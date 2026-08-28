@@ -95,6 +95,7 @@ pub mod reduce;
 mod reduce_support;
 mod reflect;
 pub mod regexp;
+mod regexp_backend;
 pub mod register_file;
 pub mod resource;
 mod semantic;

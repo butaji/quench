@@ -46,7 +46,7 @@ fn split_compiled(input: &mut String, matcher: &Value, limit: usize) -> Result<V
     Ok(Value::array(pieces.into_iter().take(limit).collect()))
 }
 
-fn split_empty_compiled(re: &regress::Regex, input: &str) -> Result<Value, VmError> {
+fn split_empty_compiled(re: &crate::regexp_backend::Regex, input: &str) -> Result<Value, VmError> {
     let values = if find_match(re, input, false)?.is_some() {
         Vec::new()
     } else {
