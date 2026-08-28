@@ -54,6 +54,8 @@ const CAP_FS_WATCH: u16 = 0x1152;
 const CAP_FS_WATCH_CLOSE: u16 = 0x1157;
 const CAP_FS_READSTREAM: u16 = 0x1153;
 const CAP_FS_WRITESTREAM: u16 = 0x1154;
+const CAP_FS_CREATE_READSTREAM: u16 = 0x1158;
+const CAP_FS_READSTREAM_OPEN: u16 = 0x1159;
 const CAP_FS_OPENDIR: u16 = 0x1155;
 const CAP_FS_OPENDIRSYNC: u16 = 0x1156;
 const CAP_FSP_READFILE: u16 = 0x1140;
@@ -94,6 +96,8 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_WATCH_CLOSE => crate::modules::fs::close_watch,
         CAP_FS_READSTREAM => crate::modules::fs::validate_stream_options,
         CAP_FS_WRITESTREAM => crate::modules::fs::validate_stream_options,
+        CAP_FS_CREATE_READSTREAM => crate::modules::fs::create_read_stream,
+        CAP_FS_READSTREAM_OPEN => crate::modules::fs::read_stream_open,
         CAP_FS_OPENDIR => crate::modules::fs::validate_directory_options,
         CAP_FS_OPENDIRSYNC => crate::modules::fs::validate_directory_options,
         _ => return fs_dispatch_more(cap),

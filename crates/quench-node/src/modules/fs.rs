@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
@@ -170,9 +170,10 @@ fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), Vm
     }
     let recursive = get("recursive");
     if !matches!(recursive, Value::Undefined | Value::Boolean(_)) {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(
-            format!("The \"options.recursive\" property must be of type boolean.{}", crate::modules::util::invalid_arg_received(&recursive)),
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"options.recursive\" property must be of type boolean.{}",
+            crate::modules::util::invalid_arg_received(&recursive)
+        )));
     }
     options.recursive = truthy(&recursive);
     options.force = truthy(&get("force"));
@@ -254,13 +255,23 @@ pub fn build() -> Value {
         ("mkdtemp", crate::host::capability(SPEC_FS_MKDTEMP)),
         ("realpath", crate::host::capability(SPEC_FS_REALPATH)),
         ("watch", crate::host::capability(SPEC_FS_WATCH)),
-        ("ReadStream", crate::host::capability(SPEC_FS_READSTREAM)),
-        ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
         ("opendir", crate::host::capability(SPEC_FS_OPENDIR)),
         ("readlink", crate::host::capability(SPEC_FS_READLINK)),
         ("chmod", crate::host::capability(SPEC_FS_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
     ];
+    props.extend([
+        (
+            "createReadStream",
+            crate::host::capability(SPEC_FS_CREATE_READSTREAM),
+        ),
+        (
+            "createWriteStream",
+            crate::host::capability(SPEC_FS_WRITESTREAM),
+        ),
+        ("ReadStream", crate::host::capability(SPEC_FS_READSTREAM)),
+        ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
+    ]);
     props.extend(sync_props());
     if let Ok(factory) = eval_function(
         "(mkdtempSync, rmdirSync, resolve) => (prefix, options) => {\
@@ -281,14 +292,55 @@ pub fn build() -> Value {
             crate::host::capability(SPEC_FS_RMDIRSYNC),
             crate::host::capability(SPEC_PATH_RESOLVE),
         ];
-        if let Ok(disposable) = quench_runtime::execute::call(&factory, &Value::Undefined, &args)
-        {
+        if let Ok(disposable) = quench_runtime::execute::call(&factory, &Value::Undefined, &args) {
             props.push(("mkdtempDisposableSync", disposable));
         }
     }
     props.push(("constants", constants()));
     props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn create_read_stream(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    let stream = crate::modules::events::new_emitter_object(state)?;
+    let stream = execute::set_property(stream, "path", Value::String(path.clone()));
+    let open = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_FS_READSTREAM_OPEN),
+        vec![stream.clone(), Value::String(path)],
+    );
+    defer(state, &open, Vec::new());
+    Ok(stream)
+}
+
+pub fn read_stream_open(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let stream = args.first().ok_or_else(|| execute::type_error("stream"))?;
+    let path = match args.get(1) {
+        Some(Value::String(path)) => path,
+        _ => return Err(execute::type_error("path")),
+    };
+    match std::fs::File::open(path) {
+        Ok(_) => Ok(Value::Undefined),
+        Err(error) => {
+            let error = match crate::modules::fs_error::fs_error("open", Some(path), &error) {
+                VmError::Thrown(value) => value,
+                other => return Err(other),
+            };
+            crate::modules::events::method_emit(
+                state,
+                Some(stream),
+                &[Value::String("error".into()), error],
+            )
+        }
+    }
 }
 
 fn eval_function(source: &str) -> Result<Value, VmError> {
