@@ -586,8 +586,10 @@ fn promise_property(value: &Value, key: &str) -> Value {
 }
 include!("vm_typed_array_properties.rs");
 fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {
-    let index = key.parse().ok()?;
-    Some(get(index).map_or(Value::Undefined, Value::Number))
+    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
+        return Some(get(index).map_or(Value::Undefined, Value::Number));
+    }
+    crate::typed_array_ops::canonical_numeric_index(key).then_some(Value::Undefined)
 }
 fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value, VmError>> {
     let Value::DataView(view) = value else {
