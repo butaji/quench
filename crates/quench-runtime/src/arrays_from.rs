@@ -57,7 +57,7 @@ fn from_impl(
                 crate::execute::get_property_result(&source, &index.to_string())?
             };
             let value = map_item(mapper.as_ref(), &this_arg, item, index)?;
-            result = write_result_element(result, index, value, true)?;
+            result = write_result_element(result, index, value, strict_result_bounds(receiver))?;
         }
         return Ok(result);
     }
@@ -92,7 +92,7 @@ fn from_typed_iterable(
     }
     for (index, item) in source_values.into_iter().enumerate() {
         let value = map_item(mapper, &this_arg, item, index)?;
-        result = write_result_element(result, index, value, true)?;
+        result = write_result_element(result, index, value, strict_result_bounds(receiver))?;
     }
     Ok(result)
 }
@@ -104,7 +104,8 @@ pub(crate) fn of(
     if let Some(receiver) = receiver.filter(|value| is_constructor(value)) {
         let mut result = construct_typed_result(Some(receiver), arguments.len())?;
         for (index, value) in arguments.iter().cloned().enumerate() {
-            result = write_result_element(result, index, value, true)?;
+            result =
+                write_result_element(result, index, value, strict_result_bounds(Some(receiver)))?;
         }
         return Ok(result);
     }
@@ -161,7 +162,12 @@ fn from_iterable(
         source_length += 1;
         let value = map_item(mapper, &this_arg, item, index)?;
         if let Some(target) = result.take() {
-            result = Some(write_result_element(target, index, value, true)?);
+            result = Some(write_result_element(
+                target,
+                index,
+                value,
+                strict_result_bounds(receiver),
+            )?);
         } else {
             source_values.push(value);
         }
@@ -183,6 +189,10 @@ fn uses_custom_result(receiver: Option<&Value>) -> bool {
         Some(value) if !matches!(value, Value::Null | Value::Undefined)
             && !matches!(value, Value::Builtin(crate::ops::Builtin::Array))
     )
+}
+
+fn strict_result_bounds(receiver: Option<&Value>) -> bool {
+    matches!(receiver, Some(Value::Function(_)))
 }
 
 fn collect_array_iterator(
@@ -283,7 +293,7 @@ fn create_result(
     // empty iterable construction cannot grow a typed-array view; assigning
     // its `length` afterward only changes metadata and leaves a zero-byte
     // backing buffer.
-    let strict_bounds = uses_custom_result(receiver);
+    let strict_bounds = strict_result_bounds(receiver);
     let mut result = construct_result(receiver, length, iterable)?;
     for (index, value) in values.into_iter().enumerate() {
         result = write_result_element(result, index, value, strict_bounds)?;
@@ -339,6 +349,7 @@ fn write_result_element(
             ));
         }
         if strict_bounds
+            && !typed_result_has_resizable_buffer(&result)
             && crate::typed_array_ops::logical_len(&result).is_some_and(|length| index >= length)
         {
             return Err(crate::value::error::throw_type_error(
@@ -381,6 +392,30 @@ fn write_result_element(
     let updated = crate::builtins::define_own_property(&result, &key, &descriptor)?;
     crate::locals::replace_value(&result, &updated);
     Ok(updated)
+}
+
+fn typed_result_has_resizable_buffer(value: &Value) -> bool {
+    macro_rules! check {
+        ($($variant:ident),+ $(,)?) => {
+            match value {
+                $(Value::$variant(view) => view.buffer.max_byte_length.is_some(),)+
+                _ => false,
+            }
+        };
+    }
+    check!(
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Uint16Array,
+        Uint32Array,
+        BigInt64Array,
+        BigUint64Array
+    )
 }
 
 #[cfg(test)]
