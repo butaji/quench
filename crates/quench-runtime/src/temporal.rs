@@ -8,11 +8,15 @@ pub(crate) mod plain_month_day;
 pub(crate) mod plain_time;
 pub(crate) mod plain_year_month;
 
+const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
+
 pub(crate) fn zoned_construct(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let epoch = match arguments.first().unwrap_or(&crate::value::Value::Undefined) {
-        crate::value::Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+        crate::value::Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+            crate::value::error::throw_range_error("Invalid epochNanoseconds")
+        })?,
         crate::value::Value::Boolean(value) => i128::from(*value),
         _ => {
             return Err(crate::value::error::throw_type_error(
@@ -20,6 +24,11 @@ pub(crate) fn zoned_construct(
             ))
         }
     };
+    if epoch.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid epochNanoseconds",
+        ));
+    }
     let timezone_value = arguments.get(1).unwrap_or(&crate::value::Value::Undefined);
     if matches!(timezone_value, crate::value::Value::String(_) | crate::value::Value::StringUnits(_)) {
         let text = crate::conversion::to_string(timezone_value)?;
@@ -233,6 +242,15 @@ fn format_year(year: i32) -> String {
 pub(crate) fn parse_timezone_identifier(
     value: &crate::value::Value,
 ) -> Result<String, crate::execute::VmError> {
+    if matches!(value, crate::value::Value::Object(_))
+        && matches!(
+            crate::execute::get_property(value, "\0prototype"),
+            crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+        )
+    {
+        let identifier = crate::execute::get_property_result(value, "timeZoneId")?;
+        return parse_timezone_identifier(&identifier);
+    }
     if matches!(
         value,
         crate::value::Value::Null
@@ -749,8 +767,9 @@ mod stubs {
             &["compatible", "earlier", "later", "reject"],
             "compatible",
         )?;
+        let overflow_mode = option_string("overflow", &["constrain", "reject"], "constrain")?;
         if let Value::String(text) = value {
-            if !text.contains('[') {
+            if !text.contains('[') || !text.ends_with(']') {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
             let (_calendar_annotation, timezone_annotation) = super::parse_iso_annotations(text)?;
@@ -765,7 +784,11 @@ mod stubs {
             let has_time_separator = date_time.contains('T')
                 || date_time.contains('t')
                 || date_time.contains(' ');
-            if !has_time_separator && timezone_annotation.is_none() {
+            if !has_time_separator
+                && (timezone_annotation.is_none()
+                    || has_z
+                    || super::parse_date_parts(date_time).is_none())
+            {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
             let (date, time) = date_time
@@ -840,8 +863,7 @@ mod stubs {
             let month = parsed_month;
             let day = parsed_day;
             if !(1..=12).contains(&month)
-                || !(1..=31).contains(&day)
-                || chrono::NaiveDate::from_ymd_opt(year, month, day).is_none()
+                || !(1..=super::plain_date::days_in_month_for_record(year, month)).contains(&day)
             {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid ZonedDateTime",
@@ -879,6 +901,14 @@ mod stubs {
                     ));
                 }
             }
+            if offset_start.is_some()
+                && matches!(offset_mode.as_str(), "prefer" | "reject")
+                && local_epoch < -super::MAX_EPOCH_NANOSECONDS
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
             if offset_start.is_some() && matches!(offset_mode.as_str(), "ignore" | "prefer") {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
@@ -888,6 +918,11 @@ mod stubs {
             }
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
+            }
+            if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
             }
             return Ok(super::zoned_record(
                 epoch,
@@ -926,7 +961,18 @@ mod stubs {
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
                 Some(normalized)
             };
-            let year = crate::conversion::to_number(&year_value)? as i32;
+            let finite_integer = |value: &Value| -> Result<i128, VmError> {
+                let number = crate::conversion::to_number(value)?;
+                if !number.is_finite() || number.abs() > 1.0e12 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid ZonedDateTime field",
+                    ));
+                }
+                Ok(number.trunc() as i128)
+            };
+            let year = i32::try_from(finite_integer(&year_value)?).map_err(|_| {
+                crate::value::error::throw_range_error("Invalid ZonedDateTime field")
+            })?;
             let month = if matches!(month_value, Value::Undefined) {
                 match month_code_value {
                     Value::String(code) if code.len() == 3 && code.starts_with('M') => code[1..]
@@ -935,30 +981,47 @@ mod stubs {
                     _ => return Err(crate::value::error::throw_range_error("Invalid monthCode")),
                 }
             } else {
-                crate::conversion::to_number(&month_value)? as u32
+                let month = finite_integer(&month_value)?;
+                if month < 1 {
+                    return Err(crate::value::error::throw_range_error("Invalid month"));
+                }
+                if overflow_mode == "reject" && month > 12 {
+                    return Err(crate::value::error::throw_range_error("Invalid month"));
+                }
+                month.clamp(1, 12) as u32
             };
-            let day = crate::conversion::to_number(&day_value)? as u32;
-            let hour = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "hour").unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let minute = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "minute").unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let second = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "second").unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let millisecond = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "millisecond")
-                    .unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let microsecond = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "microsecond")
-                    .unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let nanosecond = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "nanosecond")
-                    .unwrap_or(Value::Number(0.0)),
-            )? as i128;
+            let day = finite_integer(&day_value)?;
+            if day < 1 {
+                return Err(crate::value::error::throw_range_error("Invalid day"));
+            }
+            let day = if overflow_mode == "reject" {
+                u32::try_from(day).map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid day")
+                })?
+            } else {
+                day.min(i128::from(super::plain_date::days_in_month_for_record(year, month))) as u32
+            };
+            if overflow_mode == "reject"
+                && day > super::plain_date::days_in_month_for_record(year, month)
+            {
+                return Err(crate::value::error::throw_range_error("Invalid day"));
+            }
+            let field = |name: &str| -> Result<i128, VmError> {
+                let value = crate::execute::get_property_result(value, name)
+                    .unwrap_or(Value::Number(0.0));
+                let value = if matches!(value, Value::Undefined) {
+                    Value::Number(0.0)
+                } else {
+                    value
+                };
+                finite_integer(&value)
+            };
+            let hour = field("hour")?;
+            let minute = field("minute")?;
+            let second = field("second")?;
+            let millisecond = field("millisecond")?;
+            let microsecond = field("microsecond")?;
+            let nanosecond = field("nanosecond")?;
             let calendar = crate::execute::get_property_result(value, "calendar")?;
             if !matches!(calendar, Value::Undefined) {
                 super::parse_calendar_identifier(&calendar)?;
@@ -987,6 +1050,11 @@ mod stubs {
             let local_epoch =
                 local_epoch + millisecond * 1_000_000 + microsecond * 1_000 + nanosecond;
             let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
             if let Some(offset) = offset {
                 if super::fixed_offset_nanos(&offset)
                     != super::timezone_offset_nanos(&timezone, local_epoch)
