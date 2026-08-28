@@ -918,15 +918,16 @@ pub struct ObjectData {
 impl Drop for ObjectData {
     fn drop(&mut self) {
         crate::execution_trace::object_lifecycle(false);
-    }
         let properties = std::mem::take(&mut self.properties);
-        // Drop already has exclusive access to the object. `get_mut` avoids
-        // re-entering RefCell's dynamic borrow state during cyclic teardown.
+        // Drop already has exclusive access to the object.  `get_mut` avoids
+        // re-entering RefCell's dynamic borrow state while teardown releases
+        // a cyclic replacement graph.
         let replacement = self.replacement.get_mut().take();
         stacker::maybe_grow(64 * 1024, 4 * 1024 * 1024, || {
             drop(properties);
             drop(replacement);
         });
+    }
 }
 
 impl Clone for ObjectData {
