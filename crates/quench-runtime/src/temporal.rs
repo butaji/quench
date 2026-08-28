@@ -2516,9 +2516,37 @@ mod stubs {
                     }
                 };
                 if smallest == "year" {
-                    let year_days = if chrono::NaiveDate::from_ymd_opt(start_date.year(), 2, 29).is_some() { 366 } else { 365 };
-                    let adjustment = round_adjust(years, year_days);
-                    fields[0] = Value::Number((years + adjustment) as f64);
+                    let mut whole_years = end_date.year() - start_date.year();
+                    let anniversary = start_date.with_year((start_date.year() + whole_years) as i32);
+                    if let Some(anniversary) = anniversary {
+                        if whole_years > 0 && end_date < anniversary {
+                            whole_years -= 1;
+                        } else if whole_years < 0 && end_date > anniversary {
+                            whole_years += 1;
+                        }
+                    }
+                    let anniversary = start_date
+                        .with_year((start_date.year() + whole_years) as i32)
+                        .unwrap_or(start_date);
+                    let residual_days = (end_date - anniversary).num_days() as i128;
+                    let year_days = if chrono::NaiveDate::from_ymd_opt(anniversary.year(), 2, 29).is_some() { 366 } else { 365 };
+                    let adjustment = {
+                        let sign = residual_days.signum();
+                        let twice = residual_days.unsigned_abs().saturating_mul(2);
+                        let unit = u128::from(year_days as u32);
+                        match rounding_mode.as_str() {
+                            "ceil" => i32::from(sign > 0),
+                            "floor" => -i32::from(sign < 0),
+                            "expand" => sign as i32,
+                            "halfCeil" => if twice > unit || (twice == unit && sign > 0) { sign as i32 } else { 0 },
+                            "halfFloor" => if twice > unit || (twice == unit && sign < 0) { sign as i32 } else { 0 },
+                            "halfTrunc" => if twice > unit { sign as i32 } else { 0 },
+                            "halfExpand" => if twice >= unit { sign as i32 } else { 0 },
+                            "halfEven" => if twice > unit || (twice == unit && whole_years % 2 != 0) { sign as i32 } else { 0 },
+                            _ => 0,
+                        }
+                    };
+                    fields[0] = Value::Number((whole_years + adjustment) as f64);
                     fields[1] = Value::Number(0.0);
                     fields[3] = Value::Number(0.0);
                 } else if smallest == "month" {
@@ -2553,6 +2581,20 @@ mod stubs {
                     }
                     fields[index] = Value::Number((remainder / unit_scale) as f64);
                     remainder %= unit_scale;
+                }
+                if largest == "year"
+                    && matches!(rounding_mode.as_str(), "ceil" | "expand")
+                    && ((delta > 0 && months >= 11 && days >= 30 && time_remainder > 0)
+                        || (delta < 0 && months <= -11 && days <= -30 && time_remainder < 0))
+                {
+                    let years_value = match fields[0] {
+                        Value::Number(value) => value,
+                        _ => 0.0,
+                    };
+                    fields[0] = Value::Number(years_value + if delta > 0 { 1.0 } else { -1.0 });
+                    fields[1] = Value::Number(0.0);
+                    fields[3] = Value::Number(0.0);
+                    fields[4..].fill(Value::Number(0.0));
                 }
                 return crate::temporal::duration::construct(&fields);
             }
