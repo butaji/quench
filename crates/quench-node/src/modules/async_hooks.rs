@@ -5,7 +5,7 @@
 //! no second JavaScript object model is introduced.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -54,6 +54,7 @@ pub struct AsyncHooksState {
     next_local_id: u64,
     pub(crate) current_local_store: Option<Value>,
     resource_stack: Vec<(u64, Option<Value>)>,
+    destroyed_resources: HashSet<u64>,
 }
 
 impl AsyncHooksState {
@@ -72,6 +73,7 @@ impl AsyncHooksState {
             next_local_id: 1,
             current_local_store: None,
             resource_stack: Vec::new(),
+            destroyed_resources: HashSet::new(),
         }
     }
 
@@ -289,10 +291,20 @@ pub fn execution_resource(
 
 pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let parent_id = state.borrow().async_hooks.current_id;
-    let trigger = args
-        .first()
-        .and_then(|value| trigger_id_of(state, value))
-        .unwrap_or(state.borrow().async_hooks.current_id);
+    let public_constructor = matches!(args.first(), Some(Value::String(_)));
+    let trigger = if public_constructor {
+        args.get(1)
+            .and_then(|options| id_property(options, "triggerAsyncId"))
+            .and_then(|value| match value {
+                Value::Number(id) if id.is_finite() && id >= 0.0 => Some(id as u64),
+                _ => None,
+            })
+            .unwrap_or(parent_id)
+    } else {
+        args.first()
+            .and_then(|value| trigger_id_of(state, value))
+            .unwrap_or(parent_id)
+    };
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let inherited: Vec<(u64, Value)> = state
         .borrow()
@@ -339,10 +351,15 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         ),
     ]);
     let callbacks = active_callbacks(state, HookEvent::Init);
-    let resource_type = args
-        .get(1)
-        .cloned()
-        .unwrap_or(Value::String("AsyncResource".into()));
+    let resource_type = if public_constructor {
+        args.first()
+            .cloned()
+            .unwrap_or(Value::String("AsyncResource".into()))
+    } else {
+        args.get(1)
+            .cloned()
+            .unwrap_or(Value::String("AsyncResource".into()))
+    };
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
     for callback in callbacks {
@@ -454,10 +471,26 @@ pub fn resource_after(
 }
 
 pub fn resource_destroy(
-    _: &Rc<RefCell<HostState>>,
-    _: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
+    let Some(resource) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    let id = id_property(resource, ASYNC_ID)
+        .and_then(number)
+        .unwrap_or(0);
+    let callbacks = {
+        let mut host = state.borrow_mut();
+        if !host.async_hooks.destroyed_resources.insert(id) {
+            return Ok(Value::Undefined);
+        }
+        active_callbacks_from(&host.async_hooks, HookEvent::Destroy)
+    };
+    for callback in callbacks {
+        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+    }
     Ok(Value::Undefined)
 }
 pub fn resource_run(

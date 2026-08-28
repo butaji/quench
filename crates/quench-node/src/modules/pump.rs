@@ -192,6 +192,12 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
+        // Work created by a timer/immediate belongs to this turn.  Drain its
+        // promise and rejection edges before deciding that lifecycle work is
+        // quiescent, otherwise `exit` observers race the final rejection.
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        drain_unhandled_rejections(state)?;
         if !has_pending(state) {
             let handlers = state.borrow().process.before_exit_handlers.clone();
             run_lifecycle_handlers(state, &handlers, 0)?;
@@ -539,7 +545,9 @@ fn has_referenced_work(state: &Rc<RefCell<HostState>>) -> bool {
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
     let guard = state.borrow();
-    !guard.event_loop.immediates.borrow().is_empty()
+    quench_runtime::has_pending_promise_jobs()
+        || quench_runtime::has_pending_unhandled_rejections()
+        || !guard.event_loop.immediates.borrow().is_empty()
         || guard
             .timers
             .timers
