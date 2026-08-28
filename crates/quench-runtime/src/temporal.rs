@@ -191,6 +191,20 @@ fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
 }
 
 fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
+    if !date.contains('-') {
+        let (year_text, month_text, day_text) = match date.len() {
+            8 => (&date[..4], &date[4..6], &date[6..]),
+            11 if matches!(date.as_bytes().first(), Some(b'+' | b'-')) => {
+                (&date[..7], &date[7..9], &date[9..])
+            }
+            _ => return None,
+        };
+        return Some((
+            year_text.parse().ok()?,
+            month_text.parse().ok()?,
+            day_text.parse().ok()?,
+        ));
+    }
     let day_sep = date.rfind('-')?;
     let month_sep = date[..day_sep].rfind('-')?;
     Some((
@@ -316,6 +330,21 @@ fn valid_iso_offset(text: &str) -> bool {
         .split_once(['.', ','])
         .map_or((body, None), |(core, fraction)| (core, Some(fraction)));
     if fraction.is_some_and(|value| value.is_empty() || value.len() > 9 || !value.bytes().all(|b| b.is_ascii_digit())) {
+        return false;
+    }
+    let valid_shape = match core.len() {
+        2 | 4 | 6 => core.bytes().all(|b| b.is_ascii_digit()),
+        5 => core.as_bytes().get(2) == Some(&b':')
+            && core[..2].bytes().all(|b| b.is_ascii_digit())
+            && core[3..].bytes().all(|b| b.is_ascii_digit()),
+        8 => core.as_bytes().get(2) == Some(&b':')
+            && core.as_bytes().get(5) == Some(&b':')
+            && core[..2].bytes().all(|b| b.is_ascii_digit())
+            && core[3..5].bytes().all(|b| b.is_ascii_digit())
+            && core[6..].bytes().all(|b| b.is_ascii_digit()),
+        _ => false,
+    };
+    if !valid_shape {
         return false;
     }
     let digits = core.replace(':', "");
@@ -713,10 +742,15 @@ mod stubs {
                 .split('Z')
                 .next()
                 .unwrap_or(text);
-            if !date_time.contains('T') && !date_time.contains('t') && !date_time.contains(' ') {
+            let has_time_separator = date_time.contains('T')
+                || date_time.contains('t')
+                || date_time.contains(' ');
+            if !has_time_separator && timezone_annotation.is_none() {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
-            let (date, time) = date_time.split_once('T').unwrap_or((date_time, "00:00:00"));
+            let (date, time) = date_time
+                .split_once(['T', 't', ' '])
+                .unwrap_or((date_time, "00:00:00"));
             if date.starts_with("-000000") {
                 return Err(crate::value::error::throw_range_error("Invalid year"));
             }
@@ -729,24 +763,41 @@ mod stubs {
             if offset_start.is_some() && !super::valid_iso_offset(offset_text) {
                 return Err(crate::value::error::throw_range_error("Invalid time"));
             }
-            if (clock.contains('.') || clock.contains(',')) && clock.split(':').count() < 3 {
-                return Err(crate::value::error::throw_range_error("Fractional minutes not allowed"));
-            }
-            if clock
+            let (clock_core, fraction_text) = clock
                 .split_once(['.', ','])
-                .map(|(_, fraction)| fraction.len() > 9)
-                .unwrap_or(false)
-            {
+                .map_or((clock, None), |(core, fraction)| (core, Some(fraction)));
+            if fraction_text.is_some_and(|fraction| fraction.is_empty() || fraction.len() > 9) {
                 return Err(crate::value::error::throw_range_error("Too many fractional digits"));
             }
-            let mut time_parts = clock
-                .split(':')
-                .map(|part| part.parse::<i64>().unwrap_or(0))
-                .collect::<Vec<_>>();
-            let fractional_nanos = clock
-                .split(':')
-                .nth(2)
-                .and_then(|part| part.split_once(['.', ',']).map(|(_, fraction)| fraction))
+            let mut time_parts = if clock_core.contains(':') {
+                let parts = clock_core.split(':').collect::<Vec<_>>();
+                if parts.len() > 3
+                    || parts.iter().any(|part| part.len() != 2)
+                    || (fraction_text.is_some() && parts.len() < 3)
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                parts
+                    .iter()
+                    .map(|part| part.parse::<i64>().unwrap_or(-1))
+                    .collect::<Vec<_>>()
+            } else {
+                if !matches!(clock_core.len(), 2 | 4 | 6)
+                    || !clock_core.chars().all(|ch| ch.is_ascii_digit())
+                    || (fraction_text.is_some() && clock_core.len() != 6)
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                let mut parts = vec![clock_core[0..2].parse::<i64>().unwrap_or(-1)];
+                if clock_core.len() >= 4 {
+                    parts.push(clock_core[2..4].parse::<i64>().unwrap_or(-1));
+                }
+                if clock_core.len() == 6 {
+                    parts.push(clock_core[4..6].parse::<i64>().unwrap_or(-1));
+                }
+                parts
+            };
+            let fractional_nanos = fraction_text
                 .map(|fraction| {
                     format!("{fraction:0<9}")
                         .chars()
@@ -756,16 +807,6 @@ mod stubs {
                         .unwrap_or(0)
                 })
                 .unwrap_or(0);
-            if let Some(second) = clock
-                .split(':')
-                .nth(2)
-                .and_then(|part| part.split(['.', ',']).next())
-                .and_then(|part| part.parse::<i64>().ok())
-            {
-                if time_parts.len() > 2 {
-                    time_parts[2] = second;
-                }
-            }
             if time_parts.get(2).is_some_and(|second| *second == 60) {
                 time_parts[2] = 59;
             }
