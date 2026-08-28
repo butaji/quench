@@ -105,11 +105,9 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         if let Some(cached) = state.borrow().module_cache.get(requested_key) {
             return Ok(cached.clone());
         }
-        let promises = crate::modules::timers::build_promises()
+        let timers = crate::modules::timers::build_with_promises()
             .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
-        let mut bindings = crate::modules::timers::build();
-        bindings.push(("promises".to_string(), promises.clone()));
-        let timers = crate::host::namespace_object_from_pairs(bindings);
+        let promises = quench_runtime::execute::get_property(&timers, "promises");
         state
             .borrow_mut()
             .module_cache
@@ -346,7 +344,13 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let global = quench_runtime::vm::current_global_object();
             let event_target = quench_runtime::execute::get_property(&global, "EventTarget");
             let node_event_target =
-                quench_runtime::execute::get_property(&global, "NodeEventTarget");
+                match quench_runtime::execute::get_property(&global, "NodeEventTarget") {
+                    Value::Undefined => crate::host::capability(crate::registry::NodeSpec::new(
+                        "event_target:NodeEventTarget",
+                        0x0116,
+                    )),
+                    value => value,
+                };
             let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
             let _ = quench_runtime::execute::set_callable_property(
                 &custom_event,
@@ -564,13 +568,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 )),
             ),
         ])),
-        "timers" => {
-            let mut bindings = crate::modules::timers::build();
-            let promises = crate::modules::timers::build_promises()
-                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
-            bindings.push(("promises".to_string(), promises));
-            Some(crate::host::namespace_object_from_pairs(bindings))
-        }
+        "timers" => Some(
+            crate::modules::timers::build_with_promises()
+                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
+        ),
         "timers/promises" => Some(
             crate::modules::timers::build_promises()
                 .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
