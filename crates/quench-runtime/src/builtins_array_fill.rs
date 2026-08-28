@@ -14,6 +14,18 @@ pub(crate) fn array_fill(
         length,
     )?;
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if let (Value::Array(data), Value::Number(number)) = (&mut object, &value) {
+        if start == 0
+            && end == data.logical_len()
+            && data.can_fast_fill()
+            // `to_object` retains the caller's array Rc. Cloning here would
+            // change the observable identity of `fill`'s return value.
+            && std::rc::Rc::strong_count(data) == 1
+        {
+            std::rc::Rc::make_mut(data).fill_numeric_constant(start, end, *number);
+            return Ok(object);
+        }
+    }
     for index in start..end {
         let updated = crate::properties::assign_set_property(
             &object,
