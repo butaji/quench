@@ -223,10 +223,19 @@ pub fn add(
     let member = args.first().cloned().unwrap_or(Value::Undefined);
     let mut domain = with_domain(state, receiver)?;
     if !domain.disposed && !domain.members.iter().any(|v| *v == member) {
-        domain.members.push(member.clone());
+        let member = execute::define_property(
+            member.clone(),
+            "domain",
+            host_api::object(vec![
+                ("configurable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("writable".into(), Value::Boolean(true)),
+                ("value".into(), receiver.clone()),
+            ]),
+        )?;
+        domain.members.push(member);
         let members = host_api::array(domain.members.clone());
         execute::set_property_in_place(receiver, "members", members);
-        let _ = execute::set_property_in_place(&member, "domain", receiver.clone());
     }
     Ok(receiver.clone())
 }
@@ -242,7 +251,8 @@ pub fn remove(
         let member = domain.members.remove(i);
         let members = host_api::array(domain.members.clone());
         execute::set_property_in_place(receiver, "members", members);
-        let _ = execute::set_property_in_place(&member, "domain", Value::Undefined);
+        let (updated, _) = execute::delete_property(member.clone(), "domain");
+        execute::replace_value(&member, &updated);
     }
     Ok(receiver.clone())
 }
