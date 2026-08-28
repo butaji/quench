@@ -209,6 +209,8 @@ node_api! {
     (SPEC_ASYNC_LOCAL_ENTER, "async_hooks:AsyncLocalStorage:enterWith", 0x1F33),
     (SPEC_ASYNC_LOCAL_DISABLE, "async_hooks:AsyncLocalStorage:disable", 0x1F34),
     (SPEC_ASYNC_LOCAL_EXIT, "async_hooks:AsyncLocalStorage:exit", 0x1F38),
+    (SPEC_ASYNC_LOCAL_SCOPE, "async_hooks:AsyncLocalStorage:withScope", 0x1F3A),
+    (SPEC_ASYNC_LOCAL_SCOPE_DISPOSE, "async_hooks:AsyncLocalStorage:StoreScope:dispose", 0x1F3B),
     (SPEC_ASYNC_WORKER_RESOURCE, "async_hooks:workerResource", 0x1F35),
     (SPEC_INSPECTOR_SESSION, "inspector:Session", 0x1500),
     (SPEC_INSPECTOR_CONNECT, "inspector:Session:connect", 0x1501),
