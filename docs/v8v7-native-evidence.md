@@ -280,3 +280,23 @@ both forms) or repeated Boyer CPU time (3.5--3.8 seconds under the current
 host load), so it was reverted.  Re-freezing is not the dominant cost in the
 hot recursive path; compact Value ownership, dispatch, call frames, and
 recursive structural execution remain the measured priorities.
+
+## Rejected continuation stack-growth probe
+
+`execute_call_continuation` already drives ordinary JavaScript calls with an
+explicit `ActiveCall` vector, so a narrow probe removed its outer
+`stacker::maybe_grow` check while leaving recursive and host re-entry
+boundaries intact.  The VM tests passed, but a rebuilt production binary
+measured EarleyBoyer at score **110**, 86.06 wall seconds, and
+1,679,147,008-byte maximum RSS.  The frozen five-run control has a median
+score of 108 and an 88.07-second median wall time with lower RSS.  This is not
+a twofold win and is within the expected run variation; the change was
+reverted before full-suite measurement.
+
+The accepted next unit is therefore not another call-wrapper tweak.  It is a
+fact-driven compact activation: one immutable frame-layout fact per
+`FunctionCode`, word-backed parameter/local windows, and a complete fallback
+for captured, escaping, TDZ, direct-eval, `with`, async, generator, and host
+re-entry cases.  That is the only currently evidenced route capable of
+removing the roughly 26 million Earley environment activations rather than
+making each activation marginally cheaper.
