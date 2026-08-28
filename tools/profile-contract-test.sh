@@ -2,75 +2,40 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cargo_toml="$root/Cargo.toml"
 cargo_config="$root/.cargo/config.toml"
+probe=$(mktemp -d "${TMPDIR:-/tmp}/quench-profile-contract.XXXXXX")
+trap 'rm -rf "$probe"' EXIT
 
-section_lines() {
-  local file=$1
-  local section=$2
-  awk -v section="$section" '
-    $0 == section { in_section = 1; next }
-    /^\[/ { in_section = 0 }
-    in_section { print }
-  ' "$file"
-}
-
-require_profile_line() {
-  local file=$1
-  local section=$2
-  local expected=$3
-  if ! section_lines "$file" "$section" | grep -Fqx "$expected"; then
-    printf 'profile contract failed: %s is missing from %s in %s\n' \
-      "$expected" "${file#"$root/"}" "$section" >&2
-    exit 1
-  fi
-}
-
-forbid_profile_line() {
-  local file=$1
-  local section=$2
-  local forbidden=$3
-  if section_lines "$file" "$section" | grep -Fqx "$forbidden"; then
-    printf 'profile contract failed: %s must not appear in %s in %s\n' \
-      "$forbidden" "${file#"$root/"}" "$section" >&2
-    exit 1
-  fi
-}
-
-require_line() {
-  local file=$1
-  local expected=$2
-  if ! grep -Fqx "$expected" "$file"; then
-    printf 'profile contract failed: %s is missing from %s\n' "$expected" "${file#"$root/"}" >&2
-    exit 1
-  fi
-}
-
-
-# The shipped release profile is the production contract: size-oriented codegen,
-# whole-program optimization, deterministic single-unit codegen, and no unwind
-# or symbol payload in the executable.
-require_profile_line "$cargo_toml" '[profile.release]' 'opt-level = "z"'
-require_profile_line "$cargo_toml" '[profile.release]' 'lto = "fat"'
-require_profile_line "$cargo_toml" '[profile.release]' 'codegen-units = 1'
-require_profile_line "$cargo_toml" '[profile.release]' 'strip = "symbols"'
-require_profile_line "$cargo_toml" '[profile.release]' 'panic = "abort"'
-require_profile_line "$cargo_toml" '[profile.release-thin]' 'inherits = "release"'
-require_profile_line "$cargo_toml" '[profile.release-thin]' 'lto = "thin"'
-
-# .cargo/config.toml is an intentional, executable override: Cargo merges it
-# after the manifest, so assert the effective release values in that section,
-# rather than accepting matching text in another profile.
-require_profile_line "$cargo_config" '[profile.release]' 'opt-level = 3'
-require_profile_line "$cargo_config" '[profile.release]' 'lto = true'
-require_profile_line "$cargo_config" '[profile.release]' 'codegen-units = 1'
-require_profile_line "$cargo_config" '[profile.release]' 'panic = "abort"'
-forbid_profile_line "$cargo_config" '[profile.release]' 'incremental = true'
-forbid_profile_line "$cargo_config" '[profile.release]' 'debug = true'
-
-if grep -Eq 'target-(cpu|feature)[[:space:]]*=' "$cargo_config"; then
-  printf 'profile contract failed: production config must remain portable (target CPU features belong to benchmarks only)\n' >&2
+# A score artifact has one declared Cargo policy. Local configuration may
+# enforce diagnostics, but must not silently rewrite code generation.
+if awk '
+  $0 == "[profile.release]" { found = 1 }
+  found && /^\[/ && $0 != "[profile.release]" { exit }
+  found { exit 0 }
+  END { exit found ? 0 : 1 }
+' "$cargo_config"; then
+  printf 'profile contract failed: .cargo/config.toml must not override [profile.release]\n' >&2
   exit 1
 fi
+
+if grep -Eq 'target-(cpu|feature)[[:space:]]*=' "$cargo_config"; then
+  printf 'profile contract failed: production config must remain portable (target CPU features belong to recorded benchmark invocations)\n' >&2
+  exit 1
+fi
+
+log="$probe/cargo.log"
+(cd "$root" && CARGO_TARGET_DIR="$probe/target" cargo build -p quench-runtime --profile production -vv >"$log" 2>&1)
+
+line=$(grep 'rustc --crate-name quench_runtime ' "$log" | tail -n 1 || true)
+if [[ -z "$line" ]]; then
+  printf 'profile contract failed: Cargo did not expose quench_runtime rustc invocation\n' >&2
+  exit 1
+fi
+for flag in '-C opt-level=3' '-C panic=abort' '-C linker-plugin-lto' '-C codegen-units=1'; do
+  if [[ "$line" != *"$flag"* ]]; then
+    printf 'profile contract failed: effective production rustc invocation lacks %s\n' "$flag" >&2
+    exit 1
+  fi
+done
 
 printf 'production profile contract: ok\n'
