@@ -729,6 +729,26 @@ mod stubs {
                 "Invalid ZonedDateTime value",
             ));
         }
+        let option_string = |name: &str, allowed: &[&str], default: &str| -> Result<String, VmError> {
+            let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+                return Ok(default.to_string());
+            };
+            let option = crate::execute::get_property_result(options, name)?;
+            if matches!(option, Value::Undefined) {
+                return Ok(default.to_string());
+            }
+            let option = crate::conversion::to_string(&option)?;
+            if !allowed.contains(&option.as_str()) {
+                return Err(crate::value::error::throw_range_error("Invalid Temporal option"));
+            }
+            Ok(option)
+        };
+        let offset_mode = option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
+        let _disambiguation = option_string(
+            "disambiguation",
+            &["compatible", "earlier", "later", "reject"],
+            "compatible",
+        )?;
         if let Value::String(text) = value {
             if !text.contains('[') {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
@@ -850,13 +870,7 @@ mod stubs {
                 .unwrap_or(if has_z { "UTC" } else { offset_text });
             let timezone =
                 super::parse_timezone_identifier(&Value::String(timezone_text.to_string()))?;
-            let offset_mode = options
-                .filter(|value| !matches!(value, Value::Undefined))
-                .and_then(|value| crate::execute::get_property_result(value, "offset").ok())
-                .filter(|value| !matches!(value, Value::Undefined))
-                .and_then(|value| crate::conversion::to_string(&value).ok())
-                .unwrap_or_else(|| "reject".into());
-            if offset_start.is_some() && offset_mode != "ignore" {
+            if offset_start.is_some() && offset_mode == "reject" {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if supplied_offset != actual_offset {
@@ -865,8 +879,12 @@ mod stubs {
                     ));
                 }
             }
-            if offset_start.is_some() && offset_mode == "ignore" {
-                epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            if offset_start.is_some() && matches!(offset_mode.as_str(), "ignore" | "prefer") {
+                let supplied_offset = super::iso_offset_nanos(offset_text);
+                let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
+                if offset_mode == "ignore" || supplied_offset != actual_offset {
+                    epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+                }
             }
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
@@ -890,6 +908,24 @@ mod stubs {
             {
                 return Err(crate::value::error::throw_type_error("Missing ZonedDateTime field"));
             }
+            // Validate the offset's syntax before converting numeric fields. This
+            // preserves the specified RangeError precedence for malformed offsets.
+            let raw_offset = crate::execute::get_property_result(value, "offset")?;
+            let validated_offset = if matches!(raw_offset, Value::Undefined) {
+                None
+            } else {
+                if !matches!(raw_offset, Value::String(_) | Value::StringUnits(_)) {
+                    return Err(crate::value::error::throw_type_error("Invalid offset"));
+                }
+                let offset = crate::conversion::to_string(&raw_offset)?;
+                let normalized = if offset.eq_ignore_ascii_case("z") {
+                    Some("+00:00".to_string())
+                } else {
+                    super::normalize_offset_identifier(&offset)
+                }
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
+                Some(normalized)
+            };
             let year = crate::conversion::to_number(&year_value)? as i32;
             let month = if matches!(month_value, Value::Undefined) {
                 match month_code_value {
@@ -930,22 +966,7 @@ mod stubs {
             let timezone = super::parse_timezone_identifier(&crate::execute::get_property_result(
                 value, "timeZone",
             )?)?;
-            let offset = crate::execute::get_property_result(value, "offset")?;
-            let offset = if matches!(offset, Value::Undefined) {
-                None
-            } else {
-                if !matches!(offset, Value::String(_) | Value::StringUnits(_)) {
-                    return Err(crate::value::error::throw_type_error("Invalid offset"));
-                }
-                let offset = crate::conversion::to_string(&offset)?;
-                let normalized = if offset.eq_ignore_ascii_case("z") {
-                    Some("+00:00".to_string())
-                } else {
-                    super::normalize_offset_identifier(&offset)
-                }
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
-                Some(normalized)
-            };
+            let offset = validated_offset;
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
             let era = if year_adjusted >= 0 {
                 year_adjusted
