@@ -265,27 +265,39 @@ node_api! {
 }
 
 node_api! {
-    (SPEC_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
-    (SPEC_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
-    (SPEC_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
-    (SPEC_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
-    (SPEC_TIMERS_SETIMMEDIATE, "timers:setImmediate", 0x0704),
-    (SPEC_TIMERS_CLEARIMMEDIATE, "timers:clearImmediate", 0x0705),
-    (SPEC_TIMERS_TICK, "timers:tick", 0x0706),
-    (SPEC_TIMERS_UNREF, "timers:unref", 0x0708),
-    (SPEC_TIMERS_REF, "timers:ref", 0x0709),
-    (SPEC_TIMERS_HASREF, "timers:hasRef", 0x070A),
-    (SPEC_TIMERS_REFRESH, "timers:refresh", 0x070B),
+    (SPEC_TIMERS_SETTIMEOUT, CAP_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
+    (SPEC_TIMERS_CLEARTIMEOUT, CAP_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
+    (SPEC_TIMERS_SETINTERVAL, CAP_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
+    (SPEC_TIMERS_CLEARINTERVAL, CAP_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
+    (SPEC_TIMERS_SETIMMEDIATE, CAP_TIMERS_SETIMMEDIATE, "timers:setImmediate", 0x0704),
+    (SPEC_TIMERS_CLEARIMMEDIATE, CAP_TIMERS_CLEARIMMEDIATE, "timers:clearImmediate", 0x0705),
+    (SPEC_TIMERS_TICK, CAP_TIMERS_TICK, "timers:tick", 0x0706),
+    (SPEC_TIMERS_UNREF, CAP_TIMERS_UNREF, "timers:unref", 0x0708),
+    (SPEC_TIMERS_REF, CAP_TIMERS_REF, "timers:ref", 0x0709),
+    (SPEC_TIMERS_HASREF, CAP_TIMERS_HASREF, "timers:hasRef", 0x070A),
+    (SPEC_TIMERS_REFRESH, CAP_TIMERS_REFRESH, "timers:refresh", 0x070B),
 }
-pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
-pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
-pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
-pub const SPEC_INTERNAL_UTIL_ASSERT_CRYPTO: NodeSpec =
-    NodeSpec::new("internal/util:assertCrypto", 0x0721);
-pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
-pub const SPEC_TIMERS_TO_PRIMITIVE: NodeSpec = NodeSpec::new("timers:toPrimitive", 0x071D);
-pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
-pub const SPEC_UTIL_PROMISIFY: NodeSpec = NodeSpec::new("util:promisify", 0x071E);
+node_api! {
+    (SPEC_RUN_LOOP, CAP_RUN_LOOP, "__quench_run_loop__", 0x070C),
+    (SPEC_RUN_EXIT, CAP_RUN_EXIT, "__quench_run_exit__", 0x070D),
+    (SPEC_INTERNAL_UTIL_SLEEP, CAP_INTERNAL_UTIL_SLEEP, "internal/util:sleep", 0x070E),
+    (SPEC_INTERNAL_UTIL_ASSERT_CRYPTO, CAP_INTERNAL_UTIL_ASSERT_CRYPTO, "internal/util:assertCrypto", 0x0721),
+    (SPEC_TIMERS_CLOSE, CAP_TIMERS_CLOSE, "timers:close", 0x070F),
+    (SPEC_TIMERS_TO_PRIMITIVE, CAP_TIMERS_TO_PRIMITIVE, "timers:toPrimitive", 0x071D),
+    (SPEC_TIMERS_GET_LIBUV_NOW, CAP_TIMERS_GET_LIBUV_NOW, "timers:getLibuvNow", 0x0714),
+    (SPEC_UTIL_PROMISIFY, CAP_UTIL_PROMISIFY, "util:promisify", 0x071E),
+    (SPEC_UTIL_PROMISIFIED_CALL, CAP_UTIL_PROMISIFIED_CALL, "util:promisifiedCall", 0x071F),
+    (SPEC_UTIL_PROMISIFIED_CALLBACK, CAP_UTIL_PROMISIFIED_CALLBACK, "util:promisifiedCallback", 0x0720),
+    (SPEC_LINKED_LIST_INIT, CAP_LINKED_LIST_INIT, "internal/linkedlist:init", 0x0718),
+    (SPEC_LINKED_LIST_REMOVE, CAP_LINKED_LIST_REMOVE, "internal/linkedlist:remove", 0x0719),
+    (SPEC_LINKED_LIST_APPEND, CAP_LINKED_LIST_APPEND, "internal/linkedlist:append", 0x071A),
+    (SPEC_LINKED_LIST_IS_EMPTY, CAP_LINKED_LIST_IS_EMPTY, "internal/linkedlist:isEmpty", 0x071B),
+    (SPEC_LINKED_LIST_PEEK, CAP_LINKED_LIST_PEEK, "internal/linkedlist:peek", 0x071C),
+    (SPEC_TIMERS_SCHEDULE, CAP_TIMERS_SCHEDULE, "timers:scheduleTimer", 0x0715),
+    (SPEC_TIMERS_TOGGLE_REF, CAP_TIMERS_TOGGLE_REF, "timers:toggleTimerRef", 0x0716),
+    (SPEC_TIMERS_TOGGLE_IMMEDIATE_REF, CAP_TIMERS_TOGGLE_IMMEDIATE_REF, "timers:toggleImmediateRef", 0x0717),
+}
+pub const SPEC_QUEUE_MICROTASK: NodeSpec = NodeSpec::new("timers:queueMicrotask", 0x0707);
 pub const SPEC_UTIL_DEPRECATE: NodeSpec = NodeSpec::new("util:deprecate", 0x0730);
 pub const SPEC_UTIL_DEPRECATED_CALL: NodeSpec = NodeSpec::new("util:deprecatedCall", 0x0731);
 pub const SPEC_UTIL_SYSTEM_ERROR_NAME: NodeSpec = NodeSpec::new("util:getSystemErrorName", 0x0733);
@@ -313,19 +325,6 @@ pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x073
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
 pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
     NodeSpec::new("internal/os:getHomeDirectory", 0x0738);
-pub const SPEC_UTIL_PROMISIFIED_CALL: NodeSpec = NodeSpec::new("util:promisifiedCall", 0x071F);
-pub const SPEC_UTIL_PROMISIFIED_CALLBACK: NodeSpec =
-    NodeSpec::new("util:promisifiedCallback", 0x0720);
-pub const SPEC_LINKED_LIST_INIT: NodeSpec = NodeSpec::new("internal/linkedlist:init", 0x0718);
-pub const SPEC_LINKED_LIST_REMOVE: NodeSpec = NodeSpec::new("internal/linkedlist:remove", 0x0719);
-pub const SPEC_LINKED_LIST_APPEND: NodeSpec = NodeSpec::new("internal/linkedlist:append", 0x071A);
-pub const SPEC_LINKED_LIST_IS_EMPTY: NodeSpec =
-    NodeSpec::new("internal/linkedlist:isEmpty", 0x071B);
-pub const SPEC_LINKED_LIST_PEEK: NodeSpec = NodeSpec::new("internal/linkedlist:peek", 0x071C);
-pub const SPEC_TIMERS_SCHEDULE: NodeSpec = NodeSpec::new("timers:scheduleTimer", 0x0715);
-pub const SPEC_TIMERS_TOGGLE_REF: NodeSpec = NodeSpec::new("timers:toggleTimerRef", 0x0716);
-pub const SPEC_TIMERS_TOGGLE_IMMEDIATE_REF: NodeSpec =
-    NodeSpec::new("timers:toggleImmediateRef", 0x0717);
 pub const SPEC_INTERNAL_BINDING: NodeSpec = NodeSpec::new("internal:test-binding", 0x0710);
 pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-fill", 0x0711);
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
