@@ -956,7 +956,7 @@ pub fn namespace_bindings(
         "MessageChannel".to_string(),
         crate::host::capability(SPEC_MESSAGE_CHANNEL),
     ));
-    let event = crate::host::capability(crate::registry::SPEC_EVENT);
+    let mut event = crate::host::capability(crate::registry::SPEC_EVENT);
     let event_prototype = quench_runtime::execute::define_property(
         crate::host::namespace_object_from_pairs(Vec::new()),
         "constructor",
@@ -994,14 +994,10 @@ pub fn namespace_bindings(
         ("AT_TARGET", 2.0),
         ("BUBBLING_PHASE", 3.0),
     ] {
-        let _ = quench_runtime::execute::set_callable_property(
-            &event,
-            name,
-            quench_runtime::value::Value::Number(value),
-        );
+        event = define_event_constant(event, name, value);
     }
     out.push(("Event".to_string(), event));
-    let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+    let mut custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
     let custom_event_prototype = install_custom_event_prototype(event_prototype.clone());
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
@@ -1014,11 +1010,7 @@ pub fn namespace_bindings(
         ("AT_TARGET", 2.0),
         ("BUBBLING_PHASE", 3.0),
     ] {
-        let _ = quench_runtime::execute::set_callable_property(
-            &custom_event,
-            name,
-            quench_runtime::value::Value::Number(value),
-        );
+        custom_event = define_event_constant(custom_event, name, value);
     }
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
@@ -1037,6 +1029,29 @@ pub fn namespace_bindings(
         crate::host::namespace_object_from_pairs(vec![]),
     ));
     out
+}
+
+fn define_event_constant(
+    target: quench_runtime::value::Value,
+    name: &str,
+    value: f64,
+) -> quench_runtime::value::Value {
+    let descriptor = quench_runtime::host_api::object(vec![
+        ("value".into(), quench_runtime::value::Value::Number(value)),
+        (
+            "writable".into(),
+            quench_runtime::value::Value::Boolean(false),
+        ),
+        (
+            "enumerable".into(),
+            quench_runtime::value::Value::Boolean(true),
+        ),
+        (
+            "configurable".into(),
+            quench_runtime::value::Value::Boolean(false),
+        ),
+    ]);
+    quench_runtime::execute::define_property(target.clone(), name, descriptor).unwrap_or(target)
 }
 
 fn push_bindings(
