@@ -394,6 +394,21 @@ The result rules out treating per-slot `ensure` as the principal cost.  The
 large allocation/ownership boundary remains the activation representation,
 not the branch inside an already allocated lexical store.
 
+## Rejected immutable-code leaf/shape cache key
+
+Leaf and shape recognizers had cached their plans by `FunctionValue` pointer.
+An experiment instead keyed their tri-state cache by immutable code-store
+identity, code range, parameter count, and capture width, allowing closures
+of one static function body to share classification while retaining all
+runtime capture guards.  The runtime suite passed (442 passed, 1 ignored) and
+the closure probe `make(n) => x => x+n` returned `11 12 4` as expected.
+
+The native fat-LTO artifact (`d38bdce1…d52af742`) produced a valid
+EarleyBoyer result of score **105**, 89.54 seconds, 1.846T instructions, and
+1.660GB RSS.  It does not clear the x2 gate and was reverted.  This shows the
+matcher cache identity is not the primary aggregate limiter in Earley; avoid
+turning this cache change into permanent code-size or complexity cost.
+
 ## Rejected forced compact-dispatch inlining
 
 The ordinary compact loop calls `run_instruction` for every non-branch
