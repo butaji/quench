@@ -14,12 +14,12 @@ use crate::registry::{
     SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE,
     SPEC_DIAGNOSTICS_CHANNEL, SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE,
     SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR, SPEC_DIAGNOSTICS_CHANNEL_PUBLISH,
-    SPEC_DIAGNOSTICS_CHANNEL_SCOPE, SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE,
-    SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE, SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE,
-    SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS, SPEC_DIAGNOSTICS_SCOPE_DISPOSE, SPEC_DIAGNOSTICS_SUBSCRIBE,
-    SPEC_DIAGNOSTICS_TRACING_CHANNEL, SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE,
-    SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC, SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE,
-    SPEC_DIAGNOSTICS_UNSUBSCRIBE,
+    SPEC_DIAGNOSTICS_CHANNEL_RUN_STORES, SPEC_DIAGNOSTICS_CHANNEL_SCOPE,
+    SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE, SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE,
+    SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE, SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS,
+    SPEC_DIAGNOSTICS_SCOPE_DISPOSE, SPEC_DIAGNOSTICS_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_CHANNEL,
+    SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC,
+    SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, SPEC_DIAGNOSTICS_UNSUBSCRIBE,
 };
 
 const ID: &str = "\0quench:diagnostics_channel:id";
@@ -241,14 +241,31 @@ pub fn bounded_run(
     let call_args = args.get(3..).unwrap_or(&[]);
     let start = execute::get_property(receiver, "start");
     let end = execute::get_property(receiver, "end");
-    if channel_has_subscribers(state, &start) {
-        publish(state, Some(&start), std::slice::from_ref(&context))?;
+    let stores = channel_stores(state, &start);
+    let (previous, transform_errors) = enter_stores_with_errors(&stores, &context);
+    let start_result = if channel_has_subscribers(state, &start) {
+        publish(state, Some(&start), std::slice::from_ref(&context))
+    } else {
+        Ok(Value::Undefined)
+    };
+    if let Err(error) = start_result {
+        restore_stores(Some(&previous));
+        for error in transform_errors {
+            schedule_uncaught(state, error)?;
+        }
+        return Err(error);
     }
     let result = execute::call(callback, &this_arg, call_args);
-    if channel_has_subscribers(state, &end) {
-        publish(state, Some(&end), std::slice::from_ref(&context))?;
+    let end_result = if channel_has_subscribers(state, &end) {
+        publish(state, Some(&end), std::slice::from_ref(&context))
+    } else {
+        Ok(Value::Undefined)
+    };
+    restore_stores(Some(&previous));
+    for error in transform_errors {
+        schedule_uncaught(state, error)?;
     }
-    result
+    end_result.and(result)
 }
 
 fn tracing_member(
@@ -480,6 +497,10 @@ fn channel_object(id: u64, name: Value) -> Value {
             "withStoreScope".into(),
             crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL_SCOPE),
         ),
+        (
+            "runStores".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL_RUN_STORES),
+        ),
     ];
     CHANNEL_PROTO.with(|slot| {
         if let Some(prototype) = slot.borrow().clone() {
@@ -709,6 +730,33 @@ pub fn with_store_scope(
     Ok(scope)
 }
 
+pub fn run_stores(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("channel"))?;
+    let message = args.first().cloned().unwrap_or(Value::Undefined);
+    let callback = args.get(1).ok_or_else(|| type_error("fn"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(type_error("fn"));
+    }
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let call_args = args.get(3..).unwrap_or(&[]);
+    let stores = channel_stores(state, receiver);
+    let (previous, transform_errors) = enter_stores_with_errors(&stores, &message);
+    if let Err(error) = publish(state, Some(receiver), std::slice::from_ref(&message)) {
+        restore_stores(Some(&previous));
+        return Err(error);
+    }
+    let result = execute::call(callback, &this_arg, call_args);
+    restore_stores(Some(&previous));
+    for error in transform_errors {
+        schedule_uncaught(state, error)?;
+    }
+    result
+}
+
 pub fn dispose_store_scope(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -742,28 +790,53 @@ pub fn unbind_store(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("channel"))?;
     let data = channel_data(state, receiver)?;
-    data.borrow_mut()
-        .stores
-        .retain(|(store, _)| args.first().is_some_and(|value| *value != *store));
-    Ok(receiver.clone())
+    let Some(target) = args.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    let stores = &mut data.borrow_mut().stores;
+    let before = stores.len();
+    stores.retain(|(store, _)| store != target);
+    Ok(Value::Boolean(stores.len() != before))
 }
 
 fn enter_stores(stores: &[(Value, Value)], message: &Value) -> Vec<(Value, Value)> {
-    stores
-        .iter()
-        .filter_map(|(store, transform)| {
-            let previous =
-                execute::call(&execute::get_property(store, "getStore"), store, &[]).ok()?;
-            let value =
-                execute::call(transform, &Value::Undefined, std::slice::from_ref(message)).ok()?;
-            let _ = execute::call(
-                &execute::get_property(store, "enterWith"),
-                store,
-                std::slice::from_ref(&value),
-            );
-            Some((store.clone(), previous))
-        })
-        .collect()
+    enter_stores_with_errors(stores, message).0
+}
+
+fn enter_stores_with_errors(
+    stores: &[(Value, Value)],
+    message: &Value,
+) -> (Vec<(Value, Value)>, Vec<Value>) {
+    let mut previous_values = Vec::with_capacity(stores.len());
+    let mut errors = Vec::new();
+    for (store, transform) in stores {
+        let Some(previous) =
+            execute::call(&execute::get_property(store, "getStore"), store, &[]).ok()
+        else {
+            continue;
+        };
+        let value = match execute::call(transform, &Value::Undefined, std::slice::from_ref(message))
+        {
+            Ok(value) => value,
+            Err(VmError::Thrown(error)) => {
+                errors.push(error);
+                continue;
+            }
+            Err(_) => continue,
+        };
+        let _ = execute::call(
+            &execute::get_property(store, "enterWith"),
+            store,
+            std::slice::from_ref(&value),
+        );
+        previous_values.push((store.clone(), previous));
+    }
+    (previous_values, errors)
+}
+
+fn schedule_uncaught(state: &Rc<RefCell<HostState>>, error: Value) -> Result<(), VmError> {
+    let callback = eval_function("function(error) { throw error; }")?;
+    crate::modules::process::next_tick(state, &[callback, error]).map(|_| ())
 }
 
 fn channel_stores(state: &Rc<RefCell<HostState>>, channel: &Value) -> Vec<(Value, Value)> {
