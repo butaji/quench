@@ -444,6 +444,7 @@ fn events_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TARGET_ADD => event_target::add_event_listener,
         CAP_TARGET_REMOVE => event_target::remove_event_listener,
         CAP_TARGET_DISPATCH => event_target::dispatch_event,
+        CAP_EVENT_TARGET_REJECTION => handlers::event_target_rejection,
         _ => return path_dispatch(cap),
     })
 }
