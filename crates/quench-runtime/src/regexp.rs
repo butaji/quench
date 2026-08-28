@@ -8,7 +8,7 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
-    let normalized = normalize_named_group_escapes(pattern);
+    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
@@ -32,7 +32,7 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
     let reg_flags: Flags = flags.into();
-    let normalized = normalize_named_group_escapes(pattern);
+    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&normalized, reg_flags)
     }))
@@ -119,6 +119,45 @@ fn append_decoded_group_name(output: &mut String, name: &[char]) {
         return;
     };
     output.push_str(&decoded);
+}
+
+const NEW_UNICODE_SCRIPTS: &[(&str, &str, &str)] = &[
+    (
+        "Beria_Erfe",
+        "Berf",
+        r"\u{16EA0}-\u{16EB8}\u{16EBB}-\u{16ED3}",
+    ),
+    ("Sidetic", "Sidt", r"\u{10940}-\u{10959}"),
+    (
+        "Tai_Yo",
+        "Tayo",
+        r"\u{1E6C0}-\u{1E6DE}\u{1E6E0}-\u{1E6F5}\u{1E6FE}-\u{1E6FF}",
+    ),
+    (
+        "Tolong_Siki",
+        "Tols",
+        r"\u{11DB0}-\u{11DDB}\u{11DE0}-\u{11DE9}",
+    ),
+];
+
+fn normalize_new_unicode_scripts(pattern: &str) -> String {
+    let mut normalized = pattern.to_string();
+    for (name, alias, ranges) in NEW_UNICODE_SCRIPTS {
+        for value in [*name, *alias] {
+            for property in ["Script", "sc"] {
+                for escape in ['p', 'P'] {
+                    let needle = format!(r"\{escape}{{{property}={value}}}");
+                    let class = if escape == 'p' {
+                        format!("[{ranges}]")
+                    } else {
+                        format!("[^{ranges}]")
+                    };
+                    normalized = normalized.replace(&needle, &class);
+                }
+            }
+        }
+    }
+    normalized
 }
 
 pub fn execute_builtin(
