@@ -102,29 +102,43 @@ pub fn new_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Val
         TARGET_ID_PROP.to_string(),
         Value::Number(id.0 as f64),
     )]);
-    install_target_props(object)
-}
-
-fn install_target_props(mut object: Value) -> Result<Value, VmError> {
-    for (key, value) in target_props() {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, key, descriptor)?;
-    }
+    let global = quench_runtime::vm::current_global_object();
+    let prototype =
+        execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype");
+    let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_prototype_of(&object, &prototype)?
+    } else {
+        object
+    };
     Ok(object)
 }
 
 pub(crate) fn prototype() -> Value {
-    crate::host::namespace_object_from_pairs(
-        target_props()
-            .into_iter()
-            .map(|(name, value)| (name.to_string(), value))
-            .collect(),
+    let mut prototype = host_api::object(Vec::new());
+    for (name, value) in target_props() {
+        prototype = execute::define_property(
+            prototype,
+            name,
+            host_api::object(vec![
+                ("value".into(), value),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        )
+        .expect("EventTarget prototype property definition");
+    }
+    execute::define_property(
+        prototype,
+        "Symbol.toStringTag",
+        host_api::object(vec![
+            ("value".into(), Value::String("EventTarget".into())),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
     )
+    .expect("EventTarget toStringTag definition")
 }
 
 fn target_props() -> Vec<(&'static str, Value)> {
@@ -134,22 +148,28 @@ fn target_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_TARGET_ADD),
         ),
         (
-            "removeEventListener",
-            crate::host::capability(crate::registry::SPEC_TARGET_REMOVE),
-        ),
-        (
             "dispatchEvent",
             crate::host::capability(crate::registry::SPEC_TARGET_DISPATCH),
+        ),
+        (
+            "removeEventListener",
+            crate::host::capability(crate::registry::SPEC_TARGET_REMOVE),
         ),
     ]
 }
 
 fn type_arg(args: &[Value]) -> Result<String, VmError> {
     match args.first() {
-        Some(Value::String(name)) => Ok(name.clone()),
-        _ => Err(execute::type_error(
-            "The \"type\" argument must be of type string",
+        Some(Value::String(name)) if !name.contains('\0') && !name.contains("ymbol") => {
+            Ok(name.clone())
+        }
+        Some(value) => Err(invalid_arg_type(
+            "type",
+            "string",
+            value,
+            "The \"type\" argument must be of type string.",
         )),
+        None => Err(missing_args()),
     }
 }
 
@@ -159,10 +179,86 @@ fn callback_arg(args: &[Value]) -> Result<Value, VmError> {
         Some(value) if quench_runtime::is_callable(value) || matches!(value, Value::Object(_)) => {
             Ok(value.clone())
         }
-        _ => Err(execute::type_error(
-            "The \"callback\" argument must be of type function",
+        Some(value) => Err(invalid_arg_type(
+            "callback",
+            "function",
+            value,
+            "The \"listener\" argument must be an instance of EventListener.",
         )),
+        None => Err(missing_args()),
     }
+}
+
+fn invalid_arg_type(_name: &str, _expected: &str, value: &Value, prefix: &str) -> VmError {
+    let received = match value {
+        Value::Null => " Received null".to_string(),
+        Value::Undefined => " Received undefined".to_string(),
+        Value::Boolean(value) => format!(" Received type boolean ({value})"),
+        Value::Number(value) => format!(" Received type number ({value})"),
+        Value::String(value) => format!(
+            " Received type string ({})",
+            crate::modules::util::inspect(&Value::String(value.clone()))
+        ),
+        value if quench_runtime::is_callable(value) => " Received function".to_string(),
+        Value::Object(_) => " Received an instance of Object".to_string(),
+        value => format!(" Received {}", crate::modules::util::inspect(value)),
+    };
+    coded_error(
+        quench_runtime::ops::Builtin::TypeError,
+        "ERR_INVALID_ARG_TYPE",
+        &format!("{prefix}{received}"),
+    )
+}
+
+fn invalid_this() -> VmError {
+    coded_error(
+        quench_runtime::ops::Builtin::TypeError,
+        "ERR_INVALID_THIS",
+        "Value of \"this\" must be an instance of EventTarget",
+    )
+}
+
+fn missing_args() -> VmError {
+    coded_error(
+        quench_runtime::ops::Builtin::TypeError,
+        "ERR_MISSING_ARGS",
+        "The \"type\" argument is required",
+    )
+}
+
+fn coded_error(builtin: quench_runtime::ops::Builtin, code: &str, message: &str) -> VmError {
+    let error = quench_runtime::builtins::error(builtin, &[Value::String(message.to_string())]);
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String(code.to_string()),
+    ))
+}
+
+fn queue_listener_warning(state: &Rc<RefCell<HostState>>, receiver: &Value) {
+    let warning = host_api::object(vec![
+        (
+            "name".into(),
+            Value::String("AddEventListenerArgumentTypeWarning".into()),
+        ),
+        (
+            "message".into(),
+            Value::String("The listener argument must be a function or an object".into()),
+        ),
+        ("target".into(), receiver.clone()),
+    ]);
+    state.borrow_mut().event_loop.queue_microtask(
+        crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
+        vec![Value::String("warning".into()), warning],
+    );
+}
+
+fn event_recursion() -> VmError {
+    coded_error(
+        quench_runtime::ops::Builtin::Error,
+        "ERR_EVENT_RECURSION",
+        "The event is already being dispatched",
+    )
 }
 
 fn same_listener(left: &Value, right: &Value) -> bool {
@@ -237,7 +333,21 @@ pub fn add_event_listener(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let event = type_arg(args)?;
-    let callback = callback_arg(args)?;
+    let callback = match callback_arg(args) {
+        Ok(callback) => callback,
+        Err(error) => {
+            if let Some(receiver) = receiver {
+                queue_listener_warning(state, receiver);
+            }
+            return Err(error);
+        }
+    };
+    if matches!(callback, Value::Null | Value::Undefined) {
+        if let Some(receiver) = receiver {
+            queue_listener_warning(state, receiver);
+        }
+        return Ok(Value::Undefined);
+    }
     let signal = signal_option(args)?;
     if signal
         .as_ref()
@@ -309,29 +419,86 @@ pub fn remove_event_listener(
     Ok(Value::Undefined)
 }
 
+pub fn replace_event_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    old: &Value,
+    replacement: &Value,
+) -> bool {
+    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
+        return false;
+    };
+    let mut guard = target.borrow_mut();
+    let Some(list) = guard
+        .events
+        .iter_mut()
+        .find(|(key, _)| key == event)
+        .map(|(_, listeners)| listeners)
+    else {
+        return false;
+    };
+    let Some(index) = list
+        .iter()
+        .position(|listener| execute::same_value(&listener.callback, old))
+    else {
+        return false;
+    };
+    list[index].callback = replacement.clone();
+    true
+}
+
+fn listener_is_registered(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    callback: &Value,
+) -> bool {
+    target_id(receiver)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| {
+            target
+                .borrow()
+                .listeners_of(event)
+                .iter()
+                .any(|listener| execute::same_value(&listener.callback, callback))
+        })
+}
+
 pub fn dispatch_event(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let (Some(receiver), Some(event)) = (receiver, args.first()) else {
-        return Err(execute::type_error(
-            "The \"event\" argument must be an instance of Event",
-        ));
+    let Some(receiver) = receiver else {
+        return Err(invalid_this());
+    };
+    let Some(event) = args.first() else {
+        return Err(missing_args());
     };
     if !matches!(event, Value::Object(_))
         || matches!(execute::get_property(event, "type"), Value::Undefined)
     {
-        return Err(execute::type_error(
-            "The \"event\" argument must be an instance of Event",
+        return Err(invalid_arg_type(
+            "event",
+            "Event",
+            event,
+            "The \"event\" argument must be an instance of Event.",
         ));
     }
     let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
-        return Ok(Value::Boolean(false));
+        return Err(invalid_this());
     };
     let Value::String(event_type) = execute::get_property(event, "type") else {
         return Ok(Value::Boolean(false));
     };
+    let event_identity = event.object_identity();
+    if let Some(identity) = event_identity {
+        let mut guard = state.borrow_mut();
+        if !guard.dispatching_events.insert(identity) {
+            return Err(event_recursion());
+        }
+    }
     if event_type == "abort" && is_abort_signal(receiver) {
         let mut host = state.borrow_mut();
         for target in host.targets.targets.values() {
@@ -353,16 +520,11 @@ pub fn dispatch_event(
     execute::set_property_in_place(event, "currentTarget", receiver.clone());
     execute::set_property_in_place(event, "srcElement", receiver.clone());
     execute::set_property_in_place(event, "eventPhase", Value::Number(2.0));
-    let handler_name = format!("on{event_type}");
-    let handler = execute::get_property(receiver, &handler_name);
-    if quench_runtime::is_callable(&handler) {
-        if let Err(error) = execute::call(&handler, receiver, std::slice::from_ref(event)) {
-            crate::modules::pump::handle_uncaught(state, error)?;
-            crate::modules::pump::run_uncaught(state)?;
-        }
-    }
     for listener in &snapshot {
         if listener.weak {
+            continue;
+        }
+        if !listener_is_registered(state, receiver, &event_type, &listener.callback) {
             continue;
         }
         if listener
@@ -377,7 +539,7 @@ pub fn dispatch_event(
             || event
                 .object_identity()
                 .is_some_and(|identity| state.borrow().stopped_events.contains(&identity));
-        if stopped && has_protected_listener && !protected {
+        if stopped && (!has_protected_listener || !protected) {
             continue;
         }
         if listener.once {
@@ -402,9 +564,24 @@ pub fn dispatch_event(
         } else {
             Ok(Value::Undefined)
         };
-        if let Err(error) = result {
-            crate::modules::pump::handle_uncaught(state, error)?;
-            crate::modules::pump::run_uncaught(state)?;
+        match result {
+            Ok(Value::Promise(promise)) => {
+                // EventTarget reports rejected async listeners through the
+                // uncaught-exception channel, rather than as unhandled
+                // rejections.  Installing the rejection reaction here also
+                // records the promise as handled before the generic pump.
+                let rejection =
+                    crate::host::capability(crate::registry::SPEC_EVENT_TARGET_REJECTION);
+                quench_runtime::promise_then(
+                    Some(&Value::Promise(promise)),
+                    &[Value::Undefined, rejection],
+                )?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                crate::modules::pump::handle_uncaught(state, error)?;
+                crate::modules::pump::run_uncaught(state)?;
+            }
         }
         if !has_protected_listener
             && (execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
@@ -423,6 +600,9 @@ pub fn dispatch_event(
     execute::set_property_in_place(event, "currentTarget", Value::Null);
     execute::set_property_in_place(event, "srcElement", Value::Null);
     execute::set_property_in_place(event, "target", receiver.clone());
+    if let Some(identity) = event_identity {
+        state.borrow_mut().dispatching_events.remove(&identity);
+    }
     Ok(Value::Boolean(!prevented))
 }
 
