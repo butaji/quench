@@ -19,7 +19,14 @@ fn to_property_descriptor(descriptor: &Value) -> Result<Value, VmError> {
     let Value::Object(properties) = descriptor else {
         return Ok(descriptor.clone());
     };
-    const FIELDS: [&str; 6] = ["enumerable", "configurable", "value", "writable", "get", "set"];
+    const FIELDS: [&str; 6] = [
+        "enumerable",
+        "configurable",
+        "value",
+        "writable",
+        "get",
+        "set",
+    ];
     let mut resolved = Vec::new();
     for field in FIELDS {
         if properties.iter().any(|(name, _)| name == field) {
@@ -36,16 +43,22 @@ fn define_rejected(error: &VmError) -> bool {
     let VmError::Thrown(Value::Object(properties)) = error else {
         return false;
     };
-    let message = properties.iter().find_map(|(name, value)| match (name.as_str(), value) {
-        ("message", Value::String(text)) => Some(text),
-        _ => None,
-    });
+    let message = properties
+        .iter()
+        .find_map(|(name, value)| match (name.as_str(), value) {
+            ("message", Value::String(text)) => Some(text),
+            _ => None,
+        });
     match message.as_deref() {
         Some("Cannot define a property on a non-extensible object")
         | Some("Cannot assign to read only array length") => true,
         Some(text) => {
             text.starts_with("Cannot redefine")
-                || text == "Cannot define a property on an out-of-bounds typed array"
+                || matches!(
+                    text,
+                    "Cannot define a property on an out-of-bounds typed array"
+                        | "Cannot define a property on an integer-indexed exotic object"
+                )
         }
         None => false,
     }
@@ -152,22 +165,41 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
 }
 
 fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), VmError> {
-    let Value::Array(returned) = result else { return Ok(()); };
-    let returned: Vec<String> = returned.snapshot().into_iter().filter_map(|v| {
-        if let Value::String(s) = v { Some(s) } else { None }
-    }).collect();
-    let Value::Array(all) = crate::own_keys::all(target)? else { return Ok(()); };
-    let target_keys: Vec<String> = all.snapshot().into_iter().filter_map(|v| {
-        if let Value::String(s) = v { Some(s) } else { None }
-    }).collect();
+    let Value::Array(returned) = result else {
+        return Ok(());
+    };
+    let returned: Vec<String> = returned
+        .snapshot()
+        .into_iter()
+        .filter_map(|v| {
+            if let Value::String(s) = v {
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let Value::Array(all) = crate::own_keys::all(target)? else {
+        return Ok(());
+    };
+    let target_keys: Vec<String> = all
+        .snapshot()
+        .into_iter()
+        .filter_map(|v| {
+            if let Value::String(s) = v {
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect();
     for key in &target_keys {
-        let descriptor = crate::builtins::object::descriptor(
-            Some(target), Some(&Value::String(key.clone())),
-        )?;
+        let descriptor =
+            crate::builtins::object::descriptor(Some(target), Some(&Value::String(key.clone())))?;
         if is_non_configurable_descriptor(&descriptor) && !returned.contains(key) {
-            return Err(crate::value::error::throw_type_error(
-                &format!("'ownKeys' on proxy: trap result did not include '{key}'"),
-            ));
+            return Err(crate::value::error::throw_type_error(&format!(
+                "'ownKeys' on proxy: trap result did not include '{key}'"
+            )));
         }
     }
     if !crate::properties::object_is_extensible(target)
@@ -197,9 +229,8 @@ fn own_keys_array_like(value: &Value) -> Result<Value, VmError> {
             .collect();
         return Ok(Value::array(values));
     }
-    let length = crate::conversion::to_number(
-        &crate::execute::get_property_result(value, "length")?,
-    )?;
+    let length =
+        crate::conversion::to_number(&crate::execute::get_property_result(value, "length")?)?;
     let length = if !length.is_finite() || length <= 0.0 {
         0
     } else {
@@ -207,11 +238,13 @@ fn own_keys_array_like(value: &Value) -> Result<Value, VmError> {
     };
     let mut items = Vec::with_capacity(length);
     for index in 0..length {
-        items.push(crate::execute::get_property_result(value, &index.to_string())?);
+        items.push(crate::execute::get_property_result(
+            value,
+            &index.to_string(),
+        )?);
     }
     Ok(Value::array(items))
 }
-
 
 fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
     let Value::Array(keys) = value else {

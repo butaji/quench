@@ -89,7 +89,9 @@ pub(crate) fn descriptor_fields(
         fields.push((field.to_string(), value));
     }
     validate_accessor_fields(&fields)?;
-    let has_accessor = fields.iter().any(|(name, _)| name == "get" || name == "set");
+    let has_accessor = fields
+        .iter()
+        .any(|(name, _)| name == "get" || name == "set");
     let has_data = fields
         .iter()
         .any(|(name, _)| name == "value" || name == "writable");

@@ -7,7 +7,7 @@ pub(crate) fn set_with_receiver(
     if !crate::value::is_object(receiver) {
         return Ok(false);
     }
-    if crate::typed_array_ops::is_view(target) {
+    if target.typed_array_meta().is_some() {
         let same_receiver = crate::builtins::same_value(Some(target), Some(receiver));
         if crate::typed_array_ops::canonical_numeric_index(key)
             && !crate::typed_array_ops::is_index_key(key)
@@ -22,9 +22,9 @@ pub(crate) fn set_with_receiver(
             if !same_receiver && out_of_bounds {
                 return Ok(true);
             }
-            if let Some(result) = crate::typed_array_ops::set_property(target, key, value) {
-                result?;
-                if same_receiver {
+            if same_receiver {
+                if let Some(result) = crate::typed_array_ops::set_property(target, key, value) {
+                    result?;
                     return Ok(true);
                 }
             }
