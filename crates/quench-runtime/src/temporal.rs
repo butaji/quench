@@ -407,13 +407,10 @@ fn parse_iso_annotations(text: &str) -> Result<(Option<String>, Option<String>),
                 calendar_critical |= critical;
             }
         } else {
-            if critical {
-                return Err(crate::value::error::throw_range_error("Unknown critical annotation"));
-            }
             if timezone.is_some() {
                 return Err(crate::value::error::throw_range_error("Multiple time zones"));
             }
-            timezone = Some(annotation.to_string());
+            timezone = Some(body.to_string());
         }
         rest = &after[end + 1..];
     }
