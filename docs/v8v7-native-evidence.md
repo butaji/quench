@@ -189,6 +189,24 @@ of semantic fixes, not unproven performance evidence.  Do not merge its
 divergent runtime wholesale into the dirty worktree; evaluate its RegExp
 commits through isolated compatibility and score gates.
 
+## Verified ordinary global replace reduction
+
+The ordinary global `RegExp[@@replace]` path had an avoidable semantic
+detour: `global` alone forced `replace_with_exec`, materializing a JavaScript
+exec-result array for every match, even after the observable `flags` and
+`exec` reads had proved the ordinary built-in protocol.  The direct template
+matcher already implements replacement-token expansion.  It now resets
+`lastIndex` before the global scan (the observable built-in transition) and
+is selected only when the existing flags/`exec` guards hold; sticky and
+overridden-exec cases retain the complete exec path.
+
+Against Node, `/a/g` with a nonzero initial `lastIndex` produced `"xbx"` and
+final `lastIndex` zero, while `/(?:)/g` produced `"xaxbx"` and zero in both
+engines.  The four focused runtime RegExp tests pass.  The isolated native
+runBlock0 score rose to **273** in 13.99 s (29,327,360-byte max RSS), versus
+the traced baseline range of 226--257.  This is a reusable allocation
+reduction for ordinary JavaScript semantics, not discarded-result admission.
+
 ## Next experiment, ordered by impact / effort
 
 1. Produce a DeltaBlue-valid dSYM build by isolating the dirty semantic repair.
