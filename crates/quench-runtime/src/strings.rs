@@ -76,6 +76,20 @@ pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
     string_byte_len_fits_limit(value.len())
 }
 
+pub(crate) fn replace_discard_string(
+    input: &str,
+    regexp: &Value,
+    replacement: &Value,
+) -> Result<(), crate::execute::VmError> {
+    crate::regexp::execute_builtin(
+        crate::ops::Builtin::RegExpSymbolReplace,
+        Some(regexp),
+        &[Value::String(input.into()), replacement.clone()],
+    )
+    .ok_or(crate::execute::VmError::NotCallable)?
+    .map(|_| ())
+}
+
 #[cfg(test)]
 mod hash_tests {
     use super::{
