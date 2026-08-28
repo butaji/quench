@@ -35,7 +35,11 @@ fn object_array_like(
         } else {
             length.floor().min(usize::MAX as f64) as usize
         };
-        let mut values = vec![Value::Undefined; length];
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(length)
+            .map_err(|_| range_error("Typed-array length is too large"))?;
+        values.resize(length, Value::Undefined);
         for (name, value) in properties.iter() {
             if let Ok(index) = name.parse::<usize>() {
                 if index < length {
