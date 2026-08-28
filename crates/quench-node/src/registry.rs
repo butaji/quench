@@ -42,11 +42,6 @@ pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream"
 pub const SPEC_VM_SOURCE_TEXT_MODULE: NodeSpec = NodeSpec::new("vm:SourceTextModule", 0x0F11);
 pub const SPEC_VM_MODULE_LINK: NodeSpec = NodeSpec::new("vm:SourceTextModule:link", 0x0F13);
 pub const SPEC_VM_MODULE_EVALUATE: NodeSpec = NodeSpec::new("vm:SourceTextModule:evaluate", 0x0F14);
-pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
-pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
-pub const SPEC_TEXT_ENCODER_NEW: NodeSpec = NodeSpec::new("TextEncoder:new", 0x084C);
-pub const SPEC_TEXT_ENCODER_ENCODE: NodeSpec = NodeSpec::new("TextEncoder:encode", 0x084D);
-pub const SPEC_TEXT_ENCODER_ENCODE_INTO: NodeSpec = NodeSpec::new("TextEncoder:encodeInto", 0x084E);
 pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
 pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
 pub const SPEC_TEST_MOCK_FN: NodeSpec = NodeSpec::new("test:mock:fn", 0x1b02);
@@ -87,6 +82,11 @@ pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
 pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
 
 node_api! {
+    (SPEC_TEXT_DECODER_NEW, "TextDecoder:new", 0x0809),
+    (SPEC_TEXT_DECODER_DECODE, "TextDecoder:decode", 0x080A),
+    (SPEC_TEXT_ENCODER_NEW, "TextEncoder:new", 0x084C),
+    (SPEC_TEXT_ENCODER_ENCODE, "TextEncoder:encode", 0x084D),
+    (SPEC_TEXT_ENCODER_ENCODE_INTO, "TextEncoder:encodeInto", 0x084E),
     (SPEC_UTIL_FORMAT, "util:format", 0x0300),
     (SPEC_UTIL_INSPECT, "util:inspect", 0x0301),
     (SPEC_UTIL_ABORTED, "util:aborted", 0x0310),
