@@ -195,18 +195,18 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
                 }
             }
         }
-        // Bound functions have no own `prototype`; OrdinaryHasInstance
-        // delegates to their target instead of treating that absence as an
-        // invalid prototype. This also preserves subclass and cross-realm
-        // identity through arbitrarily nested binds.
+        // Host capability constructors may attach an explicit prototype even
+        // though their bound target has none. Prefer that observable fact;
+        // ordinary bound functions still fall through to their target.
+        if let Ok(prototype) = crate::execute::get_property_result(constructor, "prototype") {
+            if crate::value::is_object(&prototype) {
+                return Ok(prototype_chain_contains(value, &prototype)?);
+            }
+        }
         if crate::conversion::is_callable(&bound.target) {
             return ordinary_instanceof(value, &bound.target);
         }
-        let prototype = crate::execute::get_property_result(constructor, "prototype")?;
-        if !crate::value::is_object(&prototype) {
-            return Err(type_error("Function has non-object prototype"));
-        }
-        return Ok(prototype_chain_contains(value, &prototype)?);
+        return Err(type_error("Function has non-object prototype"));
     }
     let prototype = crate::execute::get_property_result(constructor, "prototype")?;
     if !crate::value::is_object(&prototype) {
