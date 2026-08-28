@@ -2414,14 +2414,8 @@ mod stubs {
                         "halfExpand".to_string(),
                     )
                 } else if crate::value::is_object(options) {
-                    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
-                    if matches!(unit, Value::Undefined) {
-                        return Err(crate::value::error::throw_range_error(
-                            "smallestUnit required",
-                        ));
-                    }
-                    let increment =
-                        match crate::execute::get_property_result(options, "roundingIncrement")? {
+                    let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
+                    let increment = match increment_value {
                             Value::Undefined => 1,
                             value => {
                                 let number = crate::conversion::to_number(&value)?;
@@ -2433,10 +2427,15 @@ mod stubs {
                                 number as i128
                             }
                         };
-                    let mode = match crate::execute::get_property_result(options, "roundingMode")? {
+                    let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
+                    let mode = match mode_value {
                         Value::Undefined => "halfExpand".to_string(),
                         value => crate::conversion::to_string(&value)?,
                     };
+                    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+                    if matches!(unit, Value::Undefined) {
+                        return Err(crate::value::error::throw_range_error("smallestUnit required"));
+                    }
                     (crate::conversion::to_string(&unit)?, increment, mode)
                 } else {
                     return Err(crate::value::error::throw_type_error(
