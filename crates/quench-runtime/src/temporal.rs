@@ -61,8 +61,21 @@ fn zoned_record(
     let seconds = (epoch + offset_nanos).div_euclid(1_000_000_000);
     let nanos = epoch.rem_euclid(1_000_000_000) as i64;
     let date = chrono::DateTime::from_timestamp(seconds as i64, nanos as u32)
-        .map(|value| value.date_naive())
-        .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch"));
+        .map(|value| value.date_naive());
+    let (year, month, day, weekday, ordinal, week, week_year, days_month) = if let Some(date) = date {
+        let days_month = (date + chrono::Days::new(32))
+            .with_day(1)
+            .map(|next| (next - chrono::Days::new(1)).day())
+            .unwrap_or(30);
+        (date.year(), date.month(), date.day(), date.weekday().number_from_monday(), date.ordinal(), date.iso_week().week(), date.iso_week().year(), days_month)
+    } else {
+        let days = seconds.div_euclid(86_400);
+        let (year, month, day) = crate::temporal::plain_date::civil_from_serial((days + 719_468) as i64);
+        let weekday = ((days + 3).rem_euclid(7) + 1) as u32;
+        let ordinal = (1..month).map(|m| crate::temporal::plain_date::days_in_month_for_record(year, m)).sum::<u32>() + day;
+        let days_month = crate::temporal::plain_date::days_in_month_for_record(year, month);
+        (year, month, day, weekday, ordinal, 1, year, days_month)
+    };
     let second_of_day = seconds.rem_euclid(86_400);
     let hour = second_of_day / 3_600;
     let minute = second_of_day / 60 % 60;
@@ -90,32 +103,32 @@ fn zoned_record(
         ),
         (
             "year".into(),
-            crate::value::Value::Number(date.year() as f64),
+            crate::value::Value::Number(year as f64),
         ),
         (
             "month".into(),
-            crate::value::Value::Number(date.month() as f64),
+            crate::value::Value::Number(month as f64),
         ),
         (
             "monthCode".into(),
-            crate::value::Value::String(format!("M{:02}", date.month())),
+            crate::value::Value::String(format!("M{:02}", month)),
         ),
-        ("day".into(), crate::value::Value::Number(date.day() as f64)),
+        ("day".into(), crate::value::Value::Number(day as f64)),
         (
             "dayOfWeek".into(),
-            crate::value::Value::Number(date.weekday().number_from_monday() as f64),
+            crate::value::Value::Number(weekday as f64),
         ),
         (
             "dayOfYear".into(),
-            crate::value::Value::Number(date.ordinal() as f64),
+            crate::value::Value::Number(ordinal as f64),
         ),
         (
             "weekOfYear".into(),
-            crate::value::Value::Number(date.iso_week().week() as f64),
+            crate::value::Value::Number(week as f64),
         ),
         (
             "yearOfWeek".into(),
-            crate::value::Value::Number(date.iso_week().year() as f64),
+            crate::value::Value::Number(week_year as f64),
         ),
         ("hour".into(), crate::value::Value::Number(hour as f64)),
         ("minute".into(), crate::value::Value::Number(minute as f64)),
@@ -135,18 +148,13 @@ fn zoned_record(
         ("daysInWeek".into(), crate::value::Value::Number(7.0)),
         (
             "daysInMonth".into(),
-            crate::value::Value::Number(
-                (date + chrono::Days::new(32))
-                    .with_day(1)
-                    .map(|next| (next - chrono::Days::new(1)).day())
-                    .unwrap_or(30) as f64,
-            ),
+            crate::value::Value::Number(days_month as f64),
         ),
         ("monthsInYear".into(), crate::value::Value::Number(12.0)),
         (
             "inLeapYear".into(),
             crate::value::Value::Boolean(
-                chrono::NaiveDate::from_ymd_opt(date.year(), 2, 29).is_some(),
+                chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some(),
             ),
         ),
         (
