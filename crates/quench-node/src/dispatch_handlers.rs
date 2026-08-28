@@ -122,6 +122,13 @@ pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
     crate::modules::events::new_emitter(state, args)
 }
 
+pub fn message_channel_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::event_target::new_message_channel(state)
+}
+
 pub fn event_target_rejection(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

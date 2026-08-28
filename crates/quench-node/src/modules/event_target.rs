@@ -36,6 +36,8 @@ pub struct EventTarget {
     pub max: Option<usize>,
     /// Whether the Node-style listener warning has already fired.
     pub warned: bool,
+    /// Resource kind used for Node's observable warning label.
+    pub message_port: bool,
 }
 
 thread_local! {
@@ -138,6 +140,22 @@ fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, 
         object
     };
     Ok(object)
+}
+
+pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    let port1 = allocate_target(state, false)?;
+    let port2 = allocate_target(state, false)?;
+    for port in [&port1, &port2] {
+        if let Some(id) = target_id(port) {
+            if let Some(target) = state.borrow().targets.get(id) {
+                target.borrow_mut().message_port = true;
+            }
+        }
+    }
+    Ok(host_api::object(vec![
+        ("port1".into(), port1),
+        ("port2".into(), port2),
+    ]))
 }
 
 pub(crate) fn set_node_prototype(prototype: Value) {
@@ -278,8 +296,18 @@ fn warn_max_listeners(
     count: usize,
     limit: usize,
 ) {
+    let label = if is_abort_signal(target) {
+        "[AbortSignal]"
+    } else if target_id(target)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| target.borrow().message_port)
+    {
+        "[MessagePort [EventTarget]]"
+    } else {
+        "EventTarget"
+    };
     let message = format!(
-        "Possible EventTarget memory leak detected. {count} {event} listeners added to NodeEventTarget. MaxListeners is {}. Use events.setMaxListeners() to increase limit",
+        "Possible EventTarget memory leak detected. {count} {event} listeners added to {label}. MaxListeners is {}. Use events.setMaxListeners() to increase limit",
         limit
     );
     let warning = quench_runtime::builtins::error(
@@ -294,19 +322,14 @@ fn warn_max_listeners(
     let warning = execute::set_property(warning, "target", target.clone());
     let warning = execute::set_property(warning, "count", Value::Number(count as f64));
     let warning = execute::set_property(warning, "type", Value::String(event.into()));
-    let handlers: Vec<Value> = state
-        .borrow()
-        .process
-        .warning_handlers
-        .iter()
-        .map(|(handler, _)| handler.clone())
-        .collect();
-    for handler in handlers {
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(handler, vec![warning.clone()]);
-    }
+    // Deliver through the canonical process warning transition. This keeps
+    // EventTarget warnings on the same state machine as process.emitWarning,
+    // including listener identity and once-handler removal semantics.
+    let emitter = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(emitter, vec![Value::String("warning".into()), warning]);
 }
 
 pub fn node_add_event_listener(
@@ -783,28 +806,65 @@ pub fn add_event_listener(
     else {
         return Err(invalid_this());
     };
-    let mut guard = target.borrow_mut();
-    let existing = guard.listeners_of(&event);
-    if !existing
-        .iter()
-        .any(|listener| same_listener(&listener.callback, &callback) && listener.capture == capture)
-    {
-        guard.entry(&event).push(Listener {
-            callback,
-            once: once_option(args),
-            capture,
-            node_event: false,
-            weak: weak_option(args, receiver.expect("validated receiver")),
-            passive,
-            signal,
-        });
-        if !weak_option(args, receiver.expect("validated receiver")) {
-            execute::set_property_in_place(
-                receiver.expect("validated receiver"),
-                "\0quench:weak-listener",
-                Value::Boolean(true),
-            );
+    let weak = weak_option(args, receiver.expect("validated receiver"));
+    let (count, limit, should_warn, inserted) = {
+        let mut guard = target.borrow_mut();
+        let existing = guard.listeners_of(&event);
+        if existing.iter().any(|listener| {
+            same_listener(&listener.callback, &callback) && listener.capture == capture
+        }) {
+            (
+                existing.iter().filter(|listener| !listener.weak).count(),
+                guard
+                    .max
+                    .unwrap_or_else(|| state.borrow().emitters.default_max),
+                false,
+                false,
+            )
+        } else {
+            guard.entry(&event).push(Listener {
+                callback,
+                once: once_option(args),
+                capture,
+                node_event: false,
+                weak,
+                passive,
+                signal,
+            });
+            let count = guard
+                .listeners_of(&event)
+                .iter()
+                .filter(|listener| !listener.weak)
+                .count();
+            let limit = guard.max.unwrap_or_else(|| {
+                if is_abort_signal(receiver.expect("validated receiver")) {
+                    0
+                } else {
+                    state.borrow().emitters.default_max
+                }
+            });
+            let should_warn = count > limit && limit > 0 && !guard.warned;
+            if should_warn {
+                guard.warned = true;
+            }
+            (count, limit, should_warn, true)
         }
+    };
+    if inserted && !weak {
+        execute::set_property_in_place(
+            receiver.expect("validated receiver"),
+            "\0quench:weak-listener",
+            Value::Boolean(true),
+        );
+    }
+    if inserted && should_warn {
+        warn_max_listeners(
+            state,
+            receiver.expect("validated receiver"),
+            &event,
+            count,
+            limit,
+        );
     }
     Ok(Value::Undefined)
 }

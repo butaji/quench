@@ -898,6 +898,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_EVENTS_NEW => events_new,
         CAP_EVENT_TARGET_NEW => crate::modules::event_target::new_target,
         CAP_NODE_EVENT_TARGET_NEW => crate::modules::event_target::new_node_target,
+        CAP_MESSAGE_CHANNEL => crate::dispatch_handlers::message_channel_construct,
         CAP_STREAM_READABLE => stream_readable,
         CAP_STREAM_WRITABLE => stream_writable,
         CAP_STREAM_DUPLEX => stream_duplex,
