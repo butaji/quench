@@ -509,17 +509,11 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
     }
-    let domain = match quench_runtime::execute::get_property(&global, "__quench_active_domain") {
-        Value::Object(_) => Some(quench_runtime::execute::get_property(
-            &global,
-            "__quench_active_domain",
-        )),
-        _ => None,
-    };
+    let domain_stack = crate::modules::domain::stack_values(state);
     state
         .borrow_mut()
         .event_loop
-        .queue_microtask_with_resource_domain(cb, rest, resource, domain);
+        .queue_microtask_with_domain_stack(cb, rest, resource, domain_stack);
     Ok(Value::Undefined)
 }
 
