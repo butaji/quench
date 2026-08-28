@@ -23,84 +23,128 @@ enum NativePattern<'a> {
     },
 }
 
-pub(crate) fn test_str(source: &str, flags: &str, input: &str, start: usize) -> Option<bool> {
-    let pattern = parse(source, flags)?;
-    Some(match pattern {
-        NativePattern::Literal(pattern) => {
-            let tail = input.get(start..)?;
-            if flags.contains('y') {
-                tail.as_bytes().starts_with(&pattern)
-            } else {
-                tail.as_bytes()
-                    .windows(pattern.len())
-                    .any(|window| window == pattern.as_ref())
-            }
-        }
-        NativePattern::CharacterClass(class) => {
-            let tail = input.get(start..)?;
-            if flags.contains('y') {
-                tail.chars()
-                    .next()
-                    .is_some_and(|character| class_matches(class, character))
-            } else {
-                tail.chars()
-                    .any(|character| class_matches(class, character))
-            }
-        }
-        NativePattern::Repeat { unit, min, max } => {
-            let tail = input.as_bytes().get(start..)?;
-            has_repeat(tail, unit, min, max)
-        }
-    })
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeMatch {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
-pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize) -> Option<bool> {
+pub(crate) fn find_str(
+    source: &str,
+    flags: &str,
+    input: &str,
+    start: usize,
+) -> Option<NativeMatch> {
     let pattern = parse(source, flags)?;
-    Some(match pattern {
+    let sticky = flags.contains('y');
+    let tail = input.get(start..)?;
+    match pattern {
         NativePattern::Literal(pattern) => {
-            if flags.contains('y') {
-                input.get(start..).is_some_and(|tail| {
-                    tail.len() >= pattern.len()
-                        && tail[..pattern.len()]
-                            .iter()
-                            .zip(pattern.iter())
-                            .all(|(unit, byte)| *unit == u16::from(*byte))
-                })
+            let needle = std::str::from_utf8(pattern).ok()?;
+            if sticky && !tail.starts_with(needle) {
+                return None;
+            }
+            let offset = if sticky { 0 } else { tail.find(needle)? };
+            Some(NativeMatch {
+                start: start + offset,
+                end: start + offset + needle.len(),
+            })
+        }
+        NativePattern::CharacterClass(class) => {
+            let (offset, character) = if sticky {
+                tail.char_indices()
+                    .next()
+                    .filter(|(_, ch)| class_matches(class, *ch))?
             } else {
-                input.windows(pattern.len()).skip(start).any(|window| {
+                tail.char_indices()
+                    .find(|(_, ch)| class_matches(class, *ch))?
+            };
+            Some(NativeMatch {
+                start: start + offset,
+                end: start + offset + character.len_utf8(),
+            })
+        }
+        NativePattern::Repeat { unit, min, max } => {
+            find_repeat(tail.as_bytes(), unit, min, max, sticky).map(|matched| NativeMatch {
+                start: start + matched.start,
+                end: start + matched.end,
+            })
+        }
+    }
+}
+
+pub(crate) fn find_units(
+    source: &str,
+    flags: &str,
+    input: &[u16],
+    start: usize,
+) -> Option<NativeMatch> {
+    let pattern = parse(source, flags)?;
+    let sticky = flags.contains('y');
+    let tail = input.get(start..)?;
+    match pattern {
+        NativePattern::Literal(pattern) => {
+            let offset = if sticky {
+                0
+            } else {
+                tail.windows(pattern.len()).position(|window| {
                     window
                         .iter()
                         .zip(pattern.iter())
                         .all(|(unit, byte)| *unit == u16::from(*byte))
-                })
+                })?
+            };
+            if tail.len() < offset + pattern.len()
+                || !tail[offset..offset + pattern.len()]
+                    .iter()
+                    .zip(pattern.iter())
+                    .all(|(unit, byte)| *unit == u16::from(*byte))
+            {
+                return None;
             }
+            Some(NativeMatch {
+                start: start + offset,
+                end: start + offset + pattern.len(),
+            })
         }
         NativePattern::CharacterClass(class) => {
-            let tail = input.get(start..)?;
-            if flags.contains('y') {
-                tail.first().is_some_and(|unit| unit_matches(class, *unit))
+            let offset = if sticky {
+                0
             } else {
-                tail.iter().any(|unit| unit_matches(class, *unit))
-            }
+                tail.iter().position(|unit| unit_matches(class, *unit))?
+            };
+            tail.get(offset)
+                .filter(|unit| unit_matches(class, **unit))?;
+            Some(NativeMatch {
+                start: start + offset,
+                end: start + offset + 1,
+            })
         }
-        NativePattern::Repeat { unit, min, max } => {
-            let tail = input.get(start..)?;
-            has_repeat_units(tail, unit, min, max)
-        }
-    })
+        NativePattern::Repeat { unit, min, max } => find_repeat_units(tail, unit, min, max, sticky)
+            .map(|matched| NativeMatch {
+                start: start + matched.start,
+                end: start + matched.end,
+            }),
+    }
+}
+
+pub(crate) fn test_str(source: &str, flags: &str, input: &str, start: usize) -> Option<bool> {
+    Some(find_str(source, flags, input, start).is_some())
+}
+
+pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize) -> Option<bool> {
+    Some(find_units(source, flags, input, start).is_some())
 }
 
 fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
-    if !flags.contains(['g', 'y']) {
-        if let Some(class) = source
-            .strip_prefix("\\\\")
-            .or_else(|| source.strip_prefix('\\'))
-            .and_then(parse_class)
-        {
-            return Some(NativePattern::CharacterClass(class));
-        }
+    if let Some(class) = source
+        .strip_prefix("\\\\")
+        .or_else(|| source.strip_prefix('\\'))
+        .and_then(parse_class)
+    {
+        return Some(NativePattern::CharacterClass(class));
     }
-    if !flags.contains(['g', 'i', 'm', 'u', 'v', 'y']) {
+    if !flags.contains(['i', 'm', 'u', 'v']) {
         if let Some(repeat) = parse_repeat(source) {
             return Some(repeat);
         }
@@ -152,36 +196,54 @@ fn parse_repeat(source: &str) -> Option<NativePattern<'_>> {
     })
 }
 
-fn has_repeat(input: &[u8], unit: u8, min: usize, max: Option<usize>) -> bool {
-    if min == 0 {
-        return true;
-    }
-    input.iter().enumerate().any(|(start, byte)| {
-        if *byte != unit {
-            return false;
-        }
+fn find_repeat(
+    input: &[u8],
+    unit: u8,
+    min: usize,
+    max: Option<usize>,
+    sticky: bool,
+) -> Option<std::ops::Range<usize>> {
+    let starts = if sticky {
+        0..input.len().min(1)
+    } else {
+        0..input.len()
+    };
+    for start in starts {
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == unit)
             .count();
-        available >= min && max.is_none_or(|upper| available >= min.min(upper))
-    })
+        if available >= min {
+            let end = start + max.map_or(available, |upper| available.min(upper));
+            return Some(start..end);
+        }
+    }
+    (min == 0).then_some(0..0)
 }
 
-fn has_repeat_units(input: &[u16], unit: u8, min: usize, max: Option<usize>) -> bool {
-    if min == 0 {
-        return true;
-    }
-    input.iter().enumerate().any(|(start, value)| {
-        if *value != u16::from(unit) {
-            return false;
-        }
+fn find_repeat_units(
+    input: &[u16],
+    unit: u8,
+    min: usize,
+    max: Option<usize>,
+    sticky: bool,
+) -> Option<std::ops::Range<usize>> {
+    let starts = if sticky {
+        0..input.len().min(1)
+    } else {
+        0..input.len()
+    };
+    for start in starts {
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == u16::from(unit))
             .count();
-        available >= min && max.is_none_or(|upper| available >= min.min(upper))
-    })
+        if available >= min {
+            let end = start + max.map_or(available, |upper| available.min(upper));
+            return Some(start..end);
+        }
+    }
+    (min == 0).then_some(0..0)
 }
 
 fn parse_class(class: &str) -> Option<CharacterClass> {
@@ -219,7 +281,7 @@ fn unit_matches(class: CharacterClass, unit: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_str, test_units};
+    use super::{find_str, find_units, test_str, test_units};
 
     #[test]
     fn literal_scan_respects_sticky_start() {
@@ -250,6 +312,22 @@ mod tests {
         assert_eq!(
             test_units("a+", "", &[b'x' as u16, b'a' as u16], 1),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn native_matches_report_consumed_length() {
+        assert_eq!(
+            find_str("a+", "g", "xxaaa", 2),
+            Some(super::NativeMatch { start: 2, end: 5 })
+        );
+        assert_eq!(
+            find_str("a?", "y", "x", 0),
+            Some(super::NativeMatch { start: 0, end: 0 })
+        );
+        assert_eq!(
+            find_units("\\d", "y", &[b'7' as u16], 0),
+            Some(super::NativeMatch { start: 0, end: 1 })
         );
     }
 }
