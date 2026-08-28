@@ -379,6 +379,12 @@ pub(crate) fn get_property_with_receiver(
         if crate::vm::realm::id_for_global(properties).is_some()
             || crate::vm::is_global_object(&value)
         {
+            if let Some(getter) = crate::property_define::accessor(&value, key, "get") {
+                return match getter {
+                    Value::Undefined => Ok(Value::Undefined),
+                    getter => invoke_accessor(&getter, receiver),
+                };
+            }
             return Ok(crate::vm::object_property(properties, receiver, key));
         }
     }
