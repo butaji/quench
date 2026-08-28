@@ -1740,7 +1740,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
-    let overflow = from_overflow_option(options)?;
     if let Value::Object(object) = value {
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
@@ -1758,6 +1757,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     .map(|(_, value)| value.clone())
             });
             if let [Some(year), Some(month), Some(day)] = hidden {
+                from_overflow_option(options)?;
                 return construct(&[
                     year,
                     month,
@@ -1772,56 +1772,67 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             }
         }
     }
-    let year = crate::execute::get_property_result(value, "year")?;
-    let day = crate::execute::get_property_result(value, "day")?;
-    let month = crate::execute::get_property_result(value, "month")?;
-    let month_code = crate::execute::get_property_result(value, "monthCode")?;
-    if matches!(year, Value::Undefined)
-        || matches!(day, Value::Undefined)
-        || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
-    {
+    let mut numeric = vec![0.0; 9];
+    let mut present = [false; 9];
+    let mut month_code_value = None;
+    let mut calendar = Value::Undefined;
+    for name in [
+        "calendar",
+        "day",
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "month",
+        "monthCode",
+        "nanosecond",
+        "second",
+        "year",
+    ] {
+        let field = crate::execute::get_property_result(value, name)?;
+        if matches!(field, Value::Undefined) {
+            continue;
+        }
+        if name == "calendar" {
+            calendar = field;
+            continue;
+        }
+        if name == "monthCode" {
+            month_code_value = Some(crate::conversion::to_number(&month_code_number(&field)?)?);
+            continue;
+        }
+        let index = match name {
+            "year" => 0,
+            "month" => 1,
+            "day" => 2,
+            "hour" => 3,
+            "minute" => 4,
+            "second" => 5,
+            "millisecond" => 6,
+            "microsecond" => 7,
+            "nanosecond" => 8,
+            _ => unreachable!(),
+        };
+        numeric[index] = crate::conversion::to_number(&field)?.trunc();
+        present[index] = true;
+    }
+    if !present[0] || !present[2] || (!present[1] && month_code_value.is_none()) {
         return Err(crate::value::error::throw_type_error(
             "Missing date-time field",
         ));
     }
-    let month_code_value = if matches!(month_code, Value::Undefined) {
-        None
-    } else {
-        Some(month_code_number(&month_code)?)
-    };
-    let month = if matches!(month, Value::Undefined) {
-        month_code_value
-            .clone()
-            .ok_or_else(|| crate::value::error::throw_type_error("Missing month"))?
-    } else {
-        month
-    };
-    let calendar = crate::execute::get_property_result(value, "calendar")?;
     if !matches!(calendar, Value::Undefined) {
         validate_calendar(&calendar)?;
     }
-    let mut fields = vec![year, month, day];
-    for name in &NAMES[3..] {
-        let field = crate::execute::get_property_result(value, name)?;
-        fields.push(if matches!(field, Value::Undefined) {
-            Value::Number(0.0)
-        } else {
-            field
-        });
-    }
-    let mut numeric = fields
-        .iter()
-        .map(crate::conversion::to_number)
-        .map(|value| value.map(f64::trunc))
-        .collect::<Result<Vec<_>, _>>()?;
+    let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
-        let month_code = crate::conversion::to_number(&month_code)?;
         if !(1.0..=12.0).contains(&month_code) {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
-        if numeric[1] != month_code {
+        if present[1] && numeric[1] != month_code {
             return Err(crate::value::error::throw_range_error("Month mismatch"));
         }
+        numeric[1] = month_code;
     }
     if numeric.iter().any(|value| !value.is_finite()) {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
