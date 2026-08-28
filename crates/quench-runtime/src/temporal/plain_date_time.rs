@@ -1863,6 +1863,22 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if date_fields.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
+    let year_text = date_fields[0];
+    let valid_year = if year_text.starts_with(['+', '-']) {
+        year_text.len() == 7 && year_text[1..].bytes().all(|byte| byte.is_ascii_digit())
+    } else {
+        year_text.len() == 4 && year_text.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    if !valid_year {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    if date_fields[1].len() != 2
+        || date_fields[2].len() != 2
+        || !date_fields[1].bytes().all(|byte| byte.is_ascii_digit())
+        || !date_fields[2].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if date_fields[0] == "-000000" {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
