@@ -118,6 +118,15 @@ fn install_target_props(mut object: Value) -> Result<Value, VmError> {
     Ok(object)
 }
 
+pub(crate) fn prototype() -> Value {
+    crate::host::namespace_object_from_pairs(
+        target_props()
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect(),
+    )
+}
+
 fn target_props() -> Vec<(&'static str, Value)> {
     vec![
         (
