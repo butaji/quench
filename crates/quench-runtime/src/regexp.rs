@@ -131,6 +131,7 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
     }
     let chars: Vec<char> = pattern.chars().collect();
     let has_named_group = pattern.as_bytes().windows(3).any(|window| window == b"(?<");
+    let capture_count = pattern_capture_count(&chars);
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0;
     let mut in_class = false;
@@ -164,7 +165,10 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
                 continue;
             }
         }
-        if next >= '4' && next < '8' {
+        if next >= '4'
+            && next < '8'
+            && (next as usize - '0' as usize) > capture_count
+        {
             let mut end = index + 2;
             if end < chars.len() && chars[end] >= '0' && chars[end] < '8' {
                 end += 1;
@@ -189,6 +193,31 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
         index += 2;
     }
     output
+}
+
+fn pattern_capture_count(chars: &[char]) -> usize {
+    let mut count = 0;
+    let mut in_class = false;
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => index += 2,
+            '[' => {
+                in_class = true;
+                index += 1;
+            }
+            ']' => {
+                in_class = false;
+                index += 1;
+            }
+            '(' if !in_class && chars.get(index + 1) != Some(&'?') => {
+                count += 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    count
 }
 
 fn legacy_identity_target(ch: char) -> bool {
