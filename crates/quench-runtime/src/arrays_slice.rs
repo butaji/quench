@@ -3,9 +3,6 @@ pub(crate) fn slice(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
-    if this.is_typed_array() {
-        return typed_array_slice(&this, arguments);
-    }
     if matches!(this, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.slice called on null or undefined",
