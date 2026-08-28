@@ -24,15 +24,7 @@ fn typed_array_static_property(builtin: Builtin, key: &str) -> Option<Value> {
     } else {
         Builtin::TypedArrayOf
     };
-    Some(Value::BoundFunction(std::rc::Rc::new(
-        crate::value::BoundFunctionValue {
-            realm: crate::vm::current_context_or_default().realm(),
-            target: Value::Builtin(target),
-            receiver: Value::Builtin(builtin),
-            arguments: Vec::new(),
-            properties: std::cell::RefCell::new(Vec::new()),
-        },
-    )))
+    Some(Value::Builtin(target))
 }
 
 fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
