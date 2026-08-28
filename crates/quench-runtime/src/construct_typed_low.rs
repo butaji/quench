@@ -244,7 +244,7 @@ fn values_uint16_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
     ));
     let view = crate::value::Uint16ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_uint16(crate::conversion::to_number(value)?));
+        view.set(index, to_uint16(number_for_typed_array(value)?));
     }
     Ok(Value::Uint16Array(Rc::new(view)))
 }
@@ -286,7 +286,7 @@ fn values_uint32_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
     ));
     let view = crate::value::Uint32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_uint32(crate::conversion::to_number(value)?));
+        view.set(index, to_uint32(number_for_typed_array(value)?));
     }
     Ok(Value::Uint32Array(Rc::new(view)))
 }
@@ -352,7 +352,7 @@ fn values_uint8_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Uint8ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_uint8(crate::conversion::to_number(value)?));
+        view.set(index, to_uint8(number_for_typed_array(value)?));
     }
     Ok(Value::Uint8Array(Rc::new(view)))
 }
@@ -368,7 +368,7 @@ fn values_uint8_clamped_array(values: &[Value]) -> Result<Value, crate::execute:
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Uint8ClampedArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, crate::conversion::to_number(value)?);
+        view.set(index, number_for_typed_array(value)?);
     }
     Ok(Value::Uint8ClampedArray(Rc::new(view)))
 }
