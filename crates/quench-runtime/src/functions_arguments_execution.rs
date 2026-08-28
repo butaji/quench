@@ -55,6 +55,16 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+        execute_inner(function, this_value, arguments)
+    })
+}
+
+fn execute_inner(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
     crate::execution_trace::function_call_shape(
         function.params,
         function.code.capture_slots().len(),
