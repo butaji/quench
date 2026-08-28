@@ -1221,12 +1221,17 @@ impl PropertyEntries for ObjectData {
 
     fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
         match self.descriptor_metadata_state.get() {
-            1 => None,
             2 => self.properties.descriptor_metadata_for_key(key),
             _ => {
                 let metadata = self.properties.descriptor_metadata_for_key(key);
-                self.descriptor_metadata_state
-                    .set(if metadata.is_some() { 2 } else { 1 });
+                // A missing metadata entry is not a stable fact: a later
+                // Object.defineProperty can append one without replacing the
+                // object. Cache only the positive result; absence remains
+                // Unknown until the next lookup so a derived fact cannot go
+                // stale across an in-place metadata write.
+                if metadata.is_some() {
+                    self.descriptor_metadata_state.set(2);
+                }
                 metadata
             }
         }
