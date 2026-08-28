@@ -1140,21 +1140,35 @@ pub fn build() -> Value {
             error.code = "ERR_INVALID_ARG_TYPE";
             throw error;
           }
-          let queue = [], waiters = [], done = false, failure;
+          let queue = [], waiters = Object.create(null), waiterCount = 0;
+          let nextWaiter = 0, done = false, failure;
+          const takeWaiter = () => {
+            for (let index = 0; index < nextWaiter; index++) {
+              const waiter = waiters[index];
+              if (waiter) {
+                delete waiters[index];
+                waiterCount--;
+                return waiter;
+              }
+            }
+          };
           const finish = (error) => {
             if (done) return;
             failure = error;
             done = true;
             cleanup();
-            const pending = waiters.splice(0);
-            if (error && pending.length) {
-              pending.shift().reject(error);
+            if (error) {
+              const waiter = takeWaiter();
+              if (waiter) waiter.reject(error);
             }
-            pending.forEach(({ resolve }) => resolve({ value: undefined, done: true }));
+            while (waiterCount) {
+              const waiter = takeWaiter();
+              if (waiter) waiter.resolve({ value: undefined, done: true });
+            }
           };
           const push = (value) => {
             if (done) return;
-            const waiter = waiters.shift();
+            const waiter = takeWaiter();
             if (waiter) waiter.resolve({ value, done: false });
             else queue.push(value);
           };
@@ -1177,7 +1191,10 @@ pub fn build() -> Value {
               if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
               if (failure) return Promise.reject(failure);
               if (done) return Promise.resolve({ value: undefined, done: true });
-              return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+              return new Promise((resolve, reject) => {
+                waiters[nextWaiter++] = { resolve, reject };
+                waiterCount++;
+              });
             },
             return() { finish(); return Promise.resolve({ value: undefined, done: true }); },
             throw(reason) {
