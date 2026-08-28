@@ -14,6 +14,10 @@ fn typed_array_of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let source = Value::array(arguments.to_vec());
-    from(receiver, &[source])
+    let Some(receiver) = receiver.filter(|value| is_constructor(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.of called on a non-constructor",
+        ));
+    };
+    create_result(Some(receiver), arguments.to_vec(), false)
 }
