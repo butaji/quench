@@ -138,6 +138,27 @@ pub fn event_target_rejection(
     Ok(Value::Undefined)
 }
 
+pub fn event_get_property(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let valid = matches!(
+        execute::get_property(receiver, "Symbol.toStringTag"),
+        Value::String(ref tag) if tag == "Event" || tag == "CustomEvent"
+    );
+    if !valid {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    }
+    let Some(Value::String(key)) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    Ok(execute::get_property(receiver, key))
+}
+
 pub fn events_call(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -4933,14 +4954,26 @@ pub fn event_source(
     Ok(Value::Undefined)
 }
 
+fn valid_event_receiver(receiver: Option<&Value>) -> Result<&Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    if !matches!(
+        execute::get_property(receiver, "Symbol.toStringTag"),
+        Value::String(ref tag) if tag == "Event" || tag == "CustomEvent"
+    ) {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    }
+    Ok(receiver)
+}
+
 pub fn event_get_cancel_bubble(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(receiver
-        .map(|value| execute::get_property(value, "\0event:cancelBubble"))
-        .unwrap_or(Value::Boolean(false)))
+    let receiver = valid_event_receiver(receiver)?;
+    Ok(execute::get_property(receiver, "\0event:cancelBubble"))
 }
 
 pub fn event_set_cancel_bubble(
@@ -4948,14 +4981,13 @@ pub fn event_set_cancel_bubble(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(receiver) = receiver {
-        let updated = execute::set_property(
-            receiver.clone(),
-            "\0event:cancelBubble",
-            Value::Boolean(args.first().is_some_and(execute::is_truthy)),
-        );
-        execute::replace_value(receiver, &updated);
-    }
+    let receiver = valid_event_receiver(receiver)?;
+    let updated = execute::set_property(
+        receiver.clone(),
+        "\0event:cancelBubble",
+        Value::Boolean(args.first().is_some_and(execute::is_truthy)),
+    );
+    execute::replace_value(receiver, &updated);
     Ok(Value::Undefined)
 }
 
@@ -5056,18 +5088,17 @@ pub fn event_prevent_default(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(receiver) = receiver {
-        if execute::is_truthy(&execute::get_property(receiver, "\0event:passive")) {
-            return Ok(Value::Undefined);
-        }
-        if let Some(identity) = receiver.object_identity() {
-            state.borrow_mut().prevented_events.insert(identity);
-        }
-        if execute::is_truthy(&execute::get_property(receiver, "cancelable")) {
-            let updated =
-                execute::set_property(receiver.clone(), "defaultPrevented", Value::Boolean(true));
-            execute::replace_value(receiver, &updated);
-        }
+    let receiver = valid_event_receiver(receiver)?;
+    if execute::is_truthy(&execute::get_property(receiver, "\0event:passive")) {
+        return Ok(Value::Undefined);
+    }
+    if let Some(identity) = receiver.object_identity() {
+        state.borrow_mut().prevented_events.insert(identity);
+    }
+    if execute::is_truthy(&execute::get_property(receiver, "cancelable")) {
+        let updated =
+            execute::set_property(receiver.clone(), "defaultPrevented", Value::Boolean(true));
+        execute::replace_value(receiver, &updated);
     }
     Ok(Value::Undefined)
 }
@@ -5077,14 +5108,13 @@ pub fn event_stop_propagation(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(receiver) = receiver {
-        let updated = execute::set_property(
-            receiver.clone(),
-            "\0event:cancelBubble",
-            Value::Boolean(true),
-        );
-        execute::replace_value(receiver, &updated);
-    }
+    let receiver = valid_event_receiver(receiver)?;
+    let updated = execute::set_property(
+        receiver.clone(),
+        "\0event:cancelBubble",
+        Value::Boolean(true),
+    );
+    execute::replace_value(receiver, &updated);
     Ok(Value::Undefined)
 }
 
@@ -5093,17 +5123,16 @@ pub fn event_stop_immediate(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(receiver) = receiver {
-        if let Some(identity) = receiver.object_identity() {
-            state.borrow_mut().stopped_events.insert(identity);
-        }
-        let updated = execute::set_property(
-            receiver.clone(),
-            "\0event:cancelBubble",
-            Value::Boolean(true),
-        );
-        execute::replace_value(receiver, &updated);
+    let receiver = valid_event_receiver(receiver)?;
+    if let Some(identity) = receiver.object_identity() {
+        state.borrow_mut().stopped_events.insert(identity);
     }
+    let updated = execute::set_property(
+        receiver.clone(),
+        "\0event:cancelBubble",
+        Value::Boolean(true),
+    );
+    execute::replace_value(receiver, &updated);
     Ok(Value::Undefined)
 }
 
@@ -5112,14 +5141,16 @@ pub fn event_composed_path(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let active = receiver
-        .map(|value| matches!(execute::get_property(value, "eventPhase"), Value::Number(phase) if phase != 0.0))
-        .unwrap_or(false);
+    let receiver = valid_event_receiver(receiver)?;
+    let active = matches!(
+        execute::get_property(receiver, "eventPhase"),
+        Value::Number(phase) if phase != 0.0
+    );
     if !active {
         return Ok(host_api::array(Vec::new()));
     }
-    match receiver.map(|value| execute::get_property(value, "target")) {
-        Some(target) if !matches!(target, Value::Undefined | Value::Null) => {
+    match execute::get_property(receiver, "target") {
+        target if !matches!(target, Value::Undefined | Value::Null) => {
             Ok(host_api::array(vec![target]))
         }
         _ => Ok(host_api::array(Vec::new())),
