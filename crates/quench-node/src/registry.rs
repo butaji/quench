@@ -590,26 +590,28 @@ pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
-pub const SPEC_URL_PATH_TO_FILE_URL: NodeSpec = NodeSpec::new("url:pathToFileURL", 0x0505);
-pub const SPEC_URL_GET_HREF: NodeSpec = NodeSpec::new("url:get:href", 0x0506);
-pub const SPEC_URL_GET_PROTOCOL: NodeSpec = NodeSpec::new("url:get:protocol", 0x0507);
-pub const SPEC_URL_GET_USERNAME: NodeSpec = NodeSpec::new("url:get:username", 0x0508);
-pub const SPEC_URL_GET_PASSWORD: NodeSpec = NodeSpec::new("url:get:password", 0x0509);
-pub const SPEC_URL_GET_HOST: NodeSpec = NodeSpec::new("url:get:host", 0x050A);
-pub const SPEC_URL_GET_HOSTNAME: NodeSpec = NodeSpec::new("url:get:hostname", 0x050B);
-pub const SPEC_URL_GET_PORT: NodeSpec = NodeSpec::new("url:get:port", 0x050C);
-pub const SPEC_URL_GET_PATHNAME: NodeSpec = NodeSpec::new("url:get:pathname", 0x050D);
-pub const SPEC_URL_GET_SEARCH: NodeSpec = NodeSpec::new("url:get:search", 0x050E);
-pub const SPEC_URL_GET_HASH: NodeSpec = NodeSpec::new("url:get:hash", 0x050F);
-pub const SPEC_URL_GET_ORIGIN: NodeSpec = NodeSpec::new("url:get:origin", 0x0510);
-pub const SPEC_URL_GET_SEARCH_PARAMS: NodeSpec = NodeSpec::new("url:get:searchParams", 0x0511);
-pub const SPEC_URL_TO_STRING: NodeSpec = NodeSpec::new("url:toString", 0x0512);
-pub const SPEC_URL_TO_JSON: NodeSpec = NodeSpec::new("url:toJSON", 0x0513);
-pub const SPEC_URL_REVOKE_OBJECT_URL: NodeSpec = NodeSpec::new("url:revokeObjectURL", 0x0514);
-pub const SPEC_URL_FILE_URL_TO_PATH: NodeSpec = NodeSpec::new("url:fileURLToPath", 0x0515);
-pub const SPEC_URL_TO_HTTP_OPTIONS: NodeSpec = NodeSpec::new("url:urlToHttpOptions", 0x0516);
-pub const SPEC_URL_DOMAIN_TO_ASCII: NodeSpec = NodeSpec::new("url:domainToASCII", 0x0517);
-pub const SPEC_URL_DOMAIN_TO_UNICODE: NodeSpec = NodeSpec::new("url:domainToUnicode", 0x0518);
+node_api! {
+    (SPEC_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
+    (SPEC_URL_GET_HREF, "url:get:href", 0x0506),
+    (SPEC_URL_GET_PROTOCOL, "url:get:protocol", 0x0507),
+    (SPEC_URL_GET_USERNAME, "url:get:username", 0x0508),
+    (SPEC_URL_GET_PASSWORD, "url:get:password", 0x0509),
+    (SPEC_URL_GET_HOST, "url:get:host", 0x050A),
+    (SPEC_URL_GET_HOSTNAME, "url:get:hostname", 0x050B),
+    (SPEC_URL_GET_PORT, "url:get:port", 0x050C),
+    (SPEC_URL_GET_PATHNAME, "url:get:pathname", 0x050D),
+    (SPEC_URL_GET_SEARCH, "url:get:search", 0x050E),
+    (SPEC_URL_GET_HASH, "url:get:hash", 0x050F),
+    (SPEC_URL_GET_ORIGIN, "url:get:origin", 0x0510),
+    (SPEC_URL_GET_SEARCH_PARAMS, "url:get:searchParams", 0x0511),
+    (SPEC_URL_TO_STRING, "url:toString", 0x0512),
+    (SPEC_URL_TO_JSON, "url:toJSON", 0x0513),
+    (SPEC_URL_REVOKE_OBJECT_URL, "url:revokeObjectURL", 0x0514),
+    (SPEC_URL_FILE_URL_TO_PATH, "url:fileURLToPath", 0x0515),
+    (SPEC_URL_TO_HTTP_OPTIONS, "url:urlToHttpOptions", 0x0516),
+    (SPEC_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
+    (SPEC_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
+}
 pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1F36);
 pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
 pub const SPEC_GC: NodeSpec = NodeSpec::new("gc", 0x2117);
