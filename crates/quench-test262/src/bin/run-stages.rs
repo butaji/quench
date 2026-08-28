@@ -2,7 +2,7 @@ use std::{
     env,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command, ExitCode},
     sync::{
         atomic::{AtomicUsize, Ordering},
         mpsc, Arc,
@@ -379,6 +379,9 @@ fn run_stage_files(
 }
 
 fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
+    if env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some() {
+        return run_file_in_process(root, path);
+    }
     let root = root.to_path_buf();
     let path = path.to_path_buf();
     std::thread::Builder::new()
@@ -391,6 +394,28 @@ fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
         .map_err(|error| format!("stage worker spawn failed: {error}"))?
         .join()
         .map_err(|_| "stage worker panicked".to_string())?
+}
+
+fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
+    let executable = env::current_exe()
+        .map_err(|error| format!("stage executable lookup failed: {error}"))?
+        .with_file_name("run-test");
+    let output = Command::new(executable)
+        .env("TEST262_DIR", root)
+        .arg(path)
+        .output()
+        .map_err(|error| format!("stage test process failed: {error}"))?;
+    if output.status.success() {
+        return Ok(TestOutcome::Pass);
+    }
+    let reason = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Ok(TestOutcome::Fail {
+        reason: if reason.is_empty() {
+            format!("test process exited with {}", output.status)
+        } else {
+            reason
+        },
+    })
 }
 fn parse_stage_index(value: &str) -> Result<u32, String> {
     value

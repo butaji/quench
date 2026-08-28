@@ -74,6 +74,14 @@ fn alloc_buffer(
         .ok_or_else(|| range_error(&format!("Invalid typed array length: {length}")))
 }
 
+#[inline]
+fn number_for_typed_array(value: &crate::value::Value) -> Result<f64, crate::execute::VmError> {
+    match value {
+        crate::value::Value::Number(number) => Ok(*number),
+        _ => crate::conversion::to_number(value),
+    }
+}
+
 fn typed_view_bounds(
     buffer: &crate::value::ArrayBufferData,
     arguments: &[Value],

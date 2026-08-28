@@ -854,11 +854,39 @@ impl ArrayData {
             for (offset, slot) in values[start..end].iter().enumerate() {
                 slot.set(first + offset as f64);
             }
+            self.deleted.resize(end, false);
+            self.deleted[start..end].fill(false);
+            self.length.set(self.length.get().max(end));
+            self.kind
+                .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
             return;
         }
         for index in start..end {
             self.set_numeric_index(index, first + (index - start) as f64);
         }
+    }
+
+    pub(crate) fn fill_numeric_constant_range(&mut self, start: usize, end: usize, number: f64) {
+        if start >= end {
+            return;
+        }
+        if self.values.len() < end {
+            self.values.resize_numeric(end);
+        }
+        if let DenseElements::Numbers(values) = &self.values {
+            for slot in values.borrow()[start..end].iter() {
+                slot.set(number);
+            }
+        } else {
+            for index in start..end {
+                self.values.set(index, Value::Number(number));
+            }
+        }
+        self.deleted.resize(end, false);
+        self.deleted[start..end].fill(false);
+        self.length.set(self.length.get().max(end));
+        self.kind
+            .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
