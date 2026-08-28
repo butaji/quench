@@ -2599,8 +2599,8 @@ mod stubs {
                 }
                 if largest == "year"
                     && matches!(rounding_mode.as_str(), "ceil" | "expand")
-                    && ((delta > 0 && months >= 11 && days >= 30 && time_remainder > 0)
-                        || (delta < 0 && months <= -11 && days <= -30 && time_remainder < 0))
+                    && ((delta > 0 && months >= 11 && days >= 30)
+                        || (delta < 0 && months <= -11 && days <= -30))
                 {
                     let years_value = match fields[0] {
                         Value::Number(value) => value,
