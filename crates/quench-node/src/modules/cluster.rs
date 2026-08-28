@@ -3,7 +3,8 @@ use crate::host::HostState;
 use crate::registry::{
     SPEC_CLUSTER_DISCONNECT, SPEC_CLUSTER_FORK, SPEC_CLUSTER_WORKER_DISCONNECT,
     SPEC_CLUSTER_WORKER_EMIT, SPEC_CLUSTER_WORKER_IS_CONNECTED, SPEC_CLUSTER_WORKER_IS_DEAD,
-    SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON, SPEC_CLUSTER_WORKER_SEND,
+    SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON, SPEC_CLUSTER_WORKER_PROCESS_SEND,
+    SPEC_CLUSTER_WORKER_SEND,
 };
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -17,12 +18,18 @@ struct Worker {
     connected: bool,
     dead: bool,
     listeners: HashMap<String, Vec<Value>>,
+    child_listeners: HashMap<String, Vec<Value>>,
+    pending_messages: Vec<Value>,
+    pending_disconnect: bool,
+    pending_exit: Option<(i32, Option<String>)>,
 }
 pub struct ClusterState {
     next_id: u64,
     workers: HashMap<u64, Worker>,
     module: Option<Value>,
     worker_prototype: Option<Value>,
+    script: Option<(String, String)>,
+    pub(crate) worker_context: Option<u64>,
 }
 impl ClusterState {
     pub fn new() -> Self {
@@ -31,7 +38,18 @@ impl ClusterState {
             workers: HashMap::new(),
             module: None,
             worker_prototype: None,
+            script: None,
+            worker_context: None,
         }
+    }
+
+    pub fn set_script(&mut self, filename: String, source: String) {
+        self.script = Some((filename, source));
+    }
+
+    pub(crate) fn active_worker(&self) -> Option<Value> {
+        self.worker_context
+            .and_then(|id| self.workers.get(&id).map(|worker| worker.object.clone()))
     }
 }
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
@@ -72,21 +90,40 @@ pub fn fork(
     let mut host = state.borrow_mut();
     let id = host.cluster.next_id;
     host.cluster.next_id += 1;
+    let process = host_api::object(vec![
+        (ID.into(), Value::Number(id as f64)),
+        ("pid".into(), Value::Undefined),
+        ("exitCode".into(), Value::Undefined),
+        ("signalCode".into(), Value::Null),
+        (
+            "env".into(),
+            args.first()
+                .cloned()
+                .unwrap_or_else(|| host_api::object(Vec::new())),
+        ),
+        ("connected".into(), Value::Boolean(true)),
+        ("on".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
+        (
+            "once".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_ON),
+        ),
+        (
+            "emit".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+        ),
+        (
+            "disconnect".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_DISCONNECT),
+        ),
+        (
+            "send".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_PROCESS_SEND),
+        ),
+    ]);
     let mut worker = host_api::object(vec![
         (ID.into(), Value::Number(id as f64)),
         ("id".into(), Value::Number(id as f64)),
-        (
-            "process".into(),
-            host_api::object(vec![
-                ("pid".into(), Value::Undefined),
-                (
-                    "env".into(),
-                    args.first()
-                        .cloned()
-                        .unwrap_or_else(|| host_api::object(Vec::new())),
-                ),
-            ]),
-        ),
+        ("process".into(), process.clone()),
         ("exitedAfterDisconnect".into(), Value::Boolean(false)),
         (
             "isDead".into(),
@@ -97,6 +134,10 @@ pub fn fork(
             crate::host::capability(SPEC_CLUSTER_WORKER_IS_CONNECTED),
         ),
         ("on".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
+        (
+            "once".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_ON),
+        ),
         (
             "emit".into(),
             crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
@@ -109,7 +150,10 @@ pub fn fork(
             "kill".into(),
             crate::host::capability(SPEC_CLUSTER_WORKER_KILL),
         ),
-        ("send".into(), crate::host::capability(SPEC_CLUSTER_WORKER_SEND)),
+        (
+            "send".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_SEND),
+        ),
     ]);
     if let Some(prototype) = host.cluster.worker_prototype.clone() {
         worker = execute::set_prototype_of(&worker, &prototype).unwrap_or(worker);
@@ -122,6 +166,10 @@ pub fn fork(
             connected: true,
             dead: false,
             listeners: HashMap::new(),
+            child_listeners: HashMap::new(),
+            pending_messages: Vec::new(),
+            pending_disconnect: false,
+            pending_exit: None,
         },
     );
     let module = host.cluster.module.clone();
@@ -136,8 +184,137 @@ pub fn fork(
             &[Value::String("fork".into()), worker.clone()],
         );
     }
+    run_worker_script(state, id, &worker);
     Ok(worker)
 }
+
+fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
+    let Some((filename, source)) = state.borrow().cluster.script.clone() else {
+        return;
+    };
+    let Some(module) = state.borrow().cluster.module.clone() else {
+        return;
+    };
+    for (key, value) in [
+        ("isPrimary", Value::Boolean(false)),
+        ("isMaster", Value::Boolean(false)),
+        ("isWorker", Value::Boolean(true)),
+        ("worker", worker.clone()),
+    ] {
+        let _ = execute::set_property_in_place(&module, key, value);
+    }
+    let _ = execute::set_property_in_place(worker, "state", Value::String("online".into()));
+    let global = quench_runtime::vm::current_global_object();
+    if let Ok(process) = execute::get_property_result(&global, "process") {
+        let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
+        let _ = execute::set_property_in_place(
+            &process,
+            "send",
+            crate::host::capability(SPEC_CLUSTER_WORKER_PROCESS_SEND),
+        );
+    }
+    let parent_exit_code = state.borrow().process.exit_code;
+    state.borrow_mut().process.exit_code = None;
+    state.borrow_mut().cluster.worker_context = Some(id);
+    let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
+    let result =
+        quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
+            let context = quench_runtime::vm::current_context();
+            let mut registers = quench_runtime::register_file::RegisterFile::new();
+            quench_runtime::vm::execute_code_in_place_context(
+                program.code(),
+                &mut registers,
+                &context,
+            )
+            .map(|_| ())
+            .map_err(|error| vec![error.render()])
+        });
+    // Child bootstrap and its first I/O notification run before `fork()`
+    // returns, but under the child's module identity. Drain only the bounded
+    // work made visible by this script; persistent work remains in the host
+    // loop after the worker transitions back to primary mode.
+    for _ in 0..64 {
+        let _ = crate::modules::net::poll(state);
+        match crate::modules::pump::drain_one_tick(state) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => break,
+        }
+    }
+    let child_exit_code = state.borrow().process.exit_code;
+    state.borrow_mut().process.exit_code = parent_exit_code;
+    state.borrow_mut().cluster.worker_context = None;
+    for (key, value) in [
+        ("isPrimary", Value::Boolean(true)),
+        ("isMaster", Value::Boolean(true)),
+        ("isWorker", Value::Boolean(false)),
+        ("worker", Value::Null),
+    ] {
+        let _ = execute::set_property_in_place(&module, key, value);
+    }
+    let global = quench_runtime::vm::current_global_object();
+    if let Ok(process) = execute::get_property_result(&global, "process") {
+        let _ = execute::delete_property(process.clone(), ID);
+        let _ = execute::delete_property(process, "send");
+    }
+    if result.is_err() {
+        state.borrow_mut().cluster.worker_context = None;
+    }
+    if let Some(code) = child_exit_code {
+        close_worker_net(state);
+        if let Some(worker_state) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            worker_state.connected = false;
+            worker_state.dead = true;
+            worker_state.pending_disconnect = true;
+            worker_state.pending_exit = Some((code, None));
+        }
+        let _ =
+            execute::set_property_in_place(worker, "state", Value::String("disconnected".into()));
+        if let Ok(process) = execute::get_property_result(worker, "process") {
+            let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
+            let _ =
+                execute::set_property_in_place(&process, "exitCode", Value::Number(code as f64));
+            let _ = execute::set_property_in_place(&process, "signalCode", Value::Null);
+        }
+    }
+}
+
+fn set_worker_mode(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value, child: bool) {
+    if let Some(module) = state.borrow().cluster.module.clone() {
+        for (key, value) in [
+            ("isPrimary", Value::Boolean(!child)),
+            ("isMaster", Value::Boolean(!child)),
+            ("isWorker", Value::Boolean(child)),
+            ("worker", if child { worker.clone() } else { Value::Null }),
+        ] {
+            let _ = execute::set_property_in_place(&module, key, value);
+        }
+    }
+    let global = quench_runtime::vm::current_global_object();
+    if let Ok(process) = execute::get_property_result(&global, "process") {
+        if child {
+            let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
+        } else {
+            let _ = execute::delete_property(process, ID);
+        }
+    }
+}
+
+fn close_worker_net(state: &Rc<RefCell<HostState>>) {
+    let servers = state
+        .borrow()
+        .net
+        .servers
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for server in servers {
+        let mut server = server.borrow_mut();
+        server.listener.take();
+        server.listening = false;
+        server.closed = true;
+    }
+}
+
 fn worker(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -199,16 +376,83 @@ pub fn on(
         if !quench_runtime::is_callable(cb) {
             return Err(err("listener"));
         }
-        state
-            .borrow_mut()
-            .cluster
-            .workers
-            .get_mut(&id)
-            .unwrap()
-            .listeners
-            .entry(name.clone())
-            .or_default()
-            .push(cb.clone());
+        let child = state.borrow().cluster.worker_context == Some(id);
+        {
+            let mut guard = state.borrow_mut();
+            let listeners = if child {
+                &mut guard.cluster.workers.get_mut(&id).unwrap().child_listeners
+            } else {
+                &mut guard.cluster.workers.get_mut(&id).unwrap().listeners
+            };
+            listeners.entry(name.clone()).or_default().push(cb.clone());
+        }
+        if name == "message" {
+            let pending = state
+                .borrow_mut()
+                .cluster
+                .workers
+                .get_mut(&id)
+                .map(|worker| std::mem::take(&mut worker.pending_messages))
+                .unwrap_or_default();
+            for message in pending {
+                let _ = execute::call(cb, &obj, &[message]);
+            }
+        }
+        if !child && name == "disconnect" {
+            let pending = state
+                .borrow()
+                .cluster
+                .workers
+                .get(&id)
+                .is_some_and(|worker| worker.pending_disconnect);
+            if pending {
+                state
+                    .borrow_mut()
+                    .cluster
+                    .workers
+                    .get_mut(&id)
+                    .unwrap()
+                    .pending_disconnect = false;
+                let _ = execute::call(cb, &obj, &[]);
+                if let Some(module) = state.borrow().cluster.module.clone() {
+                    let _ = crate::modules::events::method_emit(
+                        state,
+                        Some(&module),
+                        &[Value::String("disconnect".into()), obj.clone()],
+                    );
+                }
+            }
+        }
+        if !child && name == "exit" {
+            let pending = state
+                .borrow_mut()
+                .cluster
+                .workers
+                .get_mut(&id)
+                .and_then(|worker| worker.pending_exit.take());
+            if let Some((code, signal)) = pending {
+                let _ = execute::call(
+                    cb,
+                    &obj,
+                    &[
+                        Value::Number(code as f64),
+                        signal.clone().map(Value::String).unwrap_or(Value::Null),
+                    ],
+                );
+                if let Some(module) = state.borrow().cluster.module.clone() {
+                    let _ = crate::modules::events::method_emit(
+                        state,
+                        Some(&module),
+                        &[
+                            Value::String("exit".into()),
+                            obj.clone(),
+                            Value::Number(code as f64),
+                            signal.clone().map(Value::String).unwrap_or(Value::Null),
+                        ],
+                    );
+                }
+            }
+        }
         match name.as_str() {
             "online" => {
                 let _ =
@@ -235,7 +479,13 @@ pub fn on(
                     ("fd".into(), Value::Undefined),
                     ("port".into(), Value::Number(1.0)),
                 ]);
-                let _ = execute::call(cb, &obj, &[info]);
+                // A worker's listening notification is asynchronous. Queue
+                // the callback so the parent can finish registering its
+                // disconnect/exit listeners after `fork()` returns.
+                state
+                    .borrow_mut()
+                    .event_loop
+                    .queue_microtask(cb.clone(), vec![info]);
                 let module = state.borrow().cluster.module.clone();
                 if let Some(module) = module {
                     let _ = crate::modules::events::method_emit(
@@ -244,20 +494,6 @@ pub fn on(
                         &[Value::String("listening".into()), obj.clone()],
                     );
                 }
-            }
-            "exit"
-                if state
-                    .borrow()
-                    .cluster
-                    .workers
-                    .get(&id)
-                    .is_some_and(|w| w.dead) =>
-            {
-                let _ = execute::call(
-                    cb,
-                    &obj,
-                    &[Value::Number(0.0), Value::String("SIGTERM".into())],
-                );
             }
             _ => {}
         }
@@ -274,12 +510,19 @@ pub fn emit(
         Some(Value::String(s)) => s.clone(),
         _ => return Ok(Value::Boolean(false)),
     };
+    let child = state.borrow().cluster.worker_context == Some(id);
     let callbacks = state
         .borrow()
         .cluster
         .workers
         .get(&id)
-        .and_then(|w| w.listeners.get(&name).cloned())
+        .and_then(|w| {
+            if child {
+                w.child_listeners.get(&name).cloned()
+            } else {
+                w.listeners.get(&name).cloned()
+            }
+        })
         .unwrap_or_default();
     let present = !callbacks.is_empty();
     for cb in callbacks {
@@ -296,8 +539,56 @@ pub fn disconnect(
     if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
         w.connected = false;
         let _ = execute::set_property_in_place(&obj, "exitedAfterDisconnect", Value::Boolean(true));
+        let _ = execute::set_property_in_place(&obj, "state", Value::String("disconnected".into()));
+        if let Ok(process) = execute::get_property_result(&obj, "process") {
+            let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
+        }
     }
     let _ = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
+    if let Some(module) = state.borrow().cluster.module.clone() {
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(&module),
+            &[Value::String("disconnect".into()), obj.clone()],
+        );
+    }
+    let previous_context = state.borrow().cluster.worker_context;
+    set_worker_mode(state, id, &obj, true);
+    state.borrow_mut().cluster.worker_context = Some(id);
+    let child_result = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
+    let child_exit = state.borrow().process.exit_code;
+    state.borrow_mut().process.exit_code = None;
+    state.borrow_mut().cluster.worker_context = previous_context;
+    set_worker_mode(state, id, &obj, false);
+    if child_result.is_err() || child_exit.is_some() {
+        let code = child_exit.unwrap_or(1);
+        close_worker_net(state);
+        if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            w.dead = true;
+        }
+        let _ = emit(
+            state,
+            Some(&obj),
+            &[
+                Value::String("exit".into()),
+                Value::Number(code as f64),
+                Value::Null,
+            ],
+        );
+        let module = state.borrow().cluster.module.clone();
+        if let Some(module) = module {
+            let _ = crate::modules::events::method_emit(
+                state,
+                Some(&module),
+                &[
+                    Value::String("exit".into()),
+                    obj.clone(),
+                    Value::Number(code as f64),
+                    Value::Null,
+                ],
+            );
+        }
+    }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
         execute::call(cb, &Value::Undefined, &[])?;
     }
@@ -313,6 +604,9 @@ pub fn kill(
     if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
         w.connected = false;
         w.dead = true;
+        if let Ok(process) = execute::get_property_result(&obj, "process") {
+            let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
+        }
     }
     let _ = emit(
         state,
@@ -363,10 +657,49 @@ pub fn send(
         Some(&obj),
         &[Value::String("message".into()), message.clone()],
     );
-    let _ = crate::modules::process::emit(
-        state,
-        &[Value::String("message".into()), message],
-    );
+    let previous_context = state.borrow().cluster.worker_context;
+    set_worker_mode(state, id, &obj, true);
+    state.borrow_mut().cluster.worker_context = Some(id);
+    let process_result =
+        crate::modules::process::emit(state, &[Value::String("message".into()), message]);
+    state.borrow_mut().cluster.worker_context = previous_context;
+    set_worker_mode(state, id, &obj, false);
+    if process_result.is_err() {
+        if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            worker.connected = false;
+            worker.dead = true;
+        }
+        let _ = emit(
+            state,
+            Some(&obj),
+            &[
+                Value::String("exit".into()),
+                Value::Number(2.0),
+                Value::Null,
+            ],
+        );
+    }
+    Ok(Value::Boolean(true))
+}
+
+/// Child-side `process.send(message)`: retain the message until the parent
+/// attaches its worker listener after `fork()` returns.
+pub fn process_send(
+    state: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (id, _) = worker(state, r)?;
+    let message = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut guard = state.borrow_mut();
+    let active = guard.cluster.worker_context == Some(id);
+    let Some(worker) = guard.cluster.workers.get_mut(&id) else {
+        return Ok(Value::Boolean(false));
+    };
+    if !active || !worker.connected || worker.dead {
+        return Ok(Value::Boolean(false));
+    }
+    worker.pending_messages.push(message);
     Ok(Value::Boolean(true))
 }
 pub fn disconnect_all(
