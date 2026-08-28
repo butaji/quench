@@ -6,5 +6,6 @@ description = "Node.js test runner for a Node-API compatibility host"
 license = "MIT"
 
 [dependencies]
+libc = "0.2"
 quench-node = { path = "../quench-node" }
 quench-runtime = { path = "../quench-runtime" }
