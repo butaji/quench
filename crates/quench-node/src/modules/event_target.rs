@@ -28,9 +28,18 @@ pub struct TargetId(pub u64);
 
 #[derive(Default)]
 pub struct EventTarget {
+    /// Whether this target exposes NodeEventTarget's EventEmitter-style
+    /// methods in addition to the DOM dispatch contract.
+    pub node: bool,
     /// Insertion-ordered `(type, listeners)` pairs.
     pub events: Vec<(String, Vec<Listener>)>,
     pub max: Option<usize>,
+    /// Whether the Node-style listener warning has already fired.
+    pub warned: bool,
+}
+
+thread_local! {
+    static NODE_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 impl EventTarget {
@@ -95,22 +104,44 @@ fn is_abort_signal(value: &Value) -> bool {
 }
 
 pub fn new_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    allocate_target(state, false)
+}
+
+/// Construct the internal NodeEventTarget using the same target registry and
+/// listener records as EventTarget. Only the method surface differs.
+pub fn new_node_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    allocate_target(state, true)
+}
+
+fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, VmError> {
     let id = state.borrow_mut().targets.allocate();
-    let target = Rc::new(RefCell::new(EventTarget::default()));
+    let target = Rc::new(RefCell::new(EventTarget {
+        node,
+        ..EventTarget::default()
+    }));
     state.borrow_mut().targets.targets.insert(id, target);
     let object = crate::host::namespace_object_from_pairs(vec![(
         TARGET_ID_PROP.to_string(),
         Value::Number(id.0 as f64),
     )]);
-    let global = quench_runtime::vm::current_global_object();
-    let prototype =
-        execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype");
+    let prototype = if node {
+        NODE_PROTOTYPE
+            .with(|slot| slot.borrow().clone())
+            .unwrap_or_else(prototype)
+    } else {
+        let global = quench_runtime::vm::current_global_object();
+        execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype")
+    };
     let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&object, &prototype)?
     } else {
         object
     };
     Ok(object)
+}
+
+pub(crate) fn set_node_prototype(prototype: Value) {
+    NODE_PROTOTYPE.with(|slot| *slot.borrow_mut() = Some(prototype));
 }
 
 pub(crate) fn prototype() -> Value {
@@ -156,6 +187,379 @@ fn target_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_TARGET_REMOVE),
         ),
     ]
+}
+
+fn node_target(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Rc<RefCell<EventTarget>>, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(invalid_this());
+    };
+    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
+        return Err(invalid_this());
+    };
+    if !target.borrow().node {
+        return Err(invalid_this());
+    }
+    Ok(target)
+}
+
+fn node_register(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    once: bool,
+    node_event: bool,
+) -> Result<Value, VmError> {
+    let event = type_arg(args)?;
+    let callback = callback_arg(args)?;
+    if matches!(callback, Value::Null | Value::Undefined) {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    let target = node_target(state, receiver)?;
+    let (count, limit, already_warned, inserted) = {
+        let mut target = target.borrow_mut();
+        if target
+            .listeners_of(&event)
+            .iter()
+            .any(|listener| same_listener(&listener.callback, &callback))
+        {
+            (
+                target.listeners_of(&event).len(),
+                target.max,
+                target.warned,
+                false,
+            )
+        } else {
+            target.entry(&event).push(Listener {
+                callback,
+                once,
+                node_event,
+                weak: false,
+                passive: false,
+                signal: None,
+            });
+            (
+                target.listeners_of(&event).len(),
+                target.max,
+                target.warned,
+                true,
+            )
+        }
+    };
+    let limit = limit.unwrap_or(10);
+    if inserted && count > limit && limit > 0 && !already_warned {
+        if let Some(target) = receiver
+            .and_then(target_id)
+            .and_then(|id| state.borrow().targets.get(id))
+        {
+            target.borrow_mut().warned = true;
+        }
+        warn_max_listeners(
+            state,
+            receiver.expect("validated receiver"),
+            &event,
+            count,
+            limit,
+        );
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Queue the one-per-target NodeEventTarget listener warning for process
+/// warning handlers. The warning is an Error instance with the observable
+/// `target`, `count`, and `type` fields Node exposes.
+fn warn_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    target: &Value,
+    event: &str,
+    count: usize,
+    limit: usize,
+) {
+    let message = format!(
+        "Possible EventTarget memory leak detected. {count} {event} listeners added to NodeEventTarget. MaxListeners is {}. Use events.setMaxListeners() to increase limit",
+        limit
+    );
+    let warning = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let warning = execute::set_property(
+        warning,
+        "name",
+        Value::String("MaxListenersExceededWarning".into()),
+    );
+    let warning = execute::set_property(warning, "target", target.clone());
+    let warning = execute::set_property(warning, "count", Value::Number(count as f64));
+    let warning = execute::set_property(warning, "type", Value::String(event.into()));
+    let handlers: Vec<Value> = state
+        .borrow()
+        .process
+        .warning_handlers
+        .iter()
+        .map(|(handler, _)| handler.clone())
+        .collect();
+    for handler in handlers {
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_microtask(handler, vec![warning.clone()]);
+    }
+}
+
+pub fn node_add_event_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = node_register(state, receiver, args, once_option(args), true)?;
+    Ok(Value::Undefined)
+}
+
+pub fn node_on(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    node_register(state, receiver, args, false, false)
+}
+
+pub fn node_once(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    node_register(state, receiver, args, true, false)
+}
+
+pub fn node_remove_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = node_target(state, receiver)?;
+    remove_event_listener(state, receiver, args)?;
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn node_remove_all_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let event = match args.first() {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Undefined) | None => None,
+        _ => return Err(type_arg(args).unwrap_err()),
+    };
+    let mut target = target.borrow_mut();
+    if let Some(event) = event {
+        target.events.retain(|(name, _)| name != &event);
+    } else {
+        target.events.clear();
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn node_listener_count(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let event = type_arg(args)?;
+    let count = target.borrow().listeners_of(&event).len();
+    Ok(Value::Number(count as f64))
+}
+
+pub fn node_event_names(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let names = target
+        .borrow()
+        .events
+        .iter()
+        .filter(|(_, listeners)| !listeners.is_empty())
+        .map(|(name, _)| Value::String(name.clone()))
+        .collect();
+    Ok(host_api::array(names))
+}
+
+pub fn node_set_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let value = args.first().ok_or_else(missing_args)?;
+    let Value::Number(number) = value else {
+        return Err(invalid_arg_type(
+            "n",
+            "number",
+            value,
+            "The \"n\" argument must be a number.",
+        ));
+    };
+    if !number.is_finite() || *number < 0.0 {
+        return Err(invalid_arg_type(
+            "n",
+            "non-negative number",
+            value,
+            "The \"n\" argument must be a non-negative number.",
+        ));
+    }
+    target.borrow_mut().max = Some(*number as usize);
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn node_get_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let max = target.borrow().max.unwrap_or(10);
+    Ok(Value::Number(max as f64))
+}
+
+pub fn node_emit(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(invalid_this)?;
+    let target = node_target(state, Some(receiver))?;
+    let event = match args.first() {
+        Some(_) => type_arg(args)?,
+        None => {
+            return Err(invalid_arg_type(
+                "type",
+                "string",
+                &Value::Undefined,
+                "The \"type\" argument must be a string.",
+            ));
+        }
+    };
+    let detail = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let event_value = crate::dispatch_handlers::custom_event_new(
+        state,
+        &[
+            Value::String(event.clone()),
+            host_api::object(vec![("detail".into(), detail.clone())]),
+        ],
+    )?;
+    let snapshot = target.borrow().listeners_of(&event).to_vec();
+    let has_listeners = !snapshot.is_empty();
+    for listener in snapshot {
+        if listener.once {
+            let _ = remove_event_listener(
+                state,
+                Some(receiver),
+                &[Value::String(event.clone()), listener.callback.clone()],
+            );
+        }
+        let value = if listener.node_event {
+            event_value.clone()
+        } else {
+            detail.clone()
+        };
+        let result = if quench_runtime::is_callable(&listener.callback) {
+            execute::call(&listener.callback, receiver, &[value])
+        } else {
+            let handler = execute::get_property(&listener.callback, "handleEvent");
+            if quench_runtime::is_callable(&handler) {
+                execute::call(&handler, &listener.callback, &[value])
+            } else {
+                Ok(Value::Undefined)
+            }
+        };
+        match result {
+            Ok(Value::Promise(promise)) => {
+                let rejection =
+                    crate::host::capability(crate::registry::SPEC_EVENT_TARGET_REJECTION);
+                quench_runtime::promise_then(
+                    Some(&Value::Promise(promise)),
+                    &[Value::Undefined, rejection],
+                )?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                crate::modules::pump::handle_uncaught(state, error)?;
+                crate::modules::pump::run_uncaught(state)?;
+            }
+        }
+    }
+    Ok(Value::Boolean(has_listeners))
+}
+
+pub(crate) fn node_prototype() -> Value {
+    let mut prototype = host_api::object(Vec::new());
+    for (name, value) in [
+        (
+            "addEventListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ADD),
+        ),
+        (
+            "removeEventListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE),
+        ),
+        (
+            "dispatchEvent",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_DISPATCH),
+        ),
+        (
+            "on",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ON),
+        ),
+        (
+            "addListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ON),
+        ),
+        (
+            "once",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ONCE),
+        ),
+        (
+            "off",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE),
+        ),
+        (
+            "removeListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE),
+        ),
+        (
+            "removeAllListeners",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE_ALL),
+        ),
+        (
+            "listenerCount",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_LISTENER_COUNT),
+        ),
+        (
+            "eventNames",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_EVENT_NAMES),
+        ),
+        (
+            "setMaxListeners",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_SET_MAX),
+        ),
+        (
+            "getMaxListeners",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_GET_MAX),
+        ),
+        (
+            "emit",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_EMIT),
+        ),
+    ] {
+        execute::set_property_in_place(&prototype, name, value);
+    }
+    prototype
 }
 
 fn type_arg(args: &[Value]) -> Result<String, VmError> {
@@ -370,6 +774,7 @@ pub fn add_event_listener(
         guard.entry(&event).push(Listener {
             callback,
             once: once_option(args),
+            node_event: false,
             weak: weak_option(args, receiver.expect("validated receiver")),
             passive: passive_option(args),
             signal,

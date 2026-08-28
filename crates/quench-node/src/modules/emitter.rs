@@ -22,6 +22,9 @@ pub const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
 pub struct Listener {
     pub callback: Value,
     pub once: bool,
+    /// NodeEventTarget's `addEventListener` receives an Event object from
+    /// `emit`; EventEmitter-style methods receive the raw argument list.
+    pub node_event: bool,
     pub weak: bool,
     pub passive: bool,
     pub signal: Option<Value>,
@@ -73,6 +76,7 @@ impl EventEmitter {
                 Listener {
                     callback,
                     once,
+                    node_event: false,
                     weak: false,
                     passive: false,
                     signal: None,
@@ -82,6 +86,7 @@ impl EventEmitter {
             list.push(Listener {
                 callback,
                 once,
+                node_event: false,
                 weak: false,
                 passive: false,
                 signal: None,
