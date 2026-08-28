@@ -632,6 +632,9 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
                 }),
             };
             let Some(range) = range else {
+                if flags.reverse {
+                    return None;
+                }
                 return Some(state);
             };
             let width = range.end.saturating_sub(range.start);
@@ -845,28 +848,34 @@ fn lookaround_match(
     let behind = matches!(kind, Lookaround::Behind | Lookaround::NegativeBehind);
     let negative = matches!(kind, Lookaround::NegativeAhead | Lookaround::NegativeBehind);
     let found = if behind {
-        let mut starts: Box<dyn Iterator<Item = usize>> = if contains_alternation(body) {
-            Box::new((0..=state.position).rev())
+        if let Some(found) = reverse_captured_backreference(body, input, &state, flags)
+            .or_else(|| deferred_backreference_match(body, input, &state, flags))
+        {
+            Some(found)
         } else {
-            Box::new(0..=state.position)
-        };
-        starts.find_map(|start| {
-            let candidate = State {
-                position: start,
-                captures: state.captures.clone(),
+            let mut starts: Box<dyn Iterator<Item = usize>> = if contains_alternation(body) {
+                Box::new((0..=state.position).rev())
+            } else {
+                Box::new(0..=state.position)
             };
-            match_options(
-                body,
-                input,
-                candidate,
-                Flags {
-                    reverse: true,
-                    ..flags
-                },
-            )
-            .into_iter()
-            .find(|result| result.position == state.position)
-        })
+            starts.find_map(|start| {
+                let candidate = State {
+                    position: start,
+                    captures: state.captures.clone(),
+                };
+                match_options(
+                    body,
+                    input,
+                    candidate,
+                    Flags {
+                        reverse: true,
+                        ..flags
+                    },
+                )
+                .into_iter()
+                .find(|result| result.position == state.position)
+            })
+        }
     } else {
         match_expr(body, input, state.clone(), flags)
     };
@@ -878,6 +887,126 @@ fn lookaround_match(
             captures: found.captures,
         })
     }
+}
+
+fn deferred_backreference_match(
+    body: &Expr,
+    input: &[Unit],
+    state: &State,
+    flags: Flags,
+) -> Option<State> {
+    let Expr::Sequence(parts) = body else {
+        return None;
+    };
+    let [Expr::Backreference(Backreference::Index(index)), Expr::Capture {
+        index: capture_index,
+        body: capture_body,
+    }] = parts.as_slice()
+    else {
+        return None;
+    };
+    if *index == 0 || *index != *capture_index + 1 {
+        return None;
+    }
+    if state
+        .captures
+        .get(index.saturating_sub(1))
+        .and_then(Option::as_ref)
+        .is_some()
+    {
+        return None;
+    }
+    for capture_start in 0..=state.position {
+        for mut candidate in match_options(
+            capture_body,
+            input,
+            State {
+                position: capture_start,
+                captures: state.captures.clone(),
+            },
+            Flags {
+                reverse: true,
+                ..flags
+            },
+        ) {
+            if candidate.position != state.position {
+                continue;
+            }
+            let width = candidate.position.saturating_sub(capture_start);
+            if width == 0 || capture_start < width {
+                continue;
+            }
+            let before = &input[capture_start - width..capture_start];
+            let captured = &input[capture_start..candidate.position];
+            if before
+                .iter()
+                .zip(captured)
+                .all(|(left, right)| equal(left.value, right.value, flags.ignore_case))
+            {
+                if let Some(slot) = candidate.captures.get_mut(*capture_index) {
+                    *slot = Some(capture_start..candidate.position);
+                }
+                return Some(State {
+                    position: state.position,
+                    captures: candidate.captures,
+                });
+            }
+        }
+    }
+    None
+}
+
+fn reverse_captured_backreference(
+    body: &Expr,
+    input: &[Unit],
+    state: &State,
+    flags: Flags,
+) -> Option<State> {
+    let Expr::Sequence(parts) = body else {
+        return None;
+    };
+    let [Expr::Capture {
+        index: capture_index,
+        body: capture_body,
+    }, Expr::Backreference(Backreference::Index(index))] = parts.as_slice()
+    else {
+        return None;
+    };
+    if *index == 0
+        || *index != *capture_index + 1
+        || state
+            .captures
+            .get(*capture_index)
+            .and_then(Option::as_ref)
+            .is_some()
+    {
+        return None;
+    }
+    for capture_start in 0..=state.position {
+        for mut candidate in match_options(
+            capture_body,
+            input,
+            State {
+                position: capture_start,
+                captures: state.captures.clone(),
+            },
+            Flags {
+                reverse: true,
+                ..flags
+            },
+        ) {
+            if candidate.position == state.position {
+                if let Some(slot) = candidate.captures.get_mut(*capture_index) {
+                    *slot = Some(capture_start..candidate.position);
+                }
+                return Some(State {
+                    position: state.position,
+                    captures: candidate.captures,
+                });
+            }
+        }
+    }
+    None
 }
 
 fn contains_alternation(expr: &Expr) -> bool {
