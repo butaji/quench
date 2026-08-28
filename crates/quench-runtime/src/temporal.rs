@@ -638,6 +638,9 @@ mod stubs {
                 .next()
                 .unwrap_or(text);
             let (date, time) = date_time.split_once('T').unwrap_or((date_time, "00:00:00"));
+            if date.starts_with("-000000") {
+                return Err(crate::value::error::throw_range_error("Invalid year"));
+            }
             let (parsed_year, parsed_month, parsed_day) = super::parse_date_parts(date)
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
             let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
