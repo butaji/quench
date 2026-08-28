@@ -241,15 +241,18 @@ impl Regex {
                     .iter_mut()
                     .map(|capture| {
                         capture.take().map(|range| {
-                            let capture_start =
-                                input.get(range.start).map_or(end, |unit| unit.offset_start);
-                            let capture_end = input.get(range.end).map_or(end, |unit| {
-                                if range.end > 0 {
-                                    input[range.end - 1].offset_end
-                                } else {
-                                    unit.offset_start
-                                }
-                            });
+                            let capture_start = input.get(range.start).map_or_else(
+                                || input.last().map_or(end, |unit| unit.offset_end),
+                                |unit| unit.offset_start,
+                            );
+                            let capture_end = if range.end == 0 {
+                                capture_start
+                            } else {
+                                input.get(range.end - 1).map_or_else(
+                                    || input.last().map_or(capture_start, |unit| unit.offset_end),
+                                    |unit| unit.offset_end,
+                                )
+                            };
                             capture_start..capture_end
                         })
                     })
@@ -1377,6 +1380,9 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     let Some(character) = char::from_u32(character) else {
         return false;
     };
+    if let Some(result) = icu_property_matches(name, value, character) {
+        return result;
+    }
     match (name, value) {
         ("ASCII", _) => character.is_ascii(),
         ("Any", _) => true,
@@ -1407,6 +1413,90 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
         }
         _ => false,
     }
+}
+
+fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
+    use icu_properties::{props, CodePointMapData, CodePointSetData, PropertyParser};
+    if name == "Assigned" {
+        return Some(
+            CodePointMapData::<props::GeneralCategory>::new().get(character)
+                != props::GeneralCategory::Unassigned,
+        );
+    }
+    if matches!(name, "Script" | "sc") {
+        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
+        return Some(CodePointMapData::<props::Script>::new().get(character) == target);
+    }
+    if matches!(name, "General_Category" | "gc") {
+        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
+            return Some(
+                CodePointMapData::<props::GeneralCategory>::new().get(character) == target,
+            );
+        }
+        let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
+        return Some(
+            target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character)),
+        );
+    }
+    macro_rules! binary_property {
+        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
+            match name {
+                $( $( $property => Some(CodePointSetData::new::<props::$kind>().contains(character)), )+ )*
+                _ => None,
+            }
+        };
+    }
+    binary_property!(
+        "ASCII_Hex_Digit" => AsciiHexDigit,
+        "AHex" => AsciiHexDigit,
+        "Alphabetic" => Alphabetic,
+        "Alpha" => Alphabetic,
+        "Bidi_Control" => BidiControl,
+        "Bidi_C" => BidiControl,
+        "Bidi_Mirrored" => BidiMirrored,
+        "Bidi_M" => BidiMirrored,
+        "Case_Ignorable" => CaseIgnorable,
+        "CI" => CaseIgnorable,
+        "Cased" => Cased,
+        "Changes_When_Casefolded" | "CWCF" => ChangesWhenCasefolded,
+        "Changes_When_Casemapped" | "CWCM" => ChangesWhenCasemapped,
+        "Changes_When_Lowercased" | "CWL" => ChangesWhenLowercased,
+        "Changes_When_NFKC_Casefolded" | "CWKCF" => ChangesWhenNfkcCasefolded,
+        "Changes_When_Titlecased" | "CWT" => ChangesWhenTitlecased,
+        "Changes_When_Uppercased" | "CWU" => ChangesWhenUppercased,
+        "Dash" => Dash,
+        "Deprecated" | "Dep" => Deprecated,
+        "Default_Ignorable_Code_Point" | "DI" => DefaultIgnorableCodePoint,
+        "Diacritic" | "Dia" => Diacritic,
+        "Emoji" => Emoji,
+        "Emoji_Component" | "EComp" => EmojiComponent,
+        "Emoji_Modifier" | "EMod" => EmojiModifier,
+        "Emoji_Modifier_Base" | "EBase" => EmojiModifierBase,
+        "Emoji_Presentation" | "EPres" => EmojiPresentation,
+        "Extended_Pictographic" | "ExtPict" => ExtendedPictographic,
+        "Extender" | "Ext" => Extender,
+        "Grapheme_Base" | "Gr_Base" => GraphemeBase,
+        "Grapheme_Extend" | "Gr_Ext" => GraphemeExtend,
+        "Hex_Digit" => HexDigit,
+        "ID_Continue" | "IDC" => IdContinue,
+        "ID_Start" | "IDS" => IdStart,
+        "Ideographic" => Ideographic,
+        "Join_Control" | "Join_C" => JoinControl,
+        "Logical_Order_Exception" | "LOE" => LogicalOrderException,
+        "Lowercase" => Lowercase,
+        "Math" => Math,
+        "Noncharacter_Code_Point" | "NChar" => NoncharacterCodePoint,
+        "Pattern_Syntax" | "Pat_Syn" => PatternSyntax,
+        "Pattern_White_Space" | "Pat_WS" => PatternWhiteSpace,
+        "Quotation_Mark" | "QMark" => QuotationMark,
+        "Radical" => Radical,
+        "Regional_Indicator" | "RI" => RegionalIndicator,
+        "Uppercase" => Uppercase,
+        "Variation_Selector" | "VS" => VariationSelector,
+        "White_Space" | "space" | "WSpace" => WhiteSpace,
+        "XID_Continue" | "XIDC" => XidContinue,
+        "XID_Start" | "XIDS" => XidStart,
+    )
 }
 
 fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
@@ -1469,6 +1559,13 @@ mod tests {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
         let input = "abcdefdef".encode_utf16().collect::<Vec<_>>();
         assert!(regex.find_from_utf16(&input, 0).next().is_some());
+    }
+    #[test]
+    fn lookahead_capture_preserves_extent() {
+        let regex = Regex::with_flags("(?:(?=(abc)))a", Flags::default()).unwrap();
+        let matched = regex.find_from("abc", 0).next().unwrap();
+        assert_eq!(matched.range, 0..1);
+        assert_eq!(matched.captures, vec![Some(0..3)]);
     }
     #[test]
     fn duplicate_group_properties_pattern_matches() {
