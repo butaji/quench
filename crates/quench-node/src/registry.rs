@@ -186,6 +186,7 @@ node_api! {
     (SPEC_CLUSTER_WORKER_DISCONNECT, "cluster:Worker:disconnect", 0x1F66),
     (SPEC_CLUSTER_WORKER_KILL, "cluster:Worker:kill", 0x1F67),
     (SPEC_CLUSTER_WORKER_SEND, "cluster:Worker:send", 0x1F68),
+    (SPEC_CLUSTER_WORKER_PROCESS_SEND, "cluster:Worker:process.send", 0x1F69),
     (SPEC_DIAGNOSTICS_TRACING_CHANNEL, "diagnostics_channel:tracingChannel", 0x1F0A),
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),

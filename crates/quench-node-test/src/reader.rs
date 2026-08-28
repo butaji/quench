@@ -152,6 +152,11 @@ impl NodeRunner {
             "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
         );
         let source = format!("{web_streams_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+        self.host
+            .state()
+            .borrow_mut()
+            .cluster
+            .set_script(script.clone(), fixture_source.clone());
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) if is_module && source.contains("await ") => {
