@@ -442,7 +442,7 @@ pub(crate) mod symbol {
 /// `Array.prototype.toLocaleString`.
 pub(crate) fn array_to_locale_string(
     receiver: Option<&Value>,
-    _arguments: &[Value],
+    arguments: &[Value],
 ) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -451,10 +451,14 @@ pub(crate) fn array_to_locale_string(
     };
     let object = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&object)?;
+    let invoke_arguments = vec![
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+    ];
     let mut parts = Vec::with_capacity(length);
     for index in 0..length {
         let value = crate::execute::get_property_result(&object, &index.to_string())?;
-        parts.push(element_to_locale_string(&value)?);
+        parts.push(element_to_locale_string(&value, &invoke_arguments)?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -520,22 +524,20 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     Ok(Value::Number(result))
 }
 
-fn element_to_locale_string(value: &Value) -> Result<String, VmError> {
+fn element_to_locale_string(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
     match value {
-        Value::Number(_) => locale_element_call(value),
+        Value::Number(_) => locale_element_call(value, arguments),
         Value::Null | Value::Undefined => Ok(String::new()),
-        _ => locale_element_call(value),
+        _ => locale_element_call(value, arguments),
     }
 }
-fn locale_element_call(value: &Value) -> Result<String, VmError> {
+fn locale_element_call(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
     let mut method = crate::execute::get_property_result(value, "toLocaleString")?;
     if matches!(method, Value::Builtin(Builtin::ObjectPrototypeToString)) {
         method = crate::execute::get_property_result(value, "toString")?;
     }
     if !matches!(method, Value::Undefined | Value::Null) {
-        let invoke_arguments = Vec::new();
-        let result =
-            crate::functions::execute_target_with_receiver(&method, value, &invoke_arguments)?;
+        let result = crate::functions::execute_target_with_receiver(&method, value, arguments)?;
         return crate::conversion::to_string(&result.0);
     }
     Ok(to_string_value(value))
