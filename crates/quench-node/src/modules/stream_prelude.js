@@ -296,12 +296,14 @@
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
-        !st.endScheduled && (st.flowing || stream.listenerCount("readable") === 0)) {
+        !st.endScheduled && (st.flowing ||
+          (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
         if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
-            (st.flowing || stream.listenerCount("readable") === 0)) {
+            (st.flowing ||
+              (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
