@@ -78,17 +78,28 @@ impl ProcessState {
     }
 }
 
-pub(crate) fn mark_deprecation(state: &Rc<RefCell<HostState>>, callback: &Value, code: Option<&str>) -> bool {
+pub(crate) fn mark_deprecation(
+    state: &Rc<RefCell<HostState>>,
+    callback: &Value,
+    code: Option<&str>,
+) -> bool {
     let mut guard = state.borrow_mut();
-    let seen = guard.process.deprecations_emitted.iter().any(|(seen_callback, seen_code)| {
-        match (code, seen_code.as_deref()) {
-            (Some(code), Some(seen)) => code == seen,
-            (None, None) => callback == seen_callback,
-            _ => false,
-        }
-    });
+    let seen = guard
+        .process
+        .deprecations_emitted
+        .iter()
+        .any(
+            |(seen_callback, seen_code)| match (code, seen_code.as_deref()) {
+                (Some(code), Some(seen)) => code == seen,
+                (None, None) => callback == seen_callback,
+                _ => false,
+            },
+        );
     if !seen {
-        guard.process.deprecations_emitted.push((callback.clone(), code.map(str::to_string)));
+        guard
+            .process
+            .deprecations_emitted
+            .push((callback.clone(), code.map(str::to_string)));
     }
     !seen
 }
@@ -96,8 +107,8 @@ pub(crate) fn mark_deprecation(state: &Rc<RefCell<HostState>>, callback: &Value,
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
     props.extend(method_props());
-    let process = crate::host::namespace_object(props)
-        .unwrap_or_else(|_| host_api::object(Vec::new()));
+    let process =
+        crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
     let descriptor = host_api::object(vec![
         (
             "get".into(),
@@ -760,6 +771,7 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     };
     for handler in once {
         remove_handler(state, event, &handler);
+        quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
     }
     for handler in normal {
         quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
