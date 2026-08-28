@@ -1300,98 +1300,95 @@ fn is_string_property(name: &str) -> bool {
 
 fn string_property_widths(name: &str, input: &[Unit], position: usize) -> Vec<usize> {
     let mut widths = Vec::new();
-    for width in 1..=input.len().saturating_sub(position).min(16) {
-        let Some(text) = units_to_string(&input[position..position + width]) else {
-            continue;
-        };
-        if string_property_matches(name, &text) {
+    let limit = match name {
+        "Basic_Emoji" => 2,
+        "RGI_Emoji_Flag_Sequence" | "RGI_Emoji_Modifier_Sequence" => 3,
+        "RGI_Emoji_Tag_Sequence" => 8,
+        _ => 16,
+    };
+    for width in 1..=input.len().saturating_sub(position).min(limit) {
+        if string_property_matches_units(name, &input[position..position + width]) {
             widths.push(width);
         }
     }
     widths
 }
 
-fn units_to_string(units: &[Unit]) -> Option<String> {
-    let mut output = String::new();
-    for unit in units {
-        output.push(char::from_u32(unit.value)?);
-    }
-    Some(output)
-}
-
-fn string_property_matches(name: &str, text: &str) -> bool {
+fn string_property_matches_units(name: &str, units: &[Unit]) -> bool {
     match name {
-        "Basic_Emoji" => {
-            icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>()
-                .contains_str(text)
-        }
-        "RGI_Emoji_Flag_Sequence" => is_flag_sequence(text),
-        "RGI_Emoji_Modifier_Sequence" => is_modifier_sequence(text),
-        "RGI_Emoji_Tag_Sequence" => is_tag_sequence(text),
-        "RGI_Emoji_ZWJ_Sequence" => is_zwj_sequence(text),
-        "RGI_Emoji" => {
-            string_property_matches("Basic_Emoji", text)
-                || is_keycap_sequence(text)
-                || is_flag_sequence(text)
-                || is_modifier_sequence(text)
-                || is_tag_sequence(text)
-                || is_zwj_sequence(text)
-        }
+        "Basic_Emoji" => is_basic_emoji_units(units),
+        "RGI_Emoji_Flag_Sequence" => is_flag_units(units),
+        "RGI_Emoji_Modifier_Sequence" => is_modifier_units(units),
+        "RGI_Emoji_Tag_Sequence" => is_tag_units(units),
+        "RGI_Emoji_ZWJ_Sequence" => is_zwj_units(units),
+        "RGI_Emoji" => is_basic_emoji_units(units)
+            || is_keycap_units(units)
+            || is_flag_units(units)
+            || is_modifier_units(units)
+            || is_tag_units(units)
+            || is_zwj_units(units),
         _ => false,
     }
 }
 
-fn is_keycap_sequence(text: &str) -> bool {
-    let units: Vec<u32> = text.chars().map(u32::from).collect();
+fn is_keycap_units(units: &[Unit]) -> bool {
     matches!(
-        units.as_slice(),
-        [35, 0xFE0F, 0x20E3] | [42, 0xFE0F, 0x20E3] | [0x30..=0x39, 0xFE0F, 0x20E3]
+        units,
+        [a, b, c] if (a.value == 35 || a.value == 42 || (0x30..=0x39).contains(&a.value))
+            && b.value == 0xFE0F && c.value == 0x20E3
     )
 }
 
-fn is_flag_sequence(text: &str) -> bool {
-    let units: Vec<u32> = text.chars().map(u32::from).collect();
-    units.len() == 2 && units.iter().all(|value| (0x1F1E6..=0x1F1FF).contains(value))
+fn is_flag_units(units: &[Unit]) -> bool {
+    units.len() == 2
+        && units
+            .iter()
+            .all(|unit| (0x1F1E6..=0x1F1FF).contains(&unit.value))
 }
 
-fn is_modifier_sequence(text: &str) -> bool {
-    let units: Vec<u32> = text.chars().map(u32::from).collect();
+fn is_modifier_units(units: &[Unit]) -> bool {
     if !units
         .last()
-        .is_some_and(|value| (0x1F3FB..=0x1F3FF).contains(value))
+        .is_some_and(|unit| (0x1F3FB..=0x1F3FF).contains(&unit.value))
     {
         return false;
     }
     let mut base = &units[..units.len().saturating_sub(1)];
-    if base.last() == Some(&0xFE0F) {
+    if base.last().is_some_and(|unit| unit.value == 0xFE0F) {
         base = &base[..base.len() - 1];
     }
-    base.len() == 1 && is_basic_emoji_code_point(base[0])
+    base.len() == 1 && is_basic_emoji_code_point(base[0].value)
 }
 
-fn is_tag_sequence(text: &str) -> bool {
-    let units: Vec<u32> = text.chars().map(u32::from).collect();
+fn is_tag_units(units: &[Unit]) -> bool {
     units.len() >= 3
-        && units.first() == Some(&0x1F3F4)
-        && units.last() == Some(&0xE007F)
+        && units.first().is_some_and(|unit| unit.value == 0x1F3F4)
+        && units.last().is_some_and(|unit| unit.value == 0xE007F)
         && units[1..units.len() - 1]
             .iter()
-            .all(|value| (0xE0020..=0xE007E).contains(value))
+            .all(|unit| (0xE0020..=0xE007E).contains(&unit.value))
 }
 
-fn is_zwj_sequence(text: &str) -> bool {
-    let units: Vec<u32> = text.chars().map(u32::from).collect();
-    units.contains(&0x200D)
+fn is_zwj_units(units: &[Unit]) -> bool {
+    units.iter().any(|unit| unit.value == 0x200D)
         && units
-            .split(|value| *value == 0x200D)
+            .split(|unit| unit.value == 0x200D)
             .all(|part| {
                 !part.is_empty()
-                    && part.iter().all(|value| {
-                        *value == 0xFE0F
-                            || (0x1F3FB..=0x1F3FF).contains(value)
-                            || is_basic_emoji_code_point(*value)
+                    && part.iter().all(|unit| {
+                        unit.value == 0xFE0F
+                            || (0x1F3FB..=0x1F3FF).contains(&unit.value)
+                            || is_basic_emoji_code_point(unit.value)
                     })
             })
+}
+
+fn is_basic_emoji_units(units: &[Unit]) -> bool {
+    match units {
+        [unit] => is_basic_emoji_code_point(unit.value),
+        [base, variation] => variation.value == 0xFE0F && is_basic_emoji_code_point(base.value),
+        _ => false,
+    }
 }
 
 fn is_basic_emoji_code_point(value: u32) -> bool {
