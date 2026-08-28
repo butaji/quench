@@ -1023,6 +1023,18 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        if let Some(index) = crate::arrays::array_index(key) {
+            let append = self.properties.iter().next_back().is_some_and(|(name, _)| {
+                crate::arrays::array_index(name.as_str()).is_some_and(|last| last < index)
+            });
+            if append {
+                self.properties.push((key.into(), value));
+                self.created.push(key.into());
+                self.layout_id.set(0);
+                self.deleted_marker_state.set(0);
+                return;
+            }
+        }
         let index = { self.properties.iter().rposition(|(name, _)| name == key) };
         if let Some(index) = index {
             if let Some((_, mut current)) = self.properties.iter_mut().nth(index) {
@@ -1032,7 +1044,11 @@ impl ObjectData {
             self.properties.push((key.into(), value));
             self.created.push(key.into());
         }
-        self.invalidate_layout();
+        self.layout_id.set(0);
+        if crate::builtins::is_descriptor_key(key) {
+            self.descriptor_metadata_state.set(0);
+        }
+        self.deleted_marker_state.set(0);
     }
 
     /// Borrow the canonical hot property storage once for dependent-load-heavy
@@ -1221,6 +1237,7 @@ impl PropertyEntries for ObjectData {
 
     fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
         match self.descriptor_metadata_state.get() {
+            1 => None,
             2 => self.properties.descriptor_metadata_for_key(key),
             _ => {
                 let metadata = self.properties.descriptor_metadata_for_key(key);
@@ -1231,6 +1248,12 @@ impl PropertyEntries for ObjectData {
                 // stale across an in-place metadata write.
                 if metadata.is_some() {
                     self.descriptor_metadata_state.set(2);
+                } else if !self
+                    .properties
+                    .iter()
+                    .any(|(name, _)| crate::builtins::is_descriptor_key(name))
+                {
+                    self.descriptor_metadata_state.set(1);
                 }
                 metadata
             }

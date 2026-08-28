@@ -685,6 +685,14 @@ impl ArrayData {
             .flatten()
     }
 
+    pub(crate) fn dense_numeric_snapshot(&self) -> Option<Vec<f64>> {
+        self.is_dense_numeric_data().then(|| {
+            (0..self.logical_len())
+                .map(|index| self.dense_number_at(index).unwrap_or(0.0))
+                .collect()
+        })
+    }
+
     #[inline]
     pub(crate) fn numeric_cells(&self) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
         self.widen_mutable_numeric_kind();
@@ -893,6 +901,19 @@ impl ArrayData {
         } else {
             for index in start..end {
                 self.values.set(index, Value::Number(number));
+            }
+        }
+        if let DenseElements::Values(values) = &self.values {
+            let numeric = values
+                .borrow()
+                .iter()
+                .map(|value| match value {
+                    Value::Number(number) => Some(std::cell::Cell::new(*number)),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(numeric) = numeric {
+                self.values = DenseElements::Numbers(Rc::new(RefCell::new(numeric)));
             }
         }
         self.deleted.resize(end, false);
@@ -1151,7 +1172,7 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        if self.deleted.is_empty() && self.properties.is_empty() {
+        if self.deleted.iter().all(|deleted| !*deleted) && self.properties.is_empty() {
             if let DenseElements::Numbers(values) = &self.values {
                 let values = values.borrow();
                 return values.iter().map(|number| Value::Number(number.get())).collect();
