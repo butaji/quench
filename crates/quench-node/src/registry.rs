@@ -186,6 +186,7 @@ node_api! {
     (SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, "diagnostics_channel:BoundedChannel:subscribe", 0x1F0F),
     (SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE, "diagnostics_channel:BoundedChannel:unsubscribe", 0x1F10),
     (SPEC_DIAGNOSTICS_BOUNDED_RUN, "diagnostics_channel:BoundedChannel:run", 0x1F11),
+    (SPEC_DIAGNOSTICS_BOUNDED_SCOPE, "diagnostics_channel:BoundedChannel:withScope", 0x1F15),
     (SPEC_DIAGNOSTICS_CHANNEL_SCOPE, "diagnostics_channel:Channel:withStoreScope", 0x1F12),
     (SPEC_DIAGNOSTICS_SCOPE_DISPOSE, "diagnostics_channel:StoreScope:dispose", 0x1F13),
     (SPEC_DIAGNOSTICS_CHANNEL_RUN_STORES, "diagnostics_channel:Channel:runStores", 0x1F14),

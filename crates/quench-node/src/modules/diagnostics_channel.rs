@@ -10,7 +10,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 use crate::registry::{
-    SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, SPEC_DIAGNOSTICS_BOUNDED_RUN,
+    SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, SPEC_DIAGNOSTICS_BOUNDED_RUN, SPEC_DIAGNOSTICS_BOUNDED_SCOPE,
     SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE,
     SPEC_DIAGNOSTICS_CHANNEL, SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE,
     SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR, SPEC_DIAGNOSTICS_CHANNEL_PUBLISH,
@@ -29,6 +29,8 @@ const BOUNDED: &str = "\0quench:diagnostics_channel:bounded";
 const SCOPE_STORE: &str = "\0quench:diagnostics_channel:scope:store";
 const SCOPE_PREVIOUS: &str = "\0quench:diagnostics_channel:scope:previous";
 const SCOPE_ACTIVE: &str = "\0quench:diagnostics_channel:scope:active";
+const SCOPE_END: &str = "\0quench:diagnostics_channel:scope:end";
+const SCOPE_CONTEXT: &str = "\0quench:diagnostics_channel:scope:context";
 const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 thread_local! { static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) }; }
@@ -186,6 +188,10 @@ pub fn bounded_channel(
             "run".into(),
             crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_RUN),
         ),
+        (
+            "withScope".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_SCOPE),
+        ),
     ]);
     Ok(object)
 }
@@ -266,6 +272,47 @@ pub fn bounded_run(
         schedule_uncaught(state, error)?;
     }
     end_result.and(result)
+}
+
+pub fn bounded_scope(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("boundedChannel"))?;
+    let context = args.first().cloned().unwrap_or(Value::Undefined);
+    let start = execute::get_property(receiver, "start");
+    let end = execute::get_property(receiver, "end");
+    let stores = channel_stores(state, &start);
+    let (previous, transform_errors) = enter_stores_with_errors(&stores, &context);
+    if channel_has_subscribers(state, &start) {
+        publish(state, Some(&start), std::slice::from_ref(&context))?;
+    }
+    let scope = host_api::object(vec![
+        (
+            SCOPE_STORE.into(),
+            host_api::array(previous.iter().map(|(store, _)| store.clone()).collect()),
+        ),
+        (
+            SCOPE_PREVIOUS.into(),
+            host_api::array(previous.iter().map(|(_, value)| value.clone()).collect()),
+        ),
+        (SCOPE_ACTIVE.into(), Value::Boolean(true)),
+        (SCOPE_END.into(), end),
+        (SCOPE_CONTEXT.into(), context),
+        (
+            "dispose".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
+        ),
+        (
+            "Symbol.dispose".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
+        ),
+    ]);
+    for error in transform_errors {
+        schedule_uncaught(state, error)?;
+    }
+    Ok(scope)
 }
 
 fn tracing_member(
@@ -769,6 +816,13 @@ pub fn dispose_store_scope(
     }
     let stores = execute::get_property(receiver, SCOPE_STORE);
     let previous = execute::get_property(receiver, SCOPE_PREVIOUS);
+    let end = execute::get_property(receiver, SCOPE_END);
+    let end_result = if !matches!(end, Value::Undefined) && channel_has_subscribers(state, &end) {
+        let context = execute::get_property(receiver, SCOPE_CONTEXT);
+        publish(state, Some(&end), std::slice::from_ref(&context))
+    } else {
+        Ok(Value::Undefined)
+    };
     let length = execute::own_enumerable_keys(&stores).len();
     for index in 0..length {
         let store = execute::get_property(&stores, &index.to_string());
@@ -779,9 +833,8 @@ pub fn dispose_store_scope(
             std::slice::from_ref(&value),
         );
     }
-    let _ = state;
     let _ = execute::set_property_in_place(receiver, SCOPE_ACTIVE, Value::Boolean(false));
-    Ok(Value::Undefined)
+    end_result.map(|_| Value::Undefined)
 }
 
 pub fn unbind_store(
