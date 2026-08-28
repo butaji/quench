@@ -1019,11 +1019,34 @@ mod stubs {
                     "Invalid date-time-like",
                 ));
             }
+            if crate::temporal::plain_date::is_temporal_date_like(partial) {
+                return Err(crate::value::error::throw_type_error("Invalid date-time-like"));
+            }
             let options = arguments.get(1);
             if options.is_some_and(|value| {
                 !matches!(value, Value::Undefined) && !crate::value::is_object(value)
             }) {
                 return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let calendar = crate::execute::get_property_result(partial, "calendar")?;
+            if !matches!(calendar, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error("Invalid calendar"));
+            }
+            let partial_time_zone = crate::execute::get_property_result(partial, "timeZone")?;
+            if !matches!(partial_time_zone, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error("Invalid time zone"));
+            }
+            let has_field = [
+                "year", "month", "monthCode", "day", "hour", "minute", "second",
+                "millisecond", "microsecond", "nanosecond",
+            ]
+            .iter()
+            .any(|name| {
+                crate::execute::get_property_result(partial, name)
+                    .is_ok_and(|value| !matches!(value, Value::Undefined))
+            });
+            if !has_field {
+                return Err(crate::value::error::throw_type_error("Insufficient date-time data"));
             }
             let overflow = options
                 .filter(|value| !matches!(value, Value::Undefined))
