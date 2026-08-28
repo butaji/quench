@@ -26,12 +26,7 @@ pub(crate) fn of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver.filter(|value| is_constructor(value)) else {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.of called on a non-constructor",
-        ));
-    };
-    create_result(Some(receiver), arguments.to_vec(), false)
+    create_result(receiver.filter(|value| is_constructor(value)), arguments.to_vec(), false)
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
@@ -71,30 +66,33 @@ fn from_iterable(
     mapper: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    let custom_result = uses_custom_result(receiver);
+    let mut result = custom_result
+        .then(|| construct_result(receiver, 0, true))
+        .transpose()?;
     let mut source_values = Vec::new();
+    let mut source_length = 0;
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
     crate::collections::iterator::for_each_iterable(source, |item| {
-        source_values.push(item);
+        let index = source_length;
+        source_length += 1;
+        let value = map_item(mapper, &this_arg, item, index)?;
+        if let Some(target) = result.take() {
+            result = Some(write_result_element(target, index, value)?);
+        } else {
+            source_values.push(value);
+        }
         Ok(())
     })?;
-    let source_length = source_values.len();
-    let values = source_values
-        .into_iter()
-        .enumerate()
-        .map(|(index, item)| map_item(mapper, &this_arg, item, index))
-        .collect::<Result<Vec<_>, _>>()?;
-    if !uses_custom_result(receiver) {
-        return Ok(Value::array(values));
+    source_length = source_length.max(source_values.len());
+    if let Some(result) = result {
+        if crate::typed_array_ops::is_view(&result) {
+            return Ok(result);
+        }
+        return set_result_length(result, source_length);
     }
-    let mut result = construct_result(receiver, 0, true)?;
-    for (index, value) in values.into_iter().enumerate() {
-        result = write_result_element(result, index, value)?;
-    }
-    if crate::typed_array_ops::is_view(&result) {
-        return Ok(result);
-    }
-    set_result_length(result, source_length)
+    Ok(Value::array(source_values))
 }
 
 fn uses_custom_result(receiver: Option<&Value>) -> bool {
