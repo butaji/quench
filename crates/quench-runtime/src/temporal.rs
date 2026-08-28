@@ -63,10 +63,7 @@ fn zoned_record(
     let date = chrono::DateTime::from_timestamp(seconds as i64, nanos as u32)
         .map(|value| value.date_naive());
     let (year, month, day, weekday, ordinal, week, week_year, days_month) = if let Some(date) = date {
-        let days_month = (date + chrono::Days::new(32))
-            .with_day(1)
-            .map(|next| (next - chrono::Days::new(1)).day())
-            .unwrap_or(30);
+        let days_month = crate::temporal::plain_date::days_in_month_for_record(date.year(), date.month());
         (date.year(), date.month(), date.day(), date.weekday().number_from_monday(), date.ordinal(), date.iso_week().week(), date.iso_week().year(), days_month)
     } else {
         let days = seconds.div_euclid(86_400);
@@ -474,6 +471,11 @@ mod stubs {
         _receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
+        if builtin == crate::ops::Builtin::TemporalZonedDateTime {
+            return Some(Err(crate::value::error::throw_type_error(
+                "Temporal.ZonedDateTime requires new",
+            )));
+        }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeFrom {
             return Some(zoned_from(arguments.first()));
         }
@@ -636,6 +638,9 @@ mod stubs {
                 .next()
                 .unwrap_or(text);
             let (date, time) = date_time.split_once('T').unwrap_or((date_time, "00:00:00"));
+            if date.starts_with("-000000") {
+                return Err(crate::value::error::throw_range_error("Invalid year"));
+            }
             let (parsed_year, parsed_month, parsed_day) = super::parse_date_parts(date)
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
             let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
@@ -688,6 +693,15 @@ mod stubs {
                     time_parts[2] = second;
                 }
             }
+            if time_parts.get(2).is_some_and(|second| *second == 60) {
+                time_parts[2] = 59;
+            }
+            if time_parts.first().is_some_and(|hour| !(*hour >= 0 && *hour <= 23))
+                || time_parts.get(1).is_some_and(|minute| !(*minute >= 0 && *minute <= 59))
+                || time_parts.get(2).is_some_and(|second| !(*second >= 0 && *second <= 59))
+            {
+                return Err(crate::value::error::throw_range_error("Invalid time"));
+            }
             let year = parsed_year;
             let month = parsed_month;
             let day = parsed_day;
@@ -733,12 +747,20 @@ mod stubs {
         }
         let epoch = crate::execute::get_property_result(value, "epochNanoseconds");
         if epoch.is_err() || matches!(&epoch, Ok(Value::Undefined)) {
-            let year =
-                crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?
-                    as i32;
+            let year_value = crate::execute::get_property_result(value, "year")?;
+            let day_value = crate::execute::get_property_result(value, "day")?;
             let month_value = crate::execute::get_property_result(value, "month")?;
+            let month_code_value = crate::execute::get_property_result(value, "monthCode")?;
+            if matches!(year_value, Value::Undefined)
+                || matches!(day_value, Value::Undefined)
+                || (matches!(month_value, Value::Undefined)
+                    && matches!(month_code_value, Value::Undefined))
+            {
+                return Err(crate::value::error::throw_type_error("Missing ZonedDateTime field"));
+            }
+            let year = crate::conversion::to_number(&year_value)? as i32;
             let month = if matches!(month_value, Value::Undefined) {
-                match crate::execute::get_property_result(value, "monthCode")? {
+                match month_code_value {
                     Value::String(code) if code.len() == 3 && code.starts_with('M') => code[1..]
                         .parse::<u32>()
                         .map_err(|_| crate::value::error::throw_range_error("Invalid monthCode"))?,
@@ -747,9 +769,7 @@ mod stubs {
             } else {
                 crate::conversion::to_number(&month_value)? as u32
             };
-            let day =
-                crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?
-                    as u32;
+            let day = crate::conversion::to_number(&day_value)? as u32;
             let hour = crate::conversion::to_number(
                 &crate::execute::get_property_result(value, "hour").unwrap_or(Value::Number(0.0)),
             )? as i128;
