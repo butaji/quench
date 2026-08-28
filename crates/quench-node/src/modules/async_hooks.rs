@@ -44,7 +44,8 @@ use crate::registry::{
     SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_SNAPSHOT,
     SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER,
     SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_ID,
-    SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID,
+    SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_RESOURCE_DOMAIN,
+    SPEC_ASYNC_TRIGGER_ID,
 };
 
 #[derive(Debug)]
@@ -675,6 +676,15 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             crate::host::capability(SPEC_ASYNC_RESOURCE_TRIGGER),
         ),
     ]);
+    let resource = execute::define_property(
+        resource,
+        "domain",
+        host_api::object(vec![
+            ("configurable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("get".into(), crate::host::capability(SPEC_ASYNC_RESOURCE_DOMAIN)),
+        ]),
+    )?;
     let callbacks = active_callbacks(state, HookEvent::Init);
     let resource_type = if public_constructor {
         args.first()
@@ -700,6 +710,27 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         );
     }
     Ok(resource)
+}
+
+pub fn resource_domain(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        (
+            "code".into(),
+            Value::String("ERR_ASYNC_RESOURCE_DOMAIN_REMOVED".into()),
+        ),
+        (
+            "message".into(),
+            Value::String(
+                "The domain property on AsyncResource has been removed. Use AsyncLocalStorage instead."
+                    .into(),
+            ),
+        ),
+    ])))
 }
 
 /// Register an externally-created worker object with the canonical hook state.

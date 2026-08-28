@@ -206,6 +206,7 @@ node_api! {
     (SPEC_ASYNC_RESOURCE_DESTROY, "async_hooks:resource:emitDestroy", 0x1418),
     (SPEC_ASYNC_RESOURCE_ID, "async_hooks:resource:asyncId", 0x1419),
     (SPEC_ASYNC_RESOURCE_TRIGGER, "async_hooks:resource:triggerAsyncId", 0x141A),
+    (SPEC_ASYNC_RESOURCE_DOMAIN, "async_hooks:resource:domain", 0x141D),
     (SPEC_ASYNC_HOOK_ENABLE, "async_hooks:hook:enable", 0x141B),
     (SPEC_ASYNC_HOOK_DISABLE, "async_hooks:hook:disable", 0x141C),
     (SPEC_ASYNC_LOCAL_STORAGE, "async_hooks:AsyncLocalStorage", 0x1F30),
