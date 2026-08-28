@@ -283,7 +283,11 @@ fn parse_timezone_identifier(
     {
         return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
-    Ok(text)
+    if text.parse::<chrono_tz::Tz>().is_ok() {
+        Ok(text)
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid time zone"))
+    }
 }
 
 fn normalize_offset_identifier(text: &str) -> Option<String> {
