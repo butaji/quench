@@ -685,6 +685,14 @@ impl ArrayData {
             .flatten()
     }
 
+    pub(crate) fn dense_numeric_snapshot(&self) -> Option<Vec<f64>> {
+        self.is_dense_numeric_data().then(|| {
+            (0..self.logical_len())
+                .map(|index| self.dense_number_at(index).unwrap_or(0.0))
+                .collect()
+        })
+    }
+
     #[inline]
     pub(crate) fn numeric_cells(&self) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
         self.widen_mutable_numeric_kind();
