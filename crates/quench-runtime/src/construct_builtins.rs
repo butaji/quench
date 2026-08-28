@@ -157,7 +157,6 @@ fn construct_weak_ref(arguments: &[Value]) -> Result<Value, crate::execute::VmEr
     };
     let weak = Value::Object(Rc::new(ObjectData::new(vec![
         ("\0weakref".to_string(), target.clone()),
-        ("deref".to_string(), Value::Builtin(crate::ops::Builtin::WeakRefDeref)),
         (
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::WeakRefPrototype),
