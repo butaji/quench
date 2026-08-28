@@ -52,7 +52,7 @@ pub(crate) fn zoned_construct(
     ))
 }
 
-fn zoned_record(
+pub(crate) fn zoned_record(
     epoch: i128,
     timezone: String,
     prototype: crate::ops::Builtin,
@@ -216,7 +216,7 @@ fn format_year(year: i32) -> String {
     }
 }
 
-fn parse_timezone_identifier(
+pub(crate) fn parse_timezone_identifier(
     value: &crate::value::Value,
 ) -> Result<String, crate::execute::VmError> {
     if matches!(
@@ -1019,11 +1019,34 @@ mod stubs {
                     "Invalid date-time-like",
                 ));
             }
+            if crate::temporal::plain_date::is_temporal_date_like(partial) {
+                return Err(crate::value::error::throw_type_error("Invalid date-time-like"));
+            }
             let options = arguments.get(1);
             if options.is_some_and(|value| {
                 !matches!(value, Value::Undefined) && !crate::value::is_object(value)
             }) {
                 return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let calendar = crate::execute::get_property_result(partial, "calendar")?;
+            if !matches!(calendar, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error("Invalid calendar"));
+            }
+            let partial_time_zone = crate::execute::get_property_result(partial, "timeZone")?;
+            if !matches!(partial_time_zone, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error("Invalid time zone"));
+            }
+            let has_field = [
+                "year", "month", "monthCode", "day", "hour", "minute", "second",
+                "millisecond", "microsecond", "nanosecond",
+            ]
+            .iter()
+            .any(|name| {
+                crate::execute::get_property_result(partial, name)
+                    .is_ok_and(|value| !matches!(value, Value::Undefined))
+            });
+            if !has_field {
+                return Err(crate::value::error::throw_type_error("Insufficient date-time data"));
             }
             let overflow = options
                 .filter(|value| !matches!(value, Value::Undefined))
@@ -1046,6 +1069,17 @@ mod stubs {
             };
             let month = crate::execute::get_property_result(partial, "month")?;
             let month_code = crate::execute::get_property_result(partial, "monthCode")?;
+            if !matches!(month, Value::Undefined) && !matches!(month_code, Value::Undefined) {
+                let month_number = crate::conversion::to_number(&month)?;
+                let code = crate::conversion::to_string(&month_code)?;
+                let code_number = code
+                    .strip_prefix('M')
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
+                if month_number != code_number {
+                    return Err(crate::value::error::throw_range_error("Month mismatch"));
+                }
+            }
             let mut fields = vec![
                 ("year".to_string(), value_or("year")?),
                 ("day".to_string(), value_or("day")?),
@@ -2068,12 +2102,13 @@ mod stubs {
                         || crate::conversion::to_number(&value),
                         |text| Ok(text.parse::<f64>().unwrap_or(f64::NAN)),
                     )?;
+                    let value = value.floor();
                     if !value.is_finite() || !(0.0..=9.0).contains(&value) {
                         return Err(crate::value::error::throw_range_error(
                             "Invalid fractionalSecondDigits",
                         ));
                     }
-                    value.floor() as usize
+                    value as usize
                 }
             }
         };
