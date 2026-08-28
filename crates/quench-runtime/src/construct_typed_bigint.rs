@@ -177,7 +177,7 @@ fn bigint_view_bounds(
     }
     let length = match arguments.get(2) {
         None | Some(Value::Undefined) => {
-            if available % BIGINT_ELEMENT_SIZE != 0 {
+            if available % BIGINT_ELEMENT_SIZE != 0 && buffer.max_byte_length.is_none() {
                 return Err(range_error(&format!("Invalid {name} byte length")));
             }
             view_length(buffer, available / BIGINT_ELEMENT_SIZE)
