@@ -1390,6 +1390,72 @@ mod stubs {
                 }
                 Ok(value)
             };
+            let calendar = crate::execute::get_property_result(partial, "calendar")?;
+            if !matches!(calendar, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error("Invalid calendar"));
+            }
+            let partial_time_zone = crate::execute::get_property_result(partial, "timeZone")?;
+            if !matches!(partial_time_zone, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error("Invalid time zone"));
+            }
+            let mut prepared = Vec::with_capacity(11);
+            let mut has_field = false;
+            let mut month_provided = false;
+            let mut month_code_provided = false;
+            let mut offset_provided = false;
+            for name in [
+                "day", "hour", "microsecond", "millisecond", "minute", "month",
+                "monthCode", "nanosecond", "offset", "second", "year",
+            ] {
+                let raw = crate::execute::get_property_result(partial, name)?;
+                if !matches!(raw, Value::Undefined) {
+                    has_field = true;
+                    month_provided |= name == "month";
+                    month_code_provided |= name == "monthCode";
+                    offset_provided |= name == "offset";
+                }
+                let value = if matches!(raw, Value::Undefined) { property(name)? } else { raw };
+                let value = if name == "monthCode" || name == "offset" {
+                    if name == "offset"
+                        && !matches!(value, Value::String(_) | Value::StringUnits(_) | Value::Object(_))
+                    {
+                        return Err(crate::value::error::throw_type_error("Invalid offset"));
+                    }
+                    Value::String(crate::conversion::to_string(&value)?)
+                } else {
+                    Value::Number(crate::conversion::to_number(&value)?)
+                };
+                if name == "offset"
+                    && super::normalize_offset_identifier(&crate::conversion::to_string(&value)?).is_none()
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid offset"));
+                }
+                prepared.push((name, value));
+            }
+            if !has_field {
+                return Err(crate::value::error::throw_type_error("Insufficient date-time data"));
+            }
+            let value_for = |name: &str| {
+                prepared.iter().find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.clone()).unwrap_or(Value::Undefined)
+            };
+            let month = value_for("month");
+            let month_code = value_for("monthCode");
+            let partial_offset = if offset_provided { value_for("offset") } else { Value::Undefined };
+            let mut fields = vec![
+                ("year".to_string(), value_for("year")),
+                ("day".to_string(), value_for("day")),
+                ("hour".to_string(), value_for("hour")),
+                ("minute".to_string(), value_for("minute")),
+                ("second".to_string(), value_for("second")),
+                ("millisecond".to_string(), value_for("millisecond")),
+                ("microsecond".to_string(), value_for("microsecond")),
+                ("nanosecond".to_string(), value_for("nanosecond")),
+                ("timeZone".to_string(), property("timeZoneId")?),
+            ];
+            if !matches!(partial_offset, Value::Undefined) {
+                fields.push(("offset".to_string(), partial_offset.clone()));
+            }
             let _disambiguation = option_string(
                 "disambiguation",
                 &["compatible", "earlier", "later", "reject"],
@@ -1400,85 +1466,28 @@ mod stubs {
                 &["prefer", "use", "ignore", "reject"],
                 "reject",
             )?;
-            let calendar = crate::execute::get_property_result(partial, "calendar")?;
-            if !matches!(calendar, Value::Undefined) {
-                return Err(crate::value::error::throw_type_error("Invalid calendar"));
-            }
-            let partial_time_zone = crate::execute::get_property_result(partial, "timeZone")?;
-            if !matches!(partial_time_zone, Value::Undefined) {
-                return Err(crate::value::error::throw_type_error("Invalid time zone"));
-            }
-            let has_field = [
-                "year", "month", "monthCode", "day", "hour", "minute", "second",
-                "millisecond", "microsecond", "nanosecond", "offset",
-            ]
-            .iter()
-            .any(|name| {
-                crate::execute::get_property_result(partial, name)
-                    .is_ok_and(|value| !matches!(value, Value::Undefined))
-            });
-            if !has_field {
-                return Err(crate::value::error::throw_type_error("Insufficient date-time data"));
-            }
             let overflow = option_string("overflow", &["constrain", "reject"], "constrain")?;
             if overflow != "constrain" && overflow != "reject" {
                 return Err(crate::value::error::throw_range_error("Invalid overflow"));
             }
-            let value_or = |name: &str| -> Result<Value, VmError> {
-                let value = crate::execute::get_property_result(partial, name)?;
-                if matches!(value, Value::Undefined) {
-                    property(name)
-                } else {
-                    Ok(value)
-                }
-            };
-            let month = crate::execute::get_property_result(partial, "month")?;
-            let month_code = crate::execute::get_property_result(partial, "monthCode")?;
-            if !matches!(month_code, Value::Undefined) {
+            if month_code_provided {
                 let code = crate::conversion::to_string(&month_code)?;
                 if code.ends_with('L') {
                     return Err(crate::value::error::throw_range_error("Invalid monthCode"));
                 }
-            }
-            if !matches!(month, Value::Undefined) && !matches!(month_code, Value::Undefined) {
-                let month_number = crate::conversion::to_number(&month)?;
-                let code = crate::conversion::to_string(&month_code)?;
-                let code_number = code
-                    .strip_prefix('M')
+                let code_number = code.strip_prefix('M')
                     .and_then(|value| value.parse::<f64>().ok())
                     .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
-                if month_number.trunc() != code_number {
+                if month_provided && crate::conversion::to_number(&month)?.trunc() != code_number {
                     return Err(crate::value::error::throw_range_error("Month mismatch"));
                 }
             }
-            let mut fields = vec![
-                ("year".to_string(), value_or("year")?),
-                ("day".to_string(), value_or("day")?),
-                ("hour".to_string(), value_or("hour")?),
-                ("minute".to_string(), value_or("minute")?),
-                ("second".to_string(), value_or("second")?),
-                ("millisecond".to_string(), value_or("millisecond")?),
-                ("microsecond".to_string(), value_or("microsecond")?),
-                ("nanosecond".to_string(), value_or("nanosecond")?),
-                ("timeZone".to_string(), property("timeZoneId")?),
-            ];
-            let partial_offset = crate::execute::get_property_result(partial, "offset")?;
-            if !matches!(partial_offset, Value::Undefined) {
-                if !matches!(partial_offset, Value::String(_) | Value::StringUnits(_)) {
-                    return Err(crate::value::error::throw_type_error("Invalid offset"));
-                }
-                let offset_text = crate::conversion::to_string(&partial_offset)?;
-                if super::normalize_offset_identifier(&offset_text).is_none() {
-                    return Err(crate::value::error::throw_range_error("Invalid offset"));
-                }
-                fields.push(("offset".to_string(), partial_offset.clone()));
-            }
-            if matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined) {
-                fields.push(("month".to_string(), property("month")?));
-            } else if !matches!(month, Value::Undefined) {
+            if month_provided {
                 fields.push(("month".to_string(), month));
-            } else if !matches!(month_code, Value::Undefined) {
+            } else if month_code_provided {
                 fields.push(("monthCode".to_string(), month_code));
+            } else {
+                fields.push(("month".to_string(), value_for("month")));
             }
             let year_number = fields
                 .iter()
@@ -2565,22 +2574,28 @@ mod stubs {
                     }
                 };
                 if smallest == "year" {
-                    let mut whole_years = end_date.year() - start_date.year();
-                    let anniversary = start_date.with_year((start_date.year() + whole_years) as i32);
+                    let (year_start, year_end) = if direction > 0 {
+                        (start_date, end_date)
+                    } else {
+                        (end_date, start_date)
+                    };
+                    let calendar_sign = if year_end >= year_start { 1 } else { -1 };
+                    let mut whole_years = (year_end.year() - year_start.year()).abs();
+                    let anniversary = year_start.with_year(year_start.year() + calendar_sign * whole_years);
                     if let Some(anniversary) = anniversary {
-                        if whole_years > 0 && end_date < anniversary {
+                        if calendar_sign > 0 && year_end < anniversary {
                             whole_years -= 1;
-                        } else if whole_years < 0 && end_date > anniversary {
-                            whole_years += 1;
+                        } else if calendar_sign < 0 && year_end > anniversary {
+                            whole_years -= 1;
                         }
                     }
-                    let anniversary = start_date
-                        .with_year((start_date.year() + whole_years) as i32)
-                        .unwrap_or(start_date);
-                    let residual_days = (end_date - anniversary).num_days() as i128;
+                    let anniversary = year_start
+                        .with_year(year_start.year() + calendar_sign * whole_years)
+                        .unwrap_or(year_start);
+                    let residual_days = ((year_end - anniversary).num_days() * i64::from(calendar_sign)) as i128;
                     let year_days = if chrono::NaiveDate::from_ymd_opt(anniversary.year(), 2, 29).is_some() { 366 } else { 365 };
                     let adjustment = {
-                        let sign = residual_days.signum();
+                        let sign = delta.signum();
                         let twice = residual_days.unsigned_abs().saturating_mul(2);
                         let unit = u128::from(year_days as u32);
                         match rounding_mode.as_str() {
@@ -2595,17 +2610,48 @@ mod stubs {
                             _ => 0,
                         }
                     };
-                    fields[0] = Value::Number((whole_years + adjustment) as f64);
+                    fields[0] = Value::Number((whole_years + adjustment.abs()) as f64 * delta.signum() as f64);
                     fields[1] = Value::Number(0.0);
                     fields[3] = Value::Number(0.0);
                 } else if smallest == "month" {
-                    let month_length = chrono::NaiveDate::from_ymd_opt(anchor.year(), anchor.month(), 1)
+                    let (month_start, month_end) = if direction > 0 {
+                        (start_date, end_date)
+                    } else {
+                        (end_date, start_date)
+                    };
+                    let calendar_sign = if month_end >= month_start { 1 } else { -1 };
+                    let mut total_months = ((month_end.year() - month_start.year()) * 12
+                        + month_end.month() as i32 - month_start.month() as i32).abs();
+                    if calendar_sign > 0 && month_end.day() < month_start.day() {
+                        total_months -= 1;
+                    } else if calendar_sign < 0 && month_end.day() > month_start.day() {
+                        total_months -= 1;
+                    }
+                    let month_anchor = if calendar_sign > 0 {
+                        month_start.checked_add_months(chrono::Months::new(total_months as u32)).unwrap_or(month_start)
+                    } else {
+                        month_start.checked_sub_months(chrono::Months::new(total_months as u32)).unwrap_or(month_start)
+                    };
+                    let residual_days = ((month_end - month_anchor).num_days() * i64::from(calendar_sign)) as i128;
+                    let month_length = chrono::NaiveDate::from_ymd_opt(month_anchor.year(), month_anchor.month(), 1)
                         .and_then(|date| date.checked_add_months(chrono::Months::new(1)))
-                        .map(|next| (next - chrono::NaiveDate::from_ymd_opt(anchor.year(), anchor.month(), 1).unwrap()).num_days() as i128)
+                        .map(|next| (next - chrono::NaiveDate::from_ymd_opt(month_anchor.year(), month_anchor.month(), 1).unwrap()).num_days() as i128)
                         .unwrap_or(30);
-                    let total_months = years * 12 + months;
-                    let adjustment = round_adjust(total_months, month_length);
-                    let rounded_months = total_months + adjustment;
+                    let signed_residual = residual_days * delta.signum();
+                    let twice = signed_residual.unsigned_abs().saturating_mul(2);
+                    let unit = month_length.unsigned_abs();
+                    let adjustment = match rounding_mode.as_str() {
+                        "ceil" => i32::from(signed_residual > 0),
+                        "floor" => -i32::from(signed_residual < 0),
+                        "expand" => signed_residual.signum() as i32,
+                        "halfCeil" => if twice > unit || (twice == unit && signed_residual > 0) { signed_residual.signum() as i32 } else { 0 },
+                        "halfFloor" => if twice > unit || (twice == unit && signed_residual < 0) { signed_residual.signum() as i32 } else { 0 },
+                        "halfTrunc" => if twice > unit { signed_residual.signum() as i32 } else { 0 },
+                        "halfExpand" => if twice >= unit { signed_residual.signum() as i32 } else { 0 },
+                        "halfEven" => if twice > unit || (twice == unit && total_months % 2 != 0) { signed_residual.signum() as i32 } else { 0 },
+                        _ => 0,
+                    };
+                    let rounded_months = (total_months + adjustment.abs()) * delta.signum() as i32;
                     if largest == "year" {
                         fields[0] = Value::Number((rounded_months / 12) as f64);
                         fields[1] = Value::Number((rounded_months % 12) as f64);
