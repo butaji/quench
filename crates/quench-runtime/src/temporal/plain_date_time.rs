@@ -501,7 +501,9 @@ fn calendar_difference(
         weeks = 0;
         days = rounded as i64;
     }
-    if matches!(smallest, "year" | "month" | "week") {
+    if matches!(smallest, "year" | "month" | "week")
+        && (days != 0 || time_fraction_days != 0.0)
+    {
         let unit_value = match smallest {
             "year" => {
                 years as f64 + months as f64 / 12.0 + (days as f64 + time_fraction_days) / 365.0
@@ -543,17 +545,39 @@ fn calendar_difference(
             }
         }
     }
+    let mut time_remainder = if matches!(smallest, "year" | "month" | "week" | "day") {
+        0
+    } else {
+        time_of_day_nanos(end) - time_of_day_nanos(start)
+    };
+    if time_remainder < 0 {
+        days -= 1;
+        time_remainder += 86_400_000_000_000;
+    } else if time_remainder >= 86_400_000_000_000 {
+        days += 1;
+        time_remainder -= 86_400_000_000_000;
+    }
+    let hours = time_remainder / 3_600_000_000_000;
+    time_remainder %= 3_600_000_000_000;
+    let minutes = time_remainder / 60_000_000_000;
+    time_remainder %= 60_000_000_000;
+    let seconds = time_remainder / 1_000_000_000;
+    time_remainder %= 1_000_000_000;
+    let milliseconds = time_remainder / 1_000_000;
+    time_remainder %= 1_000_000;
+    let microseconds = time_remainder / 1_000;
+    let nanoseconds = time_remainder % 1_000;
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
         Value::Number((weeks * sign) as f64),
         Value::Number((days * sign) as f64),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
+        Value::Number((hours * i128::from(sign)) as f64),
+        Value::Number((minutes * i128::from(sign)) as f64),
+        Value::Number((seconds * i128::from(sign)) as f64),
+        Value::Number((milliseconds * i128::from(sign)) as f64),
+        Value::Number((microseconds * i128::from(sign)) as f64),
+        Value::Number((nanoseconds * i128::from(sign)) as f64),
     ])
 }
 
