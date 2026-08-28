@@ -246,3 +246,37 @@ full HashMap-based execution trace distorted Earley beyond several times its
 90-second uninstrumented runtime.  These tools are unavailable as causal
 evidence for Earley; retain per-process RSS/instruction counts and use a
 lower-perturbation profiler or allocation counters before making a VM change.
+
+## Earley-Boyer allocation and constructor evidence
+
+The local Node oracle separates unavoidable workload allocation from Quench
+retention: EarleyBoyer completed in 4.68 CPU seconds and 132,677,632-byte RSS;
+Quench needed 90.32 CPU seconds and 1,678,082,048-byte RSS.  Splay's roughly
+500 MB peak, in contrast, matches Node's 513 MB, so it is not the first
+reclamation target.
+
+The trace-only `QUENCH_EXEC_TRACE_HEAP_ONLY` lifecycle mode keeps per-opcode
+HashMap tracing disabled.  In EarleyBoyer it saw 27,139,825 object allocations
+and 26,237,456 drops before process teardown, with 25,914,058/25,769,067
+environment allocations/drops.  A one-invocation split found the score gap in
+the Boyer half: Quench 5.21 CPU seconds / 92.3B instructions versus Node 0.05
+CPU seconds / 618M instructions.  Its ordinary trace recorded 258,568
+two-field record constructions and 203,173 calls to one 84-op recursive
+function.
+
+The existing two-field record constructor fast path rejected any prototype
+with methods, even where neither assigned field nor its descriptor appeared
+anywhere in the ordinary prototype chain.  It now traverses that chain,
+rejecting replacements and all field/descriptor/deletion conflicts, while
+retaining the complete interpreter fallback.  Node and Quench agree for an
+ordinary custom prototype, own setter, and inherited setter.  Isolated Boyer
+improved from 5.21 to **2.50 CPU seconds**, 92.3B to **52.8B instructions**,
+and 98.5 MB to **80.8 MB RSS**.  The official EarleyBoyer score improved from
+98.3 to **105**, with RSS down from 1.68 GB to **1.58 GB**.
+
+An item-1 code-view experiment cached flattened loop source in a shared lazy
+`FunctionCode` cell.  It did not reduce retired instructions (about 52.7B in
+both forms) or repeated Boyer CPU time (3.5--3.8 seconds under the current
+host load), so it was reverted.  Re-freezing is not the dominant cost in the
+hot recursive path; compact Value ownership, dispatch, call frames, and
+recursive structural execution remain the measured priorities.
