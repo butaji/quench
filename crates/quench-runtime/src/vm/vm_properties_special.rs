@@ -290,7 +290,13 @@ fn bound_constructor_prototype(bound: &crate::value::BoundFunctionValue) -> Valu
     let Value::Builtin(builtin) = bound.target else {
         return Value::Undefined;
     };
-    let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) else {
+    let prototype = crate::builtin_meta::instance_prototype(builtin).or_else(|| {
+        match crate::builtins::property(builtin, "prototype") {
+            Value::Builtin(prototype) => Some(prototype),
+            _ => None,
+        }
+    });
+    let Some(prototype) = prototype else {
         return Value::Undefined;
     };
     crate::vm::realm_intrinsic_for(bound.realm, prototype)
