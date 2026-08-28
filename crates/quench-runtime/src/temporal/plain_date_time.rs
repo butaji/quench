@@ -1308,10 +1308,26 @@ fn with(
     if let Some(value) = options {
         if !matches!(
             value,
-            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
+            Value::Undefined
+                | Value::Object(_)
+                | Value::Function(_)
+                | Value::BoundFunction(_)
+                | Value::Proxy(_)
         ) {
             return Err(crate::value::error::throw_type_error("Invalid options"));
         }
+    }
+    let overflow = options
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| crate::execute::get_property_result(value, "overflow"))
+        .transpose()?
+        .unwrap_or(Value::String("constrain".into()));
+    let overflow = match overflow {
+        Value::Undefined => "constrain".to_string(),
+        value => crate::conversion::to_string(&value)?,
+    };
+    if overflow != "constrain" && overflow != "reject" {
+        return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
     let changes = changes
         .filter(|value| crate::value::is_object(value))
@@ -1329,6 +1345,12 @@ fn with(
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
     }
     let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    if !matches!(month_code, Value::Undefined) {
+        let code = crate::conversion::to_string(&month_code)?;
+        if code.ends_with('L') {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+    }
     let month = crate::execute::get_property_result(changes, "month")?;
     if !matches!(month_code, Value::Undefined) {
         values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
@@ -1358,16 +1380,6 @@ fn with(
         return Err(crate::value::error::throw_type_error(
             "Insufficient date-time data",
         ));
-    }
-    let overflow = options
-        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
-        .unwrap_or(Value::String("constrain".into()));
-    let overflow = match overflow {
-        Value::Undefined => "constrain".to_string(),
-        value => crate::conversion::to_string(&value)?,
-    };
-    if overflow != "constrain" && overflow != "reject" {
-        return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
     if !values[0].is_finite()
         || !values[1].is_finite()
