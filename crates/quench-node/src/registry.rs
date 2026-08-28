@@ -592,6 +592,7 @@ pub const SPEC_FS_READSTREAM: NodeSpec = NodeSpec::new("fs:ReadStream", 0x1153);
 pub const SPEC_FS_WRITESTREAM: NodeSpec = NodeSpec::new("fs:WriteStream", 0x1154);
 pub const SPEC_FS_CREATE_READSTREAM: NodeSpec = NodeSpec::new("fs:createReadStream", 0x1158);
 pub const SPEC_FS_READSTREAM_OPEN: NodeSpec = NodeSpec::new("fs:ReadStream:open", 0x1159);
+pub const SPEC_FS_OPEN: NodeSpec = NodeSpec::new("fs:open", 0x115A);
 pub const SPEC_FS_OPENDIR: NodeSpec = NodeSpec::new("fs:opendir", 0x1155);
 pub const SPEC_FS_OPENDIRSYNC: NodeSpec = NodeSpec::new("fs:opendirSync", 0x1156);
 pub const SPEC_FSP_READFILE: NodeSpec = NodeSpec::new("fs:promises:readFile", 0x1140);

@@ -11,7 +11,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-pub struct FsState;
+pub struct FsState {
+    next_fd: i32,
+}
 
 impl Default for FsState {
     fn default() -> Self {
@@ -21,7 +23,7 @@ impl Default for FsState {
 
 impl FsState {
     pub fn new() -> Self {
-        Self
+        Self { next_fd: 3 }
     }
 }
 
@@ -210,7 +212,10 @@ fn callback_type_error(value: &Value) -> VmError {
 
 /// Queue an async fs callback on the event loop's immediate queue.
 pub(crate) fn defer(state: &Rc<RefCell<HostState>>, cb: &Value, args: Vec<Value>) {
-    state.borrow().event_loop.queue_immediate(cb.clone(), args);
+    let callback = crate::modules::domain::current(state)
+        .and_then(|domain| crate::modules::domain::bind(state, Some(&domain), &[cb.clone()]).ok())
+        .unwrap_or_else(|| cb.clone());
+    state.borrow().event_loop.queue_immediate(callback, args);
 }
 
 /// Split `args` into `(leading, callback)` for the async family: the
@@ -259,6 +264,7 @@ pub fn build() -> Value {
         ("readlink", crate::host::capability(SPEC_FS_READLINK)),
         ("chmod", crate::host::capability(SPEC_FS_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
+        ("open", crate::host::capability(SPEC_FS_OPEN)),
     ];
     props.extend([
         (
@@ -299,6 +305,51 @@ pub fn build() -> Value {
     props.push(("constants", constants()));
     props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn open(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (leading, callback) = async_args(args)?;
+    let path = path_arg(leading.first())?;
+    let flags = match leading.get(1) {
+        None | Some(Value::Undefined) => "r",
+        Some(Value::String(flags)) => flags.as_str(),
+        Some(value) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"flags\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )))
+        }
+    };
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    if flags.contains('w') {
+        options.write(true).create(true).truncate(flags.contains('w'));
+    } else if flags.contains('a') {
+        options.write(true).create(true).append(true);
+    }
+    match options.open(&path) {
+        Ok(_) => {
+            let fd = {
+                let mut host = state.borrow_mut();
+                let fd = host.fs.next_fd;
+                host.fs.next_fd += 1;
+                fd
+            };
+            defer(state, &callback, vec![Value::Null, Value::Number(fd as f64)]);
+        }
+        Err(error) => {
+            let error = match crate::modules::fs_error::fs_error("open", Some(&path), &error) {
+                VmError::Thrown(value) => value,
+                other => return Err(other),
+            };
+            defer(state, &callback, vec![error, Value::Undefined]);
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn create_read_stream(
