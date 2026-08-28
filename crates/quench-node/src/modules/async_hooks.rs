@@ -162,6 +162,11 @@ pub fn new_async_local_storage(
         "enterWith",
         crate::host::capability(SPEC_ASYNC_LOCAL_ENTER),
     );
+    let object = execute::set_property(
+        object,
+        "exit",
+        crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_EXIT),
+    );
     Ok(execute::set_property(
         object,
         "disable",
@@ -219,6 +224,37 @@ pub fn local_disable(
             .retain(|(_, local_id), _| *local_id != id);
     }
     Ok(Value::Undefined)
+}
+
+pub fn local_exit(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::NotCallable);
+    }
+    let id = local_id(receiver).unwrap_or_default();
+    let resource_id = state.borrow().async_hooks.current_id;
+    let previous = state
+        .borrow_mut()
+        .async_hooks
+        .local_stores
+        .remove(&(resource_id, id));
+    let result = execute::call(
+        callback,
+        receiver.unwrap_or(&Value::Undefined),
+        &args[1..],
+    );
+    if let Some(value) = previous {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .insert((resource_id, id), value);
+    }
+    result
 }
 
 pub fn local_run(
