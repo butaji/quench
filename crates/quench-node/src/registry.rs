@@ -247,21 +247,21 @@ node_api! {
 }
 
 node_api! {
-    (SPEC_URL_PARSE, "url:parse", 0x0500),
-    (SPEC_URL_FORMAT, "url:format", 0x0501),
-    (SPEC_URL_RESOLVE, "url:resolve", 0x0502),
-    (SPEC_URL_NEW, "url:URL", 0x0503),
-    (SPEC_URL_LEGACY_NEW, "url:Url", 40),
-    (SPEC_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
-    (SPEC_URL_SEARCHPARAMS_NEW, "url:URLSearchParams", 0x0504),
+    (SPEC_URL_PARSE, CAP_URL_PARSE, "url:parse", 0x0500),
+    (SPEC_URL_FORMAT, CAP_URL_FORMAT, "url:format", 0x0501),
+    (SPEC_URL_RESOLVE, CAP_URL_RESOLVE, "url:resolve", 0x0502),
+    (SPEC_URL_NEW, CAP_URL_NEW, "url:URL", 0x0503),
+    (SPEC_URL_LEGACY_NEW, CAP_URL_LEGACY_NEW, "url:Url", 40),
+    (SPEC_URL_RESOLVE_OBJECT, CAP_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
+    (SPEC_URL_SEARCHPARAMS_NEW, CAP_URL_SEARCH, "url:URLSearchParams", 0x0504),
 }
 
 node_api! {
-    (SPEC_QS_PARSE, "querystring:parse", 0x0600),
-    (SPEC_QS_STRINGIFY, "querystring:stringify", 0x0601),
-    (SPEC_QS_ESCAPE, "querystring:escape", 0x0602),
-    (SPEC_QS_UNESCAPE, "querystring:unescape", 0x0603),
-    (SPEC_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
+    (SPEC_QS_PARSE, CAP_QS_PARSE, "querystring:parse", 0x0600),
+    (SPEC_QS_STRINGIFY, CAP_QS_STRINGIFY, "querystring:stringify", 0x0601),
+    (SPEC_QS_ESCAPE, CAP_QS_ESCAPE, "querystring:escape", 0x0602),
+    (SPEC_QS_UNESCAPE, CAP_QS_UNESCAPE, "querystring:unescape", 0x0603),
+    (SPEC_QS_UNESCAPE_BUFFER, CAP_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
 }
 
 node_api! {
@@ -620,26 +620,26 @@ pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
 node_api! {
-    (SPEC_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
-    (SPEC_URL_GET_HREF, "url:get:href", 0x0506),
-    (SPEC_URL_GET_PROTOCOL, "url:get:protocol", 0x0507),
-    (SPEC_URL_GET_USERNAME, "url:get:username", 0x0508),
-    (SPEC_URL_GET_PASSWORD, "url:get:password", 0x0509),
-    (SPEC_URL_GET_HOST, "url:get:host", 0x050A),
-    (SPEC_URL_GET_HOSTNAME, "url:get:hostname", 0x050B),
-    (SPEC_URL_GET_PORT, "url:get:port", 0x050C),
-    (SPEC_URL_GET_PATHNAME, "url:get:pathname", 0x050D),
-    (SPEC_URL_GET_SEARCH, "url:get:search", 0x050E),
-    (SPEC_URL_GET_HASH, "url:get:hash", 0x050F),
-    (SPEC_URL_GET_ORIGIN, "url:get:origin", 0x0510),
-    (SPEC_URL_GET_SEARCH_PARAMS, "url:get:searchParams", 0x0511),
-    (SPEC_URL_TO_STRING, "url:toString", 0x0512),
-    (SPEC_URL_TO_JSON, "url:toJSON", 0x0513),
-    (SPEC_URL_REVOKE_OBJECT_URL, "url:revokeObjectURL", 0x0514),
-    (SPEC_URL_FILE_URL_TO_PATH, "url:fileURLToPath", 0x0515),
-    (SPEC_URL_TO_HTTP_OPTIONS, "url:urlToHttpOptions", 0x0516),
-    (SPEC_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
-    (SPEC_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
+    (SPEC_URL_PATH_TO_FILE_URL, CAP_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
+    (SPEC_URL_GET_HREF, CAP_URL_GET_HREF, "url:get:href", 0x0506),
+    (SPEC_URL_GET_PROTOCOL, CAP_URL_GET_PROTOCOL, "url:get:protocol", 0x0507),
+    (SPEC_URL_GET_USERNAME, CAP_URL_GET_USERNAME, "url:get:username", 0x0508),
+    (SPEC_URL_GET_PASSWORD, CAP_URL_GET_PASSWORD, "url:get:password", 0x0509),
+    (SPEC_URL_GET_HOST, CAP_URL_GET_HOST, "url:get:host", 0x050A),
+    (SPEC_URL_GET_HOSTNAME, CAP_URL_GET_HOSTNAME, "url:get:hostname", 0x050B),
+    (SPEC_URL_GET_PORT, CAP_URL_GET_PORT, "url:get:port", 0x050C),
+    (SPEC_URL_GET_PATHNAME, CAP_URL_GET_PATHNAME, "url:get:pathname", 0x050D),
+    (SPEC_URL_GET_SEARCH, CAP_URL_GET_SEARCH, "url:get:search", 0x050E),
+    (SPEC_URL_GET_HASH, CAP_URL_GET_HASH, "url:get:hash", 0x050F),
+    (SPEC_URL_GET_ORIGIN, CAP_URL_GET_ORIGIN, "url:get:origin", 0x0510),
+    (SPEC_URL_GET_SEARCH_PARAMS, CAP_URL_GET_SEARCH_PARAMS, "url:get:searchParams", 0x0511),
+    (SPEC_URL_TO_STRING, CAP_URL_TO_STRING, "url:toString", 0x0512),
+    (SPEC_URL_TO_JSON, CAP_URL_TO_JSON, "url:toJSON", 0x0513),
+    (SPEC_URL_REVOKE_OBJECT_URL, CAP_URL_REVOKE_OBJECT_URL, "url:revokeObjectURL", 0x0514),
+    (SPEC_URL_FILE_URL_TO_PATH, CAP_URL_FILE_URL_TO_PATH, "url:fileURLToPath", 0x0515),
+    (SPEC_URL_TO_HTTP_OPTIONS, CAP_URL_TO_HTTP_OPTIONS, "url:urlToHttpOptions", 0x0516),
+    (SPEC_URL_DOMAIN_TO_ASCII, CAP_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
+    (SPEC_URL_DOMAIN_TO_UNICODE, CAP_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
 }
 node_api! {
     (SPEC_STRUCTURED_CLONE, "structuredClone", 0x1F36),
