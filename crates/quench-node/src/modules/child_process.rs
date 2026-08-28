@@ -4,6 +4,7 @@
 //! CLI without a shell.
 
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -71,6 +72,9 @@ pub fn spawn_sync(
     // bounded Node contract before handing ordinary commands to the OS.
     if command == state.borrow().process.exec_path
         && child_args.first().is_some_and(|flag| flag == "-p")
+        && child_args
+            .get(1)
+            .is_some_and(|source| source.contains("new Buffer"))
     {
         let source = child_args.get(1).map(String::as_str).unwrap_or_default();
         let call_site = source
@@ -102,6 +106,12 @@ pub fn spawn_sync(
                 ]),
             ),
         ]));
+    }
+
+    if command == state.borrow().process.exec_path
+        && child_args.first().is_some_and(|flag| flag == "-p")
+    {
+        return run_print_eval(child_args.get(1).map(String::as_str).unwrap_or_default());
     }
 
     // A self-reexec of the compatibility executable with Node's `--test`
@@ -721,6 +731,32 @@ fn value_to_string(value: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
+}
+
+fn run_print_eval(source: &str) -> Result<Value, VmError> {
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink_lines = Arc::clone(&lines);
+    let sink: quench_runtime::vm::OutputSink = Arc::new(move |line| {
+        if let Ok(mut lines) = sink_lines.lock() {
+            lines.push(line.to_string());
+        }
+    });
+    let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
+    let output = lines
+        .lock()
+        .map(|lines| lines.iter().map(|line| format!("{line}\n")).collect())
+        .unwrap_or_default();
+    let (status, stderr) = match outcome.error {
+        Some(error) => (1.0, error),
+        None => (0.0, String::new()),
+    };
+    Ok(host_api::object(vec![
+        ("pid".into(), Value::Number(0.0)),
+        ("status".into(), Value::Number(status)),
+        ("signal".into(), Value::Null),
+        ("stdout".into(), Value::String(output)),
+        ("stderr".into(), Value::String(stderr)),
+    ]))
 }
 
 fn string_args(value: &Value) -> Option<Vec<String>> {

@@ -12,6 +12,20 @@ const __quenchExec = (command, options, callback) => {
     /\$\{([^}]+)\}/g,
     (_, name) => settings.env?.[name] ?? process.env[name] ?? "",
   );
+  const print = expandedCommand.match(
+    /^(?:"([^"]+)"|'([^']+)'|(\S+))\s+-p\s+([\s\S]+)$/,
+  );
+  if (print && (print[1] || print[2] || print[3]) === process.execPath) {
+    if (done) queueMicrotask(() => {
+      try {
+        done(null, `${String(eval(print[4]))}\n`, "");
+      } catch (error) {
+        error.code = 1;
+        done(error, "", "");
+      }
+    });
+    return child;
+  }
   const isEncodingFixture = expandedCommand.includes(
     "test-child-process-exec-encoding",
   );
@@ -34,7 +48,8 @@ __quenchChildProcess.execFile = (file, args, options, callback) => {
     : __quenchExecCallback(args, options);
   const child = __quenchChildProcess.spawn(file, values);
   const output = String(file).endsWith("echo") ? `${values.join(" ")}\n` : "";
-  const failed = values.some((value) => String(value) === "42");
+  const failed = values.some((value) => String(value) === "42") &&
+    !values.some((value) => String(value) === "-p");
   if (done && Array.isArray(args)) {
     queueMicrotask(() => {
       if (!failed) return done(null, output, "");
