@@ -1,9 +1,9 @@
 fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@split")?;
     let mut input = to_string_argument(arguments)?;
-    let limit = split_limit(arguments)?;
     let flags = match_all_flags(&receiver)?;
     let matcher = split_matcher(&receiver, &flags)?;
+    let limit = split_limit(arguments)?;
     if dynamic_splitter(&matcher) {
         return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
