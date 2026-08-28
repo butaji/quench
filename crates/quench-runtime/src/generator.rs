@@ -536,6 +536,9 @@ fn resume_suspended_contexts(
         let (next, pending) =
             crate::loops::resume_async_for_of(&mut registers_mut(generator), &spec, input)?;
         state.async_for_of = pending;
+        if matches!(next, crate::completion::Completion::Normal) {
+            return Ok(None);
+        }
         return resume_machine_frame(generator, state, next).map(Some);
     }
     if let Some(resumed) = resume_delegate_frame(generator, &completion)? {
