@@ -13,8 +13,8 @@ enum CharacterClass {
     NotWord,
 }
 
-enum NativePattern {
-    Literal(Box<[u8]>),
+enum NativePattern<'a> {
+    Literal(&'a [u8]),
     CharacterClass(CharacterClass),
     Repeat {
         unit: u8,
@@ -69,7 +69,7 @@ pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize)
     })
 }
 
-fn parse(source: &str, flags: &str) -> Option<NativePattern> {
+fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
     if !flags.contains(['g', 'y']) {
         if let Some(class) = source
             .strip_prefix("\\\\")
@@ -93,10 +93,10 @@ fn parse(source: &str, flags: &str) -> Option<NativePattern> {
     {
         return None;
     }
-    Some(NativePattern::Literal(source.as_bytes().into()))
+    Some(NativePattern::Literal(source.as_bytes()))
 }
 
-fn parse_repeat(source: &str) -> Option<NativePattern> {
+fn parse_repeat(source: &str) -> Option<NativePattern<'_>> {
     let bytes = source.as_bytes();
     if bytes.len() < 2 || !bytes[0].is_ascii() || b"\\.^$*+?()[]{}|".contains(&bytes[0]) {
         return None;
