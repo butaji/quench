@@ -1982,7 +1982,7 @@ mod stubs {
             };
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128
-                && !(epoch >= 0 && timezone == "UTC")
+                && !matches!(timezone.as_str(), "UTC" | "+00" | "-00" | "+00:00" | "-00:00")
             {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid epochNanoseconds",
@@ -2501,13 +2501,9 @@ mod stubs {
                     ))
                 }
             };
-            let offset = if smallest == "day" {
-                match property("offsetNanoseconds")? {
-                    Value::Number(value) => value as i128,
-                    _ => 0,
-                }
-            } else {
-                0
+            let offset = match property("offsetNanoseconds")? {
+                Value::Number(value) => value as i128,
+                _ => 0,
             };
             let local_epoch = epoch + offset;
             let quotient = local_epoch.div_euclid(quantum);
@@ -2535,6 +2531,14 @@ mod stubs {
                 }
             };
             let rounded = (quotient + i128::from(round_up)) * quantum - offset;
+            if rounded.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128
+                || (smallest == "day"
+                    && rounded.unsigned_abs() >= super::MAX_EPOCH_NANOSECONDS as u128)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             return Ok(super::zoned_record(
                 rounded,
