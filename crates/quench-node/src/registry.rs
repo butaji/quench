@@ -873,10 +873,16 @@ pub fn namespace_bindings(
         "console".to_string(),
         crate::modules::console::build_value(),
     ));
-    out.push((
-        "EventTarget".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116)),
+    let event_target = crate::host::capability(crate::registry::NodeSpec::new(
+        "events:EventTarget",
+        0x0116,
     ));
+    let _ = quench_runtime::execute::set_callable_property(
+        &event_target,
+        "prototype",
+        crate::modules::event_target::prototype(),
+    );
+    out.push(("EventTarget".to_string(), event_target));
     let event = crate::host::capability(crate::registry::SPEC_EVENT);
     let _ = quench_runtime::execute::set_callable_property(
         &event,
