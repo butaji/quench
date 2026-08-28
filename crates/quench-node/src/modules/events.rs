@@ -462,12 +462,14 @@ fn route_domain_error(
     if handler.is_none() || matches!(handler, Some(Value::Undefined | Value::Null)) {
         return Ok(None);
     }
-    let original = argument.cloned();
-    let error = argument.cloned().unwrap_or_else(|| {
-        host_api::object(vec![(
-            "message".into(),
-            Value::String("Unhandled error.".into()),
-        )])
+    let original = argument
+        .cloned()
+        .filter(|value| !matches!(value, Value::Null | Value::Undefined | Value::Boolean(false)));
+    let error = original.clone().unwrap_or_else(|| {
+        quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("Unhandled error.".into())],
+        )
     });
     let error = execute::set_property(error, "domain", domain.clone());
     let error = execute::set_property(error, "domainEmitter", receiver.clone());
