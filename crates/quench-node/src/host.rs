@@ -280,6 +280,9 @@ pub fn install_with_argv(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
+    // Node schedules every async-function continuation as a microtask,
+    // including awaits whose operand is already fulfilled.
+    quench_runtime::module_bindings::defer_fulfilled_await(true);
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
     let host_state = host.state.clone();
     quench_runtime::install_host_job_pump(Rc::new(move || {
