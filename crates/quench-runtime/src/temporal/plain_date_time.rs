@@ -1098,28 +1098,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             ))
         }
     };
-    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
-    if crate::conversion::is_symbol(&unit) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid smallestUnit",
-        ));
-    }
-    let unit = crate::conversion::to_string(&unit)?;
-    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
-    let quantum = match unit.as_str() {
-        "day" => 86_400_000_000_000.0,
-        "hour" => 3_600_000_000_000.0,
-        "minute" => 60_000_000_000.0,
-        "second" => 1_000_000_000.0,
-        "millisecond" => 1_000_000.0,
-        "microsecond" => 1_000.0,
-        "nanosecond" => 1.0,
-        _ => {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid smallestUnit",
-            ))
-        }
-    };
     let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
     let increment = if matches!(increment_value, Value::Undefined) {
         1.0
@@ -1127,25 +1105,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         crate::conversion::to_number(&increment_value)?
     }
     .trunc();
-    let maximum: f64 = match unit.as_str() {
-        "day" => 1.0,
-        "hour" => 24.0,
-        "minute" | "second" => 60.0,
-        _ => 1_000.0,
-    };
-    if !increment.is_finite()
-        || increment < 1.0
-        || if unit == "day" {
-            increment > maximum
-        } else {
-            increment >= maximum
-        }
-        || (maximum as u64) % (increment as u64) != 0
-    {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid roundingIncrement",
-        ));
-    }
     let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
     let mut mode = "halfExpand".to_string();
     if !matches!(mode_value, Value::Undefined) {
@@ -1171,6 +1130,35 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 "Invalid roundingMode",
             ));
         }
+    }
+    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+    if crate::conversion::is_symbol(&unit) {
+        return Err(crate::value::error::throw_type_error("Invalid smallestUnit"));
+    }
+    let unit = crate::conversion::to_string(&unit)?;
+    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
+    let quantum = match unit.as_str() {
+        "day" => 86_400_000_000_000.0,
+        "hour" => 3_600_000_000_000.0,
+        "minute" => 60_000_000_000.0,
+        "second" => 1_000_000_000.0,
+        "millisecond" => 1_000_000.0,
+        "microsecond" => 1_000.0,
+        "nanosecond" => 1.0,
+        _ => return Err(crate::value::error::throw_range_error("Invalid smallestUnit")),
+    };
+    let maximum: f64 = match unit.as_str() {
+        "day" => 1.0,
+        "hour" => 24.0,
+        "minute" | "second" => 60.0,
+        _ => 1_000.0,
+    };
+    if !increment.is_finite()
+        || increment < 1.0
+        || if unit == "day" { increment > maximum } else { increment >= maximum }
+        || (maximum as u64) % (increment as u64) != 0
+    {
+        return Err(crate::value::error::throw_range_error("Invalid roundingIncrement"));
     }
     round_values(fields(receiver)?, quantum, increment, &mode)
 }
