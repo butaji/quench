@@ -5,7 +5,6 @@ pub(crate) fn construct_bigint64_array(
 ) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => bigint64_with_length(0),
-        Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
         Some(Value::ArrayBuffer(buffer)) => view_bigint64_array(buffer, arguments),
         Some(Value::BigInt64Array(view)) => copy_bigint64_array(view),
         Some(Value::Array(values)) => values_bigint64_array(&values.snapshot()),
@@ -13,11 +12,13 @@ pub(crate) fn construct_bigint64_array(
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_bigint64_array(&values)
         }
-        Some(Value::Object(properties)) => {
-            bigint_object_values(properties, "BigInt64Array")
-                .and_then(|values| values_bigint64_array(&values))
+        Some(Value::Object(properties)) => bigint_object_values(properties, "BigInt64Array")
+            .and_then(|values| values_bigint64_array(&values)),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_bigint64_array(&values)
         }
-        Some(_) => Err(type_error("BigInt64Array source must contain BigInts")),
+        Some(value) => bigint64_with_length(to_index(crate::conversion::to_number(value)?)?),
     }
 }
 
@@ -26,7 +27,6 @@ pub(crate) fn construct_biguint64_array(
 ) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => biguint64_with_length(0),
-        Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
         Some(Value::ArrayBuffer(buffer)) => view_biguint64_array(buffer, arguments),
         Some(Value::BigUint64Array(view)) => copy_biguint64_array(view),
         Some(Value::Array(values)) => values_biguint64_array(&values.snapshot()),
@@ -34,11 +34,13 @@ pub(crate) fn construct_biguint64_array(
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_biguint64_array(&values)
         }
-        Some(Value::Object(properties)) => {
-            bigint_object_values(properties, "BigUint64Array")
-                .and_then(|values| values_biguint64_array(&values))
+        Some(Value::Object(properties)) => bigint_object_values(properties, "BigUint64Array")
+            .and_then(|values| values_biguint64_array(&values)),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_biguint64_array(&values)
         }
-        Some(_) => Err(type_error("BigUint64Array source must contain BigInts")),
+        Some(value) => biguint64_with_length(to_index(crate::conversion::to_number(value)?)?),
     }
 }
 
@@ -156,6 +158,9 @@ fn bigint_view_bounds(
         None => 0.0,
     };
     let offset = to_index(offset)?;
+    if *buffer.detached.borrow() {
+        return Err(type_error("Cannot use a detached ArrayBuffer"));
+    }
     let available = buffer
         .byte_length()
         .checked_sub(offset)
@@ -164,8 +169,19 @@ fn bigint_view_bounds(
         return Err(range_error(&format!("Invalid {name} byte offset")));
     }
     let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / BIGINT_ELEMENT_SIZE),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
+        None | Some(Value::Undefined) => {
+            if available % BIGINT_ELEMENT_SIZE != 0 {
+                return Err(range_error(&format!("Invalid {name} byte length")));
+            }
+            view_length(buffer, available / BIGINT_ELEMENT_SIZE)
+        }
+        Some(value) => {
+            let number = crate::conversion::to_number(value)?;
+            if *buffer.detached.borrow() {
+                return Err(type_error("Cannot use a detached ArrayBuffer"));
+            }
+            to_index(number)?
+        }
     };
     if arguments
         .get(2)
