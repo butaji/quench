@@ -469,3 +469,26 @@ pub fn build_promises() -> Result<Value, VmError> {
     let timers = crate::host::namespace_object_from_pairs(build());
     quench_runtime::vm::call_value(&factory, &Value::Undefined, &[timers])
 }
+
+/// Build the callback namespace with Node's promisify identity links.
+pub fn build_with_promises() -> Result<Value, VmError> {
+    let promises = build_promises()?;
+    let mut bindings = build();
+    for (name, value) in &mut bindings {
+        let promise_name = match name.as_str() {
+            "setTimeout" => Some("setTimeout"),
+            "setImmediate" => Some("setImmediate"),
+            _ => None,
+        };
+        if let Some(promise_name) = promise_name {
+            let promise = quench_runtime::execute::get_property_result(&promises, promise_name)?;
+            *value = quench_runtime::execute::set_property(
+                value.clone(),
+                crate::modules::util::PROMISIFY_CUSTOM_KEY,
+                promise,
+            );
+        }
+    }
+    bindings.push(("promises".to_string(), promises));
+    Ok(crate::host::namespace_object_from_pairs(bindings))
+}

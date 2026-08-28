@@ -20,7 +20,9 @@
     const signal = options.signal;
     if (signal !== undefined &&
         (!signal || typeof signal.addEventListener !== "function")) {
-      throw new TypeError("The signal option must be an AbortSignal");
+      const error = new TypeError("The signal option must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
     }
     return new Promise(function (resolve, reject) {
       let settled = false;
