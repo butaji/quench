@@ -677,6 +677,7 @@ node_api! {
     (SPEC_ABORT_SIGNAL_ABORT, "AbortSignal.abort", 0x1F24),
     (SPEC_ABORT_SIGNAL_TIMEOUT, "AbortSignal.timeout", 0x1F40),
     (SPEC_ABORT_SIGNAL_ANY, "AbortSignal.any", 0x1F41),
+    (SPEC_ABORT_SIGNAL_TIMEOUT_FIRE, "AbortSignal.timeout.fire", 0x1F2B),
     (SPEC_ABORT_EVENT_STOP_IMMEDIATE, "AbortEvent.stopImmediatePropagation", 0x1F26),
 }
 node_api! {
