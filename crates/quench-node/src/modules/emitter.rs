@@ -126,7 +126,9 @@ pub struct EmitterId(pub u64);
 pub struct EmitterRegistry {
     next: u64,
     emitters: HashMap<EmitterId, Rc<RefCell<EventEmitter>>>,
-    identities: HashMap<usize, EmitterId>,
+    /// Semantic object identity, not an `Rc` address. Runtime copy-on-write
+    /// replacements preserve this id, so host callbacks keep the same state.
+    identities: HashMap<u64, EmitterId>,
     /// `events.defaultMaxListeners`.
     pub default_max: usize,
 }
@@ -159,28 +161,15 @@ impl EmitterRegistry {
     }
 
     pub fn identity(&self, value: &Value) -> Option<EmitterId> {
-        object_identity(value).and_then(|key| self.identities.get(&key).copied())
+        value
+            .object_identity()
+            .and_then(|key| self.identities.get(&key).copied())
     }
 
     pub fn bind_identity(&mut self, value: &Value, id: EmitterId) {
-        if let Some(key) = object_identity(value) {
+        if let Some(key) = value.object_identity() {
             self.identities.insert(key, id);
         }
-    }
-}
-
-fn object_identity(value: &Value) -> Option<usize> {
-    match value {
-        Value::Object(object) => Some(Rc::as_ptr(object) as usize),
-        Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
-            .map(|object| Rc::as_ptr(&object) as usize),
-        Value::Array(array) => Some(Rc::as_ptr(array) as usize),
-        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
-        Value::BoundFunction(function) => Some(Rc::as_ptr(function) as usize),
-        _ => None,
     }
 }
 
