@@ -1091,6 +1091,20 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn duplicate_group_cases_match() {
+        let pattern = "(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))";
+        let regex = Regex::with_flags(pattern, Flags::default()).unwrap();
+        for input in ["abc", "ad"] {
+            eprintln!("{input}: {}", regex.find_from(input, 0).next().is_some());
+        }
+        let repeated =
+            Regex::with_flags("(?:(?:(?<x>a)|(?<x>b)|c)\\k<x>){2}", Flags::default()).unwrap();
+        eprintln!(
+            "aac repeated: {}",
+            repeated.find_from("aac", 0).next().is_some()
+        );
+    }
 
     #[test]
     fn lookbehind_sticky_prefix() {
