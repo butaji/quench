@@ -193,6 +193,7 @@ const CAP_DIAGNOSTICS_BOUNDED_SUBSCRIBE: u16 =
 const CAP_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE: u16 =
     crate::registry::SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_BOUNDED_RUN: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
+const CAP_DIAGNOSTICS_BOUNDED_SCOPE: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_SCOPE.cap;
 const CAP_DIAGNOSTICS_CHANNEL_SCOPE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SCOPE.cap;
 const CAP_DIAGNOSTICS_CHANNEL_RUN_STORES: u16 =
     crate::registry::SPEC_DIAGNOSTICS_CHANNEL_RUN_STORES.cap;
@@ -607,6 +608,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
             crate::modules::diagnostics_channel::bounded_unsubscribe
         }
         CAP_DIAGNOSTICS_BOUNDED_RUN => crate::modules::diagnostics_channel::bounded_run,
+        CAP_DIAGNOSTICS_BOUNDED_SCOPE => crate::modules::diagnostics_channel::bounded_scope,
         CAP_DOMAIN_CREATE => crate::modules::domain::create,
         CAP_DOMAIN_ENTER => crate::modules::domain::enter,
         CAP_DOMAIN_EXIT => crate::modules::domain::exit,
