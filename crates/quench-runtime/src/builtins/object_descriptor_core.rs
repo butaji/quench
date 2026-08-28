@@ -156,18 +156,10 @@ fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
         }
     }
     if let Some(metadata) = super::descriptor_metadata(properties, key) {
-        let live = properties
-            .entries()
-            .rev()
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| public_value(&value));
+        let live = properties.value_for_key(key).map(|value| public_value(&value));
         return Some(live_descriptor(&metadata, live));
     }
-    properties
-        .entries()
-        .rev()
-        .find(|(name, _)| *name == key)
-        .map(|(_, value)| {
+    properties.value_for_key(key).map(|value| {
             if matches!(value, Value::Builtin(_)) && crate::vm::global_builtin_exists(key) {
                 descriptor_object_with_flags(value.clone(), true, false, true)
             } else {

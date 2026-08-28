@@ -727,6 +727,18 @@ impl ObjectProperties {
 
     #[inline]
     pub(crate) fn position_rev(&self, key: &str) -> Option<usize> {
+        if let Some(index) = numeric_property_index(key) {
+            // Object literals used as array-likes commonly establish
+            // `length` first and then append numeric keys in order. Derive
+            // that slot from the canonical vector before falling back to the
+            // general reverse lookup; no parallel index is retained.
+            let candidates = [index, index.checked_add(1)?];
+            for candidate in candidates {
+                if self.names.get(candidate).is_some_and(|name| name == key) {
+                    return Some(candidate);
+                }
+            }
+        }
         self.names.iter().rposition(|name| name == key)
     }
 
@@ -809,6 +821,23 @@ impl ObjectProperties {
     }
 }
 
+#[inline]
+fn numeric_property_index(key: &str) -> Option<usize> {
+    if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
+        return None;
+    }
+    let mut index = 0usize;
+    for byte in key.bytes() {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        index = index
+            .checked_mul(10)?
+            .checked_add(usize::from(byte - b'0'))?;
+    }
+    Some(index)
+}
+
 impl From<Vec<(PropertyName, Value)>> for ObjectProperties {
     fn from(entries: Vec<(PropertyName, Value)>) -> Self {
         entries.into_iter().collect()
@@ -854,6 +883,20 @@ pub(crate) trait PropertyEntries {
     where
         Self: 'a;
     fn entries(&self) -> Self::Iter<'_>;
+
+    #[inline]
+    fn value_for_key(&self, key: &str) -> Option<Value> {
+        self.entries()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value))
+    }
+
+    #[inline]
+    fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
+        self.entries().rev().find_map(|(name, value)| {
+            crate::builtins::is_descriptor_key_for(name, key).then_some(value)
+        })
+    }
 }
 
 impl PropertyEntries for ObjectProperties {
@@ -866,6 +909,11 @@ impl PropertyEntries for ObjectProperties {
             (name.as_str(), value)
         }
         self.into_iter().map(split)
+    }
+
+    #[inline]
+    fn value_for_key(&self, key: &str) -> Option<Value> {
+        self.position_rev(key).and_then(|slot| self.slot_value(slot))
     }
 }
 
@@ -940,6 +988,12 @@ pub struct ObjectData {
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
     pub(crate) created: Vec<PropertyName>,
+    // Derived tri-state cache for descriptor metadata. Mutation resets it;
+    // the property vector remains the sole semantic source of truth.
+    descriptor_metadata_state: std::cell::Cell<u8>,
+    // Derived tri-state cache for deletion tombstones. The canonical property
+    // vector remains authoritative; this only avoids repeated absence scans.
+    deleted_marker_state: std::cell::Cell<u8>,
 }
 
 impl Drop for ObjectData {
@@ -958,6 +1012,8 @@ impl Clone for ObjectData {
             private_slots: Rc::clone(&self.private_slots),
             original_prototype: RefCell::new(self.original_prototype()),
             created: self.created.clone(),
+            descriptor_metadata_state: std::cell::Cell::new(0),
+            deleted_marker_state: std::cell::Cell::new(0),
         }
     }
 }
@@ -1008,6 +1064,8 @@ impl ObjectData {
 
     pub(crate) fn invalidate_layout(&self) {
         self.layout_id.set(0);
+        self.descriptor_metadata_state.set(0);
+        self.deleted_marker_state.set(0);
     }
 
     pub(crate) fn new(properties: Vec<(String, Value)>) -> Self {
@@ -1077,6 +1135,8 @@ impl ObjectData {
             private_slots,
             original_prototype: RefCell::new(None),
             created,
+            descriptor_metadata_state: std::cell::Cell::new(0),
+            deleted_marker_state: std::cell::Cell::new(0),
         }
     }
 
@@ -1093,6 +1153,30 @@ impl ObjectData {
     #[inline]
     pub(crate) fn has_replacement(&self) -> bool {
         self.replacement.borrow().is_some()
+    }
+
+    #[inline]
+    pub(crate) fn has_deleted_key(&self, key: &str) -> bool {
+        match self.deleted_marker_state.get() {
+            1 => false,
+            2 => self
+                .properties
+                .names()
+                .any(|name| crate::builtins::is_deleted_key_for(name.as_str(), key)),
+            _ => {
+                let has_marker = self
+                    .properties
+                    .names()
+                    .any(|name| crate::builtins::is_deleted_marker(name.as_str()));
+                self.deleted_marker_state
+                    .set(if has_marker { 2 } else { 1 });
+                has_marker
+                    && self
+                        .properties
+                        .names()
+                        .any(|name| crate::builtins::is_deleted_key_for(name.as_str(), key))
+            }
+        }
     }
 
     #[inline]
@@ -1118,6 +1202,8 @@ impl std::ops::Deref for ObjectData {
 impl std::ops::DerefMut for ObjectData {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.layout_id.set(0);
+        self.descriptor_metadata_state.set(0);
+        self.deleted_marker_state.set(0);
         &mut self.properties
     }
 }
@@ -1126,6 +1212,24 @@ impl PropertyEntries for ObjectData {
     type Iter<'a> = <ObjectProperties as PropertyEntries>::Iter<'a>;
     fn entries(&self) -> Self::Iter<'_> {
         self.properties.entries()
+    }
+
+    #[inline]
+    fn value_for_key(&self, key: &str) -> Option<Value> {
+        self.properties.value_for_key(key)
+    }
+
+    fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
+        match self.descriptor_metadata_state.get() {
+            1 => None,
+            2 => self.properties.descriptor_metadata_for_key(key),
+            _ => {
+                let metadata = self.properties.descriptor_metadata_for_key(key);
+                self.descriptor_metadata_state
+                    .set(if metadata.is_some() { 2 } else { 1 });
+                metadata
+            }
+        }
     }
 }
 

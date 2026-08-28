@@ -123,6 +123,9 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
     if crate::vm::is_legacy_global(key) {
         return false;
     }
+    if key.parse::<usize>().is_ok() {
+        return properties.hot_properties().position_rev(key).is_some();
+    }
     let deleted = properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key));

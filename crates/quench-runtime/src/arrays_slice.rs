@@ -64,10 +64,29 @@ fn typed_array_slice(this: &Value, arguments: &[Value]) -> Result<Value, crate::
         let source_index = start as usize + index;
         if source_index < current_length {
             let item = crate::execute::get_property_result(&value, &source_index.to_string())?;
-            crate::properties::assign_set_property(&target, &index.to_string(), item)?;
+            copy_slice_element(&target, index, item)?;
         }
     }
     Ok(target)
+}
+
+fn copy_slice_element(
+    target: &Value,
+    index: usize,
+    item: Value,
+) -> Result<(), crate::execute::VmError> {
+    if let Value::Uint8Array(view) = target {
+        if view.buffer.immutable {
+            let number = crate::conversion::to_number(&item)?;
+            if !view.set_intrinsic(index, crate::construct::to_uint8(number)) {
+                return Err(crate::value::error::throw_type_error(
+                    "TypedArray slice target is out of bounds",
+                ));
+            }
+            return Ok(());
+        }
+    }
+    crate::properties::assign_set_property(target, &index.to_string(), item).map(|_| ())
 }
 
 /// `LengthOfArrayLike`: `ToLength` of the receiver's `length` property.
