@@ -217,31 +217,37 @@ pub const SPEC_PATH_WIN32_TO_NAMESPACED: NodeSpec =
     NodeSpec::new("path.win32:toNamespacedPath", 0x041A);
 pub const SPEC_PATH_WIN32_MATCHES_GLOB: NodeSpec = NodeSpec::new("path.win32:matchesGlob", 0x041B);
 
-pub const SPEC_URL_PARSE: NodeSpec = NodeSpec::new("url:parse", 0x0500);
-pub const SPEC_URL_FORMAT: NodeSpec = NodeSpec::new("url:format", 0x0501);
-pub const SPEC_URL_RESOLVE: NodeSpec = NodeSpec::new("url:resolve", 0x0502);
-pub const SPEC_URL_NEW: NodeSpec = NodeSpec::new("url:URL", 0x0503);
-pub const SPEC_URL_LEGACY_NEW: NodeSpec = NodeSpec::new("url:Url", 40);
-pub const SPEC_URL_RESOLVE_OBJECT: NodeSpec = NodeSpec::new("url:resolveObject", 0x0520);
-pub const SPEC_URL_SEARCHPARAMS_NEW: NodeSpec = NodeSpec::new("url:URLSearchParams", 0x0504);
+node_api! {
+    (SPEC_URL_PARSE, "url:parse", 0x0500),
+    (SPEC_URL_FORMAT, "url:format", 0x0501),
+    (SPEC_URL_RESOLVE, "url:resolve", 0x0502),
+    (SPEC_URL_NEW, "url:URL", 0x0503),
+    (SPEC_URL_LEGACY_NEW, "url:Url", 40),
+    (SPEC_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
+    (SPEC_URL_SEARCHPARAMS_NEW, "url:URLSearchParams", 0x0504),
+}
 
-pub const SPEC_QS_PARSE: NodeSpec = NodeSpec::new("querystring:parse", 0x0600);
-pub const SPEC_QS_STRINGIFY: NodeSpec = NodeSpec::new("querystring:stringify", 0x0601);
-pub const SPEC_QS_ESCAPE: NodeSpec = NodeSpec::new("querystring:escape", 0x0602);
-pub const SPEC_QS_UNESCAPE: NodeSpec = NodeSpec::new("querystring:unescape", 0x0603);
-pub const SPEC_QS_UNESCAPE_BUFFER: NodeSpec = NodeSpec::new("querystring:unescapeBuffer", 0x0604);
+node_api! {
+    (SPEC_QS_PARSE, "querystring:parse", 0x0600),
+    (SPEC_QS_STRINGIFY, "querystring:stringify", 0x0601),
+    (SPEC_QS_ESCAPE, "querystring:escape", 0x0602),
+    (SPEC_QS_UNESCAPE, "querystring:unescape", 0x0603),
+    (SPEC_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
+}
 
-pub const SPEC_TIMERS_SETTIMEOUT: NodeSpec = NodeSpec::new("timers:setTimeout", 0x0700);
-pub const SPEC_TIMERS_CLEARTIMEOUT: NodeSpec = NodeSpec::new("timers:clearTimeout", 0x0701);
-pub const SPEC_TIMERS_SETINTERVAL: NodeSpec = NodeSpec::new("timers:setInterval", 0x0702);
-pub const SPEC_TIMERS_CLEARINTERVAL: NodeSpec = NodeSpec::new("timers:clearInterval", 0x0703);
-pub const SPEC_TIMERS_SETIMMEDIATE: NodeSpec = NodeSpec::new("timers:setImmediate", 0x0704);
-pub const SPEC_TIMERS_CLEARIMMEDIATE: NodeSpec = NodeSpec::new("timers:clearImmediate", 0x0705);
-pub const SPEC_TIMERS_TICK: NodeSpec = NodeSpec::new("timers:tick", 0x0706);
-pub const SPEC_TIMERS_UNREF: NodeSpec = NodeSpec::new("timers:unref", 0x0708);
-pub const SPEC_TIMERS_REF: NodeSpec = NodeSpec::new("timers:ref", 0x0709);
-pub const SPEC_TIMERS_HASREF: NodeSpec = NodeSpec::new("timers:hasRef", 0x070A);
-pub const SPEC_TIMERS_REFRESH: NodeSpec = NodeSpec::new("timers:refresh", 0x070B);
+node_api! {
+    (SPEC_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
+    (SPEC_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
+    (SPEC_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
+    (SPEC_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
+    (SPEC_TIMERS_SETIMMEDIATE, "timers:setImmediate", 0x0704),
+    (SPEC_TIMERS_CLEARIMMEDIATE, "timers:clearImmediate", 0x0705),
+    (SPEC_TIMERS_TICK, "timers:tick", 0x0706),
+    (SPEC_TIMERS_UNREF, "timers:unref", 0x0708),
+    (SPEC_TIMERS_REF, "timers:ref", 0x0709),
+    (SPEC_TIMERS_HASREF, "timers:hasRef", 0x070A),
+    (SPEC_TIMERS_REFRESH, "timers:refresh", 0x070B),
+}
 pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
 pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
 pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
