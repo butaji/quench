@@ -339,6 +339,13 @@ fn difference(
         ));
     }
     if matches!(largest.as_str(), "year" | "month" | "week") {
+        if matches!(smallest_unit.as_str(), "year" | "month")
+            && rounding_increment > ((275_760_i64 + 271_821_i64) * 12) as f64
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainDateTime",
+            ));
+        }
         return calendar_difference(
             &left,
             &right,
@@ -640,6 +647,12 @@ fn calendar_difference(
     time_remainder %= 1_000_000;
     let microseconds = time_remainder / 1_000;
     let nanoseconds = time_remainder % 1_000;
+    let calendar_months = years.saturating_mul(12).saturating_add(months);
+    if calendar_months.unsigned_abs() > (275_760_i64 + 271_821_i64) as u64 * 12 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainDateTime",
+        ));
+    }
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
