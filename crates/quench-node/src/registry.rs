@@ -668,6 +668,7 @@ node_api! {
     (SPEC_DEFINE_EVENT_HANDLER, CAP_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
     (SPEC_EVENT_HANDLER_GET, CAP_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
     (SPEC_EVENT_HANDLER_SET, CAP_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
+    (SPEC_EVENT_GET_PROPERTY, CAP_EVENT_GET_PROPERTY, "Event.property:get", 0x0129),
     (SPEC_CUSTOM_EVENT, CAP_CUSTOM_EVENT, "CustomEvent", 0x0123),
     (SPEC_EVENT_SOURCE, CAP_EVENT_SOURCE, "EventSource", 0x0124),
 }
@@ -933,7 +934,7 @@ pub fn namespace_bindings(
     );
     out.push(("EventTarget".to_string(), event_target));
     let event = crate::host::capability(crate::registry::SPEC_EVENT);
-    let event_prototype = quench_runtime::execute::define_property(
+    let mut event_prototype = quench_runtime::execute::define_property(
         crate::host::namespace_object_from_pairs(Vec::new()),
         "constructor",
         crate::host::namespace_object_from_pairs(vec![
@@ -953,7 +954,79 @@ pub fn namespace_bindings(
         ]),
     )
     .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
-    let _ = quench_runtime::execute::set_callable_property(&event, "prototype", event_prototype);
+    for name in [
+        "target",
+        "currentTarget",
+        "srcElement",
+        "type",
+        "cancelable",
+        "defaultPrevented",
+        "timeStamp",
+        "returnValue",
+        "bubbles",
+        "composed",
+        "eventPhase",
+    ] {
+        let getter = crate::host::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_EVENT_GET_CANCEL_BUBBLE.cap,
+                ),
+            },
+            vec![quench_runtime::value::Value::String(name.into())],
+        );
+        event_prototype = quench_runtime::execute::define_property(
+            event_prototype,
+            name,
+            crate::host::namespace_object_from_pairs(vec![
+                ("get".into(), getter),
+                ("enumerable".into(), quench_runtime::value::Value::Boolean(true)),
+                ("configurable".into(), quench_runtime::value::Value::Boolean(true)),
+            ]),
+        )
+        .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    }
+    for (name, capability) in [
+        ("stopImmediatePropagation", crate::registry::SPEC_EVENT_STOP_IMMEDIATE),
+        ("preventDefault", crate::registry::SPEC_EVENT_PREVENT_DEFAULT),
+        ("composedPath", crate::registry::SPEC_EVENT_COMPOSED_PATH),
+        ("stopPropagation", crate::registry::SPEC_EVENT_STOP_PROPAGATION),
+    ] {
+        event_prototype = quench_runtime::execute::define_property(
+            event_prototype,
+            name,
+            crate::host::namespace_object_from_pairs(vec![
+                ("value".into(), crate::host::capability(capability)),
+                ("writable".into(), quench_runtime::value::Value::Boolean(true)),
+                ("enumerable".into(), quench_runtime::value::Value::Boolean(false)),
+                ("configurable".into(), quench_runtime::value::Value::Boolean(true)),
+            ]),
+        )
+        .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    }
+    event_prototype = quench_runtime::execute::define_property(
+        event_prototype,
+        "cancelBubble",
+        crate::host::namespace_object_from_pairs(vec![
+            (
+                "get".into(),
+                crate::host::capability(crate::registry::SPEC_EVENT_GET_CANCEL_BUBBLE),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(crate::registry::SPEC_EVENT_SET_CANCEL_BUBBLE),
+            ),
+            ("enumerable".into(), quench_runtime::value::Value::Boolean(true)),
+            ("configurable".into(), quench_runtime::value::Value::Boolean(true)),
+        ]),
+    )
+    .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    let _ = quench_runtime::execute::set_callable_property(
+        &event,
+        "prototype",
+        event_prototype.clone(),
+    );
     let _ = quench_runtime::execute::set_callable_property(
         &event,
         "length",
@@ -973,10 +1046,46 @@ pub fn namespace_bindings(
     }
     out.push(("Event".to_string(), event));
     let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+    let custom_event_prototype = quench_runtime::execute::define_property(
+        event_prototype,
+        "constructor",
+        crate::host::namespace_object_from_pairs(vec![
+            ("value".into(), custom_event.clone()),
+            ("writable".into(), quench_runtime::value::Value::Boolean(true)),
+            ("enumerable".into(), quench_runtime::value::Value::Boolean(false)),
+            ("configurable".into(), quench_runtime::value::Value::Boolean(true)),
+        ]),
+    )
+    .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
         "prototype",
-        crate::host::namespace_object_from_pairs(Vec::new()),
+        custom_event_prototype,
+    );
+    let custom_event_prototype = quench_runtime::execute::get_property(&custom_event, "prototype");
+    let detail_getter = crate::host::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_EVENT_GET_PROPERTY.cap,
+            ),
+        },
+        vec![quench_runtime::value::Value::String("detail".into())],
+    );
+    let custom_event_prototype = quench_runtime::execute::define_property(
+        custom_event_prototype,
+        "detail",
+        crate::host::namespace_object_from_pairs(vec![
+            ("get".into(), detail_getter),
+            ("enumerable".into(), quench_runtime::value::Value::Boolean(true)),
+            ("configurable".into(), quench_runtime::value::Value::Boolean(true)),
+        ]),
+    )
+    .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    let _ = quench_runtime::execute::set_callable_property(
+        &custom_event,
+        "prototype",
+        custom_event_prototype,
     );
     for (name, value) in [
         ("NONE", 0.0),
