@@ -241,15 +241,18 @@ impl Regex {
                     .iter_mut()
                     .map(|capture| {
                         capture.take().map(|range| {
-                            let capture_start =
-                                input.get(range.start).map_or(end, |unit| unit.offset_start);
-                            let capture_end = input.get(range.end).map_or(end, |unit| {
-                                if range.end > 0 {
-                                    input[range.end - 1].offset_end
-                                } else {
-                                    unit.offset_start
-                                }
-                            });
+                            let capture_start = input.get(range.start).map_or_else(
+                                || input.last().map_or(end, |unit| unit.offset_end),
+                                |unit| unit.offset_start,
+                            );
+                            let capture_end = if range.end == 0 {
+                                capture_start
+                            } else {
+                                input.get(range.end - 1).map_or_else(
+                                    || input.last().map_or(capture_start, |unit| unit.offset_end),
+                                    |unit| unit.offset_end,
+                                )
+                            };
                             capture_start..capture_end
                         })
                     })
@@ -1426,10 +1429,14 @@ fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Opt
     }
     if matches!(name, "General_Category" | "gc") {
         if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
-            return Some(CodePointMapData::<props::GeneralCategory>::new().get(character) == target);
+            return Some(
+                CodePointMapData::<props::GeneralCategory>::new().get(character) == target,
+            );
         }
         let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
-        return Some(target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character)));
+        return Some(
+            target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character)),
+        );
     }
     macro_rules! binary_property {
         ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
@@ -1552,6 +1559,13 @@ mod tests {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
         let input = "abcdefdef".encode_utf16().collect::<Vec<_>>();
         assert!(regex.find_from_utf16(&input, 0).next().is_some());
+    }
+    #[test]
+    fn lookahead_capture_preserves_extent() {
+        let regex = Regex::with_flags("(?:(?=(abc)))a", Flags::default()).unwrap();
+        let matched = regex.find_from("abc", 0).next().unwrap();
+        assert_eq!(matched.range, 0..1);
+        assert_eq!(matched.captures, vec![Some(0..3)]);
     }
     #[test]
     fn duplicate_group_properties_pattern_matches() {
