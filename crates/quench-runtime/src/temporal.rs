@@ -690,6 +690,15 @@ mod stubs {
                     time_parts[2] = second;
                 }
             }
+            if time_parts.get(2).is_some_and(|second| *second == 60) {
+                time_parts[2] = 59;
+            }
+            if time_parts.first().is_some_and(|hour| !(*hour >= 0 && *hour <= 23))
+                || time_parts.get(1).is_some_and(|minute| !(*minute >= 0 && *minute <= 59))
+                || time_parts.get(2).is_some_and(|second| !(*second >= 0 && *second <= 59))
+            {
+                return Err(crate::value::error::throw_range_error("Invalid time"));
+            }
             let year = parsed_year;
             let month = parsed_month;
             let day = parsed_day;
