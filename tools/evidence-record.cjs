@@ -76,6 +76,12 @@ function leverage(fixtures, requiredFixtures) {
   const requiredComplete = missing.length === 0
     && fixtures.length === requiredFixtures.length
     && valid.length === fixtures.length;
+  const sampleCount = requiredComplete
+    ? Math.min(...fixtures.map((fixture) => fixture.raw.quench.length))
+    : 0;
+  const indexedGeomeans = Array.from({ length: sampleCount }, (_, index) =>
+    geometricMean(fixtures.map((fixture) => fixture.raw.quench[index]?.score))
+  );
   return {
     valid_fixture_count: valid.length,
     all_valid: valid.length === fixtures.length,
@@ -85,6 +91,15 @@ function leverage(fixtures, requiredFixtures) {
     // Never publish an aggregate score for a partial suite. The individual
     // fixture data remains useful for diagnostics and leverage ranking.
     geometric_score: requiredComplete ? overall : null,
+    // The historical aggregate is the geometric mean of fixture medians.
+    // Indexed samples are a separate derived robustness view; fixture runs
+    // are sequential, so they are not falsely presented as simultaneous
+    // whole-suite trials.
+    indexed_fixture_geomean: requiredComplete ? {
+      samples: indexedGeomeans,
+      median: median(indexedGeomeans),
+      mad: mad(indexedGeomeans),
+    } : null,
     fixtures: fixtures.map((fixture) => ({
       name: fixture.name,
       score_log_weight: fixture.valid ? 1 / fixtures.length : null,
