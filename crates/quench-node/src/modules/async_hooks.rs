@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
+use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef};
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
@@ -38,11 +39,12 @@ struct Hook {
 
 use crate::registry::{
     SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID, SPEC_ASYNC_EXECUTION_RESOURCE,
-    SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE, SPEC_ASYNC_LOCAL_DISABLE,
-    SPEC_ASYNC_LOCAL_ENTER, SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_RESOURCE,
-    SPEC_ASYNC_RESOURCE_AFTER, SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY,
-    SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER,
-    SPEC_ASYNC_TRIGGER_ID,
+    SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE, SPEC_ASYNC_LOCAL_BIND,
+    SPEC_ASYNC_LOCAL_BIND_CALL, SPEC_ASYNC_LOCAL_DISABLE, SPEC_ASYNC_LOCAL_ENTER,
+    SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_SNAPSHOT,
+    SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER,
+    SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_ID,
+    SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID,
 };
 
 #[derive(Debug)]
@@ -95,6 +97,35 @@ impl AsyncHooksState {
 }
 
 pub fn build() -> Value {
+    let async_local_storage = {
+        let global = quench_runtime::vm::current_global_object();
+        let canonical = execute::get_property(&global, "__nodeAsyncLocalStorage");
+        if quench_runtime::is_callable(&canonical) {
+            canonical
+        } else {
+            crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE)
+        }
+    };
+    if matches!(
+        execute::get_own_property_descriptor(&async_local_storage, "bind"),
+        Ok(Value::Undefined) | Err(_)
+    ) {
+        let _ = execute::set_property_in_place(
+            &async_local_storage,
+            "bind",
+            crate::host::capability(SPEC_ASYNC_LOCAL_BIND),
+        );
+    }
+    if matches!(
+        execute::get_own_property_descriptor(&async_local_storage, "snapshot"),
+        Ok(Value::Undefined) | Err(_)
+    ) {
+        let _ = execute::set_property_in_place(
+            &async_local_storage,
+            "snapshot",
+            crate::host::capability(SPEC_ASYNC_LOCAL_SNAPSHOT),
+        );
+    }
     crate::host::namespace_object(vec![
         (
             "AsyncResource",
@@ -116,10 +147,7 @@ pub fn build() -> Value {
             "createHook",
             crate::host::capability(SPEC_ASYNC_CREATE_HOOK),
         ),
-        (
-            "AsyncLocalStorage",
-            crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE),
-        ),
+        ("AsyncLocalStorage", async_local_storage),
         (
             "__quenchWorkerResource",
             crate::host::capability(crate::registry::SPEC_ASYNC_WORKER_RESOURCE),
@@ -209,7 +237,11 @@ pub fn local_get_store(
         .local_stores
         .get(&(resource_id, id))
         .cloned()
-        .unwrap_or_else(|| receiver.map(|value| execute::get_property(value, LOCAL_DEFAULT)).unwrap_or(Value::Undefined));
+        .unwrap_or_else(|| {
+            receiver
+                .map(|value| execute::get_property(value, LOCAL_DEFAULT))
+                .unwrap_or(Value::Undefined)
+        });
     Ok(store)
 }
 
@@ -258,11 +290,7 @@ pub fn local_exit(
         .async_hooks
         .local_stores
         .remove(&(resource_id, id));
-    let result = execute::call(
-        callback,
-        receiver.unwrap_or(&Value::Undefined),
-        &args[1..],
-    );
+    let result = execute::call(callback, receiver.unwrap_or(&Value::Undefined), &args[1..]);
     if let Some(value) = previous {
         state
             .borrow_mut()
@@ -288,8 +316,14 @@ pub fn local_scope(
     Ok(host_api::object(vec![
         (SCOPE_ID.into(), Value::Number(id as f64)),
         (SCOPE_RESOURCE.into(), Value::Number(resource as f64)),
-        (SCOPE_PREVIOUS.into(), previous.clone().unwrap_or(Value::Undefined)),
-        (SCOPE_HAD_PREVIOUS.into(), Value::Boolean(previous.is_some())),
+        (
+            SCOPE_PREVIOUS.into(),
+            previous.clone().unwrap_or(Value::Undefined),
+        ),
+        (
+            SCOPE_HAD_PREVIOUS.into(),
+            Value::Boolean(previous.is_some()),
+        ),
         (SCOPE_ACTIVE.into(), Value::Boolean(true)),
         ("dispose".into(), dispose.clone()),
         ("Symbol.dispose".into(), dispose),
@@ -301,21 +335,179 @@ pub fn local_scope_dispose(
     receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(scope) = receiver else { return Err(VmError::NotCallable); };
-    if !matches!(execute::get_property(scope, SCOPE_ACTIVE), Value::Boolean(true)) {
+    let Some(scope) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    if !matches!(
+        execute::get_property(scope, SCOPE_ACTIVE),
+        Value::Boolean(true)
+    ) {
         return Ok(Value::Undefined);
     }
     let resource = number(execute::get_property(scope, SCOPE_RESOURCE)).unwrap_or(1);
     let id = number(execute::get_property(scope, SCOPE_ID)).unwrap_or_default();
     let previous = execute::get_property(scope, SCOPE_PREVIOUS);
-    let had_previous = matches!(execute::get_property(scope, SCOPE_HAD_PREVIOUS), Value::Boolean(true));
+    let had_previous = matches!(
+        execute::get_property(scope, SCOPE_HAD_PREVIOUS),
+        Value::Boolean(true)
+    );
     if had_previous {
-        state.borrow_mut().async_hooks.local_stores.insert((resource, id), previous);
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .insert((resource, id), previous);
     } else {
-        state.borrow_mut().async_hooks.local_stores.remove(&(resource, id));
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .remove(&(resource, id));
     }
     let _ = execute::set_property_in_place(scope, SCOPE_ACTIVE, Value::Boolean(false));
     Ok(Value::Undefined)
+}
+
+pub fn local_bind(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or_else(|| invalid_callback("fn"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(invalid_callback("fn"));
+    }
+    let context = capture_local_context(state);
+    Ok(host_api::bound_capability_with_arguments(
+        local_capability(SPEC_ASYNC_LOCAL_BIND_CALL),
+        vec![callback.clone(), context],
+    ))
+}
+
+pub fn local_bind_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or(VmError::NotCallable)?;
+    let context = args.get(1).cloned().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::NotCallable);
+    }
+    let result = with_local_context(state, &context, || {
+        execute::call(
+            callback,
+            receiver.unwrap_or(&Value::Undefined),
+            args.get(2..).unwrap_or(&[]),
+        )
+    });
+    result
+}
+
+pub fn local_snapshot(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let context = capture_local_context(state);
+    Ok(host_api::bound_capability_with_arguments(
+        local_capability(SPEC_ASYNC_LOCAL_SNAPSHOT_CALL),
+        vec![context],
+    ))
+}
+
+pub fn local_snapshot_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let context = args.first().cloned().ok_or(VmError::NotCallable)?;
+    let callback = args.get(1).ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::NotCallable);
+    }
+    with_local_context(state, &context, || {
+        execute::call(
+            callback,
+            receiver.unwrap_or(&Value::Undefined),
+            args.get(2..).unwrap_or(&[]),
+        )
+    })
+}
+
+fn capture_local_context(state: &Rc<RefCell<HostState>>) -> Value {
+    let host = state.borrow();
+    let resource = host.async_hooks.current_id;
+    let values = host
+        .async_hooks
+        .local_stores
+        .iter()
+        .filter(|((resource_id, _), _)| *resource_id == resource)
+        .flat_map(|((_, local_id), value)| [Value::Number(*local_id as f64), value.clone()])
+        .collect();
+    host_api::array(values)
+}
+
+fn with_local_context<T>(
+    state: &Rc<RefCell<HostState>>,
+    context: &Value,
+    callback: impl FnOnce() -> Result<T, VmError>,
+) -> Result<T, VmError> {
+    let resource = state.borrow().async_hooks.current_id;
+    let captured = match context {
+        Value::Array(values) => values.to_vec(),
+        _ => Vec::new(),
+    };
+    let previous = {
+        let mut host = state.borrow_mut();
+        let previous = host
+            .async_hooks
+            .local_stores
+            .iter()
+            .filter(|((resource_id, _), _)| *resource_id == resource)
+            .map(|((_, local_id), value)| (*local_id, value.clone()))
+            .collect::<Vec<_>>();
+        host.async_hooks
+            .local_stores
+            .retain(|(resource_id, _), _| *resource_id != resource);
+        for pair in captured.chunks_exact(2) {
+            if let Value::Number(local_id) = pair[0] {
+                host.async_hooks
+                    .local_stores
+                    .insert((resource, local_id as u64), pair[1].clone());
+            }
+        }
+        previous
+    };
+    let result = callback();
+    let mut host = state.borrow_mut();
+    host.async_hooks
+        .local_stores
+        .retain(|(resource_id, _), _| *resource_id != resource);
+    for (local_id, value) in previous {
+        host.async_hooks
+            .local_stores
+            .insert((resource, local_id), value);
+    }
+    result
+}
+
+fn invalid_callback(name: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(format!("The \"{name}\" argument must be of type function")),
+        ),
+    ]))
+}
+
+fn local_capability(spec: crate::registry::NodeSpec) -> HostCapabilityRef {
+    HostCapabilityRef {
+        realm: quench_runtime::vm::current_context().realm(),
+        kind: HostCapabilityKind::Custom(spec.cap),
+    }
 }
 
 pub fn local_run(
@@ -393,14 +585,20 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"type\" argument must be specified".into())),
+            (
+                "message".into(),
+                Value::String("The \"type\" argument must be specified".into()),
+            ),
         ])));
     }
     if matches!(args.first(), Some(Value::String(value)) if value.is_empty()) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_ASYNC_TYPE".into())),
-            ("message".into(), Value::String("Invalid asyncId type".into())),
+            (
+                "message".into(),
+                Value::String("Invalid asyncId type".into()),
+            ),
         ])));
     }
     if let Some(Value::Number(id)) = args.get(1) {
