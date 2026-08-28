@@ -359,6 +359,41 @@ window with disjoint parameter/local and temporary-register views, rather
 than two independently owned `RegisterFile` allocations plus an environment
 wrapper.
 
+## Rejected operand-window call transport
+
+An experimental compact `CallW` instruction retained the immutable argument
+register window in the continuation and copied those words directly into an
+ordinary function activation when the callee did not read `arguments`.  It
+kept the existing generic call path for every other case.  This is rejected
+before timing: the normal JavaScript probe
+`function f(a,b){return a+b}; console.log(f(1,2))` exited successfully with
+no output, while one-argument and zero-argument calls still completed.  The
+source was reverted and the runtime suite passed again (442 passed, 1
+ignored); the same probe again printed `3`.
+
+The failure proves that an extra call opcode plus an optional continuation
+argument representation is not a safe way to cross the existing completion
+and nested-call machinery.  Do not retry this shape.  A future frame-window
+change must make the owning word window the single activation representation
+and preserve all call/completion paths through that one record before any
+fast admission is enabled.
+
+## Rejected proven-slot resize elision
+
+`SlotRefs::with_binding` already proves that a resolved lexical binding has a
+backing `SlotStore`.  A narrow experiment split the store API: unknown paths
+kept `ensure`, while compact `LoadLocal`/`StoreLocal` used a direct existing-
+slot word copy.  Environment and full runtime tests passed (442 passed, 1
+ignored), and the executable was rebuilt with the native fat-LTO production
+contract (SHA `1e74d984…b6724696`).
+
+The valid isolated EarleyBoyer run measured score **105**, 88.83 seconds,
+1.845T instructions, and 1.644GB RSS.  That is worse than the 108-score,
+88.07-second control and far below the x2 gate, so the change was reverted.
+The result rules out treating per-slot `ensure` as the principal cost.  The
+large allocation/ownership boundary remains the activation representation,
+not the branch inside an already allocated lexical store.
+
 ## Rejected forced compact-dispatch inlining
 
 The ordinary compact loop calls `run_instruction` for every non-branch
