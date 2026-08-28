@@ -350,6 +350,14 @@ fn proven_leaf(
     if function.code.uses_slot(arguments_slot) || function.mapped_arguments {
         return Err(LeafReject::Opcode("Arguments"));
     }
+    if !function.captures.is_empty()
+        && (0..code.len()).any(|pc| {
+            code.instruction(pc)
+                .is_some_and(|op| op.opcode == crate::ir::Opcode::CallN)
+        })
+    {
+        return Err(LeafReject::Opcode("CapturedCall"));
+    }
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (LEAF_FACT_SLOTS - 1);
     let cached = LEAF_FACTS.with(|facts| facts.borrow().get(index).and_then(Clone::clone));
     if let Some(cached) = cached.filter(|cached| {
