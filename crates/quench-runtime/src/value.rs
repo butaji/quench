@@ -207,6 +207,13 @@ impl TypedArrayMeta {
         }
     }
 
+    pub(crate) fn remove_property(&self, key: &str) {
+        self.properties.borrow_mut().retain(|(name, _)| name != key);
+        self.descriptors
+            .borrow_mut()
+            .retain(|(name, _)| name != key);
+    }
+
     pub(crate) fn descriptor(&self, key: &str) -> Option<Value> {
         self.descriptors
             .borrow()
@@ -913,7 +920,8 @@ impl PropertyEntries for ObjectProperties {
 
     #[inline]
     fn value_for_key(&self, key: &str) -> Option<Value> {
-        self.position_rev(key).and_then(|slot| self.slot_value(slot))
+        self.position_rev(key)
+            .and_then(|slot| self.slot_value(slot))
     }
 }
 
