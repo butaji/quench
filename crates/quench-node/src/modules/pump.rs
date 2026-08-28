@@ -404,6 +404,12 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
+    let previous_stack = task.domain_stack.as_ref().map(|stack| {
+        let previous = crate::modules::domain::stack_values(state);
+        let base = stack.get(..stack.len().saturating_sub(1)).unwrap_or(&[]);
+        crate::modules::domain::replace_stack(state, base);
+        previous
+    });
     let result = if let Some(domain) = task.domain.as_ref() {
         let mut call_args = Vec::with_capacity(task.args.len() + 1);
         call_args.push(task.callback.clone());
@@ -412,6 +418,9 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     } else {
         call_guarded(state, &task.callback, &Value::Undefined, &task.args)
     };
+    if let Some(previous) = previous_stack.as_ref() {
+        crate::modules::domain::replace_stack(state, previous);
+    }
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
     }

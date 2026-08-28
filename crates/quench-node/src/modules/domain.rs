@@ -202,7 +202,12 @@ fn refresh(state: &Rc<RefCell<HostState>>) {
         let _ = execute::set_property_in_place(&module, "active", active.clone());
         let global = quench_runtime::vm::current_global_object();
         let process = execute::get_property(&global, "process");
-        let _ = execute::set_property_in_place(&process, "domain", active.clone());
+        let process_domain = if matches!(active, Value::Null) {
+            Value::Undefined
+        } else {
+            active.clone()
+        };
+        let _ = execute::set_property_in_place(&process, "domain", process_domain);
         let hidden = |value| {
             host_api::object(vec![
                 ("configurable".into(), Value::Boolean(true)),
@@ -237,7 +242,6 @@ pub fn enter(
     let disposed = { with_domain(state, receiver)?.disposed };
     if !disposed {
         let mut host = state.borrow_mut();
-        host.domain.stack.retain(|entry| *entry != id);
         host.domain.stack.push(id);
         drop(host);
         refresh(state);
@@ -252,8 +256,8 @@ pub fn exit(
     let receiver = receiver.ok_or_else(|| type_error("domain"))?;
     let id = id(receiver)?;
     let mut host = state.borrow_mut();
-    if let Some(pos) = host.domain.stack.iter().position(|entry| *entry == id) {
-        host.domain.stack.truncate(pos);
+    if let Some(pos) = host.domain.stack.iter().rposition(|entry| *entry == id) {
+        host.domain.stack.remove(pos);
     }
     drop(host);
     refresh(state);
@@ -550,6 +554,43 @@ pub fn error_handler(state: &Rc<RefCell<HostState>>, domain: &Value) -> Option<V
         .domains
         .get(&id)
         .and_then(|entry| entry.handler.clone())
+}
+
+pub(crate) fn stack_values(state: &Rc<RefCell<HostState>>) -> Vec<Value> {
+    let host = state.borrow();
+    host.domain
+        .stack
+        .iter()
+        .filter_map(|id| host.domain.domains.get(id).map(|domain| domain.object.clone()))
+        .collect()
+}
+
+pub(crate) fn replace_stack(state: &Rc<RefCell<HostState>>, values: &[Value]) {
+    let stack = values.iter().filter_map(|value| id(value).ok()).collect();
+    state.borrow_mut().domain.stack = stack;
+    refresh(state);
+}
+
+pub(crate) fn call_error_handler(
+    state: &Rc<RefCell<HostState>>,
+    domain: &Value,
+    handler: &Value,
+    error: &Value,
+) -> Result<Value, VmError> {
+    let id = id(domain)?;
+    let previous = {
+        let mut host = state.borrow_mut();
+        let previous = host.domain.stack.clone();
+        while host.domain.stack.last() == Some(&id) {
+            host.domain.stack.pop();
+        }
+        previous
+    };
+    refresh(state);
+    let result = execute::call(handler, domain, std::slice::from_ref(error));
+    state.borrow_mut().domain.stack = previous;
+    refresh(state);
+    result
 }
 pub fn add_emitter(
     state: &Rc<RefCell<HostState>>,
