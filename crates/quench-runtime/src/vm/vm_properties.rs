@@ -111,6 +111,11 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
             if !matches!(inherited, Value::Undefined) {
                 return inherited;
             }
+            if let Ok(inherited) = crate::vm::get_property_with_receiver(&prototype, key, value) {
+                if !matches!(inherited, Value::Undefined) {
+                    return inherited;
+                }
+            }
         }
     }
     primitive_prototype_property(value, key)

@@ -20,7 +20,12 @@ macro_rules! bigint_property {
                 "byteOffset" => Value::Number(if out { 0 } else { view.byte_offset } as f64),
                 "length" => Value::Number(if out { 0 } else { view.logical_len() } as f64),
                 "BYTES_PER_ELEMENT" => Value::Number(8.0),
-                _ => crate::builtins::property(Builtin::$prototype, key),
+                _ => crate::vm::intrinsic_override_property(
+                    Builtin::TypedArrayPrototype,
+                    key,
+                    &Value::Undefined,
+                )
+                .unwrap_or_else(|| crate::builtins::property(Builtin::$prototype, key)),
             }
         }
     };
