@@ -423,22 +423,37 @@ fn parse_calendar_identifier(
         if text.contains("-000000-") {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
-        let iso_date = text
+        let base = text.split('[').next().unwrap_or(&text);
+        let iso_date = base
             .chars()
             .all(|ch| ch.is_ascii_digit() || "-+Tt:., ".contains(ch))
-            && text.chars().any(|ch| ch.is_ascii_digit());
-        if calendar.eq_ignore_ascii_case("iso8601") || (iso_date && !text.contains("[u-ca=")) {
+            && base.chars().any(|ch| ch.is_ascii_digit());
+        let date_like = base.contains(['T', 't', ' ']) && iso_date;
+        if calendar.eq_ignore_ascii_case("iso8601") || date_like || (iso_date && !text.contains("[u-ca=")) {
             return Ok("iso8601".into());
         }
         return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
-    if matches!(value, crate::value::Value::Object(_))
-        && matches!(
-            crate::execute::get_property_result(value, "calendarId"),
-            Ok(crate::value::Value::String(calendar)) if calendar.eq_ignore_ascii_case("iso8601")
-        )
-    {
-        return Ok("iso8601".into());
+    if let crate::value::Value::Object(object) = value {
+        if object.iter().any(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "\0temporal-plain-date"
+                    | "\0temporal-plain-date-time"
+                    | "\0temporal-plain-month-day"
+                    | "\0temporal-plain-year-month"
+            )
+        }) || object.iter().any(|(key, value)| {
+            key == "\0prototype"
+                && matches!(
+                    value,
+                    crate::value::Value::Builtin(
+                        crate::ops::Builtin::TemporalZonedDateTimePrototype
+                    )
+                )
+        }) {
+            return Ok("iso8601".into());
+        }
     }
     Err(crate::value::error::throw_type_error("Invalid calendar"))
 }
@@ -761,12 +776,20 @@ mod stubs {
             }
             Ok(option)
         };
-        let offset_mode = option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
+        if let Value::String(text) = value {
+            validate_zoned_string_shape(text)?;
+        }
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            if !crate::value::is_object(options) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+        }
         let _disambiguation = option_string(
             "disambiguation",
             &["compatible", "earlier", "later", "reject"],
             "compatible",
         )?;
+        let offset_mode = option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
         let overflow_mode = option_string("overflow", &["constrain", "reject"], "constrain")?;
         if let Value::String(text) = value {
             if !text.contains('[') || !text.ends_with(']') {
@@ -930,8 +953,7 @@ mod stubs {
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
         }
-        let epoch = crate::execute::get_property_result(value, "epochNanoseconds");
-        if epoch.is_err() || matches!(&epoch, Ok(Value::Undefined)) {
+        if !super::is_zoned_receiver(value, 0) {
             let year_value = crate::execute::get_property_result(value, "year")?;
             let day_value = crate::execute::get_property_result(value, "day")?;
             let month_value = crate::execute::get_property_result(value, "month")?;
@@ -949,7 +971,10 @@ mod stubs {
             let validated_offset = if matches!(raw_offset, Value::Undefined) {
                 None
             } else {
-                if !matches!(raw_offset, Value::String(_) | Value::StringUnits(_)) {
+                if crate::conversion::is_symbol(&raw_offset) {
+                    return Err(crate::value::error::throw_type_error("Invalid offset"));
+                }
+                if !matches!(raw_offset, Value::String(_) | Value::StringUnits(_) | Value::Object(_)) {
                     return Err(crate::value::error::throw_type_error("Invalid offset"));
                 }
                 let offset = crate::conversion::to_string(&raw_offset)?;
@@ -970,16 +995,48 @@ mod stubs {
                 }
                 Ok(number.trunc() as i128)
             };
+            let month_code = if matches!(month_code_value, Value::Undefined) {
+                None
+            } else {
+                if crate::conversion::is_symbol(&month_code_value) {
+                    return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+                }
+                let code = match &month_code_value {
+                    Value::String(code) => code.clone(),
+                    Value::StringUnits(_) => crate::conversion::to_string(&month_code_value)?,
+                    Value::Object(_) => crate::conversion::to_string(&month_code_value)?,
+                    _ => return Err(crate::value::error::throw_type_error("Invalid monthCode")),
+                };
+                let well_formed = code.len() == 3 && code.starts_with('M')
+                    || code.len() == 4 && code.starts_with('M') && code.ends_with('L');
+                if !well_formed {
+                    return Err(if matches!(&month_code_value, Value::Object(_)) {
+                        crate::value::error::throw_type_error("Invalid monthCode")
+                    } else {
+                        crate::value::error::throw_range_error("Invalid monthCode")
+                    });
+                }
+                let month = code[1..3].parse::<u32>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid monthCode")
+                })?;
+                Some((month, code.ends_with('L')))
+            };
             let year = i32::try_from(finite_integer(&year_value)?).map_err(|_| {
                 crate::value::error::throw_range_error("Invalid ZonedDateTime field")
             })?;
-            let month = if matches!(month_value, Value::Undefined) {
-                match month_code_value {
-                    Value::String(code) if code.len() == 3 && code.starts_with('M') => code[1..]
-                        .parse::<u32>()
-                        .map_err(|_| crate::value::error::throw_range_error("Invalid monthCode"))?,
-                    _ => return Err(crate::value::error::throw_range_error("Invalid monthCode")),
+            if month_code.is_some_and(|(month, leap)| leap || !(1..=12).contains(&month)) {
+                return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+            }
+            let month = if let Some((month_code, _)) = month_code {
+                if !matches!(month_value, Value::Undefined) {
+                    let month = finite_integer(&month_value)?;
+                    if month != i128::from(month_code) {
+                        return Err(crate::value::error::throw_range_error(
+                            "Month and monthCode do not match",
+                        ));
+                    }
                 }
+                month_code
             } else {
                 let month = finite_integer(&month_value)?;
                 if month < 1 {
@@ -1070,7 +1127,7 @@ mod stubs {
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
         }
-        let epoch = epoch?;
+        let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
         let epoch = match epoch {
             Value::BigInt(value) => value.parse().unwrap_or(0),
             _ => {
@@ -1091,6 +1148,80 @@ mod stubs {
             timezone,
             crate::ops::Builtin::TemporalZonedDateTimePrototype,
         ))
+    }
+
+    fn validate_zoned_string_shape(text: &str) -> Result<(), VmError> {
+        if !text.contains('[') || !text.ends_with(']') {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid ZonedDateTime",
+            ));
+        }
+        let (_calendar, _timezone) = super::parse_iso_annotations(text)?;
+        let head = text.split('[').next().unwrap_or(text);
+        let head = head.strip_suffix('Z').unwrap_or(head);
+        let Some((date, time)) = head.split_once(['T', 't', ' ']) else {
+            let (year, month, day) = super::parse_date_parts(head)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+            if !(1..=12).contains(&month)
+                || !(1..=super::plain_date::days_in_month_for_record(year, month)).contains(&day)
+            {
+                return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
+            }
+            return Ok(());
+        };
+        let (year, month, day) = super::parse_date_parts(date)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+        if !(1..=12).contains(&month)
+            || !(1..=super::plain_date::days_in_month_for_record(year, month)).contains(&day)
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid ZonedDateTime",
+            ));
+        }
+        let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
+        let (clock, offset) = offset_start
+            .map(|index| (&time[..index], Some(&time[index..])))
+            .unwrap_or((time, None));
+        if let Some(offset) = offset {
+            if !super::valid_iso_offset(offset) {
+                return Err(crate::value::error::throw_range_error("Invalid time"));
+            }
+        }
+        let (clock, fraction) = clock
+            .split_once(['.', ','])
+            .map_or((clock, None), |(core, fraction)| (core, Some(fraction)));
+        if fraction.is_some_and(|value| value.is_empty() || value.len() > 9) {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+        let parts = if clock.contains(':') {
+            let parts = clock.split(':').collect::<Vec<_>>();
+            if parts.len() > 3 || parts.iter().any(|part| part.len() != 2) {
+                return Err(crate::value::error::throw_range_error("Invalid time"));
+            }
+            parts
+                .iter()
+                .map(|part| part.parse::<i64>().unwrap_or(-1))
+                .collect::<Vec<_>>()
+        } else {
+            if !matches!(clock.len(), 2 | 4 | 6) || !clock.chars().all(|ch| ch.is_ascii_digit()) {
+                return Err(crate::value::error::throw_range_error("Invalid time"));
+            }
+            let mut parts = vec![clock[0..2].parse::<i64>().unwrap_or(-1)];
+            if clock.len() >= 4 {
+                parts.push(clock[2..4].parse::<i64>().unwrap_or(-1));
+            }
+            if clock.len() == 6 {
+                parts.push(clock[4..6].parse::<i64>().unwrap_or(-1));
+            }
+            parts
+        };
+        if parts.first().is_some_and(|value| !(0..=23).contains(value))
+            || parts.get(1).is_some_and(|value| !(0..=59).contains(value))
+            || parts.get(2).is_some_and(|value| !(0..=60).contains(value))
+        {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+        Ok(())
     }
 
     fn zoned_method(
