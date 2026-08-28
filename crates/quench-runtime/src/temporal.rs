@@ -683,6 +683,23 @@ mod stubs {
             let text = crate::conversion::to_string(value)?;
             return zoned_from(Some(&Value::String(text)), options);
         }
+        if matches!(value, Value::String(text) if crate::conversion::is_symbol_string(text)) {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid ZonedDateTime value",
+            ));
+        }
+        if !matches!(
+            value,
+            Value::String(_)
+                | Value::Object(_)
+                | Value::Function(_)
+                | Value::BoundFunction(_)
+                | Value::Proxy(_)
+        ) {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid ZonedDateTime value",
+            ));
+        }
         if let Value::String(text) = value {
             if !text.contains('[') {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
