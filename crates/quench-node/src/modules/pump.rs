@@ -42,8 +42,21 @@ fn call_guarded(
     receiver: &Value,
     args: &[Value],
 ) -> Result<(), VmError> {
+    call_guarded_report(state, cb, receiver, args).map(|_| ())
+}
+
+/// Invoke one callback and report whether an exception was handled by the
+/// uncaught-exception boundary.  Immediate queues use this bit to preserve
+/// Node's phase rule: after a handled throw, the rest of the current
+/// immediate snapshot runs before its newly queued nextTick callbacks.
+fn call_guarded_report(
+    state: &Rc<RefCell<HostState>>,
+    cb: &Value,
+    receiver: &Value,
+    args: &[Value],
+) -> Result<bool, VmError> {
     let Err(error) = call_callback(cb, receiver, args) else {
-        return Ok(());
+        return Ok(false);
     };
     let VmError::Thrown(thrown) = error else {
         return Err(error);
@@ -56,7 +69,8 @@ fn call_guarded(
     {
         return Err(VmError::Thrown(thrown));
     }
-    run_uncaught_handlers(state, &thrown)
+    run_uncaught_handlers(state, &thrown)?;
+    Ok(true)
 }
 
 /// Run the registered `uncaughtException` handlers for one thrown
@@ -493,6 +507,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
 }
 
 fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let mut defer_ticks = false;
     let queued: Vec<(Value, Vec<Value>)> = state
         .borrow()
         .event_loop
@@ -501,7 +516,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         .drain(..)
         .collect();
     for (cb, args) in queued {
-        call_guarded(state, &cb, &Value::Undefined, &args)?;
+        defer_ticks |= call_guarded_report(state, &cb, &Value::Undefined, &args)?;
     }
     let mut ids: Vec<u64> = state
         .borrow()
@@ -524,10 +539,15 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         }
         crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
-        let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
+        let result = call_guarded_report(state, &timer.callback, &timer.object, &timer.args);
         crate::modules::async_hooks::resource_after(state, None, &[])?;
         super::timers::async_destroy(&timer.async_resource);
-        result?;
+        defer_ticks |= result?;
+        if !defer_ticks {
+            drain_ticks(state)?;
+        }
+    }
+    if defer_ticks {
         drain_ticks(state)?;
     }
     Ok(())
