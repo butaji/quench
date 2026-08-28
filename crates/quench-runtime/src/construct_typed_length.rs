@@ -82,6 +82,40 @@ fn number_for_typed_array(value: &crate::value::Value) -> Result<f64, crate::exe
     }
 }
 
+fn identity_number(number: f64) -> f64 {
+    number
+}
+
+macro_rules! dense_numeric_constructor {
+    ($name:ident, $variant:ident, $view:ident, $convert:expr) => {
+        fn $name(numbers: &[f64]) -> Result<crate::value::Value, crate::execute::VmError> {
+            let buffer = std::rc::Rc::new(crate::value::ArrayBufferData::new(
+                numbers.len() * crate::value::$view::BYTES_PER_ELEMENT,
+            ));
+            let view = crate::value::$view::new(buffer, 0, numbers.len());
+            for (index, number) in numbers.iter().copied().enumerate() {
+                view.set(index, ($convert)(number));
+            }
+            Ok(crate::value::Value::$variant(std::rc::Rc::new(view)))
+        }
+    };
+}
+
+dense_numeric_constructor!(dense_float64_array, Float64Array, Float64ArrayData, identity_number);
+dense_numeric_constructor!(dense_float32_array, Float32Array, Float32ArrayData, |number| number as f32);
+dense_numeric_constructor!(dense_int8_array, Int8Array, Int8ArrayData, to_int8);
+dense_numeric_constructor!(dense_int16_array, Int16Array, Int16ArrayData, to_int16);
+dense_numeric_constructor!(dense_int32_array, Int32Array, Int32ArrayData, to_int32);
+dense_numeric_constructor!(dense_uint8_array, Uint8Array, Uint8ArrayData, to_uint8);
+dense_numeric_constructor!(
+    dense_uint8_clamped_array,
+    Uint8ClampedArray,
+    Uint8ClampedArrayData,
+    identity_number
+);
+dense_numeric_constructor!(dense_uint16_array, Uint16Array, Uint16ArrayData, to_uint16);
+dense_numeric_constructor!(dense_uint32_array, Uint32Array, Uint32ArrayData, to_uint32);
+
 fn typed_view_bounds(
     buffer: &crate::value::ArrayBufferData,
     arguments: &[Value],
