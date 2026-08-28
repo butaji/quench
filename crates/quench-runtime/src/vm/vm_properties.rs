@@ -281,6 +281,21 @@ fn iterator_property(value: &Value, key: &str) -> Value {
 }
 
 fn iterator_property_value(value: &Value, property: Value) -> Value {
+    // Array iterators inherit `next` from ArrayIterator.prototype. Keep that
+    // prototype edge observable: user code may replace it before a constructor
+    // consumes the iterator. Protocol iterators carry their own `next` method
+    // and therefore do not consult this override.
+    if matches!(
+        value,
+        Value::Iterator(data)
+            if matches!(&*data.state.borrow(), crate::value::IteratorState::Native { .. })
+    ) {
+        if let Some(override_value) =
+            crate::vm::intrinsic_override_property(Builtin::ArrayIteratorPrototype, "next", value)
+        {
+            return crate::vm::bind_method(value, override_value);
+        }
+    }
     if matches!(
         property,
         Value::Builtin(
