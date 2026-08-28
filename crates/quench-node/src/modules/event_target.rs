@@ -131,18 +131,17 @@ fn target_props() -> Vec<(&'static str, Value)> {
     vec![
         (
             "addEventListener",
-            cap("event_target:addEventListener", 0x0113),
+            crate::host::capability(crate::registry::SPEC_TARGET_ADD),
         ),
         (
             "removeEventListener",
-            cap("event_target:removeEventListener", 0x0114),
+            crate::host::capability(crate::registry::SPEC_TARGET_REMOVE),
         ),
-        ("dispatchEvent", cap("event_target:dispatchEvent", 0x0115)),
+        (
+            "dispatchEvent",
+            crate::host::capability(crate::registry::SPEC_TARGET_DISPATCH),
+        ),
     ]
-}
-
-fn cap(name: &'static str, id: u16) -> Value {
-    crate::host::capability(crate::registry::NodeSpec::new(name, id))
 }
 
 fn type_arg(args: &[Value]) -> Result<String, VmError> {
