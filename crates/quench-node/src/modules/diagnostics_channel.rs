@@ -636,7 +636,10 @@ pub fn bind_store(
 ) -> Result<Value, VmError> {
     let data = channel_data(state, receiver.ok_or_else(|| type_error("channel"))?)?;
     let store = args.first().cloned().unwrap_or(Value::Undefined);
-    let transform = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let transform = match args.get(1).cloned() {
+        Some(Value::Undefined) | None => eval_function("(value) => value")?,
+        Some(value) => value,
+    };
     if !quench_runtime::is_callable(&transform) {
         return Err(type_error("transform"));
     }
