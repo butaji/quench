@@ -17,7 +17,7 @@ pub(crate) fn assign_set_property(
         && crate::typed_array_ops::is_index_key(key)
     {
         if let Some(result) = crate::typed_array_ops::set_property(target, key, &value) {
-            return Ok(result.unwrap_or_else(|_| target.clone()));
+            return result;
         }
     }
     if let crate::value::Value::Object(properties) = target {
