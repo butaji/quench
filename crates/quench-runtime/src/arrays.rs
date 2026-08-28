@@ -48,6 +48,16 @@ fn execute_builtin_match(
         TypedArraySome => return Some(typed_array_some(receiver, arguments)),
         TypedArrayMap => return Some(typed_array_map(receiver, arguments)),
         TypedArrayFilter => return Some(typed_array_filter(receiver, arguments)),
+        TypedArraySlice => {
+            return Some(receiver.map_or_else(
+                || {
+                    Err(crate::value::error::throw_type_error(
+                        "TypedArray method called on incompatible receiver",
+                    ))
+                },
+                |value| typed_array_slice(value, arguments),
+            ));
+        }
         ArrayFind => return Some(find(receiver, arguments)),
         TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
         TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
@@ -1282,16 +1292,18 @@ fn typed_array_species_create(
             "TypedArray species constructor returned a non-TypedArray",
         ));
     }
-    validate_typed_array_species_target(&result, length)?;
+    validate_typed_array_species_target(&result, length, Some(exemplar))?;
     Ok(result)
 }
 
 fn validate_typed_array_species_target(
     target: &Value,
     length: usize,
+    exemplar: Option<&Value>,
 ) -> Result<(), crate::execute::VmError> {
     if crate::typed_array_prototype::is_out_of_bounds(target)
-        || typed_array_is_immutable(target)
+        || (typed_array_is_immutable(target)
+            && !exemplar.is_some_and(|value| typed_array_same_buffer(value, target)))
         || crate::typed_array_ops::logical_len(target).unwrap_or(0) < length
     {
         return Err(crate::value::error::throw_type_error(
@@ -1299,6 +1311,28 @@ fn validate_typed_array_species_target(
         ));
     }
     Ok(())
+}
+
+fn typed_array_same_buffer(left: &Value, right: &Value) -> bool {
+    fn buffer(value: &Value) -> Option<&std::rc::Rc<crate::value::ArrayBufferData>> {
+        match value {
+            Value::Float64Array(view) => Some(&view.buffer),
+            Value::Float32Array(view) => Some(&view.buffer),
+            Value::Int8Array(view) => Some(&view.buffer),
+            Value::Int16Array(view) => Some(&view.buffer),
+            Value::Int32Array(view) => Some(&view.buffer),
+            Value::Uint8Array(view) => Some(&view.buffer),
+            Value::Uint8ClampedArray(view) => Some(&view.buffer),
+            Value::Uint16Array(view) => Some(&view.buffer),
+            Value::Uint32Array(view) => Some(&view.buffer),
+            Value::BigInt64Array(view) => Some(&view.buffer),
+            Value::BigUint64Array(view) => Some(&view.buffer),
+            _ => None,
+        }
+    }
+    buffer(left)
+        .zip(buffer(right))
+        .is_some_and(|(left, right)| std::rc::Rc::ptr_eq(left, right))
 }
 
 pub(crate) fn typed_array_species_constructor(
@@ -1354,7 +1388,7 @@ fn typed_array_prototype_override(
         return None;
     }
     let Value::BoundFunction(bound) = prototype else {
-        return None;
+        return Some(crate::execute::get_property_result(prototype, key));
     };
     let descriptor_key = crate::builtins::descriptor_key(key);
     let descriptor = bound

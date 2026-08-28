@@ -31,6 +31,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::TypedArraySome => Some("some"),
         Builtin::TypedArrayMap => Some("map"),
         Builtin::TypedArrayFilter => Some("filter"),
+        Builtin::TypedArraySlice => Some("slice"),
         Builtin::ArrayFind => Some("find"),
         Builtin::TypedArrayFind => Some("find"),
         Builtin::ArrayFindIndex => Some("findIndex"),
@@ -187,7 +188,7 @@ const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayToSpliced
         | Builtin::ArrayWith
         | Builtin::TypedArrayWith => Some(2.0),
-        Builtin::ArraySlice | Builtin::ArraySplice => Some(2.0),
+        Builtin::ArraySlice | Builtin::TypedArraySlice | Builtin::ArraySplice => Some(2.0),
         Builtin::ArrayConcat => Some(1.0),
         _ => None,
     }
