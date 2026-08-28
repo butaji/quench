@@ -3,7 +3,7 @@ use crate::host::HostState;
 use crate::registry::{
     SPEC_CLUSTER_DISCONNECT, SPEC_CLUSTER_FORK, SPEC_CLUSTER_WORKER_DISCONNECT,
     SPEC_CLUSTER_WORKER_EMIT, SPEC_CLUSTER_WORKER_IS_CONNECTED, SPEC_CLUSTER_WORKER_IS_DEAD,
-    SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON,
+    SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON, SPEC_CLUSTER_WORKER_SEND,
 };
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -109,6 +109,7 @@ pub fn fork(
             "kill".into(),
             crate::host::capability(SPEC_CLUSTER_WORKER_KILL),
         ),
+        ("send".into(), crate::host::capability(SPEC_CLUSTER_WORKER_SEND)),
     ]);
     if let Some(prototype) = host.cluster.worker_prototype.clone() {
         worker = execute::set_prototype_of(&worker, &prototype).unwrap_or(worker);
@@ -339,6 +340,34 @@ pub fn kill(
         execute::call(cb, &Value::Undefined, &[])?;
     }
     Ok(obj)
+}
+
+pub fn send(
+    state: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (id, obj) = worker(state, r)?;
+    let connected = state
+        .borrow()
+        .cluster
+        .workers
+        .get(&id)
+        .is_some_and(|w| w.connected && !w.dead);
+    if !connected {
+        return Ok(Value::Boolean(false));
+    }
+    let message = args.first().cloned().unwrap_or(Value::Undefined);
+    let _ = emit(
+        state,
+        Some(&obj),
+        &[Value::String("message".into()), message.clone()],
+    );
+    let _ = crate::modules::process::emit(
+        state,
+        &[Value::String("message".into()), message],
+    );
+    Ok(Value::Boolean(true))
 }
 pub fn disconnect_all(
     state: &Rc<RefCell<HostState>>,
