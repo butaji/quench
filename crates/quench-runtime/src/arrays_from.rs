@@ -64,7 +64,11 @@ pub(crate) fn of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    create_result(receiver.filter(|value| is_constructor(value)), arguments.to_vec(), false)
+    create_result(
+        receiver.filter(|value| is_constructor(value)),
+        arguments.to_vec(),
+        false,
+    )
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
@@ -267,9 +271,11 @@ fn write_result_element(
     // writable but non-configurable, so defining a fresh property would
     // incorrectly trip the ordinary-object read-only check.
     if crate::typed_array_ops::is_view(&result) {
-        let updated = crate::builtins::set_property(result.clone(), &key, value);
-        crate::locals::replace_value(&result, &updated);
-        return Ok(updated);
+        if let Some(updated) = crate::typed_array_ops::set_property(&result, &key, &value) {
+            let updated = updated?;
+            crate::locals::replace_value(&result, &updated);
+            return Ok(updated);
+        }
     }
     let current =
         crate::builtins::object::descriptor(Some(&result), Some(&Value::String(key.clone())))?;
