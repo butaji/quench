@@ -430,6 +430,19 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if matches!(value, Value::Builtin(crate::ops::Builtin::RegExp))
+        && crate::builtins::object::is_regexp_legacy_accessor(key)
+    {
+        return crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::RegExpLegacyGetter,
+            &[],
+            Some(receiver),
+        );
+    }
+    if matches!(value, Value::ObjectAlias(_)) {
+        let resolved = crate::builtins::object::resolve_object_alias(value.clone());
+        return get_property_with_receiver(&resolved, key, receiver);
+    }
     // Prototype mutations materialize a replacement object. Resolve it before
     // walking inherited properties so ordinary objects (including generator
     // prototypes) observe the current descriptor rather than the stale view.

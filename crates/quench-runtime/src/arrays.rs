@@ -1500,12 +1500,19 @@ pub(crate) fn reduce_values(
             "Reduce of empty array",
         ));
     };
-    let indices: Box<dyn Iterator<Item = usize>> = if reverse {
-        Box::new((0..index).rev())
-    } else {
-        Box::new(index..length)
-    };
-    for position in indices {
+    // Keep the traversal state in two machine words.  A boxed iterator here
+    // adds a heap allocation and an indirect call to a hot, linear loop;
+    // explicit bounds are just as clear and let LLVM inline the body.
+    let mut position = index;
+    loop {
+        if reverse {
+            if position == 0 {
+                break;
+            }
+            position -= 1;
+        } else if position >= length {
+            break;
+        }
         let value = crate::builtins::map_value(&receiver, position)?;
         let value = if typed && value.is_none() {
             Some(Value::Undefined)
@@ -1520,6 +1527,9 @@ pub(crate) fn reduce_values(
             receiver.clone(),
         ];
         accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        if !reverse {
+            position += 1;
+        }
     }
     Ok(accumulator)
 }

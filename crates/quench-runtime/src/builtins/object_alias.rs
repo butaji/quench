@@ -1,6 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject};
+use crate::value::{
+    ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, PropertyEntries, Value, WeakObject,
+};
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
     let self_reference = value_targets(&value, &properties);
@@ -68,6 +70,15 @@ pub(crate) fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool 
                 Value::Builtin(crate::ops::Builtin::ObjectPrototype)
             )
         })
+        && properties
+            .as_ref()
+            .value_for_key("\0prototype")
+            .is_none_or(|prototype| {
+                matches!(
+                    prototype,
+                    Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+                )
+            })
         && !properties.has_replacement()
         && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
 }
