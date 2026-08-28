@@ -1301,7 +1301,7 @@ fn validate_typed_array_species_target(
     Ok(())
 }
 
-fn typed_array_species_constructor(
+pub(crate) fn typed_array_species_constructor(
     exemplar: &Value,
     default: crate::ops::Builtin,
 ) -> Result<Value, crate::execute::VmError> {

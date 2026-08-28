@@ -189,31 +189,159 @@ fn relative_index(value: Option<&Value>, length: usize) -> Result<usize, VmError
 }
 
 fn subarray(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let view = receiver.ok_or_else(|| VmError::NotCallable)?;
-    let length = typed_array_length(view).ok_or_else(|| VmError::NotCallable)?;
+    let view = receiver.cloned().ok_or_else(|| VmError::NotCallable)?;
+    if !view.is_typed_array() {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on incompatible receiver",
+        ));
+    }
+    let source_buffer = match &view {
+        Value::Float64Array(view) => view.buffer.clone(),
+        Value::Float32Array(view) => view.buffer.clone(),
+        Value::Int8Array(view) => view.buffer.clone(),
+        Value::Int16Array(view) => view.buffer.clone(),
+        Value::Int32Array(view) => view.buffer.clone(),
+        Value::Uint8Array(view) => view.buffer.clone(),
+        Value::Uint8ClampedArray(view) => view.buffer.clone(),
+        Value::Uint16Array(view) => view.buffer.clone(),
+        Value::Uint32Array(view) => view.buffer.clone(),
+        Value::BigInt64Array(view) => view.buffer.clone(),
+        Value::BigUint64Array(view) => view.buffer.clone(),
+        _ => return Err(VmError::NotCallable),
+    };
+    let source_byte_offset = match &view {
+        Value::Float64Array(view) => view.byte_offset,
+        Value::Float32Array(view) => view.byte_offset,
+        Value::Int8Array(view) => view.byte_offset,
+        Value::Int16Array(view) => view.byte_offset,
+        Value::Int32Array(view) => view.byte_offset,
+        Value::Uint8Array(view) => view.byte_offset,
+        Value::Uint8ClampedArray(view) => view.byte_offset,
+        Value::Uint16Array(view) => view.byte_offset,
+        Value::Uint32Array(view) => view.byte_offset,
+        Value::BigInt64Array(view) => view.byte_offset,
+        Value::BigUint64Array(view) => view.byte_offset,
+        _ => 0,
+    };
+    let out_of_bounds = crate::typed_array_prototype::is_out_of_bounds(&view);
+    let length = if out_of_bounds {
+        0
+    } else {
+        crate::typed_array_ops::logical_len(&view).ok_or_else(|| VmError::NotCallable)?
+    };
     let begin = match arguments.first() {
         None | Some(Value::Undefined) => 0,
         Some(_) => relative_index(arguments.first(), length)?,
     };
-    let end = relative_index(arguments.get(1), length)?;
-    Ok(typed_array_subview(view, begin, end.saturating_sub(begin)))
-}
-
-fn typed_array_length(value: &Value) -> Option<usize> {
-    Some(match value {
-        Value::Float64Array(view) => view.length,
-        Value::Float32Array(view) => view.length,
-        Value::Int8Array(view) => view.length,
-        Value::Int16Array(view) => view.length,
-        Value::Int32Array(view) => view.length,
-        Value::BigInt64Array(view) => view.length,
-        Value::BigUint64Array(view) => view.length,
-        Value::Uint32Array(view) => view.length,
-        Value::Uint8Array(view) => view.length,
-        Value::Uint8ClampedArray(view) => view.length,
-        Value::Uint16Array(view) => view.length,
-        _ => return None,
-    })
+    let end = relative_index(
+        arguments
+            .get(1)
+            .filter(|value| !matches!(value, Value::Undefined)),
+        length,
+    )?;
+    let length = end.saturating_sub(begin);
+    let length_tracking = match &view {
+        Value::Float64Array(view) => view.length == usize::MAX,
+        Value::Float32Array(view) => view.length == usize::MAX,
+        Value::Int8Array(view) => view.length == usize::MAX,
+        Value::Int16Array(view) => view.length == usize::MAX,
+        Value::Int32Array(view) => view.length == usize::MAX,
+        Value::Uint8Array(view) => view.length == usize::MAX,
+        Value::Uint8ClampedArray(view) => view.length == usize::MAX,
+        Value::Uint16Array(view) => view.length == usize::MAX,
+        Value::Uint32Array(view) => view.length == usize::MAX,
+        Value::BigInt64Array(view) => view.length == usize::MAX,
+        Value::BigUint64Array(view) => view.length == usize::MAX,
+        _ => false,
+    };
+    let end_omitted = arguments
+        .get(1)
+        .is_none_or(|value| matches!(value, Value::Undefined));
+    let default = match view {
+        Value::Float64Array(_) => Builtin::Float64Array,
+        Value::Float32Array(_) => Builtin::Float32Array,
+        Value::Int8Array(_) => Builtin::Int8Array,
+        Value::Int16Array(_) => Builtin::Int16Array,
+        Value::Int32Array(_) => Builtin::Int32Array,
+        Value::Uint8Array(_) => Builtin::Uint8Array,
+        Value::Uint8ClampedArray(_) => Builtin::Uint8ClampedArray,
+        Value::Uint16Array(_) => Builtin::Uint16Array,
+        Value::Uint32Array(_) => Builtin::Uint32Array,
+        Value::BigInt64Array(_) => Builtin::BigInt64Array,
+        Value::BigUint64Array(_) => Builtin::BigUint64Array,
+        _ => return Err(VmError::NotCallable),
+    };
+    let constructor = crate::arrays::typed_array_species_constructor(&view, default)?;
+    let species = match constructor {
+        Value::Undefined => Value::Builtin(default),
+        Value::Builtin(_) => constructor,
+        Value::Null => {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray constructor is not an object",
+            ));
+        }
+        constructor if !crate::value::is_object(&constructor) => {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray constructor is not an object",
+            ));
+        }
+        constructor => match crate::execute::get_property_result(&constructor, "Symbol.species")? {
+            Value::Undefined | Value::Null => Value::Builtin(default),
+            species => species,
+        },
+    };
+    if matches!(&species, Value::Builtin(builtin) if *builtin == default) {
+        if crate::arrays::typed_array_is_detached(&view) {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray buffer is detached",
+            ));
+        }
+        let element_size = match &view {
+            Value::Float64Array(_) | Value::BigInt64Array(_) | Value::BigUint64Array(_) => 8,
+            Value::Float32Array(_) | Value::Int32Array(_) | Value::Uint32Array(_) => 4,
+            Value::Int16Array(_) | Value::Uint16Array(_) => 2,
+            _ => 1,
+        };
+        let begin_offset = source_byte_offset.saturating_add(begin.saturating_mul(element_size));
+        if source_buffer.byte_length() < begin_offset {
+            return Err(crate::value::error::throw_range_error(
+                "TypedArray subarray offset is out of bounds",
+            ));
+        }
+        let result_length = if length_tracking && end_omitted {
+            usize::MAX
+        } else {
+            let required = begin_offset.saturating_add(length.saturating_mul(element_size));
+            if source_buffer.byte_length() < required {
+                return Err(crate::value::error::throw_range_error(
+                    "TypedArray subarray length is out of bounds",
+                ));
+            }
+            length
+        };
+        return Ok(typed_array_subview(&view, begin, result_length));
+    }
+    let buffer = Value::ArrayBuffer(source_buffer);
+    let byte_offset = source_byte_offset;
+    let element_size = match &view {
+        Value::Float64Array(_) | Value::BigInt64Array(_) | Value::BigUint64Array(_) => 8,
+        Value::Float32Array(_) | Value::Int32Array(_) | Value::Uint32Array(_) => 4,
+        Value::Int16Array(_) | Value::Uint16Array(_) => 2,
+        _ => 1,
+    };
+    let begin_offset = Value::Number((byte_offset + begin.saturating_mul(element_size)) as f64);
+    let args = if length_tracking && end_omitted {
+        vec![buffer, begin_offset]
+    } else {
+        vec![buffer, begin_offset, Value::Number(length as f64)]
+    };
+    let result = crate::construct::construct_value(&species, &args)?;
+    if !result.is_typed_array() {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray species constructor returned a non-TypedArray",
+        ));
+    }
+    Ok(result)
 }
 
 fn typed_array_subview(value: &Value, begin: usize, length: usize) -> Value {

@@ -177,6 +177,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
 
 fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
     match builtin {
+        Builtin::TypedArrayPrototype => Some(Builtin::ObjectPrototype),
         Builtin::Float64ArrayPrototype
         | Builtin::Float32ArrayPrototype
         | Builtin::Int8ArrayPrototype
