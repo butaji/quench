@@ -35,26 +35,12 @@ fn view_int8_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
-    if offset > buffer.byte_length() {
-        return Err(range_error("Invalid Int8Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available
-    {
-        return Err(range_error("Invalid Int8Array length"));
-    }
+    let (offset, length) = typed_view_bounds(
+        buffer,
+        arguments,
+        crate::value::Int8ArrayData::BYTES_PER_ELEMENT,
+        "Int8Array",
+    )?;
     Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
         buffer.clone(),
         offset,
@@ -104,27 +90,8 @@ fn view_int16_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Int16ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Int16Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Int16Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Int16Array")?;
     Ok(Value::Int16Array(Rc::new(
         crate::value::Int16ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -158,27 +125,8 @@ fn view_int32_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Int32ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Int32Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Int32Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Int32Array")?;
     Ok(Value::Int32Array(Rc::new(
         crate::value::Int32ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -268,27 +216,8 @@ fn view_float32_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Float32ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Float32Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Float32Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Float32Array")?;
     Ok(Value::Float32Array(Rc::new(
         crate::value::Float32ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -328,27 +257,8 @@ fn view_float64_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Float64ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Float64Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Float64Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Float64Array")?;
     Ok(Value::Float64Array(Rc::new(
         crate::value::Float64ArrayData::new(buffer.clone(), offset, length),
     )))
