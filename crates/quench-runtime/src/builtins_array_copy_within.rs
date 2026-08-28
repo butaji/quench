@@ -77,16 +77,16 @@ pub(crate) fn typed_array_copy_within(
         .map(|value| copy_index(Some(value), length))
         .transpose()?
         .unwrap_or(length);
-    let count = end.saturating_sub(start).min(length.saturating_sub(target));
-    if count == 0 {
-        return Ok(value);
-    }
     if crate::arrays::typed_array_is_detached(&value)
         || crate::typed_array_prototype::is_out_of_bounds(&value)
     {
         return Err(crate::value::error::throw_type_error(
             "TypedArray.prototype.copyWithin called on invalid view",
         ));
+    }
+    let count = end.saturating_sub(start).min(length.saturating_sub(target));
+    if count == 0 {
+        return Ok(value);
     }
 
     // Snapshot before writing so overlapping ranges preserve the source bits.
@@ -171,8 +171,9 @@ fn copy_index(value: Option<&Value>, length: usize) -> Result<usize, crate::exec
     if number.is_nan() {
         return Ok(0);
     }
-    if number.is_sign_negative() {
-        return Ok(length.saturating_sub(number.abs().floor() as usize));
+    let integer = number.trunc();
+    if integer.is_sign_negative() {
+        return Ok(length.saturating_sub(integer.abs() as usize));
     }
-    Ok((number.floor() as usize).min(length))
+    Ok((integer as usize).min(length))
 }
