@@ -194,6 +194,8 @@ const CAP_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE: u16 =
     crate::registry::SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_BOUNDED_RUN: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
 const CAP_DIAGNOSTICS_CHANNEL_SCOPE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SCOPE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_RUN_STORES: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_CHANNEL_RUN_STORES.cap;
 const CAP_DOMAIN_CREATE: u16 = crate::registry::SPEC_DOMAIN_CREATE.cap;
 const CAP_DOMAIN_CONSTRUCTOR: u16 = crate::registry::SPEC_DOMAIN_CONSTRUCTOR.cap;
 const CAP_DOMAIN_ENTER: u16 = crate::registry::SPEC_DOMAIN_ENTER.cap;
@@ -623,6 +625,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CLUSTER_WORKER_DISCONNECT => crate::modules::cluster::disconnect,
         CAP_CLUSTER_WORKER_KILL => crate::modules::cluster::kill,
         CAP_DIAGNOSTICS_CHANNEL_SCOPE => crate::modules::diagnostics_channel::with_store_scope,
+        CAP_DIAGNOSTICS_CHANNEL_RUN_STORES => crate::modules::diagnostics_channel::run_stores,
         CAP_DIAGNOSTICS_SCOPE_DISPOSE => crate::modules::diagnostics_channel::dispose_store_scope,
         _ => return os_buffer_dispatch(cap),
     })
