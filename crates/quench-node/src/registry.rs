@@ -883,6 +883,18 @@ pub fn namespace_bindings(
         "prototype",
         crate::host::namespace_object_from_pairs(Vec::new()),
     );
+    for (name, value) in [
+        ("NONE", 0.0),
+        ("CAPTURING_PHASE", 1.0),
+        ("AT_TARGET", 2.0),
+        ("BUBBLING_PHASE", 3.0),
+    ] {
+        let _ = quench_runtime::execute::set_callable_property(
+            &event,
+            name,
+            quench_runtime::value::Value::Number(value),
+        );
+    }
     out.push(("Event".to_string(), event));
     let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
     let _ = quench_runtime::execute::set_callable_property(
