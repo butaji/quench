@@ -352,6 +352,9 @@ fn set_internal_prototype(
     value: Value,
     prototype: Value,
 ) -> Result<Value, crate::execute::VmError> {
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        return crate::builtins::object::set_prototype_of(&[value, prototype]);
+    }
     if matches!(
         value,
         Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_)
