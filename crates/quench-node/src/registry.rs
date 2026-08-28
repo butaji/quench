@@ -190,32 +190,32 @@ node_api! {
     (SPEC_WASI_IMPORT_OBJECT, "wasi:WASI:getImportObject", 0x1C03),
 }
 
-pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
-pub const SPEC_PATH_RESOLVE: NodeSpec = NodeSpec::new("path:resolve", 0x0401);
-pub const SPEC_PATH_NORMALIZE: NodeSpec = NodeSpec::new("path:normalize", 0x0402);
-pub const SPEC_PATH_DIRNAME: NodeSpec = NodeSpec::new("path:dirname", 0x0403);
-pub const SPEC_PATH_BASENAME: NodeSpec = NodeSpec::new("path:basename", 0x0404);
-pub const SPEC_PATH_EXTNAME: NodeSpec = NodeSpec::new("path:extname", 0x0405);
-pub const SPEC_PATH_ISABSOLUTE: NodeSpec = NodeSpec::new("path:isAbsolute", 0x0406);
-pub const SPEC_PATH_RELATIVE: NodeSpec = NodeSpec::new("path:relative", 0x0409);
-pub const SPEC_PATH_PARSE: NodeSpec = NodeSpec::new("path:parse", 0x040A);
-pub const SPEC_PATH_FORMAT: NodeSpec = NodeSpec::new("path:format", 0x040B);
-pub const SPEC_PATH_TO_NAMESPACED: NodeSpec = NodeSpec::new("path:toNamespacedPath", 0x040C);
-pub const SPEC_PATH_MATCHES_GLOB: NodeSpec = NodeSpec::new("path:matchesGlob", 0x040D);
-
-pub const SPEC_PATH_WIN32_JOIN: NodeSpec = NodeSpec::new("path.win32:join", 0x0410);
-pub const SPEC_PATH_WIN32_RESOLVE: NodeSpec = NodeSpec::new("path.win32:resolve", 0x0411);
-pub const SPEC_PATH_WIN32_NORMALIZE: NodeSpec = NodeSpec::new("path.win32:normalize", 0x0412);
-pub const SPEC_PATH_WIN32_DIRNAME: NodeSpec = NodeSpec::new("path.win32:dirname", 0x0413);
-pub const SPEC_PATH_WIN32_BASENAME: NodeSpec = NodeSpec::new("path.win32:basename", 0x0414);
-pub const SPEC_PATH_WIN32_EXTNAME: NodeSpec = NodeSpec::new("path.win32:extname", 0x0415);
-pub const SPEC_PATH_WIN32_ISABSOLUTE: NodeSpec = NodeSpec::new("path.win32:isAbsolute", 0x0416);
-pub const SPEC_PATH_WIN32_RELATIVE: NodeSpec = NodeSpec::new("path.win32:relative", 0x0417);
-pub const SPEC_PATH_WIN32_PARSE: NodeSpec = NodeSpec::new("path.win32:parse", 0x0418);
-pub const SPEC_PATH_WIN32_FORMAT: NodeSpec = NodeSpec::new("path.win32:format", 0x0419);
-pub const SPEC_PATH_WIN32_TO_NAMESPACED: NodeSpec =
-    NodeSpec::new("path.win32:toNamespacedPath", 0x041A);
-pub const SPEC_PATH_WIN32_MATCHES_GLOB: NodeSpec = NodeSpec::new("path.win32:matchesGlob", 0x041B);
+node_api! {
+    (SPEC_PATH_JOIN, "path:join", 0x0400),
+    (SPEC_PATH_RESOLVE, "path:resolve", 0x0401),
+    (SPEC_PATH_NORMALIZE, "path:normalize", 0x0402),
+    (SPEC_PATH_DIRNAME, "path:dirname", 0x0403),
+    (SPEC_PATH_BASENAME, "path:basename", 0x0404),
+    (SPEC_PATH_EXTNAME, "path:extname", 0x0405),
+    (SPEC_PATH_ISABSOLUTE, "path:isAbsolute", 0x0406),
+    (SPEC_PATH_RELATIVE, "path:relative", 0x0409),
+    (SPEC_PATH_PARSE, "path:parse", 0x040A),
+    (SPEC_PATH_FORMAT, "path:format", 0x040B),
+    (SPEC_PATH_TO_NAMESPACED, "path:toNamespacedPath", 0x040C),
+    (SPEC_PATH_MATCHES_GLOB, "path:matchesGlob", 0x040D),
+    (SPEC_PATH_WIN32_JOIN, "path.win32:join", 0x0410),
+    (SPEC_PATH_WIN32_RESOLVE, "path.win32:resolve", 0x0411),
+    (SPEC_PATH_WIN32_NORMALIZE, "path.win32:normalize", 0x0412),
+    (SPEC_PATH_WIN32_DIRNAME, "path.win32:dirname", 0x0413),
+    (SPEC_PATH_WIN32_BASENAME, "path.win32:basename", 0x0414),
+    (SPEC_PATH_WIN32_EXTNAME, "path.win32:extname", 0x0415),
+    (SPEC_PATH_WIN32_ISABSOLUTE, "path.win32:isAbsolute", 0x0416),
+    (SPEC_PATH_WIN32_RELATIVE, "path.win32:relative", 0x0417),
+    (SPEC_PATH_WIN32_PARSE, "path.win32:parse", 0x0418),
+    (SPEC_PATH_WIN32_FORMAT, "path.win32:format", 0x0419),
+    (SPEC_PATH_WIN32_TO_NAMESPACED, "path.win32:toNamespacedPath", 0x041A),
+    (SPEC_PATH_WIN32_MATCHES_GLOB, "path.win32:matchesGlob", 0x041B),
+}
 
 node_api! {
     (SPEC_URL_PARSE, "url:parse", 0x0500),
@@ -612,39 +612,34 @@ node_api! {
     (SPEC_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
     (SPEC_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
 }
-pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1F36);
-pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
-pub const SPEC_GC: NodeSpec = NodeSpec::new("gc", 0x2117);
-pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1F22);
-pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1F25);
-pub const SPEC_ABORT_CONTROLLER_SIGNAL_GET: NodeSpec =
-    NodeSpec::new("AbortController.signal:get", 0x1F27);
-pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
-pub const SPEC_ABORT_SIGNAL_ABORTED_GET: NodeSpec =
-    NodeSpec::new("AbortSignal.aborted:get", 0x1F28);
-pub const SPEC_ABORT_SIGNAL_HAS_INSTANCE: NodeSpec =
-    NodeSpec::new("AbortSignal.hasInstance", 0x1F29);
-pub const SPEC_ABORT_SIGNAL_THROW_IF_ABORTED: NodeSpec =
-    NodeSpec::new("AbortSignal.throwIfAborted", 0x1F2A);
-pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
-pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F40);
-pub const SPEC_ABORT_SIGNAL_ANY: NodeSpec = NodeSpec::new("AbortSignal.any", 0x1F41);
-pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1F26);
-pub const SPEC_EVENT: NodeSpec = NodeSpec::new("Event", 0x0118);
-pub const SPEC_EVENT_PREVENT_DEFAULT: NodeSpec = NodeSpec::new("Event.preventDefault", 0x011a);
-pub const SPEC_EVENT_STOP_PROPAGATION: NodeSpec = NodeSpec::new("Event.stopPropagation", 0x011b);
-pub const SPEC_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("Event.stopImmediatePropagation", 0x011c);
-pub const SPEC_EVENT_COMPOSED_PATH: NodeSpec = NodeSpec::new("Event.composedPath", 0x011d);
-pub const SPEC_EVENT_GET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.get", 0x011e);
-pub const SPEC_EVENT_SET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.set", 0x011f);
-pub const SPEC_DEFINE_EVENT_HANDLER: NodeSpec =
-    NodeSpec::new("internal:eventTarget:defineEventHandler", 0x0120);
-pub const SPEC_EVENT_HANDLER_GET: NodeSpec = NodeSpec::new("EventHandler.get", 0x0121);
-pub const SPEC_EVENT_HANDLER_SET: NodeSpec = NodeSpec::new("EventHandler.set", 0x0122);
-pub const SPEC_CUSTOM_EVENT: NodeSpec = NodeSpec::new("CustomEvent", 0x0123);
-pub const SPEC_EVENT_SOURCE: NodeSpec = NodeSpec::new("EventSource", 0x0124);
+node_api! {
+    (SPEC_STRUCTURED_CLONE, "structuredClone", 0x1F36),
+    (SPEC_FETCH, "fetch", 0x1F21),
+    (SPEC_GC, "gc", 0x2117),
+    (SPEC_ABORT_CONTROLLER, "AbortController", 0x1F22),
+    (SPEC_ABORT_CONTROLLER_ABORT, "AbortController.abort", 0x1F25),
+    (SPEC_ABORT_CONTROLLER_SIGNAL_GET, "AbortController.signal:get", 0x1F27),
+    (SPEC_ABORT_SIGNAL, "AbortSignal", 0x1F23),
+    (SPEC_ABORT_SIGNAL_ABORTED_GET, "AbortSignal.aborted:get", 0x1F28),
+    (SPEC_ABORT_SIGNAL_HAS_INSTANCE, "AbortSignal.hasInstance", 0x1F29),
+    (SPEC_ABORT_SIGNAL_THROW_IF_ABORTED, "AbortSignal.throwIfAborted", 0x1F2A),
+    (SPEC_ABORT_SIGNAL_ABORT, "AbortSignal.abort", 0x1F24),
+    (SPEC_ABORT_SIGNAL_TIMEOUT, "AbortSignal.timeout", 0x1F40),
+    (SPEC_ABORT_SIGNAL_ANY, "AbortSignal.any", 0x1F41),
+    (SPEC_ABORT_EVENT_STOP_IMMEDIATE, "AbortEvent.stopImmediatePropagation", 0x1F26),
+    (SPEC_EVENT, "Event", 0x0118),
+    (SPEC_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
+    (SPEC_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
+    (SPEC_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
+    (SPEC_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
+    (SPEC_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
+    (SPEC_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
+    (SPEC_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
+    (SPEC_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
+    (SPEC_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
+    (SPEC_CUSTOM_EVENT, "CustomEvent", 0x0123),
+    (SPEC_EVENT_SOURCE, "EventSource", 0x0124),
+}
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1420);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1421);
