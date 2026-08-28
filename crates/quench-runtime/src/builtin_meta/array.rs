@@ -168,7 +168,6 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         Builtin::ArrayFlat
         | Builtin::ArrayReverse
         | Builtin::TypedArrayReverse
-        | Builtin::TypedArrayCopyWithin
         | Builtin::ArrayPop
         | Builtin::ArrayToReversed
         | Builtin::TypedArrayToReversed
@@ -184,6 +183,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
 const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
     match builtin {
         Builtin::ArrayCopyWithin
+        | Builtin::TypedArrayCopyWithin
         | Builtin::ArrayToSpliced
         | Builtin::ArrayWith
         | Builtin::TypedArrayWith => Some(2.0),
