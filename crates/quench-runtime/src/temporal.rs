@@ -2046,16 +2046,34 @@ mod stubs {
             })?;
             let quotient = delta.div_euclid(quantum);
             let remainder = delta.rem_euclid(quantum);
+            let distance = if delta < 0 && remainder != 0 {
+                quantum - remainder
+            } else {
+                remainder
+            };
             let round_up = match rounding_mode.as_str() {
                 "trunc" => delta < 0 && remainder != 0,
                 "floor" => false,
                 "ceil" => remainder != 0,
                 "expand" => remainder != 0 && delta > 0,
-                "halfCeil" => remainder * 2 >= quantum,
-                "halfFloor" => remainder * 2 > quantum,
-                "halfTrunc" => remainder * 2 > quantum || (remainder * 2 == quantum && delta < 0),
+                "halfCeil" => {
+                    if delta > 0 { distance * 2 >= quantum } else { distance * 2 <= quantum }
+                }
+                "halfFloor" => {
+                    if delta > 0 { distance * 2 > quantum } else { distance * 2 < quantum }
+                }
+                "halfTrunc" => {
+                    if delta > 0 { distance * 2 > quantum } else { distance * 2 <= quantum }
+                }
+                "halfExpand" => {
+                    if delta > 0 { distance * 2 >= quantum } else { distance * 2 < quantum }
+                }
                 "halfEven" => {
-                    remainder * 2 > quantum || (remainder * 2 == quantum && quotient % 2 != 0)
+                    if delta > 0 {
+                        distance * 2 > quantum || (distance * 2 == quantum && quotient % 2 != 0)
+                    } else {
+                        distance * 2 < quantum || (distance * 2 == quantum && quotient % 2 != 0)
+                    }
                 }
                 _ => remainder * 2 >= quantum,
             };
@@ -2127,28 +2145,58 @@ mod stubs {
                     fields[1] = Value::Number((years * 12 + months) as f64);
                 }
                 fields[3] = Value::Number(days as f64);
-                if smallest == "year" {
-                    if rounding_mode == "floor"
-                        && delta < 0
-                        && (months != 0 || days != 0 || time_remainder != 0)
-                    {
-                        fields[0] = Value::Number((years - 1) as f64);
-                    } else if matches!(rounding_mode.as_str(), "ceil" | "expand")
-                        && delta > 0
-                        && (months != 0 || days != 0 || time_remainder != 0)
-                    {
-                        fields[0] = Value::Number((years + 1) as f64);
+                let residual = (months as i128) * 30 * 86_400_000_000_000_i128
+                    + (days as i128) * 86_400_000_000_000_i128
+                    + time_remainder;
+                let round_adjust = |whole: i32, unit_days: i128| -> i32 {
+                    let sign = residual.signum();
+                    if sign == 0 {
+                        return 0;
                     }
+                    let magnitude = residual.unsigned_abs();
+                    let unit = (unit_days * 86_400_000_000_000_i128).unsigned_abs();
+                    let twice = magnitude.saturating_mul(2);
+                    match rounding_mode.as_str() {
+                        "ceil" => i32::from(sign > 0),
+                        "floor" => -i32::from(sign < 0),
+                        "expand" => sign as i32,
+                        "halfCeil" => {
+                            if twice > unit || (twice == unit && sign > 0) { sign as i32 } else { 0 }
+                        }
+                        "halfFloor" => {
+                            if twice > unit || (twice == unit && sign < 0) { sign as i32 } else { 0 }
+                        }
+                        "halfTrunc" => {
+                            if twice > unit { sign as i32 } else { 0 }
+                        }
+                        "halfExpand" => {
+                            if twice >= unit { sign as i32 } else { 0 }
+                        }
+                        "halfEven" => {
+                            if twice > unit || (twice == unit && whole % 2 != 0) { sign as i32 } else { 0 }
+                        }
+                        _ => 0,
+                    }
+                };
+                if smallest == "year" {
+                    let year_days = if chrono::NaiveDate::from_ymd_opt(start_date.year(), 2, 29).is_some() { 366 } else { 365 };
+                    let adjustment = round_adjust(years, year_days);
+                    fields[0] = Value::Number((years + adjustment) as f64);
                     fields[1] = Value::Number(0.0);
                     fields[3] = Value::Number(0.0);
                 } else if smallest == "month" {
-                    if rounding_mode == "floor" && delta < 0 && (days != 0 || time_remainder != 0) {
-                        fields[1] = Value::Number((years * 12 + months - 1) as f64);
-                    } else if matches!(rounding_mode.as_str(), "ceil" | "expand")
-                        && delta > 0
-                        && (days != 0 || time_remainder != 0)
-                    {
-                        fields[1] = Value::Number((years * 12 + months + 1) as f64);
+                    let month_length = chrono::NaiveDate::from_ymd_opt(anchor.year(), anchor.month(), 1)
+                        .and_then(|date| date.checked_add_months(chrono::Months::new(1)))
+                        .map(|next| (next - chrono::NaiveDate::from_ymd_opt(anchor.year(), anchor.month(), 1).unwrap()).num_days() as i128)
+                        .unwrap_or(30);
+                    let total_months = years * 12 + months;
+                    let adjustment = round_adjust(total_months, month_length);
+                    let rounded_months = total_months + adjustment;
+                    if largest == "year" {
+                        fields[0] = Value::Number((rounded_months / 12) as f64);
+                        fields[1] = Value::Number((rounded_months % 12) as f64);
+                    } else {
+                        fields[1] = Value::Number(rounded_months as f64);
                     }
                     fields[3] = Value::Number(0.0);
                 } else if smallest == "week" {
