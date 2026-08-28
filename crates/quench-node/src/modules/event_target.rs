@@ -1086,10 +1086,7 @@ pub fn dispatch_event(
             break;
         }
     }
-    let prevented = event
-        .object_identity()
-        .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
-        || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
+    let prevented = execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
     execute::set_property_in_place(event, "eventPhase", Value::Number(0.0));
     execute::set_property_in_place(event, "currentTarget", Value::Null);
     execute::set_property_in_place(event, "srcElement", Value::Null);

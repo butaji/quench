@@ -5091,16 +5091,13 @@ pub fn event_handler_set(
 }
 
 pub fn event_prevent_default(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = valid_event_receiver(receiver)?;
     if execute::is_truthy(&execute::get_property(receiver, "\0event:passive")) {
         return Ok(Value::Undefined);
-    }
-    if let Some(identity) = receiver.object_identity() {
-        state.borrow_mut().prevented_events.insert(identity);
     }
     if execute::is_truthy(&execute::get_property(receiver, "cancelable")) {
         let updated =
