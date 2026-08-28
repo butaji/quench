@@ -679,8 +679,9 @@ fn expand_template_token(
             let name: String = chars[index + 2..end].iter().collect();
             let value = m
                 .named_groups()
-                .find(|(group_name, _)| *group_name == name.as_str())
-                .and_then(|(_, range)| range)
+                .filter(|(group_name, _)| *group_name == name.as_str())
+                .filter_map(|(_, range)| range)
+                .last()
                 .map_or_else(String::new, |range| rest[range.start..range.end].to_string());
             out.push_str(&value);
             return Some(end + 1);
