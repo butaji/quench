@@ -413,6 +413,20 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
         return Err(not_iterable());
     }
     if matches!(iterator, Value::Iterator(_)) {
+        if let Value::Iterator(data) = &iterator {
+            if matches!(&*data.state.borrow(), IteratorState::Native { .. }) {
+                if let Some(next) = crate::vm::intrinsic_override_property(
+                    crate::ops::Builtin::ArrayIteratorPrototype,
+                    "next",
+                    &iterator,
+                ) {
+                    return Ok(make_protocol_with_next(
+                        iterator.clone(),
+                        crate::vm::bind_method(&iterator, next),
+                    ));
+                }
+            }
+        }
         return Ok(iterator);
     }
     let next = crate::execute::get_property_result(&iterator, "next")?;
