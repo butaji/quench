@@ -244,7 +244,21 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             Ok(false) | Err(_) => break,
         }
     }
-    let child_exit_code = state.borrow().process.exit_code;
+    let child_exit_code = state.borrow().process.exit_code.or_else(|| {
+        let net_work = crate::modules::net::has_work(state);
+        let guard = state.borrow();
+        let waits_for_ipc = guard
+            .process
+            .other_handlers
+            .iter()
+            .any(|(event, _, _)| event == "message")
+            || guard
+                .cluster
+                .workers
+                .get(&id)
+                .is_some_and(|worker| worker.child_listeners.contains_key("message"));
+        (!waits_for_ipc && !net_work).then_some(0)
+    });
     state.borrow_mut().process.exit_code = parent_exit_code;
     state.borrow_mut().cluster.worker_context = None;
     for (key, value) in [
