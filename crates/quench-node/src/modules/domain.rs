@@ -11,8 +11,8 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::registry::{
     SPEC_DOMAIN_ADD, SPEC_DOMAIN_ADD_EMITTER, SPEC_DOMAIN_CONSTRUCTOR, SPEC_DOMAIN_CREATE,
-    SPEC_DOMAIN_DISPOSE, SPEC_DOMAIN_ENTER, SPEC_DOMAIN_EXIT, SPEC_DOMAIN_ON, SPEC_DOMAIN_REMOVE,
-    SPEC_DOMAIN_RUN,
+    SPEC_DOMAIN_DISPOSE, SPEC_DOMAIN_ENTER, SPEC_DOMAIN_EXIT, SPEC_DOMAIN_ON, SPEC_DOMAIN_ONCE,
+    SPEC_DOMAIN_REMOVE, SPEC_DOMAIN_RUN,
 };
 
 const ID: &str = "\0quench:domain:id";
@@ -21,6 +21,7 @@ struct DomainData {
     object: Value,
     members: Vec<Value>,
     handler: Option<Value>,
+    extra_handlers: Vec<(Value, bool)>,
     disposed: bool,
 }
 
@@ -73,6 +74,7 @@ pub fn new_domain(state: &Rc<RefCell<HostState>>, _: &[Value]) -> Result<Value, 
             object: object.clone(),
             members: Vec::new(),
             handler: None,
+            extra_handlers: Vec::new(),
             disposed: false,
         },
     );
@@ -95,6 +97,7 @@ fn domain_object(id: u64) -> Value {
             crate::host::capability(SPEC_DOMAIN_DISPOSE),
         ),
         ("on".into(), crate::host::capability(SPEC_DOMAIN_ON)),
+        ("once".into(), crate::host::capability(SPEC_DOMAIN_ONCE)),
         (
             "addEmitter".into(),
             crate::host::capability(SPEC_DOMAIN_ADD_EMITTER),
@@ -252,7 +255,15 @@ pub fn run(
     let callback = args.first().ok_or_else(|| type_error("function"))?;
     enter(state, Some(receiver), &[])?;
     let result = execute::call(callback, &Value::Undefined, &[]);
-    let handler = { with_domain(state, receiver)?.handler.clone() };
+    let handlers = {
+        let domain = with_domain(state, receiver)?;
+        let mut handlers = Vec::with_capacity(domain.extra_handlers.len() + 1);
+        if let Some(handler) = &domain.handler {
+            handlers.push((handler.clone(), false));
+        }
+        handlers.extend(domain.extra_handlers.iter().cloned());
+        handlers
+    };
     let _ = exit(state, Some(receiver), &[])?;
     match result {
         Ok(value) => Ok(value),
@@ -272,8 +283,22 @@ pub fn run(
                 value
             };
             let value = execute::set_property(value, "domainThrown", Value::Boolean(true));
-            if let Some(handler) = handler {
-                execute::call(&handler, &Value::Undefined, &[value])
+            if !handlers.is_empty() {
+                let mut result = Ok(Value::Undefined);
+                for (handler, once) in &handlers {
+                    result =
+                        execute::call(handler, &Value::Undefined, std::slice::from_ref(&value));
+                    if result.is_err() {
+                        break;
+                    }
+                    if *once {
+                        let mut domain = with_domain(state, receiver)?;
+                        domain
+                            .extra_handlers
+                            .retain(|(candidate, _)| !execute::same_value(candidate, handler));
+                    }
+                }
+                result
             } else {
                 Err(VmError::Thrown(value))
             }
@@ -301,8 +326,26 @@ pub fn on(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("domain"))?;
     if matches!(args.first(), Some(Value::String(name)) if name == "error") {
-        with_domain(state, receiver)?.handler = args.get(1).cloned();
+        let mut domain = with_domain(state, receiver)?;
+        if let Some(listener) = args.get(1).cloned() {
+            domain.handler = Some(listener);
+        }
     }
+    Ok(receiver.clone())
+}
+
+pub fn once(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("domain"))?;
+    let listener = args.get(1).ok_or_else(|| type_error("function"))?;
+    if !quench_runtime::is_callable(listener) {
+        return Err(type_error("function"));
+    }
+    let mut domain = with_domain(state, receiver)?;
+    domain.extra_handlers.push((listener.clone(), true));
     Ok(receiver.clone())
 }
 
