@@ -270,7 +270,7 @@ fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<()
         &[Value::String("end".to_string()), end_cap],
     )?;
     let close_cap =
-        crate::host::capability(crate::registry::NodeSpec::new("http:reqclose", 0x0F11));
+        crate::host::capability(crate::registry::NodeSpec::new("http:reqclose", 0x0F15));
     crate::modules::events::method_on(
         state,
         Some(socket),
