@@ -593,6 +593,17 @@ fn tail_constructor_dispatch(
     use crate::ops::Builtin;
     let message = match builtin {
         Builtin::TypedArray => "TypedArray is not directly constructible",
+        Builtin::Float64Array
+        | Builtin::Float32Array
+        | Builtin::Int8Array
+        | Builtin::Int16Array
+        | Builtin::Int32Array
+        | Builtin::Uint8Array
+        | Builtin::Uint8ClampedArray
+        | Builtin::Uint16Array
+        | Builtin::Uint32Array
+        | Builtin::BigInt64Array
+        | Builtin::BigUint64Array => "Constructor requires 'new'",
         Builtin::ArrayBuffer => "Constructor ArrayBuffer requires 'new'",
         Builtin::DataView => "Constructor DataView requires 'new'",
         Builtin::SharedArrayBuffer => "Constructor SharedArrayBuffer requires 'new'",
