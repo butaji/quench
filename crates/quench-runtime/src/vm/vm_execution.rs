@@ -489,6 +489,28 @@ mod tests {
     }
 
     #[test]
+    fn statement_completion_survives_replace_and_observed_loop_break() {
+        let source = r#"
+            var trim = /^\s*|\s*$/g;
+            var text = "  value  ";
+            for (var index = 0; index < 3; index++) {
+                text.replace(trim, "");
+            }
+            if (text !== "  value  ") throw "replace result was assigned";
+            if (eval("while (true) { 'last'; break; }") !== "last") {
+                throw "loop completion was lost";
+            }
+        "#;
+        let program = crate::reduce::reduce_source(source).expect("source reduces");
+        let result = crate::vm::execute_code_with_context(
+            program.code(),
+            &crate::vm::VmContext::default(),
+        )
+        .expect("statement completions run");
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
     fn staged_global_resolves_math_for_property_assignment() {
         let source = r#"
             Math.random = function () { return 1; };
