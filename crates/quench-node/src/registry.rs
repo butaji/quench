@@ -671,6 +671,7 @@ node_api! {
     (SPEC_NODE_EVENT_TARGET_SET_MAX, CAP_NODE_EVENT_TARGET_SET_MAX, "nodeEventTarget:setMaxListeners", 0x0142),
     (SPEC_NODE_EVENT_TARGET_GET_MAX, CAP_NODE_EVENT_TARGET_GET_MAX, "nodeEventTarget:getMaxListeners", 0x0143),
     (SPEC_NODE_EVENT_TARGET_EMIT, CAP_NODE_EVENT_TARGET_EMIT, "nodeEventTarget:emit", 0x0144),
+    (SPEC_MESSAGE_CHANNEL, CAP_MESSAGE_CHANNEL, "messageChannel:MessageChannel", 0x0145),
 }
 node_api! {
     (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
@@ -786,6 +787,10 @@ pub fn namespace_bindings(
     out.push((
         "queueMicrotask".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),
+    ));
+    out.push((
+        "__quench_events_set_max".to_string(),
+        crate::host::capability(SPEC_EVENTS_SET_MAX_STATIC),
     ));
     // QuickJS exposes the Float16 view storage but not its constructor.  The
     // Node facade still needs the two-byte view in common buffer-source paths;
@@ -947,6 +952,10 @@ pub fn namespace_bindings(
         event_target_prototype,
     );
     out.push(("EventTarget".to_string(), event_target));
+    out.push((
+        "MessageChannel".to_string(),
+        crate::host::capability(SPEC_MESSAGE_CHANNEL),
+    ));
     let event = crate::host::capability(crate::registry::SPEC_EVENT);
     let event_prototype = quench_runtime::execute::define_property(
         crate::host::namespace_object_from_pairs(Vec::new()),
