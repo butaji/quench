@@ -7,6 +7,29 @@ pub(crate) fn set_with_receiver(
     if !crate::value::is_object(receiver) {
         return Ok(false);
     }
+    if crate::typed_array_ops::is_view(target) {
+        let same_receiver = crate::builtins::same_value(Some(target), Some(receiver));
+        if crate::typed_array_ops::canonical_numeric_index(key)
+            && !crate::typed_array_ops::is_index_key(key)
+        {
+            return Ok(true);
+        }
+        if crate::typed_array_ops::is_index_key(key) {
+            let out_of_bounds = crate::typed_array_prototype::is_out_of_bounds(target)
+                || crate::typed_array_ops::logical_len(target).is_some_and(|length| {
+                    key.parse::<usize>().map_or(true, |index| index >= length)
+                });
+            if !same_receiver && out_of_bounds {
+                return Ok(true);
+            }
+            if let Some(result) = crate::typed_array_ops::set_property(target, key, value) {
+                result?;
+                if same_receiver {
+                    return Ok(true);
+                }
+            }
+        }
+    }
     if crate::module_bindings::is_namespace(target)
         || crate::module_bindings::is_namespace(receiver)
     {
@@ -84,7 +107,9 @@ fn set_proven_own_data(
         return false;
     }
     if let Some(slot) = target.hot_properties().position_rev(key) {
-        if let Some(crate::value::Value::BindingCell(cell)) = target.hot_properties().slot_value(slot) {
+        if let Some(crate::value::Value::BindingCell(cell)) =
+            target.hot_properties().slot_value(slot)
+        {
             cell.store(value.clone());
             return true;
         }
@@ -238,9 +263,7 @@ fn set_receiver_data(
     value: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
     let mut receiver_resolved = match receiver {
-        crate::value::Value::BindingCell(cell) => {
-            crate::locals::resolved_replacement(cell.load())
-        }
+        crate::value::Value::BindingCell(cell) => crate::locals::resolved_replacement(cell.load()),
         _ => crate::locals::resolved_replacement(receiver.clone()),
     };
     if let crate::value::Value::Array(values) = &mut receiver_resolved {
@@ -321,14 +344,6 @@ fn ordinary_set(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
-    if crate::typed_array_ops::is_view(target)
-        && crate::typed_array_ops::is_index_key(key)
-        && (crate::typed_array_prototype::is_out_of_bounds(target)
-            || crate::typed_array_ops::logical_len(target)
-                .is_some_and(|length| key.parse::<usize>().map_or(true, |index| index >= length)))
-    {
-        return write_failure(strict);
-    }
     // A script's global-object view is an execution-facing snapshot, while
     // `this` and global bindings share the realm's canonical global object.
     // Route writes through that owner so a COW view cannot hide a global var
