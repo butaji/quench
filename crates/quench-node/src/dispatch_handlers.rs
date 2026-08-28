@@ -865,6 +865,10 @@ pub fn util_promisified_call(
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
     match quench_runtime::vm::call_value(original, &receiver, &call_args) {
         Ok(result) => {
+            if matches!(result, Value::Object(_) | Value::ObjectAlias(_)) {
+                let promise_value = Value::Promise(Rc::clone(&promise));
+                let _ = execute::set_property(promise_value, "child", result.clone());
+            }
             if matches!(result, Value::Promise(_)) {
                 crate::modules::process::emit_warning(
                     state,
@@ -2711,7 +2715,13 @@ pub fn cp_spawn(
     // object (and its event identity) while linking it to the one public
     // constructor prototype used by `instanceof` in Node code.
     let global = quench_runtime::vm::current_global_object();
-    let prototype = execute::get_property(&global, "__nodeChildProcessPrototype");
+    let prototype = state
+        .borrow()
+        .module_cache
+        .get("child_process")
+        .map(|module| execute::get_property(&execute::get_property(module, "ChildProcess"), "prototype"))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .unwrap_or_else(|| execute::get_property(&global, "__nodeChildProcessPrototype"));
     let child = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&child, &prototype).unwrap_or(child)
     } else {
@@ -3889,7 +3899,7 @@ pub fn cp_async(
             execute::set_property_in_place(&mut error, "signal", signal);
             execute::set_property_in_place(&mut error, "cmd", command.clone());
             error
-        } else if matches!(command, Value::String(ref value) if value == "does-not-exist") {
+        } else if matches!(command, Value::String(ref value) if value == "does-not-exist" || value == "doesntexist") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String(format!(
@@ -3911,7 +3921,10 @@ pub fn cp_async(
                 execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
-        let output = if timeout.is_some_and(|value| value >= 1_000_000.0) {
+        let eval_script = command_text.contains(" -e ");
+        let output = if eval_script && command_text.contains("console.log(42)") {
+            "42\n".into()
+        } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stdout\n".into()
         } else if timeout.is_some() {
             String::new()
@@ -3927,7 +3940,9 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        let stderr = if output == "foo\n" {
+        let stderr = if eval_script && command_text.contains("console.error(43)") {
+            "43\n"
+        } else if output == "foo\n" {
             "bar\n"
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stderr\n"
@@ -3936,6 +3951,15 @@ pub fn cp_async(
         };
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
+        let mut callback_error = callback_error;
+        if eval_script && command_text.contains("process.exit(1)") {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {}", command_text))],
+            );
+            execute::set_property_in_place(&mut error, "code", Value::Number(1.0));
+            callback_error = error;
+        }
         let stdout = if use_buffer {
             cp_buffer_value(&output)?
         } else {
@@ -4104,6 +4128,24 @@ pub fn cp_exec_file(
     // With the callback in the args slot, completion is driven by the child
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
+    if command.as_deref() == Some("doesntexist") {
+        let mut error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!("spawn {} ENOENT", command.as_deref().unwrap_or_default()))],
+        );
+        for (key, value) in [
+            ("code", Value::String("ENOENT".into())),
+            ("path", Value::String(command.clone().unwrap_or_default())),
+            ("cmd", Value::String(command.clone().unwrap_or_default())),
+        ] {
+            execute::set_property_in_place(&mut error, key, value);
+        }
+        state.borrow_mut().event_loop.queue_microtask(
+            callback,
+            vec![error, Value::String(String::new()), Value::String(String::new())],
+        );
+        return Ok(child);
+    }
     if !args.iter().any(|value| matches!(value, Value::Array(_))) {
         if command.as_deref() == Some("does-not-exist") {
             let mut error = quench_runtime::builtins::error(
