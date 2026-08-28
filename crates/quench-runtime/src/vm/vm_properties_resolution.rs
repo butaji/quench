@@ -629,6 +629,26 @@ fn early_property_result(
             "'caller' and 'arguments' are unavailable on this function",
         )));
     }
+    if key == "Symbol.species"
+        && matches!(
+            value,
+            Value::Builtin(
+                crate::ops::Builtin::Float64Array
+                    | crate::ops::Builtin::Float32Array
+                    | crate::ops::Builtin::Int8Array
+                    | crate::ops::Builtin::Int16Array
+                    | crate::ops::Builtin::Int32Array
+                    | crate::ops::Builtin::Uint8Array
+                    | crate::ops::Builtin::Uint16Array
+                    | crate::ops::Builtin::Uint32Array
+                    | crate::ops::Builtin::Uint8ClampedArray
+                    | crate::ops::Builtin::BigInt64Array
+                    | crate::ops::Builtin::BigUint64Array
+            )
+        )
+    {
+        return Some(Ok(receiver.clone()));
+    }
     if key == "buffer" && is_typed_array_prototype(value) {
         return Some(Err(crate::value::error::throw_type_error(
             "Receiver is not a TypedArray",
