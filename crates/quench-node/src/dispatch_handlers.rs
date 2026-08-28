@@ -4209,12 +4209,17 @@ pub fn cp_exec_file(
                     if let Ok(Value::String(source)) =
                         execute::get_property_result(&Value::Array(values.clone()), "1")
                     {
-                        if let Some((stream, text)) = cp_script_output(&source) {
-                            if stream == "stdout" {
-                                stdout = text;
-                            } else {
-                                stderr = text;
-                            }
+                        if let Some(text) = cp_script_output_named(&source, "console.log") {
+                            stdout = text;
+                        }
+                        if let Some(text) = cp_script_output_named(&source, "console.error") {
+                            stderr = text;
+                        }
+                        if source.contains("process.exit(1)") {
+                            error = host_api::object(vec![(
+                                "code".into(),
+                                Value::Number(1.0),
+                            )]);
                         }
                         if let Some(message) = source
                             .split("throw new Error('")
@@ -4335,6 +4340,13 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
     }
     let value = expression.trim_matches(['\'', '"']);
     Some((stream, format_output(value, newline)))
+}
+
+fn cp_script_output_named(source: &str, call: &str) -> Option<String> {
+    let (_, marker) = source.split_once(call)?;
+    let open = marker.find('(')? + 1;
+    let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
+    Some(format_output(expression.trim_matches(['\'', '"']), true))
 }
 
 fn format_output(value: &str, newline: bool) -> String {
