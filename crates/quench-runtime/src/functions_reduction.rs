@@ -194,14 +194,16 @@ fn reduce_function_body_inner(
         formal,
         arrow_expression.is_none(),
     ));
-    let body_ops = reduce_selected_body(
-        statements,
-        &ordered,
-        facts,
-        body_locals,
-        local_count,
-        arrow_expression.unwrap_or(false),
-    );
+    let body_ops = crate::switch::with_unobservable_completion(|| {
+        reduce_selected_body(
+            statements,
+            &ordered,
+            facts,
+            body_locals,
+            local_count,
+            arrow_expression.unwrap_or(false),
+        )
+    });
     facts.eval_var_barrier = inherited_barrier;
     facts.eval_formals = inherited_formals;
     prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
