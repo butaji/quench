@@ -21,9 +21,10 @@ fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute:
         Some(Value::ArrayBuffer(buffer)) => view_float64_array(buffer, arguments),
         Some(Value::Float64Array(view)) => copy_float64_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_float64_array(&values.snapshot()), |numbers| dense_float64_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_float64_array(&values.snapshot()),
+                |numbers| dense_float64_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -50,9 +51,10 @@ fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute:
         Some(Value::ArrayBuffer(buffer)) => view_float32_array(buffer, arguments),
         Some(Value::Float32Array(view)) => copy_float32_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_float32_array(&values.snapshot()), |numbers| dense_float32_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_float32_array(&values.snapshot()),
+                |numbers| dense_float32_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -79,9 +81,10 @@ fn construct_int8_array(arguments: &[Value]) -> Result<Value, crate::execute::Vm
         Some(Value::ArrayBuffer(buffer)) => view_int8_array(buffer, arguments),
         Some(Value::Int8Array(view)) => copy_int8_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_int8_array(&values.snapshot()), |numbers| dense_int8_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_int8_array(&values.snapshot()),
+                |numbers| dense_int8_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -106,9 +109,10 @@ fn construct_int16_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::ArrayBuffer(buffer)) => view_int16_array(buffer, arguments),
         Some(Value::Int16Array(view)) => copy_int16_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_int16_array(&values.snapshot()), |numbers| dense_int16_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_int16_array(&values.snapshot()),
+                |numbers| dense_int16_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -133,9 +137,10 @@ fn construct_int32_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::ArrayBuffer(buffer)) => view_int32_array(buffer, arguments),
         Some(Value::Int32Array(view)) => copy_int32_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_int32_array(&values.snapshot()), |numbers| dense_int32_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_int32_array(&values.snapshot()),
+                |numbers| dense_int32_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -160,9 +165,10 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::ArrayBuffer(buffer)) => view_uint8_array(buffer, arguments),
         Some(Value::Uint8Array(view)) => copy_uint8_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_uint8_array(&values.snapshot()), |numbers| dense_uint8_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_uint8_array(&values.snapshot()),
+                |numbers| dense_uint8_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -195,9 +201,10 @@ fn construct_uint32_array(arguments: &[Value]) -> Result<Value, crate::execute::
         Some(Value::ArrayBuffer(buffer)) => view_uint32_array(buffer, arguments),
         Some(Value::Uint32Array(view)) => copy_uint32_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_uint32_array(&values.snapshot()), |numbers| dense_uint32_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_uint32_array(&values.snapshot()),
+                |numbers| dense_uint32_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -224,9 +231,10 @@ fn construct_uint16_array(arguments: &[Value]) -> Result<Value, crate::execute::
         Some(Value::ArrayBuffer(buffer)) => view_uint16_array(buffer, arguments),
         Some(Value::Uint16Array(view)) => copy_uint16_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_uint16_array(&values.snapshot()), |numbers| dense_uint16_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_uint16_array(&values.snapshot()),
+                |numbers| dense_uint16_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
@@ -337,9 +345,10 @@ fn construct_uint8_clamped_array(arguments: &[Value]) -> Result<Value, crate::ex
         Some(Value::ArrayBuffer(buffer)) => view_uint8_clamped_array(buffer, arguments),
         Some(Value::Uint8ClampedArray(view)) => copy_uint8_clamped_array(view),
         Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
-            values
-                .dense_numeric_snapshot()
-                .map_or_else(|| values_uint8_clamped_array(&values.snapshot()), |numbers| dense_uint8_clamped_array(&numbers))
+            values.dense_numeric_snapshot().map_or_else(
+                || values_uint8_clamped_array(&values.snapshot()),
+                |numbers| dense_uint8_clamped_array(&numbers),
+            )
         }
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
