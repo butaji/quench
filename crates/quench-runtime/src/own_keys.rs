@@ -82,6 +82,19 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
     let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     if let Some(meta) = value.typed_array_meta() {
         for (key, _) in meta.own_properties() {
+            let enumerable = meta
+                .descriptor(&key)
+                .and_then(|descriptor| match descriptor {
+                    Value::Object(fields) => fields
+                        .iter()
+                        .rev()
+                        .find_map(|(name, value)| (name == "enumerable").then_some(value)),
+                    _ => None,
+                })
+                .is_none_or(|value| matches!(value, Value::Boolean(true)));
+            if !enumerable {
+                continue;
+            }
             if !keys.iter().any(|current| current == &key) {
                 keys.push(key);
             }
