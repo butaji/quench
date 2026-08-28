@@ -1806,6 +1806,49 @@ mod stubs {
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let mut duration_sign = 0_i8;
+            let duration_limits = [
+                1_000_000.0,
+                4_294_967_295.0,
+                4_294_967_295.0,
+                104_249_991_374.0,
+                2_501_999_792_983.0,
+                150_119_987_579_016.0,
+                9_007_199_254_740_991.0,
+                1.0e30,
+                1.0e30,
+                1.0e30,
+            ];
+            for (index, value) in values.iter().enumerate() {
+                if !value.is_finite() || value.fract() != 0.0 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid duration field",
+                    ));
+                }
+                if value.abs() > duration_limits[index] {
+                    return Err(crate::value::error::throw_range_error(
+                        "Duration is out of range",
+                    ));
+                }
+                if *value != 0.0 {
+                    let sign = if *value < 0.0 { -1 } else { 1 };
+                    if duration_sign != 0 && duration_sign != sign {
+                        return Err(crate::value::error::throw_range_error(
+                            "Mixed-sign duration",
+                        ));
+                    }
+                    duration_sign = sign;
+                }
+            }
+            if (values[3].abs() >= duration_limits[3] - 1.0 && values[4].abs() >= 24.0)
+                || (values[4].abs() >= duration_limits[4] - 1.0 && values[5].abs() >= 60.0)
+                || (values[5].abs() >= duration_limits[5] - 1.0 && values[6].abs() >= 60.0)
+                || (values[6].abs() >= duration_limits[6] && values[7..].iter().any(|v| *v != 0.0))
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Duration is out of range",
+                ));
+            }
             let overflow = match arguments.get(1) {
                 None | Some(Value::Undefined) => "constrain".to_string(),
                 Some(options)
