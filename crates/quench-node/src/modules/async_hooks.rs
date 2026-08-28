@@ -426,16 +426,6 @@ pub fn resource_before(
         .push((previous_id, previous_resource));
     state.async_hooks.current_id = id;
     state.async_hooks.current_resource = Some(resource);
-    let global = quench_runtime::vm::current_global_object();
-    let _ = execute::set_property_in_place(
-        &global,
-        "__nodeCurrentAsyncResource",
-        state
-            .async_hooks
-            .current_resource
-            .clone()
-            .unwrap_or(Value::Undefined),
-    );
     let callbacks = active_callbacks_from(&state.async_hooks, HookEvent::Before);
     drop(state);
     for callback in callbacks {
@@ -456,16 +446,6 @@ pub fn resource_after(
         state.async_hooks.current_id = id;
         state.async_hooks.current_resource = resource;
     }
-    let global = quench_runtime::vm::current_global_object();
-    let _ = execute::set_property_in_place(
-        &global,
-        "__nodeCurrentAsyncResource",
-        state
-            .async_hooks
-            .current_resource
-            .clone()
-            .unwrap_or(Value::Undefined),
-    );
     drop(state);
     for callback in callbacks {
         let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
