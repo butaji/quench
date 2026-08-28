@@ -416,7 +416,12 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         call_args.extend(task.args.iter().cloned());
         crate::modules::domain::run(state, Some(domain), &call_args).map(|_| ())
     } else {
-        call_guarded(state, &task.callback, &Value::Undefined, &task.args)
+        call_guarded(
+            state,
+            &task.callback,
+            task.receiver.as_ref().unwrap_or(&Value::Undefined),
+            &task.args,
+        )
     };
     if let Some(previous) = previous_stack.as_ref() {
         crate::modules::domain::replace_stack(state, previous);
