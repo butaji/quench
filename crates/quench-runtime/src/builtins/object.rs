@@ -408,9 +408,7 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
     let descriptor = match value {
         Value::Object(properties) => {
             let global = Value::Object(properties.clone());
-            let deleted = properties
-                .iter()
-                .any(|(name, _)| name.as_str() == crate::builtins::deleted_key(key).as_str());
+            let deleted = properties.has_deleted_key(key);
             if !deleted
                 && crate::vm::is_global_object(&global)
                 && crate::vm::global_builtin_exists(key)

@@ -260,6 +260,10 @@ pub(crate) fn is_deleted_key_for(stored: &str, key: &str) -> bool {
     stored.strip_prefix(DELETED_PREFIX) == Some(key)
 }
 #[inline]
+pub(crate) fn is_deleted_marker(stored: &str) -> bool {
+    stored.starts_with(DELETED_PREFIX)
+}
+#[inline]
 pub(crate) fn is_descriptor_key_for(stored: &str, key: &str) -> bool {
     stored.strip_prefix(DESCRIPTOR_PREFIX) == Some(key)
 }
@@ -277,11 +281,7 @@ pub(crate) fn descriptor_metadata<P: crate::value::PropertyEntries + ?Sized>(
     properties: &P,
     key: &str,
 ) -> Option<Value> {
-    properties
-        .entries()
-        .rev()
-        .find(|(name, _)| is_descriptor_key_for(name, key))
-        .map(|(_, value)| value)
+    properties.descriptor_metadata_for_key(key)
 }
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {
     overrides::read(builtin, key)
