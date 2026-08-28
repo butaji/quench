@@ -999,6 +999,17 @@ mod stubs {
                     }),
             ));
         }
+        if matches!(
+            builtin,
+            crate::ops::Builtin::TemporalZonedDateTimeToJSON
+                | crate::ops::Builtin::TemporalZonedDateTimeToLocaleString
+        ) {
+            return zoned_method(
+                crate::ops::Builtin::TemporalZonedDateTimeToString,
+                Some(receiver),
+                &[],
+            );
+        }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeWith {
             let partial = arguments.first().ok_or_else(|| {
                 crate::value::error::throw_type_error("Missing date-time-like argument")
