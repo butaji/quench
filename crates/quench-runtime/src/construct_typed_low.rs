@@ -143,7 +143,7 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         // the constructor path so all callers share the same semantics.
         Some(value) => match crate::collections::iterator::collect_iterable(value.clone()) {
             Ok(values) => values_uint8_array(&values),
-            Err(_) => Err(type_error("Uint8Array source must be iterable or a buffer")),
+            Err(error) => Err(error),
         },
     }
 }
