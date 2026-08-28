@@ -109,6 +109,20 @@ pub fn new_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Val
     allocate_target(state, false)
 }
 
+/// Keep the constructor and allocated targets on one prototype fact. Bootstrap
+/// modules can expose the constructor before its host prototype is installed;
+/// repair that derived view once, at the boundary, instead of teaching every
+/// consumer a separate fallback.
+pub(crate) fn ensure_constructor_prototype(constructor: &Value) -> Value {
+    let current = execute::get_property(constructor, "prototype");
+    if quench_runtime::is_callable(&execute::get_property(&current, "addEventListener")) {
+        return current;
+    }
+    let replacement = prototype();
+    let _ = execute::set_callable_property(constructor, "prototype", replacement.clone());
+    replacement
+}
+
 /// Construct the internal NodeEventTarget using the same target registry and
 /// listener records as EventTarget. Only the method surface differs.
 pub fn new_node_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -132,16 +146,8 @@ fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, 
             .unwrap_or_else(prototype)
     } else {
         let global = quench_runtime::vm::current_global_object();
-        let global_prototype =
-            execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype");
-        if quench_runtime::is_callable(&execute::get_property(
-            &global_prototype,
-            "addEventListener",
-        )) {
-            global_prototype
-        } else {
-            prototype()
-        }
+        let constructor = execute::get_property(&global, "EventTarget");
+        ensure_constructor_prototype(&constructor)
     };
     let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&object, &prototype)?
