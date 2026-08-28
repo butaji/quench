@@ -122,6 +122,22 @@ pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
     crate::modules::events::new_emitter(state, args)
 }
 
+pub fn event_target_rejection(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::emit(
+        state,
+        &[
+            Value::String("uncaughtException".into()),
+            args.first().cloned().unwrap_or(Value::Undefined),
+            Value::String("uncaughtException".into()),
+        ],
+    )?;
+    Ok(Value::Undefined)
+}
+
 pub fn events_call(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -2719,7 +2735,9 @@ pub fn cp_spawn(
         .borrow()
         .module_cache
         .get("child_process")
-        .map(|module| execute::get_property(&execute::get_property(module, "ChildProcess"), "prototype"))
+        .map(|module| {
+            execute::get_property(&execute::get_property(module, "ChildProcess"), "prototype")
+        })
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .unwrap_or_else(|| execute::get_property(&global, "__nodeChildProcessPrototype"));
     let child = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -3899,7 +3917,8 @@ pub fn cp_async(
             execute::set_property_in_place(&mut error, "signal", signal);
             execute::set_property_in_place(&mut error, "cmd", command.clone());
             error
-        } else if matches!(command, Value::String(ref value) if value == "does-not-exist" || value == "doesntexist") {
+        } else if matches!(command, Value::String(ref value) if value == "does-not-exist" || value == "doesntexist")
+        {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String(format!(
@@ -4131,7 +4150,10 @@ pub fn cp_exec_file(
     if command.as_deref() == Some("doesntexist") {
         let mut error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
-            &[Value::String(format!("spawn {} ENOENT", command.as_deref().unwrap_or_default()))],
+            &[Value::String(format!(
+                "spawn {} ENOENT",
+                command.as_deref().unwrap_or_default()
+            ))],
         );
         for (key, value) in [
             ("code", Value::String("ENOENT".into())),
@@ -4142,7 +4164,11 @@ pub fn cp_exec_file(
         }
         state.borrow_mut().event_loop.queue_microtask(
             callback,
-            vec![error, Value::String(String::new()), Value::String(String::new())],
+            vec![
+                error,
+                Value::String(String::new()),
+                Value::String(String::new()),
+            ],
         );
         return Ok(child);
     }
@@ -4258,10 +4284,7 @@ pub fn cp_exec_file(
                             stderr = text;
                         }
                         if source.contains("process.exit(1)") {
-                            error = host_api::object(vec![(
-                                "code".into(),
-                                Value::Number(1.0),
-                            )]);
+                            error = host_api::object(vec![("code".into(), Value::Number(1.0))]);
                         }
                         if let Some(message) = source
                             .split("throw new Error('")
@@ -4794,41 +4817,16 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         _ => return Err(execute::type_error("Event type is invalid")),
     };
     let options = args.get(1).cloned().unwrap_or(Value::Undefined);
-    if !matches!(options, Value::Undefined | Value::Object(_)) {
-        let (kind, shown) = match &options {
-            Value::String(value) => ("string", format!("'{value}'")),
-            Value::Number(value) => ("number", value.to_string()),
-            Value::Boolean(value) => ("boolean", value.to_string()),
-            Value::Null => ("object", "null".into()),
-            _ => ("unknown", "".into()),
-        };
+    if !matches!(options, Value::Undefined | Value::Null | Value::Object(_)) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             (
                 "message".into(),
                 Value::String(format!(
-                "The \"options\" argument must be of type object. Received type {kind} ({shown})"
-            )),
-            ),
-        ])));
-    }
-    if !matches!(options, Value::Undefined | Value::Object(_)) {
-        let (kind, shown) = match &options {
-            Value::String(value) => ("string", format!("'{value}'")),
-            Value::Number(value) => ("number", value.to_string()),
-            Value::Boolean(value) => ("boolean", value.to_string()),
-            Value::Null => ("object", "null".into()),
-            _ => ("unknown", "".into()),
-        };
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String(format!(
-                "The \"options\" argument must be of type object. Received type {kind} ({shown})"
-            )),
+                    "The \"options\" argument must be of type object.{}",
+                    crate::modules::buffer_enc::invalid_arg_received(&options)
+                )),
             ),
         ])));
     }
@@ -4870,6 +4868,14 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             crate::host::capability(crate::registry::SPEC_EVENT_COMPOSED_PATH),
         ),
     ]);
+    let global = quench_runtime::vm::current_global_object();
+    let event_prototype =
+        execute::get_property(&execute::get_property(&global, "Event"), "prototype");
+    let event = if matches!(event_prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_prototype_of(&event, &event_prototype)?
+    } else {
+        event
+    };
     let event = execute::define_property(
         event,
         "cancelBubble",
@@ -4886,7 +4892,7 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             ("configurable".into(), Value::Boolean(true)),
         ]),
     )?;
-    execute::set_prototype_of(&event, &event_prototype())
+    Ok(event)
 }
 
 pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -5012,13 +5018,6 @@ pub fn event_handler_set(
     };
     let event = execute::get_property(receiver, "\0event:handler:event");
     let old = execute::get_property(receiver, "\0event:handler:listener");
-    if quench_runtime::is_callable(&old) {
-        let _ = crate::modules::event_target::remove_event_listener(
-            state,
-            Some(receiver),
-            &[event.clone(), old],
-        );
-    }
     let listener = args.first().cloned().unwrap_or(Value::Null);
     let updated = execute::set_property(
         receiver.clone(),
@@ -5027,10 +5026,26 @@ pub fn event_handler_set(
     );
     execute::replace_value(receiver, &updated);
     if quench_runtime::is_callable(&listener) {
-        let _ = crate::modules::event_target::add_event_listener(
+        let event_name = match &event {
+            Value::String(name) => name.as_str(),
+            _ => "",
+        };
+        if !quench_runtime::is_callable(&old)
+            || !crate::modules::event_target::replace_event_listener(
+                state, receiver, event_name, &old, &listener,
+            )
+        {
+            let _ = crate::modules::event_target::add_event_listener(
+                state,
+                Some(receiver),
+                &[event, listener],
+            );
+        }
+    } else if quench_runtime::is_callable(&old) {
+        let _ = crate::modules::event_target::remove_event_listener(
             state,
             Some(receiver),
-            &[event, listener],
+            &[event, old],
         );
     }
     Ok(Value::Undefined)
