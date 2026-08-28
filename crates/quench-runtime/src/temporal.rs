@@ -2463,10 +2463,17 @@ mod stubs {
                 let years = month_delta / 12;
                 let months = month_delta % 12;
                 let (anchor, days) = if month_delta >= 0 {
-                    let anchor = end_date
-                        .checked_sub_months(chrono::Months::new(month_delta as u32))
-                        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    (anchor, (anchor - start_date).num_days())
+                    if direction > 0 {
+                        let anchor = start_date
+                            .checked_add_months(chrono::Months::new(month_delta as u32))
+                            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                        (anchor, (end_date - anchor).num_days())
+                    } else {
+                        let anchor = end_date
+                            .checked_sub_months(chrono::Months::new(month_delta as u32))
+                            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                        (anchor, (anchor - start_date).num_days())
+                    }
                 } else {
                     let anchor = start_date
                         .checked_sub_months(chrono::Months::new(month_delta.unsigned_abs() as u32))
