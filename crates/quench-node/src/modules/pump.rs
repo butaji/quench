@@ -510,7 +510,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         }
     }
     if destroy && !converted {
-        super::timers::async_destroy(&resource);
+        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     result
 }
@@ -560,7 +560,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             None => call_guarded_report(state, &timer.callback, &timer.object, &timer.args),
         };
         crate::modules::async_hooks::resource_after(state, None, &[])?;
-        super::timers::async_destroy(&timer.async_resource);
+        crate::modules::async_hooks::resource_destroy(state, Some(&timer.async_resource), &[])?;
         defer_ticks |= result?;
         if !defer_ticks {
             drain_ticks(state)?;

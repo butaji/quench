@@ -734,6 +734,10 @@ pub const SPEC_VM_CREATE_CONTEXT: NodeSpec = NodeSpec::new("vm:createContext", 0
 pub const SPEC_VM_RUN_IN_CONTEXT: NodeSpec = NodeSpec::new("vm:runInContext", 0x1602);
 pub const SPEC_VM_IS_CONTEXT: NodeSpec = NodeSpec::new("vm:isContext", 0x1603);
 
+/// Host globals whose value must be materialized before callbacks can outlive
+/// the installing frame. This is policy data, not a second dispatch path.
+pub const PERSISTENT_GLOBALS: &[NodeSpec] = &[SPEC_GC];
+
 /// Symbolic id for a Node host object stored in a `Value::Object`.
 /// The runtime does not interpret this; the host uses it to map
 /// `Value::Object` back to the Rust envelope.
@@ -935,10 +939,6 @@ pub fn namespace_bindings(
     let abort_signal =
         quench_runtime::execute::set_property(abort_signal, "prototype", signal_prototype);
     out.push(("AbortSignal".to_string(), abort_signal));
-    out.push((
-        "gc".to_string(),
-        crate::host::capability(crate::registry::SPEC_GC),
-    ));
     out.push((
         "console".to_string(),
         crate::modules::console::build_value(),

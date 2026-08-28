@@ -307,6 +307,10 @@ pub fn install_with_argv(
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
+    for spec in crate::registry::PERSISTENT_GLOBALS {
+        let name = spec.name.rsplit([':', '.']).next().unwrap_or(spec.name);
+        context = context.with_persistent_host_value(name, crate::host::capability(*spec));
+    }
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
     context = context.with_host_value(
