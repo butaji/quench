@@ -170,6 +170,25 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
+    // TypedArray.from/of are inherited from %TypedArray%; the constructor
+    // property resolver exposes them without making them own properties.
+    if matches!(
+        builtin,
+        Builtin::Float64Array
+            | Builtin::Float32Array
+            | Builtin::Int8Array
+            | Builtin::Int16Array
+            | Builtin::Int32Array
+            | Builtin::Uint8Array
+            | Builtin::Uint8ClampedArray
+            | Builtin::Uint16Array
+            | Builtin::Uint32Array
+            | Builtin::BigInt64Array
+            | Builtin::BigUint64Array
+    ) && matches!(key, "from" | "of")
+    {
+        return false;
+    }
     if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }

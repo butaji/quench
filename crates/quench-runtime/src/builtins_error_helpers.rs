@@ -141,6 +141,19 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         }
         Value::Array(values) => set_array_property(values, key, value),
         Value::Function(function) => set_function_property(function, key, value),
+        Value::Builtin(builtin) => {
+            // Intrinsic objects are represented as stable builtin identities;
+            // ordinary assignment records the value in the shared override
+            // table so all existing references observe the same mutation.
+            let descriptor = Value::Object(Rc::new(ObjectData::new(vec![
+                ("value".to_string(), value),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ])));
+            crate::builtins::write_intrinsic_override(builtin, key, descriptor);
+            Value::Builtin(builtin)
+        }
         _ => set_property_tail(target, key, value),
     }
 }

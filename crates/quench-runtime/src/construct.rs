@@ -1,7 +1,7 @@
 use crate::{
     facts::ProgramDb,
     ops::Op,
-    value::{ObjectData, Value},
+    value::{ObjectData, PropertyEntries, Value},
 };
 use std::{collections::HashMap, rc::Rc};
 pub(crate) fn reduce(
