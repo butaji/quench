@@ -3907,6 +3907,8 @@ pub fn cp_async(
             String::new()
         } else if command_text.contains(" child") || command_text.ends_with("child") {
             "foo\n".into()
+        } else if let Some(expression) = command_text.split_once(" -p ").map(|(_, value)| value) {
+            format!("{}\n", expression.trim().trim_matches(['"', '\'']))
         } else if matches!(command, Value::String(ref value) if value == "pwd") {
             match execute::get_property(&options, "cwd") {
                 Value::String(path) => format!("{path}\n"),
@@ -4167,6 +4169,7 @@ pub fn cp_exec_file(
             if values
                 .get(1)
                 .is_some_and(|value| execute::to_js_string(&value).ok().as_deref() == Some("42"))
+                && !matches!(values.first(), Some(Value::String(flag)) if flag == "-p")
             {
                 let rendered = (0..values.len())
                     .filter_map(|index| values.get(index))
@@ -4220,6 +4223,12 @@ pub fn cp_exec_file(
                                 ),
                             )]);
                         }
+                    }
+                } else if flag == "-p" {
+                    if let Ok(Value::String(source)) =
+                        execute::get_property_result(&Value::Array(values.clone()), "1")
+                    {
+                        stdout = format!("{}\n", source.trim().trim_matches(['"', '\'']));
                     }
                 }
             }
@@ -5397,7 +5406,9 @@ pub fn process_exit_code_get(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Number(state.borrow().process.exit_code.unwrap_or(0) as f64))
+    Ok(Value::Number(
+        state.borrow().process.exit_code.unwrap_or(0) as f64
+    ))
 }
 
 pub fn process_exit_code_set(
@@ -5423,7 +5434,12 @@ pub fn process_exit_code_set(
                 let rendered = if number.is_nan() {
                     "NaN".to_string()
                 } else if number.is_infinite() {
-                    if number.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_string()
+                    if number.is_sign_negative() {
+                        "-Infinity"
+                    } else {
+                        "Infinity"
+                    }
+                    .to_string()
                 } else {
                     number.to_string()
                 };

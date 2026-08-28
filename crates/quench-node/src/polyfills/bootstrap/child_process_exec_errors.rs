@@ -65,7 +65,12 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
     });
     return child;
   }
-  if (done && Array.isArray(args) && args.some((value) => String(value) === "42")) {
+  if (
+    done &&
+    Array.isArray(args) &&
+    args.some((value) => String(value) === "42") &&
+    !args.some((value) => String(value) === "-p")
+  ) {
     const child = __quenchExecErrorChildProcess.spawn(String(file), args);
     queueMicrotask(() => {
       const error = new Error(`Command failed: ${String(file)} ${args.join(" ")}`);
