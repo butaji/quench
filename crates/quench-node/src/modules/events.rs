@@ -632,12 +632,22 @@ fn route_domain_error(
     if let Some(original) = original {
         execute::replace_value(&original, &error);
     }
-    execute::call(
+    match execute::call(
         handler.as_ref().expect("checked handler"),
         &domain,
         &[error],
-    )
-    .map(Some)
+    ) {
+        Ok(value) => Ok(Some(value)),
+        Err(VmError::Thrown(reason)) => {
+            let reason = execute::set_property(
+                reason,
+                crate::modules::domain::HANDLER_DOMAIN,
+                domain,
+            );
+            Err(VmError::Thrown(reason))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// `emit('error')` with no listeners throws the error argument.
