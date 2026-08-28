@@ -26,6 +26,12 @@ pub struct NodeSpec {
 /// namespace construction, capability dispatch, and future generated
 /// evidence tables; mechanical registrations should not repeat ids inline.
 macro_rules! node_api {
+    ($(($name:ident, $cap_name:ident, $label:literal, $cap:expr)),* $(,)?) => {
+        $(
+            pub const $name: NodeSpec = NodeSpec::new($label, $cap);
+            pub const $cap_name: CapId = $cap;
+        )*
+    };
     ($(($name:ident, $label:literal, $cap:expr)),* $(,)?) => {
         $(pub const $name: NodeSpec = NodeSpec::new($label, $cap);)*
     };
@@ -107,15 +113,41 @@ node_api! {
     (SPEC_CONSOLE_ERROR, "console:error", 0x0203),
     (SPEC_CONSOLE_DEBUG, "console:debug", 0x0204),
     (SPEC_CONSOLE_TRACE, "console:trace", 0x0205),
-    (SPEC_EVENTS_NEW, "events:EventEmitter", 0x0100),
-    (SPEC_EVENTS_FROM, "events:from", 0x0101),
-    (SPEC_EVENTS_ON, "events:on", 0x0102),
-    (SPEC_EVENTS_EMIT, "events:emit", 0x0103),
-    (SPEC_EVENTS_CAPTURE_GET, "events:captureRejections:get", 0x0104),
-    (SPEC_EVENTS_CAPTURE_SET, "events:captureRejections:set", 0x0119),
-    (SPEC_EVENTS_DEFAULT_MAX_GET, "events:defaultMaxListeners:get", 0x0125),
-    (SPEC_EVENTS_DEFAULT_MAX_SET, "events:defaultMaxListeners:set", 0x0126),
-    (SPEC_EVENTS_RAW_LISTENERS, "events:rawListeners", 0x0127),
+}
+node_api! {
+    (SPEC_EVENTS_NEW, CAP_EVENTS_NEW, "events:EventEmitter", 0x0100),
+    (SPEC_EVENTS_FROM, CAP_EVENTS_FROM, "events:from", 0x0101),
+    (SPEC_EVENTS_ON, CAP_EVENTS_ON, "events:on", 0x0102),
+    (SPEC_EVENTS_EMIT, CAP_EVENTS_EMIT, "events:emit", 0x0103),
+    (SPEC_EVENTS_CAPTURE_GET, CAP_EVENTS_CAPTURE_GET, "events:captureRejections:get", 0x0104),
+    (SPEC_EVENTS_CAPTURE_SET, CAP_EVENTS_CAPTURE_SET, "events:captureRejections:set", 0x0119),
+    (SPEC_EVENTS_DEFAULT_MAX_GET, CAP_EVENTS_DEFAULT_MAX_GET, "events:defaultMaxListeners:get", 0x0125),
+    (SPEC_EVENTS_DEFAULT_MAX_SET, CAP_EVENTS_DEFAULT_MAX_SET, "events:defaultMaxListeners:set", 0x0126),
+    (SPEC_EVENTS_RAW_LISTENERS, CAP_EVENTS_RAW_LISTENERS, "events:rawListeners", 0x0127),
+    (SPEC_EVENTS_ONCE, CAP_EVENTS_ONCE, "events:once", 0x0105),
+    (SPEC_EVENTS_REMOVE_LISTENER, CAP_EVENTS_REMOVE_LISTENER, "events:removeListener", 0x0106),
+    (SPEC_EVENTS_REMOVE_ALL, CAP_EVENTS_REMOVE_ALL, "events:removeAllListeners", 0x0107),
+    (SPEC_EVENTS_LISTENERS, CAP_EVENTS_LISTENERS, "events:listeners", 0x0108),
+    (SPEC_EVENTS_EVENT_NAMES, CAP_EVENTS_EVENT_NAMES, "events:eventNames", 0x0109),
+    (SPEC_EVENTS_LISTENER_COUNT, CAP_EVENTS_LISTENER_COUNT, "events:listenerCount", 0x010A),
+    (SPEC_EVENTS_PREPEND, CAP_EVENTS_PREPEND, "events:prependListener", 0x010B),
+    (SPEC_EVENTS_PREPEND_ONCE, CAP_EVENTS_PREPEND_ONCE, "events:prependOnceListener", 0x010C),
+    (SPEC_EVENTS_SET_MAX, CAP_EVENTS_SET_MAX, "events:setMaxListeners", 0x010D),
+    (SPEC_EVENTS_GET_MAX, CAP_EVENTS_GET_MAX, "events:getMaxListeners", 0x010E),
+    (SPEC_EVENTS_SET_MAX_STATIC, CAP_EVENTS_SET_MAX_STATIC, "events:setMaxListeners:static", 0x010F),
+    (SPEC_EVENTS_GET_LISTENERS, CAP_EVENTS_GET_LISTENERS, "events:getEventListeners", 0x0110),
+    (SPEC_EVENTS_LISTENER_COUNT_STATIC, CAP_EVENTS_LISTENER_COUNT_STATIC, "events:listenerCount:static", 0x0111),
+    (SPEC_EVENTS_GET_MAX_STATIC, CAP_EVENTS_GET_MAX_STATIC, "events:getMaxListeners:static", 0x0112),
+    (SPEC_TARGET_ADD, CAP_TARGET_ADD, "eventTarget:addEventListener", 0x0113),
+    (SPEC_TARGET_REMOVE, CAP_TARGET_REMOVE, "eventTarget:removeEventListener", 0x0114),
+    (SPEC_TARGET_DISPATCH, CAP_TARGET_DISPATCH, "eventTarget:dispatchEvent", 0x0115),
+    (SPEC_EVENT_TARGET_NEW, CAP_EVENT_TARGET_NEW, "eventTarget:EventTarget", 0x0116),
+    (SPEC_RUN_UNCAUGHT, CAP_RUN_UNCAUGHT, "process:runUncaught", 0x0117),
+    (SPEC_EVENTS_ABORT_LISTENER, CAP_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
+    (SPEC_EVENTS_ABORT_DISPOSE, CAP_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
+    (SPEC_EVENTS_ADD_ABORT, CAP_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
+}
+node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
     (SPEC_DIAGNOSTICS_SUBSCRIBE, "diagnostics_channel:subscribe", 0x1F01),
     (SPEC_DIAGNOSTICS_UNSUBSCRIBE, "diagnostics_channel:unsubscribe", 0x1F02),
@@ -148,9 +180,6 @@ node_api! {
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),
     (SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC, "diagnostics_channel:TracingChannel:traceSync", 0x1F0D),
-    (SPEC_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
-    (SPEC_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
-    (SPEC_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
     (SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, "diagnostics_channel:boundedChannel", 0x1F0E),
     (SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, "diagnostics_channel:BoundedChannel:subscribe", 0x1F0F),
     (SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE, "diagnostics_channel:BoundedChannel:unsubscribe", 0x1F10),
@@ -191,72 +220,84 @@ node_api! {
 }
 
 node_api! {
-    (SPEC_PATH_JOIN, "path:join", 0x0400),
-    (SPEC_PATH_RESOLVE, "path:resolve", 0x0401),
-    (SPEC_PATH_NORMALIZE, "path:normalize", 0x0402),
-    (SPEC_PATH_DIRNAME, "path:dirname", 0x0403),
-    (SPEC_PATH_BASENAME, "path:basename", 0x0404),
-    (SPEC_PATH_EXTNAME, "path:extname", 0x0405),
-    (SPEC_PATH_ISABSOLUTE, "path:isAbsolute", 0x0406),
-    (SPEC_PATH_RELATIVE, "path:relative", 0x0409),
-    (SPEC_PATH_PARSE, "path:parse", 0x040A),
-    (SPEC_PATH_FORMAT, "path:format", 0x040B),
-    (SPEC_PATH_TO_NAMESPACED, "path:toNamespacedPath", 0x040C),
-    (SPEC_PATH_MATCHES_GLOB, "path:matchesGlob", 0x040D),
-    (SPEC_PATH_WIN32_JOIN, "path.win32:join", 0x0410),
-    (SPEC_PATH_WIN32_RESOLVE, "path.win32:resolve", 0x0411),
-    (SPEC_PATH_WIN32_NORMALIZE, "path.win32:normalize", 0x0412),
-    (SPEC_PATH_WIN32_DIRNAME, "path.win32:dirname", 0x0413),
-    (SPEC_PATH_WIN32_BASENAME, "path.win32:basename", 0x0414),
-    (SPEC_PATH_WIN32_EXTNAME, "path.win32:extname", 0x0415),
-    (SPEC_PATH_WIN32_ISABSOLUTE, "path.win32:isAbsolute", 0x0416),
-    (SPEC_PATH_WIN32_RELATIVE, "path.win32:relative", 0x0417),
-    (SPEC_PATH_WIN32_PARSE, "path.win32:parse", 0x0418),
-    (SPEC_PATH_WIN32_FORMAT, "path.win32:format", 0x0419),
-    (SPEC_PATH_WIN32_TO_NAMESPACED, "path.win32:toNamespacedPath", 0x041A),
-    (SPEC_PATH_WIN32_MATCHES_GLOB, "path.win32:matchesGlob", 0x041B),
+    (SPEC_PATH_JOIN, CAP_PATH_JOIN, "path:join", 0x0400),
+    (SPEC_PATH_RESOLVE, CAP_PATH_RESOLVE, "path:resolve", 0x0401),
+    (SPEC_PATH_NORMALIZE, CAP_PATH_NORMALIZE, "path:normalize", 0x0402),
+    (SPEC_PATH_DIRNAME, CAP_PATH_DIRNAME, "path:dirname", 0x0403),
+    (SPEC_PATH_BASENAME, CAP_PATH_BASENAME, "path:basename", 0x0404),
+    (SPEC_PATH_EXTNAME, CAP_PATH_EXTNAME, "path:extname", 0x0405),
+    (SPEC_PATH_ISABSOLUTE, CAP_PATH_ISABSOLUTE, "path:isAbsolute", 0x0406),
+    (SPEC_PATH_RELATIVE, CAP_PATH_RELATIVE, "path:relative", 0x0409),
+    (SPEC_PATH_PARSE, CAP_PATH_PARSE, "path:parse", 0x040A),
+    (SPEC_PATH_FORMAT, CAP_PATH_FORMAT, "path:format", 0x040B),
+    (SPEC_PATH_TO_NAMESPACED, CAP_PATH_TO_NAMESPACED, "path:toNamespacedPath", 0x040C),
+    (SPEC_PATH_MATCHES_GLOB, CAP_PATH_MATCHES_GLOB, "path:matchesGlob", 0x040D),
+    (SPEC_PATH_WIN32_JOIN, CAP_PATH_WIN32_JOIN, "path.win32:join", 0x0410),
+    (SPEC_PATH_WIN32_RESOLVE, CAP_PATH_WIN32_RESOLVE, "path.win32:resolve", 0x0411),
+    (SPEC_PATH_WIN32_NORMALIZE, CAP_PATH_WIN32_NORMALIZE, "path.win32:normalize", 0x0412),
+    (SPEC_PATH_WIN32_DIRNAME, CAP_PATH_WIN32_DIRNAME, "path.win32:dirname", 0x0413),
+    (SPEC_PATH_WIN32_BASENAME, CAP_PATH_WIN32_BASENAME, "path.win32:basename", 0x0414),
+    (SPEC_PATH_WIN32_EXTNAME, CAP_PATH_WIN32_EXTNAME, "path.win32:extname", 0x0415),
+    (SPEC_PATH_WIN32_ISABSOLUTE, CAP_PATH_WIN32_ISABSOLUTE, "path.win32:isAbsolute", 0x0416),
+    (SPEC_PATH_WIN32_RELATIVE, CAP_PATH_WIN32_RELATIVE, "path.win32:relative", 0x0417),
+    (SPEC_PATH_WIN32_PARSE, CAP_PATH_WIN32_PARSE, "path.win32:parse", 0x0418),
+    (SPEC_PATH_WIN32_FORMAT, CAP_PATH_WIN32_FORMAT, "path.win32:format", 0x0419),
+    (SPEC_PATH_WIN32_TO_NAMESPACED, CAP_PATH_WIN32_TO_NAMESPACED, "path.win32:toNamespacedPath", 0x041A),
+    (SPEC_PATH_WIN32_MATCHES_GLOB, CAP_PATH_WIN32_MATCHES_GLOB, "path.win32:matchesGlob", 0x041B),
 }
 
 node_api! {
-    (SPEC_URL_PARSE, "url:parse", 0x0500),
-    (SPEC_URL_FORMAT, "url:format", 0x0501),
-    (SPEC_URL_RESOLVE, "url:resolve", 0x0502),
-    (SPEC_URL_NEW, "url:URL", 0x0503),
-    (SPEC_URL_LEGACY_NEW, "url:Url", 40),
-    (SPEC_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
-    (SPEC_URL_SEARCHPARAMS_NEW, "url:URLSearchParams", 0x0504),
+    (SPEC_URL_PARSE, CAP_URL_PARSE, "url:parse", 0x0500),
+    (SPEC_URL_FORMAT, CAP_URL_FORMAT, "url:format", 0x0501),
+    (SPEC_URL_RESOLVE, CAP_URL_RESOLVE, "url:resolve", 0x0502),
+    (SPEC_URL_NEW, CAP_URL_NEW, "url:URL", 0x0503),
+    (SPEC_URL_LEGACY_NEW, CAP_URL_LEGACY_NEW, "url:Url", 40),
+    (SPEC_URL_RESOLVE_OBJECT, CAP_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
+    (SPEC_URL_SEARCHPARAMS_NEW, CAP_URL_SEARCH, "url:URLSearchParams", 0x0504),
 }
 
 node_api! {
-    (SPEC_QS_PARSE, "querystring:parse", 0x0600),
-    (SPEC_QS_STRINGIFY, "querystring:stringify", 0x0601),
-    (SPEC_QS_ESCAPE, "querystring:escape", 0x0602),
-    (SPEC_QS_UNESCAPE, "querystring:unescape", 0x0603),
-    (SPEC_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
+    (SPEC_QS_PARSE, CAP_QS_PARSE, "querystring:parse", 0x0600),
+    (SPEC_QS_STRINGIFY, CAP_QS_STRINGIFY, "querystring:stringify", 0x0601),
+    (SPEC_QS_ESCAPE, CAP_QS_ESCAPE, "querystring:escape", 0x0602),
+    (SPEC_QS_UNESCAPE, CAP_QS_UNESCAPE, "querystring:unescape", 0x0603),
+    (SPEC_QS_UNESCAPE_BUFFER, CAP_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
 }
 
 node_api! {
-    (SPEC_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
-    (SPEC_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
-    (SPEC_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
-    (SPEC_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
-    (SPEC_TIMERS_SETIMMEDIATE, "timers:setImmediate", 0x0704),
-    (SPEC_TIMERS_CLEARIMMEDIATE, "timers:clearImmediate", 0x0705),
-    (SPEC_TIMERS_TICK, "timers:tick", 0x0706),
-    (SPEC_TIMERS_UNREF, "timers:unref", 0x0708),
-    (SPEC_TIMERS_REF, "timers:ref", 0x0709),
-    (SPEC_TIMERS_HASREF, "timers:hasRef", 0x070A),
-    (SPEC_TIMERS_REFRESH, "timers:refresh", 0x070B),
+    (SPEC_TIMERS_SETTIMEOUT, CAP_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
+    (SPEC_TIMERS_CLEARTIMEOUT, CAP_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
+    (SPEC_TIMERS_SETINTERVAL, CAP_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
+    (SPEC_TIMERS_CLEARINTERVAL, CAP_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
+    (SPEC_TIMERS_SETIMMEDIATE, CAP_TIMERS_SETIMMEDIATE, "timers:setImmediate", 0x0704),
+    (SPEC_TIMERS_CLEARIMMEDIATE, CAP_TIMERS_CLEARIMMEDIATE, "timers:clearImmediate", 0x0705),
+    (SPEC_TIMERS_TICK, CAP_TIMERS_TICK, "timers:tick", 0x0706),
+    (SPEC_TIMERS_UNREF, CAP_TIMERS_UNREF, "timers:unref", 0x0708),
+    (SPEC_TIMERS_REF, CAP_TIMERS_REF, "timers:ref", 0x0709),
+    (SPEC_TIMERS_HASREF, CAP_TIMERS_HASREF, "timers:hasRef", 0x070A),
+    (SPEC_TIMERS_REFRESH, CAP_TIMERS_REFRESH, "timers:refresh", 0x070B),
 }
-pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
-pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
-pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
-pub const SPEC_INTERNAL_UTIL_ASSERT_CRYPTO: NodeSpec =
-    NodeSpec::new("internal/util:assertCrypto", 0x0721);
-pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
-pub const SPEC_TIMERS_TO_PRIMITIVE: NodeSpec = NodeSpec::new("timers:toPrimitive", 0x071D);
-pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
-pub const SPEC_UTIL_PROMISIFY: NodeSpec = NodeSpec::new("util:promisify", 0x071E);
+node_api! {
+    (SPEC_RUN_LOOP, CAP_RUN_LOOP, "__quench_run_loop__", 0x070C),
+    (SPEC_RUN_EXIT, CAP_RUN_EXIT, "__quench_run_exit__", 0x070D),
+    (SPEC_INTERNAL_UTIL_SLEEP, CAP_INTERNAL_UTIL_SLEEP, "internal/util:sleep", 0x070E),
+    (SPEC_INTERNAL_UTIL_ASSERT_CRYPTO, CAP_INTERNAL_UTIL_ASSERT_CRYPTO, "internal/util:assertCrypto", 0x0721),
+    (SPEC_TIMERS_CLOSE, CAP_TIMERS_CLOSE, "timers:close", 0x070F),
+    (SPEC_TIMERS_TO_PRIMITIVE, CAP_TIMERS_TO_PRIMITIVE, "timers:toPrimitive", 0x071D),
+    (SPEC_TIMERS_GET_LIBUV_NOW, CAP_TIMERS_GET_LIBUV_NOW, "timers:getLibuvNow", 0x0714),
+    (SPEC_UTIL_PROMISIFY, CAP_UTIL_PROMISIFY, "util:promisify", 0x071E),
+    (SPEC_UTIL_PROMISIFIED_CALL, CAP_UTIL_PROMISIFIED_CALL, "util:promisifiedCall", 0x071F),
+    (SPEC_UTIL_PROMISIFIED_CALLBACK, CAP_UTIL_PROMISIFIED_CALLBACK, "util:promisifiedCallback", 0x0720),
+    (SPEC_LINKED_LIST_INIT, CAP_LINKED_LIST_INIT, "internal/linkedlist:init", 0x0718),
+    (SPEC_LINKED_LIST_REMOVE, CAP_LINKED_LIST_REMOVE, "internal/linkedlist:remove", 0x0719),
+    (SPEC_LINKED_LIST_APPEND, CAP_LINKED_LIST_APPEND, "internal/linkedlist:append", 0x071A),
+    (SPEC_LINKED_LIST_IS_EMPTY, CAP_LINKED_LIST_IS_EMPTY, "internal/linkedlist:isEmpty", 0x071B),
+    (SPEC_LINKED_LIST_PEEK, CAP_LINKED_LIST_PEEK, "internal/linkedlist:peek", 0x071C),
+    (SPEC_TIMERS_SCHEDULE, CAP_TIMERS_SCHEDULE, "timers:scheduleTimer", 0x0715),
+    (SPEC_TIMERS_TOGGLE_REF, CAP_TIMERS_TOGGLE_REF, "timers:toggleTimerRef", 0x0716),
+    (SPEC_TIMERS_TOGGLE_IMMEDIATE_REF, CAP_TIMERS_TOGGLE_IMMEDIATE_REF, "timers:toggleImmediateRef", 0x0717),
+}
+pub const SPEC_QUEUE_MICROTASK: NodeSpec = NodeSpec::new("timers:queueMicrotask", 0x0707);
 pub const SPEC_UTIL_DEPRECATE: NodeSpec = NodeSpec::new("util:deprecate", 0x0730);
 pub const SPEC_UTIL_DEPRECATED_CALL: NodeSpec = NodeSpec::new("util:deprecatedCall", 0x0731);
 pub const SPEC_UTIL_SYSTEM_ERROR_NAME: NodeSpec = NodeSpec::new("util:getSystemErrorName", 0x0733);
@@ -284,19 +325,6 @@ pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x073
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
 pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
     NodeSpec::new("internal/os:getHomeDirectory", 0x0738);
-pub const SPEC_UTIL_PROMISIFIED_CALL: NodeSpec = NodeSpec::new("util:promisifiedCall", 0x071F);
-pub const SPEC_UTIL_PROMISIFIED_CALLBACK: NodeSpec =
-    NodeSpec::new("util:promisifiedCallback", 0x0720);
-pub const SPEC_LINKED_LIST_INIT: NodeSpec = NodeSpec::new("internal/linkedlist:init", 0x0718);
-pub const SPEC_LINKED_LIST_REMOVE: NodeSpec = NodeSpec::new("internal/linkedlist:remove", 0x0719);
-pub const SPEC_LINKED_LIST_APPEND: NodeSpec = NodeSpec::new("internal/linkedlist:append", 0x071A);
-pub const SPEC_LINKED_LIST_IS_EMPTY: NodeSpec =
-    NodeSpec::new("internal/linkedlist:isEmpty", 0x071B);
-pub const SPEC_LINKED_LIST_PEEK: NodeSpec = NodeSpec::new("internal/linkedlist:peek", 0x071C);
-pub const SPEC_TIMERS_SCHEDULE: NodeSpec = NodeSpec::new("timers:scheduleTimer", 0x0715);
-pub const SPEC_TIMERS_TOGGLE_REF: NodeSpec = NodeSpec::new("timers:toggleTimerRef", 0x0716);
-pub const SPEC_TIMERS_TOGGLE_IMMEDIATE_REF: NodeSpec =
-    NodeSpec::new("timers:toggleImmediateRef", 0x0717);
 pub const SPEC_INTERNAL_BINDING: NodeSpec = NodeSpec::new("internal:test-binding", 0x0710);
 pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-fill", 0x0711);
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
@@ -591,26 +619,26 @@ pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
 node_api! {
-    (SPEC_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
-    (SPEC_URL_GET_HREF, "url:get:href", 0x0506),
-    (SPEC_URL_GET_PROTOCOL, "url:get:protocol", 0x0507),
-    (SPEC_URL_GET_USERNAME, "url:get:username", 0x0508),
-    (SPEC_URL_GET_PASSWORD, "url:get:password", 0x0509),
-    (SPEC_URL_GET_HOST, "url:get:host", 0x050A),
-    (SPEC_URL_GET_HOSTNAME, "url:get:hostname", 0x050B),
-    (SPEC_URL_GET_PORT, "url:get:port", 0x050C),
-    (SPEC_URL_GET_PATHNAME, "url:get:pathname", 0x050D),
-    (SPEC_URL_GET_SEARCH, "url:get:search", 0x050E),
-    (SPEC_URL_GET_HASH, "url:get:hash", 0x050F),
-    (SPEC_URL_GET_ORIGIN, "url:get:origin", 0x0510),
-    (SPEC_URL_GET_SEARCH_PARAMS, "url:get:searchParams", 0x0511),
-    (SPEC_URL_TO_STRING, "url:toString", 0x0512),
-    (SPEC_URL_TO_JSON, "url:toJSON", 0x0513),
-    (SPEC_URL_REVOKE_OBJECT_URL, "url:revokeObjectURL", 0x0514),
-    (SPEC_URL_FILE_URL_TO_PATH, "url:fileURLToPath", 0x0515),
-    (SPEC_URL_TO_HTTP_OPTIONS, "url:urlToHttpOptions", 0x0516),
-    (SPEC_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
-    (SPEC_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
+    (SPEC_URL_PATH_TO_FILE_URL, CAP_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
+    (SPEC_URL_GET_HREF, CAP_URL_GET_HREF, "url:get:href", 0x0506),
+    (SPEC_URL_GET_PROTOCOL, CAP_URL_GET_PROTOCOL, "url:get:protocol", 0x0507),
+    (SPEC_URL_GET_USERNAME, CAP_URL_GET_USERNAME, "url:get:username", 0x0508),
+    (SPEC_URL_GET_PASSWORD, CAP_URL_GET_PASSWORD, "url:get:password", 0x0509),
+    (SPEC_URL_GET_HOST, CAP_URL_GET_HOST, "url:get:host", 0x050A),
+    (SPEC_URL_GET_HOSTNAME, CAP_URL_GET_HOSTNAME, "url:get:hostname", 0x050B),
+    (SPEC_URL_GET_PORT, CAP_URL_GET_PORT, "url:get:port", 0x050C),
+    (SPEC_URL_GET_PATHNAME, CAP_URL_GET_PATHNAME, "url:get:pathname", 0x050D),
+    (SPEC_URL_GET_SEARCH, CAP_URL_GET_SEARCH, "url:get:search", 0x050E),
+    (SPEC_URL_GET_HASH, CAP_URL_GET_HASH, "url:get:hash", 0x050F),
+    (SPEC_URL_GET_ORIGIN, CAP_URL_GET_ORIGIN, "url:get:origin", 0x0510),
+    (SPEC_URL_GET_SEARCH_PARAMS, CAP_URL_GET_SEARCH_PARAMS, "url:get:searchParams", 0x0511),
+    (SPEC_URL_TO_STRING, CAP_URL_TO_STRING, "url:toString", 0x0512),
+    (SPEC_URL_TO_JSON, CAP_URL_TO_JSON, "url:toJSON", 0x0513),
+    (SPEC_URL_REVOKE_OBJECT_URL, CAP_URL_REVOKE_OBJECT_URL, "url:revokeObjectURL", 0x0514),
+    (SPEC_URL_FILE_URL_TO_PATH, CAP_URL_FILE_URL_TO_PATH, "url:fileURLToPath", 0x0515),
+    (SPEC_URL_TO_HTTP_OPTIONS, CAP_URL_TO_HTTP_OPTIONS, "url:urlToHttpOptions", 0x0516),
+    (SPEC_URL_DOMAIN_TO_ASCII, CAP_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
+    (SPEC_URL_DOMAIN_TO_UNICODE, CAP_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
 }
 node_api! {
     (SPEC_STRUCTURED_CLONE, "structuredClone", 0x1F36),
@@ -627,18 +655,20 @@ node_api! {
     (SPEC_ABORT_SIGNAL_TIMEOUT, "AbortSignal.timeout", 0x1F40),
     (SPEC_ABORT_SIGNAL_ANY, "AbortSignal.any", 0x1F41),
     (SPEC_ABORT_EVENT_STOP_IMMEDIATE, "AbortEvent.stopImmediatePropagation", 0x1F26),
-    (SPEC_EVENT, "Event", 0x0118),
-    (SPEC_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
-    (SPEC_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
-    (SPEC_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
-    (SPEC_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
-    (SPEC_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
-    (SPEC_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
-    (SPEC_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
-    (SPEC_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
-    (SPEC_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
-    (SPEC_CUSTOM_EVENT, "CustomEvent", 0x0123),
-    (SPEC_EVENT_SOURCE, "EventSource", 0x0124),
+}
+node_api! {
+    (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
+    (SPEC_EVENT_PREVENT_DEFAULT, CAP_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
+    (SPEC_EVENT_STOP_PROPAGATION, CAP_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
+    (SPEC_EVENT_STOP_IMMEDIATE, CAP_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
+    (SPEC_EVENT_COMPOSED_PATH, CAP_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
+    (SPEC_EVENT_GET_CANCEL_BUBBLE, CAP_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
+    (SPEC_EVENT_SET_CANCEL_BUBBLE, CAP_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
+    (SPEC_DEFINE_EVENT_HANDLER, CAP_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
+    (SPEC_EVENT_HANDLER_GET, CAP_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
+    (SPEC_EVENT_HANDLER_SET, CAP_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
+    (SPEC_CUSTOM_EVENT, CAP_CUSTOM_EVENT, "CustomEvent", 0x0123),
+    (SPEC_EVENT_SOURCE, CAP_EVENT_SOURCE, "EventSource", 0x0124),
 }
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1420);
