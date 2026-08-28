@@ -413,7 +413,7 @@ pub(crate) fn get_property_with_receiver(
                 {
                     crate::reflect::note_shadow_method_realm(bound.realm);
                 }
-                return get_property_with_receiver(&bound.target, key, receiver);
+                return Ok(crate::execute::get_property(&value, key));
             }
         }
         return Ok(crate::execute::get_property(&value, key));
