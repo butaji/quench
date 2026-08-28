@@ -632,10 +632,11 @@ fn route_domain_error(
     if let Some(original) = original {
         execute::replace_value(&original, &error);
     }
-    match execute::call(
-        handler.as_ref().expect("checked handler"),
+    match crate::modules::domain::call_error_handler(
+        state,
         &domain,
-        &[error],
+        handler.as_ref().expect("checked handler"),
+        &error,
     ) {
         Ok(value) => Ok(Some(value)),
         Err(VmError::Thrown(reason)) => {
