@@ -25,6 +25,14 @@ impl StringUnitsData {
     pub fn cached_hash(&self, hash: impl FnOnce(&[u16]) -> u64) -> u64 {
         *self.hash.get_or_init(|| hash(&self.units))
     }
+
+    /// Append UTF-16 units while preserving the flat canonical representation.
+    /// Callers must have exclusive ownership of this value; replacing the
+    /// hash cache keeps derived state coherent after mutation.
+    pub fn append_units(&mut self, units: &[u16]) {
+        self.units.extend_from_slice(units);
+        self.hash = OnceLock::new();
+    }
 }
 
 impl std::ops::Deref for StringUnitsData {

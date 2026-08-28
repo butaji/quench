@@ -317,6 +317,19 @@ fn arithmetic_value(
         value.push_str(right);
         return Ok(Value::String(value));
     }
+    // `String.fromCodePoint` preserves lone surrogates in `StringUnits`.
+    // Reuse that uniquely-owned flat buffer for `+=` so generated Unicode
+    // inputs grow amortized-linearly without introducing rope nodes.
+    if let Value::StringUnits(mut left_units) = left {
+        let right_units = add_units(&right)?;
+        if let Some(left_data) = std::rc::Rc::get_mut(&mut left_units) {
+            left_data.append_units(&right_units);
+            return Ok(Value::StringUnits(left_units));
+        }
+        let mut units = left_units.to_vec();
+        units.extend(right_units);
+        return Ok(crate::strings::from_units(units));
+    }
     if is_string_like(&left) || is_string_like(&right) {
         let mut units = add_units(&left)?;
         units.extend(add_units(&right)?);
