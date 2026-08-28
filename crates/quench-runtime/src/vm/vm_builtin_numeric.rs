@@ -105,6 +105,9 @@ pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Optio
         Some(Value::Object(properties)) => properties.iter().find_map(|(key, value)| {
             (key == "\0realm").then(|| match value {
                 Value::HostCapability(token) => realm::id_for_token(&token),
+                Value::Number(realm) if realm >= 0.0 => {
+                    Some(crate::ops::RealmId::new(realm as u64))
+                }
                 _ => None,
             })?
         }),

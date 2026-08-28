@@ -6,18 +6,63 @@ use std::borrow::Cow;
 /// comment NULs to a space. String and template contents keep the code point
 /// as an escape that the parser accepts.
 pub(crate) fn prepare_source(source: &str) -> Cow<'_, str> {
-    if !source.contains('\0') && !source.contains('\r') && !source.contains("await") {
+    if !source.contains('\0') && !source.contains('\r') && !source.contains("await") && !source.contains("-->") {
         return Cow::Borrowed(source);
     }
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
     let normalized = rewrite_await_using_line_break(&normalized);
     let normalized = rewrite_classic_for_using(&normalized);
+    let normalized = rewrite_html_close_comments(&normalized);
     if normalized.contains('\0') {
         Cow::Owned(rewrite_nuls(&normalized))
     } else if normalized == source {
         Cow::Borrowed(source)
     } else {
         Cow::Owned(normalized)
+    }
+}
+
+/// OXC accepts Annex B HTML-close comments after the first line, but rejects
+/// the same line comment at the start of a script. Replacing only a line's
+/// leading close marker keeps the source's executable text and line structure.
+fn rewrite_html_close_comments(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut changed = false;
+    for line in source.split_inclusive('\n') {
+        let bytes = line.as_bytes();
+        let mut cursor = 0;
+        loop {
+            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+                cursor += 1;
+            }
+            if bytes
+                .get(cursor..)
+                .is_some_and(|tail| tail.starts_with(b"/*"))
+            {
+                let Some(end) = line[cursor + 2..].find("*/") else {
+                    break;
+                };
+                cursor += end + 4;
+                continue;
+            }
+            break;
+        }
+        if bytes
+            .get(cursor..)
+            .is_some_and(|tail| tail.starts_with(b"-->"))
+        {
+            output.push_str(&line[..cursor]);
+            output.push_str("//");
+            output.push_str(&line[cursor + 3..]);
+            changed = true;
+        } else {
+            output.push_str(line);
+        }
+    }
+    if changed {
+        output
+    } else {
+        source.to_string()
     }
 }
 
