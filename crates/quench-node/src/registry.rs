@@ -217,13 +217,15 @@ pub const SPEC_PATH_WIN32_TO_NAMESPACED: NodeSpec =
     NodeSpec::new("path.win32:toNamespacedPath", 0x041A);
 pub const SPEC_PATH_WIN32_MATCHES_GLOB: NodeSpec = NodeSpec::new("path.win32:matchesGlob", 0x041B);
 
-pub const SPEC_URL_PARSE: NodeSpec = NodeSpec::new("url:parse", 0x0500);
-pub const SPEC_URL_FORMAT: NodeSpec = NodeSpec::new("url:format", 0x0501);
-pub const SPEC_URL_RESOLVE: NodeSpec = NodeSpec::new("url:resolve", 0x0502);
-pub const SPEC_URL_NEW: NodeSpec = NodeSpec::new("url:URL", 0x0503);
-pub const SPEC_URL_LEGACY_NEW: NodeSpec = NodeSpec::new("url:Url", 40);
-pub const SPEC_URL_RESOLVE_OBJECT: NodeSpec = NodeSpec::new("url:resolveObject", 0x0520);
-pub const SPEC_URL_SEARCHPARAMS_NEW: NodeSpec = NodeSpec::new("url:URLSearchParams", 0x0504);
+node_api! {
+    (SPEC_URL_PARSE, "url:parse", 0x0500),
+    (SPEC_URL_FORMAT, "url:format", 0x0501),
+    (SPEC_URL_RESOLVE, "url:resolve", 0x0502),
+    (SPEC_URL_NEW, "url:URL", 0x0503),
+    (SPEC_URL_LEGACY_NEW, "url:Url", 40),
+    (SPEC_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
+    (SPEC_URL_SEARCHPARAMS_NEW, "url:URLSearchParams", 0x0504),
+}
 
 node_api! {
     (SPEC_QS_PARSE, "querystring:parse", 0x0600),
