@@ -895,6 +895,19 @@ impl ArrayData {
                 self.values.set(index, Value::Number(number));
             }
         }
+        if let DenseElements::Values(values) = &self.values {
+            let numeric = values
+                .borrow()
+                .iter()
+                .map(|value| match value {
+                    Value::Number(number) => Some(std::cell::Cell::new(*number)),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(numeric) = numeric {
+                self.values = DenseElements::Numbers(Rc::new(RefCell::new(numeric)));
+            }
+        }
         self.deleted.resize(end, false);
         self.deleted[start..end].fill(false);
         self.length.set(self.length.get().max(end));
@@ -1151,7 +1164,7 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        if self.deleted.is_empty() && self.properties.is_empty() {
+        if self.deleted.iter().all(|deleted| !*deleted) && self.properties.is_empty() {
             if let DenseElements::Numbers(values) = &self.values {
                 let values = values.borrow();
                 return values.iter().map(|number| Value::Number(number.get())).collect();
