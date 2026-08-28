@@ -287,9 +287,15 @@ fn run_instruction(
             }
             if instruction.a != instruction.b {
                 let object = registers.read_object(usize::from(instruction.b));
-                if let Some(payload) = object
-                    .and_then(|object| get_named_cached_payload(object, &metadata.named_cache))
-                {
+                let global_like = object.as_ref().is_some_and(|object| {
+                    crate::vm::current_global_object().object_identity() == Some(object.identity())
+                        || object
+                            .iter()
+                            .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+                });
+                if let Some(payload) = object.as_ref().filter(|_| !global_like).and_then(|object| {
+                    get_named_cached_payload(object, &metadata.named_cache)
+                }) {
                     match payload {
                         NamedCachedPayload::Word(word) => {
                             // SAFETY: the source register owns the containing

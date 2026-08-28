@@ -367,8 +367,21 @@ pub(crate) fn get_property_with_receiver(
     // Prototype mutations materialize a replacement object. Resolve it before
     // walking inherited properties so ordinary objects (including generator
     // prototypes) observe the current descriptor rather than the stale view.
-    let value = crate::locals::resolved_replacement(value.clone());
+    let mut value = crate::locals::resolved_replacement(value.clone());
     crate::module_bindings::exports(&value, key)?;
+    // A script's `this` is a derived global view. Global declaration batches
+    // replace the canonical owner with a copy-on-write object; resolve the
+    // view before reading so `this.x` observes the same binding as `x`.
+    if matches!(&value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)) {
+        let owner = crate::vm::current_global_object();
+        let distinct_storage = match (&owner, &value) {
+            (Value::Object(owner), Value::Object(view)) => !std::rc::Rc::ptr_eq(owner, view),
+            _ => owner.object_identity() != value.object_identity(),
+        };
+        if distinct_storage {
+            value = owner;
+        }
+    }
     if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
     }
