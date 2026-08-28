@@ -19,6 +19,17 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+fn global_constructor_or_capability(
+    global: &Value,
+    name: &str,
+    spec: crate::registry::NodeSpec,
+) -> Value {
+    match quench_runtime::execute::get_property(global, name) {
+        Value::Undefined => crate::host::capability(spec),
+        value => value,
+    }
+}
+
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     if matches!(spec.as_str(), "child_process" | "node:child_process") {
@@ -358,8 +369,16 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {
             let global = quench_runtime::vm::current_global_object();
-            let event_target = quench_runtime::execute::get_property(&global, "EventTarget");
-            let event = quench_runtime::execute::get_property(&global, "Event");
+            let event_target = global_constructor_or_capability(
+                &global,
+                "EventTarget",
+                crate::registry::SPEC_EVENT_TARGET_NEW,
+            );
+            let event = global_constructor_or_capability(
+                &global,
+                "Event",
+                crate::registry::SPEC_EVENT,
+            );
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
@@ -396,7 +415,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 );
                 constructor
             };
-            let custom_event = quench_runtime::execute::get_property(&global, "CustomEvent");
+            let custom_event = global_constructor_or_capability(
+                &global,
+                "CustomEvent",
+                crate::registry::SPEC_CUSTOM_EVENT,
+            );
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
