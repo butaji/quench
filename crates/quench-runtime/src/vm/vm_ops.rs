@@ -121,6 +121,12 @@ fn execute_call_continuation_inner(
         if !function.with_captures.is_empty() {
             return Ok(None);
         }
+        // The packed continuation has no lexical private-environment guard.
+        // Class-scoped functions therefore use the ordinary invocation path,
+        // which installs the captured private-name map before executing code.
+        if function.private_environment.has_names() {
+            return Ok(None);
+        }
         if crate::with_scope::is_active() {
             return Ok(None);
         }
