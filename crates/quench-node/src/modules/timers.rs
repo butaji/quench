@@ -96,9 +96,18 @@ fn schedule(
     args: &[Value],
     kind: TimerKind,
 ) -> Result<Value, VmError> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut cb = args.first().cloned().unwrap_or(Value::Undefined);
     if !quench_runtime::is_callable(&cb) {
         return Err(invalid_callback_error());
+    }
+    // Capture the JS async context at registration time. The wrapper restores
+    // `__nodeCurrentAsyncResource` around invocation, which is the canonical
+    // source consumed by AsyncLocalStorage.getStore().
+    let global = quench_runtime::vm::current_global_object();
+    let capture = quench_runtime::execute::get_property(&global, "__nodeCaptureAsyncCallback");
+    if quench_runtime::is_callable(&capture) {
+        let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+        cb = quench_runtime::execute::call(&capture, &Value::Undefined, &[cb, current])?;
     }
     let domain = crate::modules::domain::current(state);
     // `setTimeout(cb, delay, ...args)`; `setImmediate(cb, ...args)`.
@@ -112,8 +121,20 @@ fn schedule(
     let id = state.borrow_mut().timers.allocate();
     let fire_at = monotonic_ms().saturating_add(delay);
     let destroyed = quench_runtime::value::BindingCell::new(Value::Boolean(false));
-    let object = timer_object(id, &destroyed)?;
+    let object = timer_object(id, &destroyed, &kind)?;
     let async_resource = async_resource(state, &kind)?;
+    // AsyncLocalStorage state is carried by the JS resource object. Capture
+    // the current resource's store map when the timer is created so the
+    // callback observes the same context after resource_before switches to
+    // this timer.
+    let global = quench_runtime::vm::current_global_object();
+    let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+    let stores = quench_runtime::execute::get_property(&current, "__nodeAsyncStores");
+    let async_resource = if matches!(stores, Value::Undefined) {
+        async_resource
+    } else {
+        quench_runtime::execute::set_property(async_resource, "__nodeAsyncStores", stores)
+    };
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
@@ -161,12 +182,24 @@ pub(crate) fn async_destroy(resource: &Value) {
 fn timer_object(
     id: u64,
     destroyed: &Rc<quench_runtime::value::BindingCell>,
+    kind: &TimerKind,
 ) -> Result<Value, VmError> {
+    let constructor_name = match kind {
+        TimerKind::Immediate => "Immediate",
+        TimerKind::Timeout | TimerKind::Interval => "Timeout",
+    };
     let object = crate::host::namespace_object_from_pairs(vec![
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
         (
             "_destroyed".to_string(),
             Value::BindingCell(Rc::clone(destroyed)),
+        ),
+        (
+            "constructor".to_string(),
+            host_api::object(vec![(
+                "name".to_string(),
+                Value::String(constructor_name.to_string()),
+            )]),
         ),
     ]);
     let methods: Vec<(&str, crate::registry::NodeSpec)> = vec![
