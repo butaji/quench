@@ -17,6 +17,7 @@ use crate::registry::{
 };
 
 const ID: &str = "\0quench:domain:id";
+pub(crate) const HANDLER_DOMAIN: &str = "\0quench:domain:handler";
 
 struct DomainData {
     object: Value,
@@ -348,6 +349,12 @@ fn run_callback(
     match result {
         Ok(value) => Ok(value),
         Err(VmError::Thrown(value)) => {
+            if matches!(
+                execute::get_property_result(&value, HANDLER_DOMAIN),
+                Ok(origin) if execute::same_value(&origin, receiver)
+            ) {
+                return Err(VmError::Thrown(value));
+            }
             let value = mark_error(&value, receiver, &Value::Undefined, true)?;
             if !handlers.is_empty() {
                 let mut result = Ok(Value::Undefined);
