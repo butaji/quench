@@ -292,6 +292,29 @@ pub fn execution_resource(
 pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let parent_id = state.borrow().async_hooks.current_id;
     let public_constructor = matches!(args.first(), Some(Value::String(_)));
+    if args.is_empty() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"type\" argument must be specified".into())),
+        ])));
+    }
+    if matches!(args.first(), Some(Value::String(value)) if value.is_empty()) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_ASYNC_TYPE".into())),
+            ("message".into(), Value::String("Invalid asyncId type".into())),
+        ])));
+    }
+    if let Some(Value::Number(id)) = args.get(1) {
+        if !id.is_finite() || *id < 0.0 || id.fract() != 0.0 {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("RangeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ASYNC_ID".into())),
+                ("message".into(), Value::String("Invalid asyncId".into())),
+            ])));
+        }
+    }
     let trigger = if public_constructor {
         args.get(1)
             .and_then(|options| id_property(options, "triggerAsyncId"))
