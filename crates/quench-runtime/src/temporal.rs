@@ -63,10 +63,7 @@ fn zoned_record(
     let date = chrono::DateTime::from_timestamp(seconds as i64, nanos as u32)
         .map(|value| value.date_naive());
     let (year, month, day, weekday, ordinal, week, week_year, days_month) = if let Some(date) = date {
-        let days_month = (date + chrono::Days::new(32))
-            .with_day(1)
-            .map(|next| (next - chrono::Days::new(1)).day())
-            .unwrap_or(30);
+        let days_month = crate::temporal::plain_date::days_in_month_for_record(date.year(), date.month());
         (date.year(), date.month(), date.day(), date.weekday().number_from_monday(), date.ordinal(), date.iso_week().week(), date.iso_week().year(), days_month)
     } else {
         let days = seconds.div_euclid(86_400);
