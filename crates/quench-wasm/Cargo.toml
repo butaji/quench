@@ -1,0 +1,12 @@
+[package]
+name = "quench-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly execution boundary for Quench"
+license = "MIT"
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime" }
+wasmi = "2.0.0-beta.10"
+wasmi_wast = "2.0.0-beta.10"
+wat = "1"
