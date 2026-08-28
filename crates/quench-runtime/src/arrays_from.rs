@@ -50,6 +50,7 @@ fn from_impl(
                 "Cannot set an element on an invalid typed array",
             ));
         }
+        validate_initial_result_bounds(&result, length, strict_result_bounds(receiver))?;
         for index in 0..length {
             let item = if let Value::Array(array) = &source {
                 array.get_index(index).unwrap_or(Value::Undefined)
@@ -57,7 +58,7 @@ fn from_impl(
                 crate::execute::get_property_result(&source, &index.to_string())?
             };
             let value = map_item(mapper.as_ref(), &this_arg, item, index)?;
-            result = write_result_element(result, index, value)?;
+            result = write_result_element(result, index, value, false)?;
         }
         return Ok(result);
     }
@@ -90,9 +91,10 @@ fn from_typed_iterable(
             "Cannot set an element on an invalid typed array",
         ));
     }
+    validate_initial_result_bounds(&result, source_values.len(), strict_result_bounds(receiver))?;
     for (index, item) in source_values.into_iter().enumerate() {
         let value = map_item(mapper, &this_arg, item, index)?;
-        result = write_result_element(result, index, value)?;
+        result = write_result_element(result, index, value, false)?;
     }
     Ok(result)
 }
@@ -101,11 +103,19 @@ pub(crate) fn of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    create_result(
-        receiver.filter(|value| is_constructor(value)),
-        arguments.to_vec(),
-        false,
-    )
+    if let Some(receiver) = receiver.filter(|value| is_constructor(value)) {
+        let mut result = construct_typed_result(Some(receiver), arguments.len())?;
+        validate_initial_result_bounds(
+            &result,
+            arguments.len(),
+            strict_result_bounds(Some(receiver)),
+        )?;
+        for (index, value) in arguments.iter().cloned().enumerate() {
+            result = write_result_element(result, index, value, false)?;
+        }
+        return Ok(result);
+    }
+    create_result(receiver, arguments.to_vec(), false)
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
@@ -158,7 +168,7 @@ fn from_iterable(
         source_length += 1;
         let value = map_item(mapper, &this_arg, item, index)?;
         if let Some(target) = result.take() {
-            result = Some(write_result_element(target, index, value)?);
+            result = Some(write_result_element(target, index, value, false)?);
         } else {
             source_values.push(value);
         }
@@ -180,6 +190,10 @@ fn uses_custom_result(receiver: Option<&Value>) -> bool {
         Some(value) if !matches!(value, Value::Null | Value::Undefined)
             && !matches!(value, Value::Builtin(crate::ops::Builtin::Array))
     )
+}
+
+fn strict_result_bounds(receiver: Option<&Value>) -> bool {
+    receiver.is_some_and(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_)))
 }
 
 fn collect_array_iterator(
@@ -280,9 +294,11 @@ fn create_result(
     // empty iterable construction cannot grow a typed-array view; assigning
     // its `length` afterward only changes metadata and leaves a zero-byte
     // backing buffer.
+    let strict_bounds = strict_result_bounds(receiver);
     let mut result = construct_result(receiver, length, iterable)?;
+    validate_initial_result_bounds(&result, length, strict_bounds)?;
     for (index, value) in values.into_iter().enumerate() {
-        result = write_result_element(result, index, value)?;
+        result = write_result_element(result, index, value, false)?;
     }
     if crate::typed_array_ops::is_view(&result) {
         return Ok(result);
@@ -322,6 +338,7 @@ fn write_result_element(
     result: Value,
     index: usize,
     value: Value,
+    strict_bounds: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let key = index.to_string();
     // Typed-array elements are integer-indexed exotic properties: they are
@@ -331,6 +348,13 @@ fn write_result_element(
         if typed_array_result_unwritable(&result, false) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot set an element on an invalid typed array",
+            ));
+        }
+        if strict_bounds
+            && crate::typed_array_ops::logical_len(&result).is_some_and(|length| index >= length)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot set an element on an out-of-bounds typed array",
             ));
         }
         if let Some(updated) = crate::typed_array_ops::set_property(&result, &key, &value) {
@@ -369,6 +393,22 @@ fn write_result_element(
     let updated = crate::builtins::define_own_property(&result, &key, &descriptor)?;
     crate::locals::replace_value(&result, &updated);
     Ok(updated)
+}
+
+fn validate_initial_result_bounds(
+    result: &Value,
+    length: usize,
+    strict_bounds: bool,
+) -> Result<(), crate::execute::VmError> {
+    if strict_bounds
+        && crate::typed_array_ops::is_view(result)
+        && crate::typed_array_ops::logical_len(result).is_some_and(|actual| actual < length)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set an element on an out-of-bounds typed array",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

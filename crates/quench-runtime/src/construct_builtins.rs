@@ -157,7 +157,6 @@ fn construct_weak_ref(arguments: &[Value]) -> Result<Value, crate::execute::VmEr
     };
     let weak = Value::Object(Rc::new(ObjectData::new(vec![
         ("\0weakref".to_string(), target.clone()),
-        ("deref".to_string(), Value::Builtin(crate::ops::Builtin::WeakRefDeref)),
         (
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::WeakRefPrototype),
@@ -178,6 +177,14 @@ fn construct_typed_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
+    if arguments
+        .first()
+        .is_some_and(|source| source.is_typed_array() && crate::typed_array_prototype::is_out_of_bounds(source))
+    {
+        return Some(Err(crate::value::error::throw_type_error(
+            "Cannot construct from an out-of-bounds TypedArray",
+        )));
+    }
     use crate::ops::Builtin::*;
     Some(match builtin {
         Float64Array => construct_float64_array(arguments),
