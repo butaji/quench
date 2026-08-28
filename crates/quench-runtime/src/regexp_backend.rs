@@ -577,7 +577,7 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
             .find_map(|alternative| match_expr(alternative, input, state.clone(), flags)),
         Expr::Literal(value) => input
             .get(state.position)
-            .filter(|unit| equal(*value, unit.value, flags.ignore_case))
+            .filter(|unit| equal(*value, unit.value, flags.ignore_case, flags.unicode))
             .map(|_| State {
                 position: state.position + 1,
                 ..state
@@ -589,13 +589,19 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
                 position: state.position + 1,
                 ..state
             }),
-        Expr::Class(class) => class_match_widths(class, input, state.position, flags.ignore_case)
-            .into_iter()
-            .next()
-            .map(|width| State {
-                position: state.position + width,
-                ..state
-            }),
+        Expr::Class(class) => class_match_widths(
+            class,
+            input,
+            state.position,
+            flags.ignore_case,
+            flags.unicode,
+        )
+        .into_iter()
+        .next()
+        .map(|width| State {
+            position: state.position + width,
+            ..state
+        }),
         Expr::Capture { index, body } => {
             let start = state.position;
             let mut result = match_expr(body, input, state, flags)?;
@@ -645,7 +651,12 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
                         .iter()
                         .zip(actual)
                         .all(|(expected, actual)| {
-                            equal(expected.value, actual.value, flags.ignore_case)
+                            equal(
+                                expected.value,
+                                actual.value,
+                                flags.ignore_case,
+                                flags.unicode,
+                            )
                         })
                 });
             matches.then_some(State {
@@ -926,7 +937,7 @@ fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> V
             else {
                 return Vec::new();
             };
-            equal(*value, previous.value, flags.ignore_case)
+            equal(*value, previous.value, flags.ignore_case, flags.unicode)
                 .then_some(State {
                     position: state.position - 1,
                     ..state
@@ -950,7 +961,9 @@ fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> V
                 .into_iter()
                 .collect()
         }
-        Expr::Class(class) => reverse_class_options(class, input, state, flags.ignore_case),
+        Expr::Class(class) => {
+            reverse_class_options(class, input, state, flags.ignore_case, flags.unicode)
+        }
         Expr::Capture { index, body } => {
             let end = state.position;
             reverse_options(body, input, state, flags)
@@ -1002,7 +1015,9 @@ fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> V
             expected
                 .iter()
                 .zip(actual)
-                .all(|(left, right)| equal(left.value, right.value, flags.ignore_case))
+                .all(|(left, right)| {
+                    equal(left.value, right.value, flags.ignore_case, flags.unicode)
+                })
                 .then_some(State {
                     position: state.position - width,
                     ..state
@@ -1051,11 +1066,12 @@ fn reverse_class_options(
     input: &[Unit],
     state: State,
     ignore_case: bool,
+    unicode: bool,
 ) -> Vec<State> {
     let mut output = Vec::new();
     for width in 1..=state.position.min(32) {
         let start = state.position - width;
-        if class_match_widths(class, input, start, ignore_case).contains(&width) {
+        if class_match_widths(class, input, start, ignore_case, unicode).contains(&width) {
             output.push(State {
                 position: start,
                 ..state.clone()
@@ -1124,16 +1140,28 @@ fn merge_flags(flags: Flags, local: ModeFlags) -> Flags {
     }
 }
 
-fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool) -> bool {
+fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: bool) -> bool {
     match item {
-        ClassItem::Character(character) => equal(*character, value, ignore_case),
+        ClassItem::Character(character) => equal(*character, value, ignore_case, unicode),
         ClassItem::Range(min, max) => {
-            let value = if ignore_case { lower(value) } else { value };
-            let min = if ignore_case { lower(*min) } else { *min };
-            let max = if ignore_case { lower(*max) } else { *max };
+            let value = if ignore_case {
+                canonical(value, unicode)
+            } else {
+                value
+            };
+            let min = if ignore_case {
+                canonical(*min, unicode)
+            } else {
+                *min
+            };
+            let max = if ignore_case {
+                canonical(*max, unicode)
+            } else {
+                *max
+            };
             min <= value && value <= max
         }
-        ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case),
+        ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case, unicode),
         ClassItem::Property {
             negative,
             name,
@@ -1162,7 +1190,7 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool) -> bool {
                     }));
             matches != *negative
         }
-        ClassItem::Nested(nested) => class_matches(nested, value, ignore_case),
+        ClassItem::Nested(nested) => class_matches(nested, value, ignore_case, unicode),
         ClassItem::String(_) => false,
     }
 }
@@ -1172,16 +1200,16 @@ fn class_item_widths(
     input: &[Unit],
     position: usize,
     ignore_case: bool,
+    unicode: bool,
 ) -> Vec<usize> {
     match item {
         ClassItem::String(expected) => input
             .get(position..position.saturating_add(expected.len()))
             .filter(|actual| {
                 actual.len() == expected.len()
-                    && actual
-                        .iter()
-                        .zip(expected)
-                        .all(|(actual, expected)| equal(*expected, actual.value, ignore_case))
+                    && actual.iter().zip(expected).all(|(actual, expected)| {
+                        equal(*expected, actual.value, ignore_case, unicode)
+                    })
             })
             .map_or_else(Vec::new, |_| vec![expected.len()]),
         ClassItem::Property { name, .. } if name == "Emoji_Keycap_Sequence" => {
@@ -1202,10 +1230,12 @@ fn class_item_widths(
                 .map(|expected| expected.len())
                 .collect()
         }
-        ClassItem::Nested(nested) => class_match_widths(nested, input, position, ignore_case),
+        ClassItem::Nested(nested) => {
+            class_match_widths(nested, input, position, ignore_case, unicode)
+        }
         _ => input
             .get(position)
-            .filter(|unit| class_item_matches(item, unit.value, ignore_case))
+            .filter(|unit| class_item_matches(item, unit.value, ignore_case, unicode))
             .map_or_else(Vec::new, |_| vec![1]),
     }
 }
@@ -1215,35 +1245,38 @@ fn class_match_widths(
     input: &[Unit],
     position: usize,
     ignore_case: bool,
+    unicode: bool,
 ) -> Vec<usize> {
     let mut widths: Vec<usize> = match class.kind {
         ClassKind::Union => class
             .items
             .iter()
-            .flat_map(|item| class_item_widths(item, input, position, ignore_case))
+            .flat_map(|item| class_item_widths(item, input, position, ignore_case, unicode))
             .collect(),
         ClassKind::Intersection => {
             let candidate = class.items.first().map_or_else(Vec::new, |item| {
-                class_item_widths(item, input, position, ignore_case)
+                class_item_widths(item, input, position, ignore_case, unicode)
             });
             candidate
                 .into_iter()
                 .filter(|width| {
                     class.items.iter().skip(1).all(|item| {
-                        class_item_widths(item, input, position, ignore_case).contains(width)
+                        class_item_widths(item, input, position, ignore_case, unicode)
+                            .contains(width)
                     })
                 })
                 .collect()
         }
         ClassKind::Subtraction => {
             let candidate = class.items.first().map_or_else(Vec::new, |item| {
-                class_item_widths(item, input, position, ignore_case)
+                class_item_widths(item, input, position, ignore_case, unicode)
             });
             candidate
                 .into_iter()
                 .filter(|width| {
                     !class.items.iter().skip(1).any(|item| {
-                        class_item_widths(item, input, position, ignore_case).contains(width)
+                        class_item_widths(item, input, position, ignore_case, unicode)
+                            .contains(width)
                     })
                 })
                 .collect()
@@ -1261,8 +1294,8 @@ fn class_match_widths(
     widths
 }
 
-fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool) -> bool {
-    let item_matches = |item: &ClassItem| class_item_matches(item, value, ignore_case);
+fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool) -> bool {
+    let item_matches = |item: &ClassItem| class_item_matches(item, value, ignore_case, unicode);
     let matches = match class.kind {
         ClassKind::Union => class.items.iter().any(item_matches),
         ClassKind::Intersection => class.items.iter().all(item_matches),
@@ -1278,7 +1311,12 @@ fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool) -> bool {
     }
 }
 
-fn escape_matches(escape: ast::CharacterClassEscapeKind, value: u32, ignore_case: bool) -> bool {
+fn escape_matches(
+    escape: ast::CharacterClassEscapeKind,
+    value: u32,
+    ignore_case: bool,
+    unicode: bool,
+) -> bool {
     match escape {
         ast::CharacterClassEscapeKind::D => value <= 0x7f && (value as u8).is_ascii_digit(),
         ast::CharacterClassEscapeKind::NegativeD => {
@@ -1290,8 +1328,8 @@ fn escape_matches(escape: ast::CharacterClassEscapeKind, value: u32, ignore_case
         ast::CharacterClassEscapeKind::NegativeS => {
             !char::from_u32(value).is_some_and(crate::regexp::is_ecma_whitespace)
         }
-        ast::CharacterClassEscapeKind::W => is_word_mode(value, ignore_case),
-        ast::CharacterClassEscapeKind::NegativeW => !is_word_mode(value, ignore_case),
+        ast::CharacterClassEscapeKind::W => is_word_mode(value, ignore_case && unicode),
+        ast::CharacterClassEscapeKind::NegativeW => !is_word_mode(value, ignore_case && unicode),
     }
 }
 
@@ -1331,11 +1369,20 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     }
 }
 
-fn equal(left: u32, right: u32, ignore_case: bool) -> bool {
+fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
     if ignore_case {
-        lower(left) == lower(right)
+        canonical(left, unicode) == canonical(right, unicode)
     } else {
         left == right
+    }
+}
+fn canonical(value: u32, unicode: bool) -> u32 {
+    if unicode {
+        lower(value)
+    } else if (u32::from(b'A')..=u32::from(b'Z')).contains(&value) {
+        value + 0x20
+    } else {
+        value
     }
 }
 fn lower(value: u32) -> u32 {
