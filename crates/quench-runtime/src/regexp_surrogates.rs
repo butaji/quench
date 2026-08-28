@@ -1,10 +1,10 @@
 /// Detect character classes that contain a high-surrogate atom followed by
-/// a low-surrogate range. regress parses `[\uD87A\uDC00-\uDFE0]` as a
+/// a low-surrogate range. The previous backend parses `[\uD87A\uDC00-\uDFE0]` as a
 /// single range `\uD87A..\uDFE0` and rejects it as reversed. ECMAScript
 /// instead treats the high surrogate as its own atom and the low
 /// surrogate range as another atom joined by union. We rewrite the class
 /// as `(?:\uD87A|[\uDC00-\uDFE0])` so the high surrogate and the
-/// low-surrogate range are separate alternatives and regress accepts the
+/// low-surrogate range are separate alternatives and the repository parser accepts the
 /// pattern.
 fn split_surrogate_classes(pattern: &str) -> String {
     let bytes = pattern.as_bytes();
@@ -70,7 +70,7 @@ fn split_surrogate_classes(pattern: &str) -> String {
 /// Find a class at `start` whose body contains a high-surrogate atom
 /// followed by a low-surrogate range. Returns the class close index and
 /// the body. If the class has a high surrogate atom NOT followed by a
-/// range, we don't rewrite (regress can handle a lone high surrogate).
+/// range, we don't rewrite (the repository parser can handle a lone high surrogate).
 fn find_class_with_split(bytes: &[u8], start: usize) -> Option<(usize, String)> {
     let close = find_char_class_close(bytes, start)?;
     let body_bytes = &bytes[start + 1..close];
