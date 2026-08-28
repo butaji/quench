@@ -186,25 +186,37 @@ pub(crate) fn execute_set_property(
         return write_failure(strict);
     }
     let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
+    if crate::typed_array_ops::is_view(&target) {
+        if crate::typed_array_ops::canonical_numeric_index(&key)
+            && !crate::typed_array_ops::is_index_key(&key)
+        {
+            crate::conversion::to_number(&value)?;
+            return Ok(());
+        }
+        if crate::typed_array_ops::is_index_key(&key) {
+            if let Some(result) = crate::typed_array_ops::set_property(&target, &key, &value) {
+                let updated = result?;
+                crate::execute::write_value(registers, object, updated);
+                return Ok(());
+            }
+        }
+    }
     // Computed numeric writes are emitted as SetPropertyDynamic by the
     // general reducer. Keep the proven packed-array path ahead of extensible
     // and prototype checks, so each indexed append is constant work.
-    if let (crate::value::Value::Array(array), Some(index), crate::value::Value::Number(number)) =
-        (&target, crate::arrays::array_index(&key).map(|index| index as usize), &value)
-    {
-        if array.set_existing_f64(index, *number)
-            || array.append_preallocated_f64(index, *number)
-        {
+    if let (crate::value::Value::Array(array), Some(index), crate::value::Value::Number(number)) = (
+        &target,
+        crate::arrays::array_index(&key).map(|index| index as usize),
+        &value,
+    ) {
+        if array.set_existing_f64(index, *number) || array.append_preallocated_f64(index, *number) {
             return Ok(());
         }
     }
     if let crate::value::Value::Object(object_data) = &target {
         if crate::builtins::object_alias::plain_index_write(object_data, &key) {
-            let updated = crate::builtins::object_alias::set(
-                std::rc::Rc::clone(object_data),
-                &key,
-                value,
-            );
+            let updated =
+                crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
             crate::execute::write_value(registers, object, updated);
             return Ok(());
         }
@@ -261,11 +273,7 @@ fn try_plain_index_dynamic_write(
         return Ok(false);
     }
     let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);
-    let updated = crate::builtins::object_alias::set(
-        std::rc::Rc::clone(object_data),
-        &key,
-        value,
-    );
+    let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
     crate::execute::write_value(registers, *object, updated);
     Ok(true)
 }

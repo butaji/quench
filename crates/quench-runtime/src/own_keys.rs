@@ -82,6 +82,19 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
     let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     if let Some(meta) = value.typed_array_meta() {
         for (key, _) in meta.own_properties() {
+            let enumerable = meta
+                .descriptor(&key)
+                .and_then(|descriptor| match descriptor {
+                    Value::Object(fields) => fields
+                        .iter()
+                        .rev()
+                        .find_map(|(name, value)| (name == "enumerable").then_some(value)),
+                    _ => None,
+                })
+                .is_none_or(|value| matches!(value, Value::Boolean(true)));
+            if !enumerable {
+                continue;
+            }
             if !keys.iter().any(|current| current == &key) {
                 keys.push(key);
             }
@@ -91,7 +104,7 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
 }
 
 fn typed_array_length(value: &Value) -> Option<usize> {
-    Some(match value {
+    let length = match value {
         Value::Float64Array(view) => view.logical_len(),
         Value::Float32Array(view) => view.logical_len(),
         Value::Int8Array(view) => view.logical_len(),
@@ -104,7 +117,10 @@ fn typed_array_length(value: &Value) -> Option<usize> {
         Value::BigInt64Array(view) => view.logical_len(),
         Value::BigUint64Array(view) => view.logical_len(),
         _ => return None,
-    })
+    };
+    crate::typed_array_prototype::is_out_of_bounds(value)
+        .then_some(0)
+        .or(Some(length))
 }
 
 fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
@@ -540,11 +556,34 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             string_keys(value, symbols)
         }
         Value::Builtin(builtin) => builtin_keys(*builtin, symbols),
-        value => value
-            .typed_array_meta()
-            .map(|meta| ordered(&meta.own_properties()[..], symbols))
-            .unwrap_or_default(),
+        value if typed_array_length(value).is_some() => typed_array_own_keys(value, symbols),
+        _ => Vec::new(),
     }
+}
+
+fn typed_array_own_keys(value: &Value, symbols: bool) -> Vec<String> {
+    let length = typed_array_length(value).unwrap_or(0);
+    if symbols {
+        return value
+            .typed_array_meta()
+            .map(|meta| {
+                ordered(&meta.own_properties()[..], true)
+                    .into_iter()
+                    .filter(|key| crate::conversion::is_symbol_string(key))
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
+    if let Some(meta) = value.typed_array_meta() {
+        let extras: Vec<String> = ordered(&meta.own_properties()[..], false)
+            .into_iter()
+            .filter(|key| !crate::conversion::is_symbol_string(key))
+            .filter(|key| !keys.iter().any(|current| current == key))
+            .collect();
+        keys.extend(extras);
+    }
+    keys
 }
 
 fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
