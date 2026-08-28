@@ -190,6 +190,16 @@ pub(crate) fn execute_set_property(
         if crate::typed_array_ops::canonical_numeric_index(&key)
             && !crate::typed_array_ops::is_index_key(&key)
         {
+            if !typed_array_buffer_detached(&target) {
+                if matches!(
+                    target,
+                    crate::value::Value::BigInt64Array(_) | crate::value::Value::BigUint64Array(_)
+                ) {
+                    crate::construct::bigint_bits(&value)?;
+                } else {
+                    crate::conversion::to_number(&value)?;
+                }
+            }
             return Ok(());
         }
         if crate::typed_array_ops::is_index_key(&key) {
@@ -240,6 +250,23 @@ pub(crate) fn execute_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:finish");
     finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn typed_array_buffer_detached(value: &crate::value::Value) -> bool {
+    match value {
+        crate::value::Value::Float64Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Float32Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Int8Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Int16Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Int32Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Uint8Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Uint8ClampedArray(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Uint16Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::Uint32Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::BigInt64Array(view) => *view.buffer.detached.borrow(),
+        crate::value::Value::BigUint64Array(view) => *view.buffer.detached.borrow(),
+        _ => false,
+    }
 }
 
 fn try_plain_index_dynamic_write(

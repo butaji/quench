@@ -79,6 +79,16 @@ pub(crate) fn set_with_receiver(
         return if valid {
             set_receiver_data(receiver, key, value)
         } else {
+            if crate::typed_array_ops::is_index_key(key) && receiver.typed_array_meta().is_some() {
+                if matches!(
+                    receiver,
+                    crate::value::Value::BigInt64Array(_) | crate::value::Value::BigUint64Array(_)
+                ) {
+                    crate::construct::bigint_bits(value)?;
+                } else {
+                    crate::conversion::to_number(value)?;
+                }
+            }
             Ok(true)
         };
     }
