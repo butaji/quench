@@ -269,7 +269,13 @@ pub fn run(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("domain"))?;
     let callback = args.first().ok_or_else(|| type_error("function"))?;
-    run_callback(state, receiver, callback, &Value::Undefined, &[])
+    run_callback(
+        state,
+        receiver,
+        callback,
+        &Value::Undefined,
+        args.get(1..).unwrap_or(&[]),
+    )
 }
 
 fn run_callback(
