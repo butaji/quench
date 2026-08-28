@@ -69,13 +69,13 @@
   }
   function setInterval(delay, value, options) {
     options = options === undefined ? {} : options;
+    let optionError = null;
     if (!options || typeof options !== "object") {
-      throw new TypeError("The options argument must be an object");
-    }
-    if (options.ref !== undefined && typeof options.ref !== "boolean") {
-      const error = new TypeError("The options.ref property must be of type boolean");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      optionError = new TypeError("The options argument must be an object");
+      optionError.code = "ERR_INVALID_ARG_TYPE";
+    } else if (options.ref !== undefined && typeof options.ref !== "boolean") {
+      optionError = new TypeError("The options.ref property must be of type boolean");
+      optionError.code = "ERR_INVALID_ARG_TYPE";
     }
     let timer;
     let closed = false;
@@ -94,10 +94,11 @@
       removeAbortListener();
       while (waiters.length > 0) waiters.shift().reject(error);
     };
-    const signal = options.signal;
-    if (signal !== undefined &&
+    const signal = optionError ? undefined : options.signal;
+    if (!optionError && signal !== undefined &&
         (!signal || typeof signal.addEventListener !== "function")) {
-      throw new TypeError("The signal option must be an AbortSignal");
+      optionError = new TypeError("The signal option must be an AbortSignal");
+      optionError.code = "ERR_INVALID_ARG_TYPE";
     }
     const onAbort = () => reject(abortError());
     const removeAbortListener = () => {
@@ -124,13 +125,18 @@
       }
     };
     iterator[Symbol.asyncIterator] = function () { return this; };
-    timer = timers.setInterval(function () {
-      if (!closed) settle({ value, done: false });
-    }, delay);
-    if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
-    if (signal) {
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort);
+    if (optionError) {
+      failure = optionError;
+      closed = true;
+    } else {
+      timer = timers.setInterval(function () {
+        if (!closed) settle({ value, done: false });
+      }, delay);
+      if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
+      if (signal) {
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort);
+      }
     }
     return iterator;
   }
