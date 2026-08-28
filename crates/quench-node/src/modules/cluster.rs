@@ -760,6 +760,7 @@ pub fn send(
         if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
             worker.pending_messages.push(message.clone());
         }
+        return Ok(Value::Boolean(true));
     } else {
         let _ = emit(
             state,
