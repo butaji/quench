@@ -168,6 +168,9 @@ pub(crate) fn execute_set_property(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
+    if try_plain_index_dynamic_write(registers, op)? {
+        return Ok(());
+    }
     let (object, key, src, strict) = set_property_parts(registers, op)?;
     let mut target = crate::execute::read_register(registers, object)?.clone();
     if matches!(
@@ -195,6 +198,17 @@ pub(crate) fn execute_set_property(
             return Ok(());
         }
     }
+    if let crate::value::Value::Object(object_data) = &target {
+        if crate::builtins::object_alias::plain_index_write(object_data, &key) {
+            let updated = crate::builtins::object_alias::set(
+                std::rc::Rc::clone(object_data),
+                &key,
+                value,
+            );
+            crate::execute::write_value(registers, object, updated);
+            return Ok(());
+        }
+    }
     let rejects_new = {
         let _scope = crate::execution_trace::attribution_scope("SetN:reject_new");
         rejects_new_property(&target, &key)
@@ -215,6 +229,45 @@ pub(crate) fn execute_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:finish");
     finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn try_plain_index_dynamic_write(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<bool, crate::execute::VmError> {
+    let Op::SetPropertyDynamic {
+        object, key, src, ..
+    } = op
+    else {
+        return Ok(false);
+    };
+    let key_value = crate::execute::read_register(registers, *key)?;
+    let crate::value::Value::Number(number) = key_value else {
+        return Ok(false);
+    };
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+        return Ok(false);
+    }
+    let index = number as u64;
+    if index >= u64::from(u32::MAX) {
+        return Ok(false);
+    }
+    let target = crate::execute::read_register(registers, *object)?;
+    let crate::value::Value::Object(object_data) = &target else {
+        return Ok(false);
+    };
+    let key = index.to_string();
+    if !crate::builtins::object_alias::plain_index_write(object_data, &key) {
+        return Ok(false);
+    }
+    let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);
+    let updated = crate::builtins::object_alias::set(
+        std::rc::Rc::clone(object_data),
+        &key,
+        value,
+    );
+    crate::execute::write_value(registers, *object, updated);
+    Ok(true)
 }
 
 fn unwrap_assignment_value(value: &crate::value::Value) -> crate::value::Value {
