@@ -51,6 +51,12 @@ pub(crate) fn try_execute_specialized(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    // Private-name lookup is a dynamic lexical fact. Specialized kernels do
+    // not install the function's private environment, so keep class-scoped
+    // functions on the guard-aware interpreter path.
+    if function.private_environment.has_names() {
+        return Ok(None);
+    }
     crate::execution_trace::function_call_shape(
         function.params,
         function.code.capture_slots().len(),
