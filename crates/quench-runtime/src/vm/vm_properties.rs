@@ -106,6 +106,15 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
         return direct;
     }
     if value.typed_array_meta().is_some() {
+        // Integer-indexed exotic objects consume every canonical numeric key,
+        // including out-of-bounds indices.  An OOB read therefore produces
+        // `undefined` without consulting the prototype chain (which keeps a
+        // user-installed numeric prototype property from leaking through).
+        if crate::typed_array_ops::typed_array_index(key).is_some()
+            || crate::typed_array_ops::canonical_numeric_index(key)
+        {
+            return Value::Undefined;
+        }
         if let Some(prototype) = crate::typed_array_prototype::get(value) {
             let inherited = get_property(&prototype, key);
             if !matches!(inherited, Value::Undefined) {
