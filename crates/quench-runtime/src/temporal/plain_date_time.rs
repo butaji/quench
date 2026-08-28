@@ -1940,6 +1940,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if clock.is_empty() || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
+    if colon_clock && clock.iter().any(|part| part.len() != 2) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if (clock.len() < 3 && !fraction.is_empty())
         || (!colon_clock && clock.len() == 1 && !fraction.is_empty())
     {
