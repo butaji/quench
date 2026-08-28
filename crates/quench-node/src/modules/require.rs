@@ -21,6 +21,19 @@ use crate::host::HostState;
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    if matches!(spec.as_str(), "child_process" | "node:child_process") {
+        let global = quench_runtime::vm::current_global_object();
+        let module = quench_runtime::execute::get_property(&global, "__nodeRequireChildProcess");
+        if matches!(module, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(module);
+        }
+        let factory = quench_runtime::execute::get_property(&global, "__nodeChildProcessModule");
+        if matches!(factory, Value::Function(_) | Value::BoundFunction(_)) {
+            let module = quench_runtime::execute::call(&factory, &Value::Undefined, &[])?;
+            state.borrow_mut().module_cache.insert("child_process".into(), module.clone());
+            return Ok(module);
+        }
+    }
     if let Some(mock) = crate::modules::test::mocked_module(&spec) {
         if crate::modules::test::mock_module_cache(&spec) {
             let key = format!("\0mock:{spec}");
@@ -578,6 +591,20 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         ),
         "child_process" => {
             let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
+            let constructor = crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR);
+            let prototype = host_api::object(Vec::new());
+            let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
+            let global = quench_runtime::vm::current_global_object();
+            let _ = quench_runtime::execute::define_property(
+                global,
+                "__nodeChildProcessPrototype",
+                host_api::object(vec![
+                    ("value".into(), prototype),
+                    ("writable".into(), Value::Boolean(false)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(false)),
+                ]),
+            );
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
                     "fork".to_string(),
@@ -585,7 +612,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 ),
                 (
                     "ChildProcess".to_string(),
-                    crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR),
+                    constructor,
                 ),
                 (
                     "spawnSync".to_string(),
