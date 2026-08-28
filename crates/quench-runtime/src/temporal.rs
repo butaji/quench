@@ -2415,6 +2415,19 @@ mod stubs {
                     ))
                 }
             };
+            let increment_max = match smallest {
+                "hour" => 24_i128,
+                "minute" | "second" => 60,
+                "millisecond" | "microsecond" | "nanosecond" => 1_000,
+                _ => 1,
+            };
+            if (increment_max > 1 && (increment >= increment_max || increment_max % increment != 0))
+                || (increment_max == 1 && increment != 1)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingIncrement",
+                ));
+            }
             let quantum = unit.checked_mul(increment).ok_or_else(|| {
                 crate::value::error::throw_range_error("Invalid roundingIncrement")
             })?;
