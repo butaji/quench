@@ -449,7 +449,9 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             }
         }
     };
+    crate::modules::async_hooks::resource_before(state, Some(&resource), &[])?;
     let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
+    crate::modules::async_hooks::resource_after(state, None, &[])?;
     let converted = destroy
         && result.is_ok()
         && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
@@ -515,7 +517,9 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if !timer.referenced && !has_referenced_work(state) {
             continue;
         }
+        crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
         let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
+        crate::modules::async_hooks::resource_after(state, None, &[])?;
         super::timers::async_destroy(&timer.async_resource);
         result?;
         drain_ticks(state)?;
