@@ -18,6 +18,14 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         record_created(&mut parent.created, key);
         return Value::Object(properties);
     }
+    if plain_index_write(&properties, key) {
+        // Ordinary objects are identity-bearing mutable records. For a plain
+        // indexed data write, mutate the canonical record in place instead of
+        // retaining one full COW snapshot per sequential assignment.
+        let object = unsafe { &mut *(Rc::as_ptr(&properties) as *mut ObjectData) };
+        object.set_property_in_place(key, value);
+        return Value::Object(properties);
+    }
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
         // A subsequent define/set resurrects a property removed through the
@@ -50,6 +58,13 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
     Value::Object(object)
+}
+
+fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool {
+    crate::arrays::array_index(key).is_some()
+        && properties.original_prototype().is_none()
+        && !properties.has_replacement()
+        && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
 }
 
 fn value_targets(value: &Value, object: &Rc<ObjectData>) -> bool {
