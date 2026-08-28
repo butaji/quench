@@ -5,6 +5,14 @@ pub(crate) fn set_with_receiver(
     receiver: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
     if !crate::value::is_object(receiver) {
+        if target.typed_array_meta().is_some()
+            && crate::typed_array_ops::is_index_key(key)
+            && (crate::typed_array_prototype::is_out_of_bounds(target)
+                || crate::typed_array_ops::logical_len(target)
+                    .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+        {
+            return Ok(true);
+        }
         return Ok(false);
     }
     if target.typed_array_meta().is_some() {
@@ -60,6 +68,22 @@ pub(crate) fn set_with_receiver(
         return set_receiver_data(receiver, key, value);
     }
     let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
+    if parent.typed_array_meta().is_some()
+        && crate::typed_array_ops::is_index_key(key)
+        && (crate::typed_array_prototype::is_out_of_bounds(&parent)
+            || crate::typed_array_ops::logical_len(&parent)
+                .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+    {
+        if matches!(
+            parent,
+            crate::value::Value::BigInt64Array(_) | crate::value::Value::BigUint64Array(_)
+        ) {
+            crate::construct::bigint_bits(value)?;
+        } else {
+            crate::conversion::to_number(value)?;
+        }
+        return Ok(true);
+    }
     if matches!(parent, crate::value::Value::Proxy(_)) {
         return crate::proxy::proxy_set(&parent, key, value, Some(receiver))
             .map(|result| crate::execute::is_truthy(&result));
