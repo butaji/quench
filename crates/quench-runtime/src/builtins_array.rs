@@ -64,6 +64,12 @@ fn delete_object_property_value(
     properties: Rc<crate::value::ObjectData>,
     key: &str,
 ) -> (Value, bool) {
+    let original = Rc::clone(&properties);
+    let owner = crate::vm::resolve_global_owner(&Value::Object(properties));
+    let properties = match owner {
+        Some(Value::Object(properties)) => properties,
+        _ => original,
+    };
     if key == "lastIndex" && properties.iter().any(|(name, _)| name == "\0regexp") {
         return (Value::Object(properties), false);
     }
@@ -247,11 +253,7 @@ fn is_global_new_property(properties: &Rc<ObjectData>, key: &str) -> bool {
     if !crate::vm::is_global_object(&Value::Object(Rc::clone(properties))) {
         return false;
     }
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == key).then_some(value))
-        .is_none_or(|value| !matches!(value, Value::BindingCell(_)))
+    properties.iter().rev().all(|(name, _)| name != key)
 }
 
 const MAX_DENSE_ARRAY_INDEX_GAP: usize = 1024;
