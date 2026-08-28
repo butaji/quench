@@ -563,12 +563,12 @@ fn typed_array_own_keys(value: &Value, symbols: bool) -> Vec<String> {
     }
     let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     if let Some(meta) = value.typed_array_meta() {
-        keys.extend(
-            ordered(&meta.own_properties()[..], false)
-                .into_iter()
-                .filter(|key| !crate::conversion::is_symbol_string(key))
-                .filter(|key| !keys.iter().any(|current| current == key)),
-        );
+        let extras: Vec<String> = ordered(&meta.own_properties()[..], false)
+            .into_iter()
+            .filter(|key| !crate::conversion::is_symbol_string(key))
+            .filter(|key| !keys.iter().any(|current| current == key))
+            .collect();
+        keys.extend(extras);
     }
     keys
 }
