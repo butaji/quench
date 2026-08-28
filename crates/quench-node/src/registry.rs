@@ -170,6 +170,7 @@ node_api! {
     (SPEC_DOMAIN_DISPOSE, "domain:dispose", 0x1F57),
     (SPEC_DOMAIN_ON, "domain:on", 0x1F58),
     (SPEC_DOMAIN_ADD_EMITTER, "domain:addEmitter", 0x1F59),
+    (SPEC_DOMAIN_ONCE, "domain:once", 0x1F5A),
     (SPEC_CLUSTER_FORK, "cluster:fork", 0x1F40),
     (SPEC_CLUSTER_DISCONNECT, "cluster:disconnect", 0x1F41),
     (SPEC_CLUSTER_WORKER_IS_DEAD, "cluster:Worker:isDead", 0x1F42),
