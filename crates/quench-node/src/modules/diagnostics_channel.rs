@@ -347,6 +347,7 @@ fn tracing_object(channels: Vec<Value>) -> Value {
             eval_function(
                 "function(fn, context, thisArg) {\
                   var args = Array.prototype.slice.call(arguments, 3);\
+                  context = context || {};\
                   if (typeof fn !== 'function') throw new TypeError('fn');\
                   if (!this.hasSubscribers) return fn.apply(thisArg, args);\
                   var startScope = this.start?.withStoreScope(context); this.start?.publish(context); var self = this; var result;\
