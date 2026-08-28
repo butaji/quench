@@ -144,6 +144,7 @@ enum ClassItem {
         value: Option<String>,
     },
     Nested(ClassExpr),
+    String(Vec<u32>),
 }
 
 struct Lowering {
@@ -457,16 +458,25 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
             ast::CharacterClassContents::NestedCharacterClass(nested) => {
                 vec![ClassItem::Nested(lower_class(nested, lowering))]
             }
-            ast::CharacterClassContents::ClassStringDisjunction(strings) => strings
-                .body
-                .iter()
-                .flat_map(|string| {
-                    string
+            ast::CharacterClassContents::ClassStringDisjunction(strings) => {
+                vec![ClassItem::Nested(ClassExpr {
+                    negative: false,
+                    kind: ClassKind::Union,
+                    items: strings
                         .body
                         .iter()
-                        .map(|character| ClassItem::Character(character.value))
-                })
-                .collect(),
+                        .map(|string| {
+                            ClassItem::String(
+                                string
+                                    .body
+                                    .iter()
+                                    .map(|character| character.value)
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                })]
+            }
         })
         .collect();
     ClassExpr {
@@ -500,11 +510,11 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
                 position: state.position + 1,
                 ..state
             }),
-        Expr::Class(class) => input
-            .get(state.position)
-            .filter(|unit| class_matches(class, unit.value, flags.ignore_case))
-            .map(|_| State {
-                position: state.position + 1,
+        Expr::Class(class) => class_match_widths(class, input, state.position, flags.ignore_case)
+            .into_iter()
+            .next()
+            .map(|width| State {
+                position: state.position + width,
                 ..state
             }),
         Expr::Capture { index, body } => {
@@ -747,8 +757,8 @@ fn merge_flags(flags: Flags, local: ModeFlags) -> Flags {
     }
 }
 
-fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool) -> bool {
-    let item_matches = |item: &ClassItem| match item {
+fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool) -> bool {
+    match item {
         ClassItem::Character(character) => equal(*character, value, ignore_case),
         ClassItem::Range(min, max) => {
             let value = if ignore_case { lower(value) } else { value };
@@ -763,7 +773,106 @@ fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool) -> bool {
             value: property,
         } => property_matches(name, property.as_deref(), value) != *negative,
         ClassItem::Nested(nested) => class_matches(nested, value, ignore_case),
+        ClassItem::String(_) => false,
+    }
+}
+
+fn class_item_widths(
+    item: &ClassItem,
+    input: &[Unit],
+    position: usize,
+    ignore_case: bool,
+) -> Vec<usize> {
+    match item {
+        ClassItem::String(expected) => input
+            .get(position..position.saturating_add(expected.len()))
+            .filter(|actual| {
+                actual.len() == expected.len()
+                    && actual
+                        .iter()
+                        .zip(expected)
+                        .all(|(actual, expected)| equal(*expected, actual.value, ignore_case))
+            })
+            .map_or_else(Vec::new, |_| vec![expected.len()]),
+        ClassItem::Property { name, .. } if name == "Emoji_Keycap_Sequence" => {
+            let mut sequences = vec![[b'#' as u32, 0xFE0F, 0x20E3], [b'*' as u32, 0xFE0F, 0x20E3]];
+            sequences.extend((b'0'..=b'9').map(|digit| [u32::from(digit), 0xFE0F, 0x20E3]));
+            sequences
+                .into_iter()
+                .filter(|expected| {
+                    input
+                        .get(position..position + expected.len())
+                        .is_some_and(|actual| {
+                            actual
+                                .iter()
+                                .zip(expected)
+                                .all(|(actual, expected)| actual.value == *expected)
+                        })
+                })
+                .map(|expected| expected.len())
+                .collect()
+        }
+        ClassItem::Nested(nested) => class_match_widths(nested, input, position, ignore_case),
+        _ => input
+            .get(position)
+            .filter(|unit| class_item_matches(item, unit.value, ignore_case))
+            .map_or_else(Vec::new, |_| vec![1]),
+    }
+}
+
+fn class_match_widths(
+    class: &ClassExpr,
+    input: &[Unit],
+    position: usize,
+    ignore_case: bool,
+) -> Vec<usize> {
+    let mut widths: Vec<usize> = match class.kind {
+        ClassKind::Union => class
+            .items
+            .iter()
+            .flat_map(|item| class_item_widths(item, input, position, ignore_case))
+            .collect(),
+        ClassKind::Intersection => {
+            let candidate = class.items.first().map_or_else(Vec::new, |item| {
+                class_item_widths(item, input, position, ignore_case)
+            });
+            candidate
+                .into_iter()
+                .filter(|width| {
+                    class.items.iter().skip(1).all(|item| {
+                        class_item_widths(item, input, position, ignore_case).contains(width)
+                    })
+                })
+                .collect()
+        }
+        ClassKind::Subtraction => {
+            let candidate = class.items.first().map_or_else(Vec::new, |item| {
+                class_item_widths(item, input, position, ignore_case)
+            });
+            candidate
+                .into_iter()
+                .filter(|width| {
+                    !class.items.iter().skip(1).any(|item| {
+                        class_item_widths(item, input, position, ignore_case).contains(width)
+                    })
+                })
+                .collect()
+        }
     };
+    widths.sort_unstable_by(|left, right| right.cmp(left));
+    widths.dedup();
+    if class.negative {
+        if widths.is_empty() && input.get(position).is_some() {
+            widths.push(1);
+        } else {
+            widths.clear();
+        }
+    }
+    widths
+}
+
+fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool) -> bool {
+    let item_matches = |item: &ClassItem| class_item_matches(item, value, ignore_case);
     let matches = match class.kind {
         ClassKind::Union => class.items.iter().any(item_matches),
         ClassKind::Intersection => class.items.iter().all(item_matches),
@@ -862,5 +971,17 @@ mod tests {
         let matched = regex.find_from("abbbbbbbc", 0).next().unwrap();
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
+    }
+
+    #[test]
+    fn unicode_string_class_matches() {
+        for (pattern, input) in [("[[0-9]&&\\q{0|2|4|9️⃣}]", "0"), ("[\\q{0|2|4|9️⃣}]", "9️⃣")]
+        {
+            let regex = Regex::with_flags(pattern, Flags::from("v")).unwrap();
+            assert!(
+                regex.find_from(input, 0).next().is_some(),
+                "{pattern} {input}"
+            );
+        }
     }
 }
