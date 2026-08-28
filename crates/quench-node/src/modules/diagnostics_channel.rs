@@ -33,7 +33,10 @@ const SCOPE_END: &str = "\0quench:diagnostics_channel:scope:end";
 const SCOPE_CONTEXT: &str = "\0quench:diagnostics_channel:scope:context";
 const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
-thread_local! { static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) }; }
+thread_local! {
+    static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static BOUNDED_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
 
 struct ChannelData {
     name: Value,
@@ -70,14 +73,18 @@ impl DiagnosticsState {
 pub fn build() -> Value {
     let prototype = host_api::object(Vec::new());
     CHANNEL_PROTO.with(|slot| *slot.borrow_mut() = Some(prototype.clone()));
+    let bounded_prototype = host_api::object(Vec::new());
+    BOUNDED_PROTO.with(|slot| *slot.borrow_mut() = Some(bounded_prototype.clone()));
     let mut constructor = crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR);
     constructor = execute::set_property(constructor, "prototype", prototype.clone());
+    let bounded_constructor = execute::set_property(
+        crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_CHANNEL),
+        "prototype",
+        bounded_prototype,
+    );
     crate::host::namespace_object(vec![
         ("Channel", constructor),
-        (
-            "BoundedChannel",
-            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_CHANNEL),
-        ),
+        ("BoundedChannel", bounded_constructor),
         ("channel", crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL)),
         (
             "subscribe",
@@ -193,7 +200,22 @@ pub fn bounded_channel(
             crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_SCOPE),
         ),
     ]);
-    Ok(object)
+    let descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS),
+        ),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    let object =
+        execute::define_property(object, "hasSubscribers", descriptor).unwrap_or(Value::Undefined);
+    Ok(BOUNDED_PROTO.with(|slot| {
+        slot.borrow()
+            .clone()
+            .map(|prototype| execute::set_property(object.clone(), "\0prototype", prototype))
+            .unwrap_or(object)
+    }))
 }
 
 pub fn bounded_subscribe(
@@ -593,6 +615,15 @@ pub fn has_subscribers(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(value) = receiver.filter(|value| {
+        channel_data(state, &execute::get_property(value, "start")).is_ok()
+            && channel_data(state, &execute::get_property(value, "end")).is_ok()
+    }) {
+        let active = ["start", "end"]
+            .iter()
+            .any(|name| channel_has_subscribers(state, &execute::get_property(value, name)));
+        return Ok(Value::Boolean(active));
+    }
     if receiver.is_some_and(|value| {
         TRACE_CHANNELS.iter().all(|name| {
             let channel = execute::get_property(value, name);
