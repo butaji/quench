@@ -218,3 +218,31 @@ reduction for ordinary JavaScript semantics, not discarded-result admission.
 4. Before any result-elision, finish the explicit split between expression
    value, statement completion, and unobservable normal completion.  A
    discarded effect must still write the statement-completion register.
+
+## Current full-suite physical baseline
+
+The current native-CPU release binary completed the official V8_v7 programs
+with a geometric score of **102.0**: Richards 75.9, DeltaBlue 45.4, Crypto
+74.7, RayTrace 88.5, EarleyBoyer 98.3, RegExp 159, Splay 131, and
+NavierStokes 252.  This is a valid complete score, rather than the former
+RegExp-timeout partial result.
+
+`/usr/bin/time -l` moves the physical-memory priority ahead of further
+RegExp work: EarleyBoyer used 90.32 CPU s and peaked at 1,678,082,048 bytes;
+Splay peaked at 501,743,616 bytes.  DeltaBlue peaked at 111,099,904 bytes;
+every other program was at or below 35,438,592 bytes.  Earley also retired
+1.848 trillion instructions, versus 111.9 billion in DeltaBlue.  Therefore
+the next reusable optimization must target VM ownership/allocation on list-
+and object-heavy ordinary code, with Earley first and Splay second.
+
+An execution-trace pass found 193,460 rejected DeltaBlue leaf candidates.
+They are all `CALLN_DISCARD_RESULT_FLAG` operations, not large-arity calls.
+The leaf executor must continue to reject them: admitting them would again
+conflate an unobservable call result with a statement-completion value.  This
+rules out an otherwise tempting fixed-argument-buffer experiment.
+
+The host denied the Instruments Allocations attachment (`-60007`), and the
+full HashMap-based execution trace distorted Earley beyond several times its
+90-second uninstrumented runtime.  These tools are unavailable as causal
+evidence for Earley; retain per-process RSS/instruction counts and use a
+lower-perturbation profiler or allocation counters before making a VM change.
