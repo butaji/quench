@@ -15,10 +15,11 @@ fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute:
                 )),
             }
         }
-        Some(Value::Number(length)) => length_float64_array(*length),
-        Some(_) => Err(type_error(
-            "Float64Array source must be iterable or a buffer",
-        )),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_float64_array(&values)
+        }
+        Some(value) => length_float64_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -39,10 +40,11 @@ fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute:
                 )),
             }
         }
-        Some(Value::Number(length)) => length_float32_array(*length),
-        Some(_) => Err(type_error(
-            "Float32Array source must be iterable or a buffer",
-        )),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_float32_array(&values)
+        }
+        Some(value) => length_float32_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -61,8 +63,11 @@ fn construct_int8_array(arguments: &[Value]) -> Result<Value, crate::execute::Vm
                 None => Err(type_error("Int8Array source must be iterable or a buffer")),
             }
         }
-        Some(Value::Number(length)) => length_int8_array(*length),
-        Some(_) => Err(type_error("Int8Array source must be iterable or a buffer")),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_int8_array(&values)
+        }
+        Some(value) => length_int8_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -81,8 +86,11 @@ fn construct_int16_array(arguments: &[Value]) -> Result<Value, crate::execute::V
                 None => Err(type_error("Int16Array source must be iterable or a buffer")),
             }
         }
-        Some(Value::Number(length)) => length_int16_array(*length),
-        Some(_) => Err(type_error("Int16Array source must be iterable or a buffer")),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_int16_array(&values)
+        }
+        Some(value) => length_int16_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -101,8 +109,11 @@ fn construct_int32_array(arguments: &[Value]) -> Result<Value, crate::execute::V
                 None => Err(type_error("Int32Array source must be iterable or a buffer")),
             }
         }
-        Some(Value::Number(length)) => length_int32_array(*length),
-        Some(_) => Err(type_error("Int32Array source must be iterable or a buffer")),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_int32_array(&values)
+        }
+        Some(value) => length_int32_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -121,7 +132,9 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
                 None => Err(type_error("Uint8Array source must be iterable or a buffer")),
             }
         }
-        Some(Value::Number(length)) => length_uint8_array(*length),
+        Some(value) if !crate::value::is_object(value) => {
+            length_uint8_array(crate::conversion::to_number(value)?)
+        }
         // DataView is an array-buffer view but not an iterable source;
         // TypedArray construction observes its absent `length` as empty.
         Some(Value::DataView(_)) => empty_uint8_array(),
@@ -152,10 +165,11 @@ fn construct_uint32_array(arguments: &[Value]) -> Result<Value, crate::execute::
                 )),
             }
         }
-        Some(Value::Number(length)) => length_uint32_array(*length),
-        Some(_) => Err(type_error(
-            "Uint32Array source must be iterable or a buffer",
-        )),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_uint32_array(&values)
+        }
+        Some(value) => length_uint32_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -176,10 +190,11 @@ fn construct_uint16_array(arguments: &[Value]) -> Result<Value, crate::execute::
                 )),
             }
         }
-        Some(Value::Number(length)) => length_uint16_array(*length),
-        Some(_) => Err(type_error(
-            "Uint16Array source must be iterable or a buffer",
-        )),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_uint16_array(&values)
+        }
+        Some(value) => length_uint16_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -218,27 +233,8 @@ fn view_uint16_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Uint16ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Uint16Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Uint16Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Uint16Array")?;
     Ok(Value::Uint16Array(Rc::new(
         crate::value::Uint16ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -279,27 +275,8 @@ fn view_uint32_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Uint32ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Uint32Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Uint32Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Uint32Array")?;
     Ok(Value::Uint32Array(Rc::new(
         crate::value::Uint32ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -322,10 +299,11 @@ fn construct_uint8_clamped_array(arguments: &[Value]) -> Result<Value, crate::ex
                 )),
             }
         }
-        Some(Value::Number(length)) => length_uint8_clamped_array(*length),
-        Some(_) => Err(type_error(
-            "Uint8ClampedArray source must be iterable or a buffer",
-        )),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_uint8_clamped_array(&values)
+        }
+        Some(value) => length_uint8_clamped_array(crate::conversion::to_number(value)?),
     }
 }
 
@@ -377,26 +355,12 @@ fn view_uint8_clamped_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
-    if offset > buffer.byte_length() {
-        return Err(range_error("Invalid Uint8ClampedArray byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available
-    {
-        return Err(range_error("Invalid Uint8ClampedArray length"));
-    }
+    let (offset, length) = typed_view_bounds(
+        buffer,
+        arguments,
+        crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT,
+        "Uint8ClampedArray",
+    )?;
     Ok(Value::Uint8ClampedArray(Rc::new(
         crate::value::Uint8ClampedArrayData::new(buffer.clone(), offset, length),
     )))
@@ -418,26 +382,12 @@ fn view_uint8_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
-    if offset > buffer.byte_length() {
-        return Err(range_error("Invalid Uint8Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available
-    {
-        return Err(range_error("Invalid Uint8Array length"));
-    }
+    let (offset, length) = typed_view_bounds(
+        buffer,
+        arguments,
+        crate::value::Uint8ArrayData::BYTES_PER_ELEMENT,
+        "Uint8Array",
+    )?;
     Ok(Value::Uint8Array(Rc::new(
         crate::value::Uint8ArrayData::new(buffer.clone(), offset, length),
     )))
