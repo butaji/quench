@@ -712,11 +712,11 @@ mod stubs {
             if offset_start.is_some() && !super::valid_iso_offset(offset_text) {
                 return Err(crate::value::error::throw_range_error("Invalid time"));
             }
-            if clock.contains('.') && clock.split(':').count() < 3 {
+            if (clock.contains('.') || clock.contains(',')) && clock.split(':').count() < 3 {
                 return Err(crate::value::error::throw_range_error("Fractional minutes not allowed"));
             }
             if clock
-                .split_once('.')
+                .split_once(['.', ','])
                 .map(|(_, fraction)| fraction.len() > 9)
                 .unwrap_or(false)
             {
@@ -729,7 +729,7 @@ mod stubs {
             let fractional_nanos = clock
                 .split(':')
                 .nth(2)
-                .and_then(|part| part.split_once('.').map(|(_, fraction)| fraction))
+                .and_then(|part| part.split_once(['.', ',']).map(|(_, fraction)| fraction))
                 .map(|fraction| {
                     format!("{fraction:0<9}")
                         .chars()
@@ -742,7 +742,7 @@ mod stubs {
             if let Some(second) = clock
                 .split(':')
                 .nth(2)
-                .and_then(|part| part.split('.').next())
+                .and_then(|part| part.split(['.', ',']).next())
                 .and_then(|part| part.parse::<i64>().ok())
             {
                 if time_parts.len() > 2 {
