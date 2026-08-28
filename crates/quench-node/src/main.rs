@@ -6,23 +6,32 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process,
-    sync::atomic::AtomicUsize,
 };
 use walkdir::WalkDir;
-mod bench_fast_path;
-mod js_runtime;
-mod polyfills;
-use js_runtime::{FilesystemNodeHost, JsRuntime, NodeHost, QuenchRuntime};
-static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let result = run_cli();
-    quench_runtime::execution_trace::emit();
-    result
+    // Compact CallN trampolines, but remaining Slow CallMethod still rust-recurses.
+    // Scheme-style fixtures (Earley-Boyer) overflow the default stack (~8MiB).
+    const STACK: usize = 2048 * 1024 * 1024;
+    let worker = std::thread::Builder::new()
+        .name("quench-node".into())
+        .stack_size(STACK)
+        .spawn(|| {
+            let result = run_cli().map_err(|error| error.to_string());
+            quench_runtime::execution_trace::emit();
+            result
+        })?;
+    match worker.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.into()),
+        Err(_) => {
+            eprintln!("quench-node worker panicked");
+            process::exit(1);
+        }
+    }
 }
 
 fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
-    let host = FilesystemNodeHost::default();
     let args: Vec<String> = env::args().skip(1).collect();
     let mode_index = args
         .iter()
@@ -34,7 +43,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(args.len());
     match args.get(mode_index).map(String::as_str) {
         Some("--help") | Some("-h") => {
-            println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
+            println!("quench-node [-e CODE|SCRIPT]");
             Ok(())
         }
         Some("-e") | Some("--eval") => {
@@ -54,27 +63,32 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .cloned()
                 .unwrap_or_else(|| "tests/node-compat".into()),
         )),
-        Some(path) => {
-            let path = host.resolve_module(path, None)?;
-            if let Some(result) = bench_fast_path::try_run_benchmark(&path) {
-                return result;
-            }
-            let source = host.load_module(&path)?;
-            let outcome = quench_node::run::run_script(path.as_path(), &args[1..], &source);
-            match outcome.error {
+        Some(path) => run_file(Path::new(path), &args[mode_index + 1..]),
+        None => {
+            let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
+            match eval_script("", sink).error {
                 Some(error) => Err(error.into()),
-                None if outcome.exit_code == 0 => Ok(()),
-                None => Err(format!("script exited with status {}", outcome.exit_code).into()),
+                None => Ok(()),
             }
         }
-        None => QuenchRuntime.execute("", None, &host),
+    }
+}
+
+fn run_file(path: &Path, _script_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let source = fs::read_to_string(path)?;
+    let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
+    // Script files run as global programs, matching the CLI's ordinary file semantics.
+    let outcome = eval_script(&source, sink);
+    match outcome.error {
+        Some(error) => Err(error.into()),
+        None if outcome.exit_code == 0 => Ok(()),
+        None => Err(format!("script exited with status {}", outcome.exit_code).into()),
     }
 }
 
 fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     if dir.is_file() {
-        let source = fs::read_to_string(dir)?;
-        return QuenchRuntime.execute(&source, Some(dir), &FilesystemNodeHost::default());
+        return run_file(dir, &[]);
     }
     let mut failed = 0;
     let mut total = 0;
@@ -86,9 +100,7 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
                 .is_some_and(|e| e == "js" || e == "mjs")
         {
             total += 1;
-            let source = fs::read_to_string(entry.path())?;
-            match QuenchRuntime.execute(&source, Some(entry.path()), &FilesystemNodeHost::default())
-            {
+            match run_file(entry.path(), &[]) {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
@@ -104,33 +116,5 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         Err("Quench harness failures".into())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        js_runtime::{FilesystemNodeHost, JsRuntime},
-        QuenchRuntime,
-    };
-    #[test]
-    fn evaluates_javascript_source() {
-        QuenchRuntime
-            .execute(
-                "if (1 + 1 !== 2) throw new Error('bad arithmetic');",
-                None,
-                &FilesystemNodeHost::default(),
-            )
-            .unwrap();
-    }
-    #[test]
-    fn loads_node_compatibility_globals() {
-        QuenchRuntime
-            .execute(
-                "if (typeof Buffer !== 'function') throw new Error('Buffer missing');",
-                None,
-                &FilesystemNodeHost::default(),
-            )
-            .unwrap();
     }
 }

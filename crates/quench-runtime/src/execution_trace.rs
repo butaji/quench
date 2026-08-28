@@ -108,17 +108,6 @@ execution_events! {
     NamedSetLayoutMismatch => "named_set_layout_mismatch",
     NamedSetSlotNotCell => "named_set_slot_not_cell",
     NamedSetPromoteCell => "named_set_promote_cell",
-    CryptoKernelShape => "crypto_kernel_shape",
-    CryptoKernelPrefix => "crypto_kernel_prefix",
-    CryptoKernelProduct => "crypto_kernel_product",
-    CryptoKernelStores => "crypto_kernel_stores",
-    CryptoKernelHeader => "crypto_kernel_header",
-    CryptoKernelInputs => "crypto_kernel_inputs",
-    CryptoKernelInputStorage => "crypto_kernel_input_storage",
-    CryptoKernelOutputStorage => "crypto_kernel_output_storage",
-    CryptoKernelStorage => "crypto_kernel_storage",
-    CryptoKernelBounds => "crypto_kernel_bounds",
-    CryptoKernelHit => "crypto_kernel_hit",
 }
 
 #[cfg(feature = "execution-trace")]
@@ -168,13 +157,13 @@ struct Counters {
     descriptor_views_by_op: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
     named_property_misses: HashMap<String, u64>,
-    crypto_direct_iterations: u64,
     loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
     value_decode_by_site: HashMap<&'static str, u64>,
     value_decode_other_by_op: HashMap<&'static str, u64>,
     owned_word_read_by_site: HashMap<&'static str, u64>,
     owned_word_read_by_op: HashMap<&'static str, u64>,
     packed_miss_by: HashMap<&'static str, u64>,
+    packed_miss_kind: HashMap<&'static str, u64>,
     allocations: HashMap<&'static str, u64>,
     last_index: HashMap<&'static str, u64>,
     kernels: HashMap<&'static str, (u64, u64)>,
@@ -329,6 +318,9 @@ fn l0_profile(counters: &Counters) -> serde_json::Value {
             "packed_miss": event(Event::PackedArrayMiss),
             "packed_miss_by": named_buckets(&counters.packed_miss_by,
                 &["kind", "hole", "oob", "other"]),
+            "packed_miss_kind": named_buckets(&counters.packed_miss_kind,
+                &["packed_limb28", "packed_int", "packed_double", "packed_value",
+                  "holey", "sparse", "stale", "non_array", "other"]),
     })
 }
 
@@ -344,8 +336,6 @@ fn l1_profile(counters: &Counters) -> serde_json::Value {
         .collect::<Vec<_>>();
     serde_json::json!({
             "shape_hits": event(Event::ShapeKernelHit),
-            "crypto": {"hits": event(Event::CryptoKernelHit),
-                "direct_iterations": counters.crypto_direct_iterations},
             "counted": {"attempts": event(Event::CountedForAttempt),
                 "hits": event(Event::CountedForHit), "deopts": event(Event::CountedForDeopt),
                 "recognized": event(Event::CountedForRecognized),
@@ -781,6 +771,12 @@ pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Va
 }
 
 #[cfg(feature = "execution-trace")]
+pub(crate) fn named_call(_key: &str) {}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_call(_: &str) {}
+
+#[cfg(feature = "execution-trace")]
 pub(crate) fn named_property_miss(key: &str) {
     if enabled() {
         let reason = NAMED_GET_MISS_REASON.with(std::cell::Cell::get);
@@ -846,36 +842,6 @@ pub(crate) fn named_get_miss_reason(_: &'static str) {}
 #[cfg(not(feature = "execution-trace"))]
 #[inline(always)]
 pub(crate) fn named_property_word(_: &'static str, _: &'static str) {}
-
-#[cfg(feature = "execution-trace")]
-pub(crate) fn crypto_direct_iterations(count: usize) {
-    if enabled() {
-        COUNTERS.with(|counters| {
-            counters.borrow_mut().crypto_direct_iterations += count as u64;
-        });
-    }
-}
-
-#[cfg(not(feature = "execution-trace"))]
-pub(crate) fn crypto_direct_iterations(_: usize) {}
-
-#[cfg(feature = "execution-trace")]
-pub(crate) fn crypto_kernel_iterations(count: usize) {
-    if enabled() && count != 0 {
-        COUNTERS.with(|counters| {
-            let mut counters = counters.borrow_mut();
-            if counters.events.is_empty() {
-                counters.events.resize(EVENT_NAMES.len(), 0);
-            }
-            counters.crypto_direct_iterations += count as u64;
-            counters.events[Event::CryptoKernelHit as usize] += count as u64;
-        });
-    }
-}
-
-#[cfg(not(feature = "execution-trace"))]
-#[inline(always)]
-pub(crate) fn crypto_kernel_iterations(_: usize) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
@@ -965,40 +931,6 @@ pub(crate) fn counted_loop_iterations(fingerprint: u64, iterations: usize) {
 #[cfg(not(feature = "execution-trace"))]
 #[inline(always)]
 pub(crate) fn counted_loop_iterations(_: u64, _: usize) {}
-
-#[cfg(feature = "execution-trace")]
-pub(crate) fn numeric_kernel_iterations(
-    id: &'static str,
-    fingerprint: u64,
-    iterations: usize,
-    gets_per_iteration: usize,
-    sets_per_iteration: usize,
-) {
-    if !enabled() || iterations == 0 {
-        return;
-    }
-    let iterations = iterations as u64;
-    COUNTERS.with(|counters| {
-        let mut counters = counters.borrow_mut();
-        if counters.events.is_empty() {
-            counters.events.resize(EVENT_NAMES.len(), 0);
-        }
-        counters.events[Event::LoopIteration as usize] += iterations;
-        counters.events[Event::CountedForHit as usize] += iterations;
-        counters.events[Event::PackedArrayGet as usize] +=
-            iterations.saturating_mul(gets_per_iteration as u64);
-        counters.events[Event::PackedArraySet as usize] +=
-            iterations.saturating_mul(sets_per_iteration as u64);
-        if let Some(shape) = counters.loop_shapes.get_mut(&fingerprint) {
-            shape.1 += iterations;
-        }
-        counters.kernels.entry(id).or_default().0 += iterations;
-    });
-}
-
-#[cfg(not(feature = "execution-trace"))]
-#[inline(always)]
-pub(crate) fn numeric_kernel_iterations(_: &'static str, _: u64, _: usize, _: usize, _: usize) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -1418,6 +1350,39 @@ pub(crate) fn packed_miss(reason: &'static str) {
 }
 
 #[inline(always)]
+pub(crate) fn packed_kind_miss(kind: crate::value::ArrayKind) {
+    packed_miss("kind");
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        let kind = array_kind_name(kind);
+        COUNTERS.with(|counters| count_named(&mut counters.borrow_mut().packed_miss_kind, kind));
+    }
+    let _ = kind;
+}
+
+#[inline(always)]
+pub(crate) fn packed_kind_reason(reason: &'static str) {
+    packed_miss("kind");
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        COUNTERS.with(|counters| count_named(&mut counters.borrow_mut().packed_miss_kind, reason));
+    }
+    let _ = reason;
+}
+
+#[cfg(feature = "execution-trace")]
+const fn array_kind_name(kind: crate::value::ArrayKind) -> &'static str {
+    match kind {
+        crate::value::ArrayKind::PackedLimb28 => "packed_limb28",
+        crate::value::ArrayKind::PackedInt => "packed_int",
+        crate::value::ArrayKind::PackedDouble => "packed_double",
+        crate::value::ArrayKind::PackedValue => "packed_value",
+        crate::value::ArrayKind::Holey => "holey",
+        crate::value::ArrayKind::Sparse => "sparse",
+    }
+}
+
+#[inline(always)]
 pub(crate) fn allocation(kind: &'static str) {
     #[cfg(feature = "execution-trace")]
     if enabled() {
@@ -1646,7 +1611,6 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
                 "named_property_misses": top_string_map(&counters.named_property_misses, 32),
-                "crypto_direct_iterations": counters.crypto_direct_iterations,
                 "loop_shapes": loop_shapes,
                 "lanes": lanes,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
@@ -1734,6 +1698,17 @@ mod lane_profile_tests {
             assert_eq!(CURRENT_OP.with(std::cell::Cell::get), "SetN:ordinary");
         }
         assert_eq!(CURRENT_OP.with(std::cell::Cell::get), "ResolveName");
+    }
+
+    #[test]
+    fn packed_kind_miss_names_every_physical_array_layout() {
+        use crate::value::ArrayKind::*;
+        assert_eq!(array_kind_name(PackedLimb28), "packed_limb28");
+        assert_eq!(array_kind_name(PackedInt), "packed_int");
+        assert_eq!(array_kind_name(PackedDouble), "packed_double");
+        assert_eq!(array_kind_name(PackedValue), "packed_value");
+        assert_eq!(array_kind_name(Holey), "holey");
+        assert_eq!(array_kind_name(Sparse), "sparse");
     }
 
     #[test]

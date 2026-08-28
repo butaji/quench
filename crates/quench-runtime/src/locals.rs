@@ -215,8 +215,8 @@ pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
         || crate::vm::global_builtin_exists(name)
         || matches!(crate::vm::current_global_object(), Value::Object(object) if object
-            .iter()
-            .any(|(key, _)| key == name))
+            .physical_slot_for_name(name)
+            .is_some())
 }
 
 pub(crate) fn global_has_lexical_name(name: &str) -> bool {

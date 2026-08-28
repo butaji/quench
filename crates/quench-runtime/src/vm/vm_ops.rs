@@ -25,19 +25,33 @@ pub fn execute_call(
             .map(peel_binding_cell)
             .unwrap_or(Value::Undefined),
     };
-    Ok(crate::completion::Completion::Call(
-        crate::completion::CallContinuation {
-            callee: callee_value,
-            receiver: receiver_value,
-            arguments,
-            caller_code: crate::identity::CodeId(0),
-            caller_pc: 0,
-            caller_registers: std::mem::take(registers),
-            caller_environment: crate::identity::EnvironmentRef(0),
-            destination: dst,
-            guards: crate::completion::ContinuationGuards::default(),
-        },
+    Ok(take_call_continuation(
+        registers,
+        dst,
+        callee_value,
+        receiver_value,
+        arguments,
     ))
+}
+
+pub(crate) fn take_call_continuation(
+    registers: &mut crate::register_file::RegisterFile,
+    destination: u16,
+    callee: Value,
+    receiver: Value,
+    arguments: Vec<Value>,
+) -> crate::completion::Completion {
+    crate::completion::Completion::Call(crate::completion::CallContinuation {
+        callee,
+        receiver,
+        arguments,
+        caller_code: crate::identity::CodeId(0),
+        caller_pc: 0,
+        caller_registers: std::mem::take(registers),
+        caller_environment: crate::identity::EnvironmentRef(0),
+        destination,
+        guards: crate::completion::ContinuationGuards::default(),
+    })
 }
 
 fn peel_binding_cell(mut value: Value) -> Value {
@@ -54,6 +68,15 @@ fn peel_binding_cell(mut value: Value) -> Value {
 }
 
 pub fn execute_call_continuation(
+    registers: &mut crate::register_file::RegisterFile,
+    continuation: crate::completion::CallContinuation,
+) -> Result<(), VmError> {
+    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+        execute_call_continuation_inner(registers, continuation)
+    })
+}
+
+fn execute_call_continuation_inner(
     registers: &mut crate::register_file::RegisterFile,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
@@ -113,21 +136,11 @@ pub fn execute_call_continuation(
         }))
     }
     if let Value::Function(function) = &continuation.callee {
-        if crate::functions::is_shape_kernel_candidate(function) {
-            let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
-            if let Some(value) =
-                crate::functions::execute_shape_kernel(function, &receiver, &continuation.arguments)
-            {
-                *registers = continuation.caller_registers;
-                super::write_value(registers, continuation.destination, value);
-                return Ok(());
-            }
-        }
-        let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
-        if let Some(result) =
-            crate::functions::execute_proven_leaf(function, &receiver, &continuation.arguments)
-        {
-            let value = result?;
+        if let Some(value) = crate::functions::try_execute_specialized(
+            function,
+            &continuation.receiver,
+            &continuation.arguments,
+        )? {
             *registers = continuation.caller_registers;
             super::write_value(registers, continuation.destination, value);
             return Ok(());
@@ -159,6 +172,25 @@ pub fn execute_call_continuation(
         ) {
             Ok(step) => step,
             Err(error) => {
+                if let crate::execute::VmError::Thrown(value) = error {
+                    let thrown = value;
+                    loop {
+                        let view = current.code.code().ok_or(VmError::MissingReturn)?;
+                        if let Some((handler, slot)) = view.catch_at(current.pc) {
+                            if let Some(slot) = slot {
+                                super::write_value(&mut current.registers, slot, thrown.clone());
+                                crate::locals::write(slot, thrown.clone());
+                            }
+                            current.pc = handler;
+                            break;
+                        }
+                        let Some(parent) = stack.pop() else {
+                            return Err(crate::execute::VmError::Thrown(thrown));
+                        };
+                        current = parent;
+                    }
+                    continue;
+                }
                 // Calls move the caller's register file into the continuation.
                 // On an abrupt completion, restore the nearest suspended caller
                 // before returning so an enclosing try/assert.throws can observe
@@ -172,6 +204,25 @@ pub fn execute_call_continuation(
             }
         };
         current.pc = next;
+        if let crate::completion::Completion::Throw(value) = completion {
+            let thrown = value;
+            loop {
+                let view = current.code.code().ok_or(VmError::MissingReturn)?;
+                if let Some((handler, slot)) = view.catch_at(current.pc) {
+                    if let Some(slot) = slot {
+                        super::write_value(&mut current.registers, slot, thrown.clone());
+                        crate::locals::write(slot, thrown.clone());
+                    }
+                    current.pc = handler;
+                    break;
+                }
+                let Some(parent) = stack.pop() else {
+                    return Err(crate::execute::VmError::Thrown(thrown));
+                };
+                current = parent;
+            }
+            continue;
+        }
         let result = match completion {
             crate::completion::Completion::Normal => Some(Value::Undefined),
             crate::completion::Completion::Return(value) => Some(value),

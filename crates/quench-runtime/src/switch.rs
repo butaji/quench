@@ -12,27 +12,51 @@ type SwitchCases = Vec<(
     crate::machine::FunctionCode,
 )>;
 
+/// The sole consumer of a statement's normal completion value while reducing
+/// a nested statement. `UpdateEmpty` is the ES abrupt-completion transport;
+/// it is not a general-purpose dead-result marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StatementResultUse {
+    /// A parent expression or eval result may observe the produced value.
+    Value,
+    /// A loop, switch, or finally needs the last non-empty value to complete
+    /// an otherwise empty `break`/`continue`.
+    UpdateEmpty(u16),
+    /// Ordinary function completion always returns `undefined`; normal
+    /// statement values have no observer after this boundary.
+    Unobservable,
+}
+
 thread_local! {
-    static COMPLETION: Cell<Option<u16>> = const { Cell::new(None) };
+    static RESULT_USE: Cell<StatementResultUse> = const { Cell::new(StatementResultUse::Value) };
 }
 
 pub(crate) fn record_completion(ops: &mut Vec<Op>, src: u16) {
-    if let Some(dst) = COMPLETION.get() {
+    if let StatementResultUse::UpdateEmpty(dst) = RESULT_USE.get() {
         ops.push(Op::Move { dst, src });
     }
 }
 
 pub(crate) fn suspend_completion<T>(reduce: impl FnOnce() -> T) -> T {
-    let previous = COMPLETION.replace(None);
-    let result = reduce();
-    COMPLETION.set(previous);
-    result
+    with_result_use(StatementResultUse::Value, reduce)
 }
 
 pub(crate) fn with_completion<T>(dst: u16, reduce: impl FnOnce() -> T) -> T {
-    let previous = COMPLETION.replace(Some(dst));
+    with_result_use(StatementResultUse::UpdateEmpty(dst), reduce)
+}
+
+pub(crate) fn with_unobservable_completion<T>(reduce: impl FnOnce() -> T) -> T {
+    with_result_use(StatementResultUse::Unobservable, reduce)
+}
+
+pub(crate) fn statement_result_use() -> StatementResultUse {
+    RESULT_USE.get()
+}
+
+fn with_result_use<T>(use_: StatementResultUse, reduce: impl FnOnce() -> T) -> T {
+    let previous = RESULT_USE.replace(use_);
     let result = reduce();
-    COMPLETION.set(previous);
+    RESULT_USE.set(previous);
     result
 }
 
@@ -69,7 +93,7 @@ pub(crate) fn reduce(
     let mut next_slot = crate::reduce_support::register_base(locals);
     let mut block_locals = locals.clone();
     instantiate_case_block(statement, ops, &mut block_locals, &mut next_slot);
-    let previous = COMPLETION.replace(Some(dst));
+    let previous = RESULT_USE.replace(StatementResultUse::UpdateEmpty(dst));
     let cases = reduce_cases(
         statement,
         facts,
@@ -77,7 +101,7 @@ pub(crate) fn reduce(
         &mut next_slot,
         &mut block_locals,
     );
-    COMPLETION.set(previous);
+    RESULT_USE.set(previous);
     let cases = cases?;
     ops.push(Op::Switch {
         discriminant,
@@ -252,5 +276,25 @@ fn evaluate_case_test(
         crate::completion::Completion::Normal => Ok(Value::Undefined),
         crate::completion::Completion::Throw(value) => Err(crate::execute::VmError::Thrown(value)),
         _ => Err(crate::execute::VmError::MissingReturn),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        statement_result_use, with_completion, with_unobservable_completion, StatementResultUse,
+    };
+
+    #[test]
+    fn statement_result_use_restores_nested_consumers() {
+        assert_eq!(statement_result_use(), StatementResultUse::Value);
+        with_unobservable_completion(|| {
+            assert_eq!(statement_result_use(), StatementResultUse::Unobservable);
+            with_completion(7, || {
+                assert_eq!(statement_result_use(), StatementResultUse::UpdateEmpty(7));
+            });
+            assert_eq!(statement_result_use(), StatementResultUse::Unobservable);
+        });
+        assert_eq!(statement_result_use(), StatementResultUse::Value);
     }
 }

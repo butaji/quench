@@ -72,6 +72,27 @@ fn run_code_completion_step_from(
 ) -> Result<CompletionStep, VmError> {
     let mut pc = start;
     while let Some(instruction) = code.instruction(pc) {
+        match instruction.opcode {
+            crate::ir::Opcode::Jump => {
+                pc = usize::from(instruction.a);
+                continue;
+            }
+            crate::ir::Opcode::JumpIfFalse => {
+                let truthy = registers
+                    .word_truthiness(usize::from(instruction.a))
+                    .map_or_else(
+                        || read_register(registers, instruction.a).map(|value| is_truthy(&value)),
+                        Ok,
+                    )?;
+                if truthy {
+                    pc += 1;
+                } else {
+                    pc = usize::from(instruction.b);
+                }
+                continue;
+            }
+            _ => {}
+        }
         let result = match run_instruction(code, pc, instruction, registers, context) {
             Ok(result) => result,
             Err(error) => return completion_step_after_error(registers, error, pc + 1),
@@ -86,7 +107,7 @@ fn run_code_completion_step_from(
     completion_step_after_transition(registers, crate::completion::Completion::Normal, code.len())
 }
 
-#[inline(always)]
+#[inline(never)]
 fn run_instruction(
     code: crate::machine::CodeView<'_>,
     pc: usize,
@@ -221,9 +242,8 @@ fn run_instruction(
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
-                let array = registers
-                    .read_array(usize::from(instruction.b))
-                    .filter(|array| crate::locals::array_word_is_current(array));
+                let raw_array = registers.read_array(usize::from(instruction.b));
+                let array = raw_array.filter(|array| crate::locals::array_word_is_current(array));
                 if let Some((array, index)) =
                     array.filter(|array| array.is_packed_ordinary()).zip(index)
                 {
@@ -242,18 +262,34 @@ fn run_instruction(
                         return Ok(None);
                     }
                 }
-                let reason = if array.is_none_or(|array| !array.is_packed_ordinary()) {
-                    "kind"
+                if let Some(array) = array.filter(|array| !array.is_packed_ordinary()) {
+                    crate::execution_trace::packed_kind_miss(array.kind());
+                    let object = read_register(registers, instruction.b)?;
+                    let key = read_register(registers, instruction.c)?;
+                    let key = crate::properties::dynamic_property_key(&key)?;
+                    let value = get_property_result(&object, &key)?;
+                    write_value(registers, instruction.a, value);
+                    return Ok(None);
+                }
+                let reason = if array.is_none() {
+                    crate::execution_trace::packed_kind_reason(if raw_array.is_some() {
+                        "stale"
+                    } else {
+                        "non_array"
+                    });
+                    None
                 } else if index.is_none() {
-                    "other"
+                    Some("other")
                 } else if index.expect("checked index")
                     >= array.expect("checked array").logical_len()
                 {
-                    "oob"
+                    Some("oob")
                 } else {
-                    "hole"
+                    Some("hole")
                 };
-                crate::execution_trace::packed_miss(reason);
+                if let Some(reason) = reason {
+                    crate::execution_trace::packed_miss(reason);
+                }
             }
             let object = read_register(registers, instruction.b)?;
             let key = read_register(registers, instruction.c)?;
@@ -265,6 +301,16 @@ fn run_instruction(
         Opcode::GetN => {
             let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
             let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+            if instruction.flags == crate::ir::GETN_GLOBAL_FLAG {
+                let global = crate::vm::current_global_object();
+                let value = crate::vm::get_global_named_property_result(
+                    &global,
+                    key,
+                    &metadata.named_cache,
+                )?;
+                write_value(registers, instruction.a, value);
+                return Ok(None);
+            }
             if key == "length" {
                 if let Some(array) = registers
                     .read_array(usize::from(instruction.b))
@@ -337,13 +383,12 @@ fn run_instruction(
         }
         Opcode::CallN => {
             if instruction.flags != 0 {
-                crate::methods::execute_registered(registers, instruction, code, pc)?;
+                crate::methods::execute_registered(registers, instruction, code, pc)
             } else {
                 let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
                 let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
-                crate::methods::execute_named(registers, instruction, key, &metadata.named_cache)?;
+                crate::methods::execute_named(registers, instruction, key, &metadata.named_cache)
             }
-            Ok(None)
         }
         Opcode::ASetI => {
             let index = registers.read_array_index(usize::from(instruction.b));

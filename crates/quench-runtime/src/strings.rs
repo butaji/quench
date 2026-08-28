@@ -621,6 +621,7 @@ pub(crate) fn char_code_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    let units = receiver_units(receiver)?;
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -628,12 +629,7 @@ pub(crate) fn char_code_at(
     if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
-    let index = index as usize;
-    let unit = match receiver {
-        Some(Value::String(value)) => value.encode_utf16().nth(index),
-        Some(Value::StringUnits(units)) => units.get(index).copied(),
-        _ => string_receiver(receiver)?.encode_utf16().nth(index),
-    };
+    let unit = units.get(index as usize).copied();
     Ok(unit.map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64)))
 }
 
@@ -1159,11 +1155,7 @@ mod tests {
             ],
         )
         .expect("regexp construction");
-        super::replace(
-            Some(&Value::String("  value  ".into())),
-            &[regexp, Value::String(String::new())],
-            false,
-        )
-        .expect("discarded replace");
+        super::replace_discard_string("  value  ", &regexp, &Value::String(String::new()))
+            .expect("discarded replace");
     }
 }
