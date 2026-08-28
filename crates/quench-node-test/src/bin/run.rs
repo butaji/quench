@@ -54,7 +54,10 @@ fn main() -> ExitCode {
             .map(|lines| lines.clone())
             .unwrap_or_default();
         for line in &lines {
-            println!("{line}");
+            // The sink receives stream chunks, not logical lines. Preserve
+            // their bytes when forwarding child stdout; adding another
+            // newline changes Node's observable `spawnSync().stdout`.
+            print!("{line}");
         }
         let todo = lines
             .iter()
