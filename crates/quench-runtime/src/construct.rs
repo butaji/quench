@@ -518,13 +518,13 @@ fn construct_function(
         let super_constructor = derived_constructor(function)?;
         let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
         let receiver = initialize_instance_fields(function, receiver)?;
-        let prototype =
-            crate::execute::get_property(&Value::Function(function.clone()), "prototype");
-        return if crate::value::is_object(&prototype) {
-            set_internal_prototype(receiver, prototype)
-        } else {
-            Ok(receiver)
-        };
+        // A default derived constructor must honor the active newTarget.  In
+        // nested typed-array subclasses, using this function's prototype
+        // loses the outer subclass constructor and breaks species creation.
+        let prototype = get_prototype_from_constructor(target, |_| {
+            crate::execute::get_property(&Value::Function(function.clone()), "prototype")
+        });
+        return set_internal_prototype(receiver, prototype);
     }
     if crate::functions::is_derived_constructor(function) {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
