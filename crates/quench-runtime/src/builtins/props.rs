@@ -9,6 +9,9 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
     }
+    if builtin == Builtin::TypedArrayPrototype && key == "slice" {
+        return Value::Builtin(Builtin::TypedArraySlice);
+    }
     if let Some(value) = crate::builtins::read_descriptor_value(builtin, key) {
         return value;
     }
@@ -299,7 +302,7 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         })
         .or_else(|| {
             (builtin == Builtin::TypedArrayPrototype && key == "slice")
-                .then_some(Builtin::ArraySlice)
+                .then_some(Builtin::TypedArraySlice)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArrayPrototype && key == "values")

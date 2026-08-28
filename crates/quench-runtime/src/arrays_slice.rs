@@ -3,6 +3,9 @@ pub(crate) fn slice(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
+    if this.is_typed_array() {
+        return typed_array_slice(&this, arguments);
+    }
     if matches!(this, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.slice called on null or undefined",
@@ -19,6 +22,52 @@ pub(crate) fn slice(
         ));
     }
     copy_slice(&this, start, end, species)
+}
+
+fn typed_array_slice(this: &Value, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    if !this.is_typed_array() {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on incompatible receiver",
+        ));
+    }
+    let value = this.clone();
+    let detached = crate::arrays::typed_array_is_detached(&value);
+    if detached {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on detached buffer",
+        ));
+    }
+    if !detached && crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on out-of-bounds view",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0) as isize;
+    let start = slice_index(arguments.first(), length, 0)?;
+    let end = slice_index(arguments.get(1), length, length)?;
+    let count = (end - start).max(0) as usize;
+    let target = crate::arrays::typed_array_species_create(&value, count)?;
+
+    // The source length is captured before species construction. A fixed view
+    // that becomes out of bounds must throw; a length-tracking view simply
+    // contributes undefined values for elements no longer available.
+    if (crate::arrays::typed_array_is_detached(&value)
+        || crate::typed_array_prototype::is_out_of_bounds(&value))
+        && count > 0
+    {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray source became out of bounds",
+        ));
+    }
+    let current_length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    for index in 0..count {
+        let source_index = start as usize + index;
+        if source_index < current_length {
+            let item = crate::execute::get_property_result(&value, &source_index.to_string())?;
+            crate::properties::assign_set_property(&target, &index.to_string(), item)?;
+        }
+    }
+    Ok(target)
 }
 
 /// `LengthOfArrayLike`: `ToLength` of the receiver's `length` property.
