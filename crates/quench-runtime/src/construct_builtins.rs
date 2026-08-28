@@ -269,7 +269,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ("\0regexp_flags".to_string(), Value::String(flags.clone())),
         (
             "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::RegExpPrototype),
+            crate::vm::realm_intrinsic(crate::ops::Builtin::RegExpPrototype),
         ),
         ("lastIndex".to_string(), last_index),
         (
