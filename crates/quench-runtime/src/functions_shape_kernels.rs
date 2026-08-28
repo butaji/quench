@@ -116,7 +116,7 @@ pub(crate) fn execute_shape_kernel_word(
     function: &crate::value::FunctionValue,
     receiver: &crate::value::ObjectData,
 ) -> Option<f64> {
-    let ShapeKernelPlan::NestedArrayLength(plan) = cached_shape_kernel_fact(function)? else {
+    let ShapeKernelPlan::NestedArrayLength(plan) = cached_shape_kernel_fact(function)?? else {
         return None;
     };
     let code = function.code.code()?;
@@ -284,7 +284,7 @@ fn shape_kernel_fact(
     function: &std::rc::Rc<crate::value::FunctionValue>,
 ) -> Option<ShapeKernelPlan> {
     if let Some(plan) = cached_shape_kernel_fact(function) {
-        return Some(plan);
+        return plan;
     }
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
     let plan = match_state_predicate(function)
@@ -309,7 +309,13 @@ fn shape_kernel_fact(
     plan
 }
 
-fn cached_shape_kernel_fact(function: &crate::value::FunctionValue) -> Option<ShapeKernelPlan> {
+/// `None` means the function has not been classified. `Some(None)` is a
+/// proven negative fact: its immutable code has no supported shape plan.
+/// Keeping those states distinct prevents every ordinary interpreted call
+/// from re-running the complete matcher ladder.
+fn cached_shape_kernel_fact(
+    function: &crate::value::FunctionValue,
+) -> Option<Option<ShapeKernelPlan>> {
     let pointer = function as *const crate::value::FunctionValue;
     let index = (pointer as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
     SHAPE_KERNEL_FACTS.with(|facts| {
@@ -317,7 +323,6 @@ fn cached_shape_kernel_fact(function: &crate::value::FunctionValue) -> Option<Sh
         let cached = facts.get(index)?.as_ref()?;
         (cached.function.as_ptr() == pointer)
             .then_some(cached.plan)
-            .flatten()
     })
 }
 
