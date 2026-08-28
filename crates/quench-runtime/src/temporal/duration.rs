@@ -248,11 +248,11 @@ fn total_calendar(
 ) -> Result<Value, VmError> {
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
-    let target = shift_calendar_by(start, 0, duration_field(object, "years"))
+    let mut target = shift_calendar_by(start, 0, duration_field(object, "years"))
         .and_then(|date| shift_calendar_by(date, 1, duration_field(object, "months")))
         .and_then(|date| shift_calendar_by(date, 2, duration_field(object, "weeks")))
         .and_then(|date| shift_calendar_by(date, 3, duration_field(object, "days")))?;
-    let time_nanos = [
+    let mut time_nanos = [
         ("hours", 3_600_000_000_000_i128),
         ("minutes", 60_000_000_000),
         ("seconds", 1_000_000_000),
@@ -267,6 +267,11 @@ fn total_calendar(
         return Err(crate::value::error::throw_range_error(
             "Duration time span is out of range",
         ));
+    }
+    let time_days = time_nanos / 86_400_000_000_000;
+    if time_days != 0 {
+        target = shift_calendar_by(target, 3, time_days)?;
+        time_nanos -= time_days * 86_400_000_000_000;
     }
     let days = (target - start).num_days() as i128;
     let total_nanos = days * 86_400_000_000_000 + time_nanos;
@@ -320,12 +325,15 @@ fn total_calendar(
                 year_anchor = shift_calendar_by(start, 0, whole_years)?;
             }
         }
-        let year_span = (shift_calendar(year_anchor, 0, if total_nanos >= 0 { 1 } else { -1 })?
+        let mut year_span = (shift_calendar(year_anchor, 0, if total_nanos >= 0 { 1 } else { -1 })?
             - year_anchor)
             .num_days()
             .unsigned_abs() as f64;
         let year_remainder =
             (target - year_anchor).num_days() as f64 + time_nanos as f64 / 86_400_000_000_000.0;
+        if year_span == 365.0 && (year_remainder * 2.0 - 366.0).abs() < 1e-9 {
+            year_span = 366.0;
+        }
         return Ok(Value::Number(
             whole_years as f64 + year_remainder / year_span,
         ));

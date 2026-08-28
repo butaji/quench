@@ -2527,9 +2527,13 @@ mod stubs {
                     fields[1] = Value::Number((years * 12 + months) as f64);
                 }
                 fields[3] = Value::Number(days as f64);
-                let residual = (months as i128) * 30 * 86_400_000_000_000_i128
-                    + (days as i128) * 86_400_000_000_000_i128
-                    + time_remainder;
+                let residual = if smallest == "month" {
+                    (days as i128) * 86_400_000_000_000_i128 + time_remainder
+                } else {
+                    (months as i128) * 30 * 86_400_000_000_000_i128
+                        + (days as i128) * 86_400_000_000_000_i128
+                        + time_remainder
+                };
                 let round_adjust = |whole: i32, unit_days: i128| -> i32 {
                     let sign = residual.signum();
                     if sign == 0 {
