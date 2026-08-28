@@ -1938,12 +1938,12 @@ mod stubs {
                 date.checked_sub_days(chrono::Days::new((-day_count) as u64))
             }
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-            let time_delta = values[4] * 3_600_000_000_000.0
-                + values[5] * 60_000_000_000.0
-                + values[6] * 1_000_000_000.0
-                + values[7] * 1_000_000.0
-                + values[8] * 1_000.0
-                + values[9];
+            let time_delta = (values[4] as i128) * 3_600_000_000_000
+                + (values[5] as i128) * 60_000_000_000
+                + (values[6] as i128) * 1_000_000_000
+                + (values[7] as i128) * 1_000_000
+                + (values[8] as i128) * 1_000
+                + values[9] as i128;
             let old_date = chrono::NaiveDate::from_ymd_opt(
                 crate::conversion::to_number(&property("year")?)? as i32,
                 crate::conversion::to_number(&property("month")?)? as u32,
@@ -1953,7 +1953,7 @@ mod stubs {
             let date_delta = (date - old_date).num_days() as i128 * 86_400_000_000_000;
             let epoch = match property("epochNanoseconds")? {
                 Value::BigInt(value) => {
-                    value.parse::<i128>().unwrap_or(0) + date_delta + (time_delta * sign) as i128
+                    value.parse::<i128>().unwrap_or(0) + date_delta + time_delta * sign as i128
                 }
                 _ => {
                     return Err(crate::value::error::throw_type_error(
