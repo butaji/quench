@@ -206,7 +206,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     Some(descriptor)
 }
 
-fn is_regexp_legacy_accessor(key: &str) -> bool {
+pub(crate) fn is_regexp_legacy_accessor(key: &str) -> bool {
     key.strip_prefix('$')
         .is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
         || matches!(
