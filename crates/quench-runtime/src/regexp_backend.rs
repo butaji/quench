@@ -205,17 +205,13 @@ impl Regex {
     }
 
     pub(crate) fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
-        let units = input
+        let units = units_from_utf16(input, self.flags.unicode || self.flags.unicode_sets);
+        let first = units
             .iter()
-            .enumerate()
-            .map(|(index, value)| Unit {
-                value: u32::from(*value),
-                offset_start: index,
-                offset_end: index + 1,
-            })
-            .collect::<Vec<_>>();
+            .position(|unit| unit.offset_start >= start)
+            .unwrap_or(units.len());
         Matches {
-            item: self.find_units(&units, start),
+            item: self.find_units(&units, first),
         }
     }
 
@@ -304,6 +300,36 @@ fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+fn units_from_utf16(input: &[u16], unicode: bool) -> Vec<Unit> {
+    let mut units = Vec::with_capacity(input.len());
+    let mut index = 0;
+    while index < input.len() {
+        let value = input[index];
+        if unicode
+            && (0xD800..=0xDBFF).contains(&value)
+            && input
+                .get(index + 1)
+                .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+        {
+            let low = input[index + 1];
+            units.push(Unit {
+                value: 0x1_0000 + ((u32::from(value) - 0xD800) << 10) + u32::from(low) - 0xDC00,
+                offset_start: index,
+                offset_end: index + 2,
+            });
+            index += 2;
+        } else {
+            units.push(Unit {
+                value: u32::from(value),
+                offset_start: index,
+                offset_end: index + 1,
+            });
+            index += 1;
+        }
+    }
+    units
 }
 
 fn lower_disjunction(disjunction: &ast::Disjunction<'_>, lowering: &mut Lowering) -> Expr {
@@ -1040,6 +1066,9 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
         ("ASCII_Hex_Digit", _) => character.is_ascii_hexdigit(),
         ("Script", Some("Latin")) | ("Script_Extensions", Some("Latin")) => {
             character.is_ascii_alphabetic()
+        }
+        ("Script", Some("Han")) | ("Script_Extensions", Some("Han")) => {
+            matches!(character as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0x20000..=0x2FA1F)
         }
         _ => false,
     }
