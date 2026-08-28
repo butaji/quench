@@ -355,7 +355,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainTime => Some(0.0),
         Builtin::TemporalPlainMonthDay => Some(2.0),
         Builtin::TemporalPlainYearMonth => Some(2.0),
-        Builtin::TemporalZonedDateTime => Some(3.0),
+        Builtin::TemporalZonedDateTime => Some(2.0),
         Builtin::TemporalPlainDate => Some(3.0),
         Builtin::AbstractModuleSource | Builtin::ShadowRealm => Some(0.0),
         Builtin::DisposableStack => Some(0.0),
