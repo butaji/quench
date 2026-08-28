@@ -2438,7 +2438,7 @@ mod stubs {
                             Value::Undefined => 1,
                             value => {
                                 let number = crate::conversion::to_number(&value)?;
-                                if !number.is_finite() || number <= 0.0 || number.fract() != 0.0 {
+                                if !number.is_finite() || number <= 0.0 {
                                     return Err(crate::value::error::throw_range_error(
                                         "Invalid roundingIncrement",
                                     ));
@@ -2482,7 +2482,8 @@ mod stubs {
                 "millisecond" | "microsecond" | "nanosecond" => 1_000,
                 _ => 1,
             };
-            if (increment_max > 1 && (increment >= increment_max || increment_max % increment != 0))
+            if increment < 1
+                || (increment_max > 1 && (increment >= increment_max || increment_max % increment != 0))
                 || (increment_max == 1 && increment != 1)
             {
                 return Err(crate::value::error::throw_range_error(
@@ -2512,20 +2513,20 @@ mod stubs {
             let quotient = local_epoch.div_euclid(quantum);
             let remainder = local_epoch.rem_euclid(quantum);
             let round_up = match mode.as_str() {
-                "trunc" => local_epoch < 0 && remainder != 0,
+                "trunc" => false,
                 "floor" => false,
                 "ceil" => remainder != 0,
                 "expand" => remainder != 0,
-                "halfExpand" | "halfCeil" | "halfFloor" | "halfTrunc" | "halfEven" => {
+                "halfExpand" => remainder * 2 >= quantum,
+                "halfCeil" => remainder * 2 >= quantum,
+                "halfFloor" => remainder * 2 > quantum,
+                "halfTrunc" => {
                     remainder * 2 > quantum
-                        || (remainder * 2 == quantum
-                            && match mode.as_str() {
-                                "halfCeil" => true,
-                                "halfFloor" => false,
-                                "halfTrunc" => local_epoch < 0,
-                                "halfEven" => quotient % 2 != 0,
-                                _ => true,
-                            })
+                        || (remainder * 2 == quantum && local_epoch < 0)
+                }
+                "halfEven" => {
+                    remainder * 2 > quantum
+                        || (remainder * 2 == quantum && quotient % 2 != 0)
                 }
                 _ => {
                     return Err(crate::value::error::throw_range_error(
