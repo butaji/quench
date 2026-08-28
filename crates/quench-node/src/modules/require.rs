@@ -369,12 +369,30 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     Value::Number(value),
                 );
             }
-            let node_event_target =
-                match quench_runtime::execute::get_property(&global, "NodeEventTarget") {
-                    Value::Undefined =>
-                        crate::host::capability(crate::registry::SPEC_EVENT_TARGET_NEW),
-                    value => value,
-                };
+            let node_event_target = {
+                let constructor =
+                    crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_NEW);
+                let prototype = crate::modules::event_target::node_prototype();
+                let event_prototype = quench_runtime::execute::get_property(
+                    &quench_runtime::execute::get_property(&global, "EventTarget"),
+                    "prototype",
+                );
+                let prototype =
+                    quench_runtime::execute::set_prototype_of(&prototype, &event_prototype)
+                        .unwrap_or(prototype);
+                crate::modules::event_target::set_node_prototype(prototype.clone());
+                let _ = quench_runtime::execute::set_callable_property(
+                    &constructor,
+                    "prototype",
+                    prototype,
+                );
+                let _ = quench_runtime::execute::set_callable_property(
+                    &constructor,
+                    "defaultMaxListeners",
+                    Value::Number(10.0),
+                );
+                constructor
+            };
             let custom_event = quench_runtime::execute::get_property(&global, "CustomEvent");
             for (name, value) in [
                 ("NONE", 0.0),
