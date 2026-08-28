@@ -144,7 +144,7 @@ fn normalize_new_unicode_scripts(pattern: &str) -> String {
     let mut normalized = pattern.to_string();
     for (name, alias, ranges) in NEW_UNICODE_SCRIPTS {
         for value in [*name, *alias] {
-            for property in ["Script", "sc"] {
+            for property in ["Script", "sc", "Script_Extensions", "scx"] {
                 for escape in ['p', 'P'] {
                     let needle = format!(r"\{escape}{{{property}={value}}}");
                     let class = if escape == 'p' {
