@@ -1376,7 +1376,7 @@ fn escape_matches(
     }
 }
 
-fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
+pub(crate) fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     let Some(character) = char::from_u32(character) else {
         return false;
     };
@@ -1415,38 +1415,81 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     }
 }
 
-fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
-    use icu_properties::{props, CodePointMapData, CodePointSetData, PropertyParser};
-    if name == "Assigned" {
-        return Some(
-            CodePointMapData::<props::GeneralCategory>::new().get(character)
-                != props::GeneralCategory::Unassigned,
-        );
-    }
-    if matches!(name, "Script" | "sc") {
-        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
-        return Some(CodePointMapData::<props::Script>::new().get(character) == target);
-    }
-    if matches!(name, "General_Category" | "gc") {
-        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
-            return Some(
-                CodePointMapData::<props::GeneralCategory>::new().get(character) == target,
-            );
-        }
-        let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
-        return Some(
-            target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character)),
-        );
-    }
-    macro_rules! binary_property {
-        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
-            match name {
-                $( $( $property => Some(CodePointSetData::new::<props::$kind>().contains(character)), )+ )*
-                _ => None,
+#[derive(Clone, Copy)]
+pub(crate) struct PropertyMatcher {
+    kind: PropertyMatcherKind,
+}
+
+#[derive(Clone, Copy)]
+enum PropertyMatcherKind {
+    Assigned,
+    Script(icu_properties::props::Script),
+    ScriptExtensions(icu_properties::props::Script),
+    GeneralCategory(icu_properties::props::GeneralCategory),
+    GeneralCategoryGroup(icu_properties::props::GeneralCategoryGroup),
+    Binary(fn(char) -> bool),
+}
+
+impl PropertyMatcher {
+    pub(crate) fn matches(self, character: char) -> bool {
+        use icu_properties::{props, CodePointMapData};
+        match self.kind {
+            PropertyMatcherKind::Assigned => {
+                CodePointMapData::<props::GeneralCategory>::new().get(character)
+                    != props::GeneralCategory::Unassigned
             }
-        };
+            PropertyMatcherKind::Script(target) => {
+                CodePointMapData::<props::Script>::new().get(character) == target
+            }
+            PropertyMatcherKind::ScriptExtensions(target) => {
+                icu_properties::script::ScriptWithExtensions::new().has_script(character, target)
+            }
+            PropertyMatcherKind::GeneralCategory(target) => {
+                CodePointMapData::<props::GeneralCategory>::new().get(character) == target
+            }
+            PropertyMatcherKind::GeneralCategoryGroup(target) => {
+                target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character))
+            }
+            PropertyMatcherKind::Binary(matcher) => matcher(character),
+        }
     }
-    binary_property!(
+}
+
+fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: char) -> bool {
+    icu_properties::CodePointSetData::new::<P>().contains(character)
+}
+
+pub(crate) fn compile_property_matcher(
+    name: &str,
+    value: Option<&str>,
+) -> Option<PropertyMatcher> {
+    use icu_properties::{props, PropertyParser};
+    let kind = if name == "Assigned" {
+        PropertyMatcherKind::Assigned
+    } else if matches!(name, "Script" | "sc") {
+        PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
+    } else if matches!(name, "Script_Extensions" | "scx") {
+        PropertyMatcherKind::ScriptExtensions(
+            PropertyParser::<props::Script>::new().get_loose(value?)?,
+        )
+    } else if matches!(name, "General_Category" | "gc") {
+        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
+            PropertyMatcherKind::GeneralCategory(target)
+        } else {
+            PropertyMatcherKind::GeneralCategoryGroup(
+                PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?,
+            )
+        }
+    } else {
+        macro_rules! binary_property {
+            ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
+                match name {
+                    $( $( $property => PropertyMatcherKind::Binary(binary_property_matches::<props::$kind>), )+ )*
+                    _ => return None,
+                }
+            };
+        }
+        binary_property!(
         "ASCII_Hex_Digit" => AsciiHexDigit,
         "AHex" => AsciiHexDigit,
         "Alphabetic" => Alphabetic,
@@ -1496,7 +1539,13 @@ fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Opt
         "White_Space" | "space" | "WSpace" => WhiteSpace,
         "XID_Continue" | "XIDC" => XidContinue,
         "XID_Start" | "XIDS" => XidStart,
-    )
+        )
+    };
+    Some(PropertyMatcher { kind })
+}
+
+fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
+    Some(compile_property_matcher(name, value)?.matches(character))
 }
 
 fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
