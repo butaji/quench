@@ -1293,30 +1293,16 @@ fn with(
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    if let Some(value) = options {
-        if !matches!(
+    let options_primitive = options.is_some_and(|value| {
+        !matches!(
             value,
             Value::Undefined
                 | Value::Object(_)
                 | Value::Function(_)
                 | Value::BoundFunction(_)
                 | Value::Proxy(_)
-        ) {
-            return Err(crate::value::error::throw_type_error("Invalid options"));
-        }
-    }
-    let overflow = options
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(|value| crate::execute::get_property_result(value, "overflow"))
-        .transpose()?
-        .unwrap_or(Value::String("constrain".into()));
-    let overflow = match overflow {
-        Value::Undefined => "constrain".to_string(),
-        value => crate::conversion::to_string(&value)?,
-    };
-    if overflow != "constrain" && overflow != "reject" {
-        return Err(crate::value::error::throw_range_error("Invalid overflow"));
-    }
+        )
+    });
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
@@ -1332,38 +1318,77 @@ fn with(
     if !matches!(time_zone, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
     }
-    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
-    if !matches!(month_code, Value::Undefined) {
-        let code = crate::conversion::to_string(&month_code)?;
-        if code.ends_with('L') {
-            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
-        }
-    }
-    let month = crate::execute::get_property_result(changes, "month")?;
-    if !matches!(month_code, Value::Undefined) {
-        values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
-    }
-    for (index, name) in NAMES.iter().enumerate() {
+    let mut month = Value::Undefined;
+    let mut month_code = Value::Undefined;
+    let mut month_number_value = None;
+    let mut month_code_number_value = None;
+    let mut recognized = false;
+    for name in [
+        "day",
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "month",
+        "monthCode",
+        "nanosecond",
+        "second",
+        "year",
+    ] {
         let value = crate::execute::get_property_result(changes, name)?;
-        if !matches!(value, Value::Undefined) {
-            values[index] = if *name == "monthCode" {
-                crate::conversion::to_number(&month_code_number(&value)?)?
-            } else {
-                crate::conversion::to_number(&value)?
-            };
+        if matches!(value, Value::Undefined) {
+            continue;
         }
+        recognized = true;
+        match name {
+            "month" => {
+                month = value.clone();
+                let number = crate::conversion::to_number(&value)?.trunc();
+                month_number_value = Some(number);
+                values[1] = number;
+            }
+            "monthCode" => {
+                month_code = value.clone();
+                let number = crate::conversion::to_number(&month_code_number(&value)?)?;
+                month_code_number_value = Some(number);
+                values[1] = number;
+            }
+            "day" => values[2] = crate::conversion::to_number(&value)?.trunc(),
+            "hour" => values[3] = crate::conversion::to_number(&value)?.trunc(),
+            "minute" => values[4] = crate::conversion::to_number(&value)?.trunc(),
+            "second" => values[5] = crate::conversion::to_number(&value)?.trunc(),
+            "millisecond" => values[6] = crate::conversion::to_number(&value)?.trunc(),
+            "microsecond" => values[7] = crate::conversion::to_number(&value)?.trunc(),
+            "nanosecond" => values[8] = crate::conversion::to_number(&value)?.trunc(),
+            "year" => values[0] = crate::conversion::to_number(&value)?.trunc(),
+            _ => unreachable!(),
+        }
+    }
+    let overflow = if options_primitive {
+        "constrain".to_string()
+    } else {
+        let value = options
+            .filter(|value| !matches!(value, Value::Undefined))
+            .map(|value| crate::execute::get_property_result(value, "overflow"))
+            .transpose()?
+            .unwrap_or(Value::String("constrain".into()));
+        match value {
+            Value::Undefined => "constrain".to_string(),
+            value => crate::conversion::to_string(&value)?,
+        }
+    };
+    if overflow != "constrain" && overflow != "reject" {
+        return Err(crate::value::error::throw_range_error("Invalid overflow"));
+    }
+    if month_code_number_value.is_some_and(f64::is_nan) {
+        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
     if !matches!(month_code, Value::Undefined)
         && month != Value::Undefined
-        && crate::conversion::to_number(&month)?
-            != crate::conversion::to_number(&month_code_number(&month_code)?)?
+        && month_number_value.unwrap_or_default() != month_code_number_value.unwrap_or_default()
     {
         return Err(crate::value::error::throw_range_error("Month mismatch"));
     }
-    let recognized = NAMES.iter().any(|name| {
-        crate::execute::get_property_result(changes, name)
-            .is_ok_and(|value| !matches!(value, Value::Undefined))
-    }) || !matches!(month_code, Value::Undefined);
     if !recognized {
         return Err(crate::value::error::throw_type_error(
             "Insufficient date-time data",
@@ -1400,6 +1425,9 @@ fn with(
                 return Err(crate::value::error::throw_range_error("Invalid date-time"));
             }
         }
+    }
+    if options_primitive {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
     }
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
