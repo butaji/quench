@@ -212,12 +212,12 @@ fn node_register(
     once: bool,
     node_event: bool,
 ) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
     let event = type_arg(args)?;
     let callback = callback_arg(args)?;
     if matches!(callback, Value::Null | Value::Undefined) {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    let target = node_target(state, receiver)?;
     let (count, limit, already_warned, inserted) = {
         let mut target = target.borrow_mut();
         if target
@@ -235,6 +235,7 @@ fn node_register(
             target.entry(&event).push(Listener {
                 callback,
                 once,
+                capture: false,
                 node_event,
                 weak: false,
                 passive: false,
@@ -688,6 +689,12 @@ fn passive_option(args: &[Value]) -> bool {
         .is_some_and(|value| execute::is_truthy(&value))
 }
 
+fn capture_option(args: &[Value]) -> bool {
+    args.get(2)
+        .and_then(|v| execute::get_property_result(v, "capture").ok())
+        .is_some_and(|value| execute::is_truthy(&value))
+}
+
 fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
     let Some(options) = args.get(2) else {
         return Ok(None);
@@ -736,6 +743,13 @@ pub fn add_event_listener(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver
+        .and_then(|value| target_id(value))
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_none()
+    {
+        return Err(invalid_this());
+    }
     let event = type_arg(args)?;
     // Node probes the options bag before validating the listener, so a
     // passive getter is observable even when the listener is null.
@@ -756,6 +770,7 @@ pub fn add_event_listener(
         return Ok(Value::Undefined);
     }
     let signal = signal_option(args)?;
+    let capture = capture_option(args);
     if signal
         .as_ref()
         .is_some_and(|value| execute::is_truthy(&execute::get_property(value, "aborted")))
@@ -772,11 +787,12 @@ pub fn add_event_listener(
     let existing = guard.listeners_of(&event);
     if !existing
         .iter()
-        .any(|listener| same_listener(&listener.callback, &callback))
+        .any(|listener| same_listener(&listener.callback, &callback) && listener.capture == capture)
     {
         guard.entry(&event).push(Listener {
             callback,
             once: once_option(args),
+            capture,
             node_event: false,
             weak: weak_option(args, receiver.expect("validated receiver")),
             passive,
@@ -798,6 +814,13 @@ pub fn remove_event_listener(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver
+        .and_then(|value| target_id(value))
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_none()
+    {
+        return Err(invalid_this());
+    }
     let event = type_arg(args)?;
     let callback = callback_arg(args)?;
     let Some(target) = receiver
@@ -810,10 +833,10 @@ pub fn remove_event_listener(
         let mut guard = target.borrow_mut();
         if let Some(index) = guard.events.iter().position(|(key, _)| key == &event) {
             let list = &mut guard.events[index].1;
-            if let Some(at) = list
-                .iter()
-                .position(|listener| execute::same_value(&listener.callback, &callback))
-            {
+            let capture = capture_option(args);
+            if let Some(at) = list.iter().position(|listener| {
+                execute::same_value(&listener.callback, &callback) && listener.capture == capture
+            }) {
                 list.remove(at);
             }
             if list.is_empty() {
@@ -884,6 +907,9 @@ pub fn dispatch_event(
     let Some(receiver) = receiver else {
         return Err(invalid_this());
     };
+    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
+        return Err(invalid_this());
+    };
     let Some(event) = args.first() else {
         return Err(missing_args());
     };
@@ -897,9 +923,6 @@ pub fn dispatch_event(
             "The \"event\" argument must be an instance of Event.",
         ));
     }
-    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
-        return Err(invalid_this());
-    };
     let Value::String(event_type) = execute::get_property(event, "type") else {
         return Ok(Value::Boolean(false));
     };

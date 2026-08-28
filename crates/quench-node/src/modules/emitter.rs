@@ -22,6 +22,9 @@ pub const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
 pub struct Listener {
     pub callback: Value,
     pub once: bool,
+    /// EventTarget registration identity includes the capture flag. EventEmitter
+    /// listeners always use the default `false` value.
+    pub capture: bool,
     /// NodeEventTarget's `addEventListener` receives an Event object from
     /// `emit`; EventEmitter-style methods receive the raw argument list.
     pub node_event: bool,
@@ -76,6 +79,7 @@ impl EventEmitter {
                 Listener {
                     callback,
                     once,
+                    capture: false,
                     node_event: false,
                     weak: false,
                     passive: false,
@@ -86,6 +90,7 @@ impl EventEmitter {
             list.push(Listener {
                 callback,
                 once,
+                capture: false,
                 node_event: false,
                 weak: false,
                 passive: false,
