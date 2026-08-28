@@ -30,7 +30,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         let factory = quench_runtime::execute::get_property(&global, "__nodeChildProcessModule");
         if matches!(factory, Value::Function(_) | Value::BoundFunction(_)) {
             let module = quench_runtime::execute::call(&factory, &Value::Undefined, &[])?;
-            state.borrow_mut().module_cache.insert("child_process".into(), module.clone());
+            state
+                .borrow_mut()
+                .module_cache
+                .insert("child_process".into(), module.clone());
             return Ok(module);
         }
     }
@@ -412,10 +415,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 Value::Number(1.0),
             );
             Some(crate::host::namespace_object_from_pairs(vec![
-                (
-                    "Event".to_string(),
-                    event,
-                ),
+                ("Event".to_string(), event),
                 ("CustomEvent".to_string(), custom_event),
                 (
                     "defineEventHandler".to_string(),
@@ -481,11 +481,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "https" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "request".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:request", 0x1600)),
+                crate::host::capability(crate::registry::SPEC_HTTPS_REQUEST),
             ),
             (
                 "get".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601)),
+                crate::host::capability(crate::registry::SPEC_HTTPS_GET),
             ),
         ])),
         "zlib" => Some(crate::modules::zlib::build()),
@@ -617,7 +617,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
             let constructor = crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR);
             let prototype = host_api::object(Vec::new());
-            let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
+            let constructor =
+                quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
             let global = quench_runtime::vm::current_global_object();
             let _ = quench_runtime::execute::define_property(
                 global,
@@ -634,10 +635,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "fork".to_string(),
                     crate::host::capability(crate::registry::SPEC_CP_FORK),
                 ),
-                (
-                    "ChildProcess".to_string(),
-                    constructor,
-                ),
+                ("ChildProcess".to_string(), constructor),
                 (
                     "spawnSync".to_string(),
                     crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
