@@ -69,20 +69,18 @@ pub(crate) fn set_with_receiver(
     }
     let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
     if parent.typed_array_meta().is_some()
-        && crate::typed_array_ops::is_index_key(key)
-        && (crate::typed_array_prototype::is_out_of_bounds(&parent)
-            || crate::typed_array_ops::logical_len(&parent)
-                .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+        && (crate::typed_array_ops::is_index_key(key)
+            || crate::typed_array_ops::canonical_numeric_index(key))
     {
-        if matches!(
-            parent,
-            crate::value::Value::BigInt64Array(_) | crate::value::Value::BigUint64Array(_)
-        ) {
-            crate::construct::bigint_bits(value)?;
+        let valid = crate::typed_array_ops::is_index_key(key)
+            && !crate::typed_array_prototype::is_out_of_bounds(&parent)
+            && crate::typed_array_ops::logical_len(&parent)
+                .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index < length));
+        return if valid {
+            set_receiver_data(receiver, key, value)
         } else {
-            crate::conversion::to_number(value)?;
-        }
-        return Ok(true);
+            Ok(true)
+        };
     }
     if matches!(parent, crate::value::Value::Proxy(_)) {
         return crate::proxy::proxy_set(&parent, key, value, Some(receiver))
@@ -293,10 +291,26 @@ fn set_receiver_data(
     if let crate::value::Value::Array(values) = &mut receiver_resolved {
         std::rc::Rc::make_mut(values).sync_length_to_storage();
     }
-    let current = crate::builtins::object::descriptor(
+    if receiver_resolved.typed_array_meta().is_some()
+        && crate::typed_array_ops::is_index_key(key)
+        && (crate::typed_array_prototype::is_out_of_bounds(&receiver_resolved)
+            || crate::typed_array_ops::logical_len(&receiver_resolved)
+                .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+    {
+        return Ok(false);
+    }
+    let own = crate::builtins::object::has_own_property(
         Some(&receiver_resolved),
         Some(&crate::value::Value::String(key.to_string())),
-    )?;
+    ) == crate::value::Value::Boolean(true);
+    let current = if own {
+        crate::builtins::object::descriptor(
+            Some(&receiver_resolved),
+            Some(&crate::value::Value::String(key.to_string())),
+        )?
+    } else {
+        crate::value::Value::Undefined
+    };
     if !matches!(current, crate::value::Value::Undefined) {
         if descriptor_field_exists(&current, "set") || !descriptor_writable(&current)? {
             return Ok(false);
