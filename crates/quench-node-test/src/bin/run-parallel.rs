@@ -228,13 +228,25 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
     }
     use std::io::Read;
     use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new(exe)
+    let mut command = Command::new(exe);
+    command
         .arg("--triage-one")
         .arg(path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let Ok(mut child) = command.spawn() else {
         return RunResult::Crash;
     };
     for _ in 0..timeout_secs.saturating_mul(20) {
@@ -259,6 +271,11 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
             Err(_) => return RunResult::Crash,
         }
     }
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
     let _ = child.kill();
     let _ = child.wait();
     RunResult::Timeout
