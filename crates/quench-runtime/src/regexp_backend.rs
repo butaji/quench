@@ -3,7 +3,7 @@
 //! OXC supplies syntax facts; the VM owns the executable representation and
 //! matching algorithm. No third-party regular-expression engine is involved.
 
-use std::ops::Range;
+use std::{collections::VecDeque, ops::Range};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -738,6 +738,9 @@ fn repeat_options(
     max: Option<usize>,
     greedy: bool,
 ) -> Vec<State> {
+    if matches!(body, Expr::Literal(_) | Expr::Dot | Expr::Class(_)) {
+        return repeat_simple_options(body, input, state, flags, min, max, greedy);
+    }
     let limit = max.unwrap_or(input.len().saturating_add(1));
     fn visit(
         body: &Expr,
@@ -784,6 +787,49 @@ fn repeat_options(
         .into_iter()
         .take(MAX_BACKTRACK_STATES)
         .collect()
+}
+
+fn repeat_simple_options(
+    body: &Expr,
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+    min: usize,
+    max: Option<usize>,
+    greedy: bool,
+) -> Vec<State> {
+    let limit = max.unwrap_or(input.len().saturating_add(1));
+    let mut states = VecDeque::new();
+    let mut current = state.clone();
+    let mut count = 0;
+    while count < limit {
+        let Some(next) = match_expr(body, input, current.clone(), flags) else {
+            break;
+        };
+        if next.position == current.position {
+            break;
+        }
+        count += 1;
+        current = next;
+        if count >= min {
+            if states.len() == MAX_BACKTRACK_STATES {
+                states.pop_front();
+            }
+            states.push_back(current.clone());
+        }
+    }
+    if !greedy && min == 0 {
+        states.push_front(state.clone());
+        states.truncate(MAX_BACKTRACK_STATES);
+    }
+    let mut result: Vec<State> = states.into_iter().collect();
+    if greedy {
+        result.reverse();
+        if min == 0 {
+            result.push(state);
+        }
+    }
+    result
 }
 
 fn capture_indices(expr: &Expr) -> Vec<usize> {
@@ -848,34 +894,9 @@ fn lookaround_match(
     let behind = matches!(kind, Lookaround::Behind | Lookaround::NegativeBehind);
     let negative = matches!(kind, Lookaround::NegativeAhead | Lookaround::NegativeBehind);
     let found = if behind {
-        if let Some(found) = reverse_captured_backreference(body, input, &state, flags)
-            .or_else(|| deferred_backreference_match(body, input, &state, flags))
-        {
-            Some(found)
-        } else {
-            let mut starts: Box<dyn Iterator<Item = usize>> = if contains_alternation(body) {
-                Box::new((0..=state.position).rev())
-            } else {
-                Box::new(0..=state.position)
-            };
-            starts.find_map(|start| {
-                let candidate = State {
-                    position: start,
-                    captures: state.captures.clone(),
-                };
-                match_options(
-                    body,
-                    input,
-                    candidate,
-                    Flags {
-                        reverse: true,
-                        ..flags
-                    },
-                )
-                .into_iter()
-                .find(|result| result.position == state.position)
-            })
-        }
+        reverse_options(body, input, state.clone(), flags)
+            .into_iter()
+            .next()
     } else {
         match_expr(body, input, state.clone(), flags)
     };
@@ -889,136 +910,209 @@ fn lookaround_match(
     }
 }
 
-fn deferred_backreference_match(
-    body: &Expr,
-    input: &[Unit],
-    state: &State,
-    flags: Flags,
-) -> Option<State> {
-    let Expr::Sequence(parts) = body else {
-        return None;
-    };
-    let [Expr::Backreference(Backreference::Index(index)), Expr::Capture {
-        index: capture_index,
-        body: capture_body,
-    }] = parts.as_slice()
-    else {
-        return None;
-    };
-    if *index == 0 || *index != *capture_index + 1 {
-        return None;
-    }
-    if state
-        .captures
-        .get(index.saturating_sub(1))
-        .and_then(Option::as_ref)
-        .is_some()
-    {
-        return None;
-    }
-    for capture_start in 0..=state.position {
-        for mut candidate in match_options(
-            capture_body,
-            input,
-            State {
-                position: capture_start,
-                captures: state.captures.clone(),
-            },
-            Flags {
-                reverse: true,
-                ..flags
-            },
-        ) {
-            if candidate.position != state.position {
-                continue;
-            }
-            let width = candidate.position.saturating_sub(capture_start);
-            if width == 0 || capture_start < width {
-                continue;
-            }
-            let before = &input[capture_start - width..capture_start];
-            let captured = &input[capture_start..candidate.position];
-            if before
-                .iter()
-                .zip(captured)
-                .all(|(left, right)| equal(left.value, right.value, flags.ignore_case))
-            {
-                if let Some(slot) = candidate.captures.get_mut(*capture_index) {
-                    *slot = Some(capture_start..candidate.position);
-                }
-                return Some(State {
-                    position: state.position,
-                    captures: candidate.captures,
-                });
-            }
-        }
-    }
-    None
-}
-
-fn reverse_captured_backreference(
-    body: &Expr,
-    input: &[Unit],
-    state: &State,
-    flags: Flags,
-) -> Option<State> {
-    let Expr::Sequence(parts) = body else {
-        return None;
-    };
-    let [Expr::Capture {
-        index: capture_index,
-        body: capture_body,
-    }, Expr::Backreference(Backreference::Index(index))] = parts.as_slice()
-    else {
-        return None;
-    };
-    if *index == 0
-        || *index != *capture_index + 1
-        || state
-            .captures
-            .get(*capture_index)
-            .and_then(Option::as_ref)
-            .is_some()
-    {
-        return None;
-    }
-    for capture_start in 0..=state.position {
-        for mut candidate in match_options(
-            capture_body,
-            input,
-            State {
-                position: capture_start,
-                captures: state.captures.clone(),
-            },
-            Flags {
-                reverse: true,
-                ..flags
-            },
-        ) {
-            if candidate.position == state.position {
-                if let Some(slot) = candidate.captures.get_mut(*capture_index) {
-                    *slot = Some(capture_start..candidate.position);
-                }
-                return Some(State {
-                    position: state.position,
-                    captures: candidate.captures,
-                });
-            }
-        }
-    }
-    None
-}
-
-fn contains_alternation(expr: &Expr) -> bool {
+fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec<State> {
     match expr {
-        Expr::Alternation(_) => true,
-        Expr::Sequence(parts) => parts.iter().any(contains_alternation),
-        Expr::Capture { body, .. }
-        | Expr::Repeat { body, .. }
-        | Expr::Lookaround { body, .. }
-        | Expr::Mode { body, .. } => contains_alternation(body),
-        _ => false,
+        Expr::Sequence(parts) => reverse_sequence_options(parts, input, state, flags),
+        Expr::Alternation(alternatives) => alternatives
+            .iter()
+            .flat_map(|alternative| reverse_options(alternative, input, state.clone(), flags))
+            .take(MAX_BACKTRACK_STATES)
+            .collect(),
+        Expr::Literal(value) => {
+            let Some(previous) = state
+                .position
+                .checked_sub(1)
+                .and_then(|index| input.get(index))
+            else {
+                return Vec::new();
+            };
+            equal(*value, previous.value, flags.ignore_case)
+                .then_some(State {
+                    position: state.position - 1,
+                    ..state
+                })
+                .into_iter()
+                .collect()
+        }
+        Expr::Dot => {
+            let Some(previous) = state
+                .position
+                .checked_sub(1)
+                .and_then(|index| input.get(index))
+            else {
+                return Vec::new();
+            };
+            (flags.dot_all || !is_line_terminator(previous.value))
+                .then_some(State {
+                    position: state.position - 1,
+                    ..state
+                })
+                .into_iter()
+                .collect()
+        }
+        Expr::Class(class) => reverse_class_options(class, input, state, flags.ignore_case),
+        Expr::Capture { index, body } => {
+            let end = state.position;
+            reverse_options(body, input, state, flags)
+                .into_iter()
+                .map(|mut result| {
+                    if let Some(capture) = result.captures.get_mut(*index) {
+                        *capture = Some(result.position..end);
+                    }
+                    result
+                })
+                .take(MAX_BACKTRACK_STATES)
+                .collect()
+        }
+        Expr::Repeat {
+            body,
+            min,
+            max,
+            greedy,
+        } => reverse_repeat_options(body, input, state, flags, *min, *max, *greedy),
+        Expr::Assertion(assertion) => assertion_matches(*assertion, input, state.position, flags)
+            .then_some(state)
+            .into_iter()
+            .collect(),
+        Expr::Lookaround { kind, body } => lookaround_match(*kind, body, input, state, flags)
+            .into_iter()
+            .collect(),
+        Expr::Backreference(reference) => {
+            let range = match reference {
+                Backreference::Index(index) => state
+                    .captures
+                    .get(index.saturating_sub(1))
+                    .and_then(Option::as_ref),
+                Backreference::Named(indices) => indices.iter().find_map(|index| {
+                    state
+                        .captures
+                        .get(index.saturating_sub(1))
+                        .and_then(Option::as_ref)
+                }),
+            };
+            let Some(range) = range else {
+                return vec![state];
+            };
+            let width = range.end.saturating_sub(range.start);
+            if width > state.position {
+                return Vec::new();
+            }
+            let expected = &input[range.clone()];
+            let actual = &input[state.position - width..state.position];
+            expected
+                .iter()
+                .zip(actual)
+                .all(|(left, right)| equal(left.value, right.value, flags.ignore_case))
+                .then_some(State {
+                    position: state.position - width,
+                    ..state
+                })
+                .into_iter()
+                .collect()
+        }
+        Expr::Mode { body, flags: local } => {
+            reverse_options(body, input, state, merge_flags(flags, *local))
+        }
     }
+}
+
+fn reverse_sequence_options(
+    parts: &[Expr],
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+) -> Vec<State> {
+    fn visit(
+        parts: &[Expr],
+        index: usize,
+        input: &[Unit],
+        state: State,
+        flags: Flags,
+        output: &mut Vec<State>,
+    ) {
+        if output.len() >= MAX_BACKTRACK_STATES {
+            return;
+        }
+        if index == 0 {
+            output.push(state);
+            return;
+        }
+        for candidate in reverse_options(&parts[index - 1], input, state.clone(), flags) {
+            visit(parts, index - 1, input, candidate, flags, output);
+        }
+    }
+    let mut output = Vec::new();
+    visit(parts, parts.len(), input, state, flags, &mut output);
+    output
+}
+
+fn reverse_class_options(
+    class: &ClassExpr,
+    input: &[Unit],
+    state: State,
+    ignore_case: bool,
+) -> Vec<State> {
+    let mut output = Vec::new();
+    for width in 1..=state.position.min(32) {
+        let start = state.position - width;
+        if class_match_widths(class, input, start, ignore_case).contains(&width) {
+            output.push(State {
+                position: start,
+                ..state.clone()
+            });
+        }
+    }
+    output.reverse();
+    output
+}
+
+fn reverse_repeat_options(
+    body: &Expr,
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+    min: usize,
+    max: Option<usize>,
+    greedy: bool,
+) -> Vec<State> {
+    let limit = max.unwrap_or(input.len().saturating_add(1));
+    fn visit(
+        body: &Expr,
+        input: &[Unit],
+        state: State,
+        flags: Flags,
+        count: usize,
+        min: usize,
+        limit: usize,
+        greedy: bool,
+    ) -> Vec<State> {
+        let mut result = Vec::new();
+        let continuations = if count >= limit {
+            Vec::new()
+        } else {
+            reverse_options(body, input, state.clone(), flags)
+                .into_iter()
+                .filter(|next| next.position != state.position || count < min)
+                .flat_map(|next| visit(body, input, next, flags, count + 1, min, limit, greedy))
+                .collect()
+        };
+        if greedy {
+            result.extend(continuations);
+            if count >= min {
+                result.push(state);
+            }
+        } else {
+            if count >= min {
+                result.push(state.clone());
+            }
+            result.extend(continuations);
+        }
+        result
+    }
+    visit(body, input, state, flags, 0, min, limit, greedy)
+        .into_iter()
+        .take(MAX_BACKTRACK_STATES)
+        .collect()
 }
 
 fn merge_flags(flags: Flags, local: ModeFlags) -> Flags {
@@ -1214,7 +1308,7 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
                 || character.is_ascii_punctuation()
                 || character.is_whitespace()
         }
-        ("Letter", _) | ("Alphabetic", _) | ("L", _) => character.is_alphabetic(),
+        ("Letter", _) | ("Alphabetic", _) | ("Alpha", _) | ("L", _) => character.is_alphabetic(),
         ("Number", _) | ("N", _) | ("Decimal_Number", _) | ("Nd", _) => character.is_numeric(),
         ("Lowercase_Letter", _)
         | ("Ll", _)
@@ -1226,7 +1320,7 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
         | ("General_Category", Some("Lu")) => character.is_uppercase(),
         ("General_Category", Some("Letter")) => character.is_alphabetic(),
         ("White_Space", _) | ("space", _) => character.is_whitespace(),
-        ("ASCII_Hex_Digit", _) => character.is_ascii_hexdigit(),
+        ("ASCII_Hex_Digit", _) | ("AHex", _) | ("Hex_Digit", _) => character.is_ascii_hexdigit(),
         ("Script", Some("Latin")) | ("Script_Extensions", Some("Latin")) => {
             character.is_ascii_alphabetic()
         }
@@ -1283,21 +1377,6 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn duplicate_group_cases_match() {
-        let pattern = "(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))";
-        let regex = Regex::with_flags(pattern, Flags::default()).unwrap();
-        for input in ["abc", "ad"] {
-            eprintln!("{input}: {}", regex.find_from(input, 0).next().is_some());
-        }
-        let repeated =
-            Regex::with_flags("(?:(?:(?<x>a)|(?<x>b)|c)\\k<x>){2}", Flags::default()).unwrap();
-        eprintln!(
-            "aac repeated: {}",
-            repeated.find_from("aac", 0).next().is_some()
-        );
-    }
-
     #[test]
     fn lookbehind_sticky_prefix() {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
