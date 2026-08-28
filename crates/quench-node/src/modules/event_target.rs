@@ -359,7 +359,7 @@ pub fn add_event_listener(
         .and_then(target_id)
         .and_then(|id| state.borrow().targets.get(id))
     else {
-        return Ok(Value::Undefined);
+        return Err(invalid_this());
     };
     let mut guard = target.borrow_mut();
     let existing = guard.listeners_of(&event);
@@ -392,9 +392,12 @@ pub fn remove_event_listener(
 ) -> Result<Value, VmError> {
     let event = type_arg(args)?;
     let callback = callback_arg(args)?;
-    if let Some(target) = receiver
+    let Some(target) = receiver
         .and_then(target_id)
         .and_then(|id| state.borrow().targets.get(id))
+    else {
+        return Err(invalid_this());
+    };
     {
         let mut guard = target.borrow_mut();
         if let Some(index) = guard.events.iter().position(|(key, _)| key == &event) {
