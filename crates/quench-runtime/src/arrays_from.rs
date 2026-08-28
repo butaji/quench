@@ -57,7 +57,7 @@ fn from_impl(
                 crate::execute::get_property_result(&source, &index.to_string())?
             };
             let value = map_item(mapper.as_ref(), &this_arg, item, index)?;
-            result = write_result_element(result, index, value)?;
+            result = write_result_element(result, index, value, true)?;
         }
         return Ok(result);
     }
@@ -92,7 +92,7 @@ fn from_typed_iterable(
     }
     for (index, item) in source_values.into_iter().enumerate() {
         let value = map_item(mapper, &this_arg, item, index)?;
-        result = write_result_element(result, index, value)?;
+        result = write_result_element(result, index, value, true)?;
     }
     Ok(result)
 }
@@ -101,11 +101,14 @@ pub(crate) fn of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    create_result(
-        receiver.filter(|value| is_constructor(value)),
-        arguments.to_vec(),
-        false,
-    )
+    if let Some(receiver) = receiver.filter(|value| is_constructor(value)) {
+        let mut result = construct_typed_result(Some(receiver), arguments.len())?;
+        for (index, value) in arguments.iter().cloned().enumerate() {
+            result = write_result_element(result, index, value, true)?;
+        }
+        return Ok(result);
+    }
+    create_result(receiver, arguments.to_vec(), false)
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
@@ -158,7 +161,7 @@ fn from_iterable(
         source_length += 1;
         let value = map_item(mapper, &this_arg, item, index)?;
         if let Some(target) = result.take() {
-            result = Some(write_result_element(target, index, value)?);
+            result = Some(write_result_element(target, index, value, true)?);
         } else {
             source_values.push(value);
         }
@@ -280,9 +283,10 @@ fn create_result(
     // empty iterable construction cannot grow a typed-array view; assigning
     // its `length` afterward only changes metadata and leaves a zero-byte
     // backing buffer.
+    let strict_bounds = uses_custom_result(receiver);
     let mut result = construct_result(receiver, length, iterable)?;
     for (index, value) in values.into_iter().enumerate() {
-        result = write_result_element(result, index, value)?;
+        result = write_result_element(result, index, value, strict_bounds)?;
     }
     if crate::typed_array_ops::is_view(&result) {
         return Ok(result);
@@ -322,6 +326,7 @@ fn write_result_element(
     result: Value,
     index: usize,
     value: Value,
+    strict_bounds: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let key = index.to_string();
     // Typed-array elements are integer-indexed exotic properties: they are
@@ -331,6 +336,13 @@ fn write_result_element(
         if typed_array_result_unwritable(&result, false) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot set an element on an invalid typed array",
+            ));
+        }
+        if strict_bounds
+            && crate::typed_array_ops::logical_len(&result).is_some_and(|length| index >= length)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot set an element on an out-of-bounds typed array",
             ));
         }
         if let Some(updated) = crate::typed_array_ops::set_property(&result, &key, &value) {
