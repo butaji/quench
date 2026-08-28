@@ -16,7 +16,7 @@ fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError>
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Int8ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_int8(crate::conversion::to_number(value)?));
+        view.set(index, to_int8(number_for_typed_array(value)?));
     }
     Ok(Value::Int8Array(Rc::new(view)))
 }
@@ -69,7 +69,7 @@ fn values_int16_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     ));
     let view = crate::value::Int16ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_int16(crate::conversion::to_number(value)?));
+        view.set(index, to_int16(number_for_typed_array(value)?));
     }
     Ok(Value::Int16Array(Rc::new(view)))
 }
@@ -104,7 +104,7 @@ fn values_int32_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     ));
     let view = crate::value::Int32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_int32(crate::conversion::to_number(value)?));
+        view.set(index, to_int32(number_for_typed_array(value)?));
     }
     Ok(Value::Int32Array(Rc::new(view)))
 }
@@ -195,7 +195,7 @@ fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
     ));
     let view = crate::value::Float32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, crate::conversion::to_number(value)? as f32);
+        view.set(index, number_for_typed_array(value)? as f32);
     }
     Ok(Value::Float32Array(Rc::new(view)))
 }
@@ -236,7 +236,7 @@ fn values_float64_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
     ));
     let view = crate::value::Float64ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, crate::conversion::to_number(value)?);
+        view.set(index, number_for_typed_array(value)?);
     }
     Ok(Value::Float64Array(Rc::new(view)))
 }

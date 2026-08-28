@@ -839,6 +839,19 @@ impl ArrayData {
                 self.values.set(index, Value::Number(number));
             }
         }
+        if let DenseElements::Values(values) = &self.values {
+            let numeric = values
+                .borrow()
+                .iter()
+                .map(|value| match value {
+                    Value::Number(number) => Some(std::cell::Cell::new(*number)),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(numeric) = numeric {
+                self.values = DenseElements::Numbers(Rc::new(RefCell::new(numeric)));
+            }
+        }
         self.deleted.clear();
         self.length.set(end);
         self.kind
@@ -854,11 +867,39 @@ impl ArrayData {
             for (offset, slot) in values[start..end].iter().enumerate() {
                 slot.set(first + offset as f64);
             }
+            self.deleted.resize(end, false);
+            self.deleted[start..end].fill(false);
+            self.length.set(self.length.get().max(end));
+            self.kind
+                .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
             return;
         }
         for index in start..end {
             self.set_numeric_index(index, first + (index - start) as f64);
         }
+    }
+
+    pub(crate) fn fill_numeric_constant_range(&mut self, start: usize, end: usize, number: f64) {
+        if start >= end {
+            return;
+        }
+        if self.values.len() < end {
+            self.values.resize_numeric(end);
+        }
+        if let DenseElements::Numbers(values) = &self.values {
+            for slot in values.borrow()[start..end].iter() {
+                slot.set(number);
+            }
+        } else {
+            for index in start..end {
+                self.values.set(index, Value::Number(number));
+            }
+        }
+        self.deleted.resize(end, false);
+        self.deleted[start..end].fill(false);
+        self.length.set(self.length.get().max(end));
+        self.kind
+            .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
@@ -1110,6 +1151,12 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
+        if self.deleted.is_empty() && self.properties.is_empty() {
+            if let DenseElements::Numbers(values) = &self.values {
+                let values = values.borrow();
+                return values.iter().map(|number| Value::Number(number.get())).collect();
+            }
+        }
         (0..self.logical_len())
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
             .collect()
