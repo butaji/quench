@@ -490,6 +490,9 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
 fn append_bound_function_metadata(properties: &RefCell<Vec<(String, Value)>>, builtin: Builtin) {
     let entries = &mut *properties.borrow_mut();
     for key in ["length", "name"] {
+        if entries.iter().any(|(name, _)| name == key) {
+            continue;
+        }
         let Some(value) = crate::builtins::callable_property(builtin, key) else {
             continue;
         };
