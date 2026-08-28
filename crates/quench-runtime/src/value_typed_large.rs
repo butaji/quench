@@ -327,6 +327,23 @@ impl Uint8ArrayData {
         true
     }
 
+    /// Store a byte for an intrinsic algorithm that has already validated its
+    /// target. Immutable buffers reject observable JavaScript writes, but
+    /// TypedArray.prototype.slice performs its specified byte copy even when a
+    /// species constructor returns another view over that same buffer.
+    pub fn set_intrinsic(&self, index: usize, value: u8) -> bool {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
+            return false;
+        }
+        let offset = self.byte_offset + index;
+        let mut bytes = self.buffer.bytes.borrow_mut();
+        let Some(byte) = bytes.get_mut(offset) else {
+            return false;
+        };
+        *byte = value;
+        true
+    }
+
     fn is_out_of_bounds(&self) -> bool {
         self.buffer.byte_length() < self.byte_offset + self.byte_length()
     }
