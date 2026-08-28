@@ -356,6 +356,24 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "internal/event_target" => {
             let global = quench_runtime::vm::current_global_object();
             let event_target = quench_runtime::execute::get_property(&global, "EventTarget");
+            let event = crate::host::capability(crate::registry::SPEC_EVENT);
+            let _ = quench_runtime::execute::set_callable_property(
+                &event,
+                "prototype",
+                crate::host::namespace_object_from_pairs(Vec::new()),
+            );
+            for (name, value) in [
+                ("NONE", 0.0),
+                ("CAPTURING_PHASE", 1.0),
+                ("AT_TARGET", 2.0),
+                ("BUBBLING_PHASE", 3.0),
+            ] {
+                let _ = quench_runtime::execute::set_callable_property(
+                    &event,
+                    name,
+                    Value::Number(value),
+                );
+            }
             let node_event_target =
                 match quench_runtime::execute::get_property(&global, "NodeEventTarget") {
                     Value::Undefined => crate::host::capability(crate::registry::NodeSpec::new(
@@ -390,7 +408,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
                     "Event".to_string(),
-                    crate::host::capability(crate::registry::SPEC_EVENT),
+                    event,
                 ),
                 ("CustomEvent".to_string(), custom_event),
                 (
