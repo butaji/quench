@@ -8,11 +8,15 @@ pub(crate) mod plain_month_day;
 pub(crate) mod plain_time;
 pub(crate) mod plain_year_month;
 
+const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
+
 pub(crate) fn zoned_construct(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let epoch = match arguments.first().unwrap_or(&crate::value::Value::Undefined) {
-        crate::value::Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+        crate::value::Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+            crate::value::error::throw_range_error("Invalid epochNanoseconds")
+        })?,
         crate::value::Value::Boolean(value) => i128::from(*value),
         _ => {
             return Err(crate::value::error::throw_type_error(
@@ -20,6 +24,11 @@ pub(crate) fn zoned_construct(
             ))
         }
     };
+    if epoch.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid epochNanoseconds",
+        ));
+    }
     let timezone_value = arguments.get(1).unwrap_or(&crate::value::Value::Undefined);
     if matches!(timezone_value, crate::value::Value::String(_) | crate::value::Value::StringUnits(_)) {
         let text = crate::conversion::to_string(timezone_value)?;
@@ -233,6 +242,15 @@ fn format_year(year: i32) -> String {
 pub(crate) fn parse_timezone_identifier(
     value: &crate::value::Value,
 ) -> Result<String, crate::execute::VmError> {
+    if matches!(value, crate::value::Value::Object(_))
+        && matches!(
+            crate::execute::get_property(value, "\0prototype"),
+            crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+        )
+    {
+        let identifier = crate::execute::get_property_result(value, "timeZoneId")?;
+        return parse_timezone_identifier(&identifier);
+    }
     if matches!(
         value,
         crate::value::Value::Null
@@ -750,7 +768,7 @@ mod stubs {
             "compatible",
         )?;
         if let Value::String(text) = value {
-            if !text.contains('[') {
+            if !text.contains('[') || !text.ends_with(']') {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
             let (_calendar_annotation, timezone_annotation) = super::parse_iso_annotations(text)?;
@@ -765,7 +783,13 @@ mod stubs {
             let has_time_separator = date_time.contains('T')
                 || date_time.contains('t')
                 || date_time.contains(' ');
-            if !has_time_separator && timezone_annotation.is_none() {
+            if !has_time_separator
+                && (timezone_annotation.is_none()
+                    || date_time.ends_with('Z')
+                    || date_time
+                        .rfind(['+', '-'])
+                        .is_some_and(|index| index > 0))
+            {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
             let (date, time) = date_time
@@ -840,8 +864,7 @@ mod stubs {
             let month = parsed_month;
             let day = parsed_day;
             if !(1..=12).contains(&month)
-                || !(1..=31).contains(&day)
-                || chrono::NaiveDate::from_ymd_opt(year, month, day).is_none()
+                || !(1..=super::plain_date::days_in_month_for_record(year, month)).contains(&day)
             {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid ZonedDateTime",
@@ -879,6 +902,14 @@ mod stubs {
                     ));
                 }
             }
+            if offset_start.is_some()
+                && matches!(offset_mode.as_str(), "prefer" | "reject")
+                && local_epoch < -super::MAX_EPOCH_NANOSECONDS
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
             if offset_start.is_some() && matches!(offset_mode.as_str(), "ignore" | "prefer") {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
@@ -888,6 +919,11 @@ mod stubs {
             }
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
+            }
+            if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
             }
             return Ok(super::zoned_record(
                 epoch,
@@ -987,6 +1023,11 @@ mod stubs {
             let local_epoch =
                 local_epoch + millisecond * 1_000_000 + microsecond * 1_000 + nanosecond;
             let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
             if let Some(offset) = offset {
                 if super::fixed_offset_nanos(&offset)
                     != super::timezone_offset_nanos(&timezone, local_epoch)
