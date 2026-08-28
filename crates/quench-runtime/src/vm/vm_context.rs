@@ -119,6 +119,7 @@ pub struct VmContext {
     capabilities: Vec<HostCapabilityRef>,
     host_bindings: Vec<(String, HostCapabilityRef)>,
     host_values: Vec<(String, Value)>,
+    persistent_host_values: Vec<String>,
     can_block: bool,
     source_text: Option<Rc<str>>,
 }
@@ -131,6 +132,7 @@ impl Default for VmContext {
             capabilities: Vec::new(),
             host_bindings: Vec::new(),
             host_values: Vec::new(),
+            persistent_host_values: Vec::new(),
             can_block: false,
             source_text: None,
         }
@@ -223,11 +225,25 @@ impl VmContext {
         self
     }
 
+    /// Install a host value that must remain observable after the installing
+    /// VM frame yields to a callback. The value still lives in the same host
+    /// table; this flag only derives its first-read materialization policy.
+    pub fn with_persistent_host_value(mut self, name: impl Into<String>, value: Value) -> Self {
+        let name = name.into();
+        self.persistent_host_values.push(name.clone());
+        self.host_values.push((name, value));
+        self
+    }
+
     pub(crate) fn host_value(&self, name: &str) -> Option<Value> {
         self.host_values
             .iter()
             .rev()
             .find_map(|(key, value)| (key == name).then_some(value.clone()))
+    }
+
+    pub(crate) fn host_value_is_persistent(&self, name: &str) -> bool {
+        self.persistent_host_values.iter().any(|key| key == name)
     }
 
     pub(crate) fn host_binding(&self, name: &str) -> Option<HostCapabilityRef> {

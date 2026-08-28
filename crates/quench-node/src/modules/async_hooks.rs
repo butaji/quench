@@ -43,8 +43,8 @@ use crate::registry::{
     SPEC_ASYNC_LOCAL_BIND_CALL, SPEC_ASYNC_LOCAL_DISABLE, SPEC_ASYNC_LOCAL_ENTER,
     SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_SNAPSHOT,
     SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER,
-    SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_ID,
-    SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_RESOURCE_DOMAIN,
+    SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_DOMAIN,
+    SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER,
     SPEC_ASYNC_TRIGGER_ID,
 };
 
@@ -64,6 +64,7 @@ pub struct AsyncHooksState {
     pub(crate) current_local_store: Option<Value>,
     resource_stack: Vec<(u64, Option<Value>)>,
     destroyed_resources: HashSet<u64>,
+    tracked_resources: HashMap<u64, (Value, bool)>,
 }
 
 impl AsyncHooksState {
@@ -83,6 +84,7 @@ impl AsyncHooksState {
             current_local_store: None,
             resource_stack: Vec::new(),
             destroyed_resources: HashSet::new(),
+            tracked_resources: HashMap::new(),
         }
     }
 
@@ -682,9 +684,26 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         host_api::object(vec![
             ("configurable".into(), Value::Boolean(true)),
             ("enumerable".into(), Value::Boolean(false)),
-            ("get".into(), crate::host::capability(SPEC_ASYNC_RESOURCE_DOMAIN)),
+            (
+                "get".into(),
+                crate::host::capability(SPEC_ASYNC_RESOURCE_DOMAIN),
+            ),
         ]),
     )?;
+    let require_manual_destroy = public_constructor
+        && args.get(1).is_some_and(|options| {
+            matches!(
+                id_property(options, "requireManualDestroy"),
+                Some(Value::Boolean(true))
+            )
+        });
+    if public_constructor {
+        state
+            .borrow_mut()
+            .async_hooks
+            .tracked_resources
+            .insert(id, (resource.clone(), require_manual_destroy));
+    }
     let callbacks = active_callbacks(state, HookEvent::Init);
     let resource_type = if public_constructor {
         args.first()
@@ -839,6 +858,7 @@ pub fn resource_destroy(
         .unwrap_or(0);
     let callbacks = {
         let mut host = state.borrow_mut();
+        host.async_hooks.tracked_resources.remove(&id);
         if !host.async_hooks.destroyed_resources.insert(id) {
             return Ok(Value::Undefined);
         }
@@ -848,6 +868,30 @@ pub fn resource_destroy(
         let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
+}
+
+/// Deliver the explicit `gc()` boundary for user-created resources. The
+/// runtime's object collector remains independent; this host state machine
+/// only drains resources whose Node contract permits automatic destruction.
+pub fn collect_garbage(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let mut pending = Vec::new();
+    {
+        let mut host = state.borrow_mut();
+        host.async_hooks
+            .tracked_resources
+            .retain(|_, (resource, manual)| {
+                if *manual {
+                    true
+                } else {
+                    pending.push(resource.clone());
+                    false
+                }
+            });
+    }
+    for resource in pending {
+        resource_destroy(state, Some(&resource), &[])?;
+    }
+    Ok(())
 }
 pub fn resource_run(
     state: &Rc<RefCell<HostState>>,
