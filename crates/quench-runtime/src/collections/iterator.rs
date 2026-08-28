@@ -433,6 +433,21 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     Ok(make_protocol_with_next(iterator, next))
 }
 
+pub(crate) fn open_with_method(
+    value: &Value,
+    method: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let iterator = call(&method, value)?;
+    if !crate::value::is_object(&iterator) {
+        return Err(not_iterable());
+    }
+    if matches!(iterator, Value::Iterator(_)) {
+        return Ok(iterator);
+    }
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    Ok(make_protocol_with_next(iterator, next))
+}
+
 pub(crate) fn open_async(value: Value) -> Result<Value, crate::execute::VmError> {
     let method = crate::execute::get_property_result(&value, "Symbol.asyncIterator")?;
     if !matches!(method, Value::Undefined) {
@@ -532,14 +547,21 @@ pub(crate) fn collect_iterable_no_close(
     }
 }
 
-pub(crate) fn for_each_iterable<F>(
-    value: Value,
+pub(crate) fn for_each_iterable<F>(value: Value, callback: F) -> Result<(), crate::execute::VmError>
+where
+    F: FnMut(Value) -> Result<(), crate::execute::VmError>,
+{
+    let iterator = open(value)?;
+    for_each_open_iterator(iterator, callback)
+}
+
+pub(crate) fn for_each_open_iterator<F>(
+    iterator: Value,
     mut callback: F,
 ) -> Result<(), crate::execute::VmError>
 where
     F: FnMut(Value) -> Result<(), crate::execute::VmError>,
 {
-    let iterator = open(value)?;
     loop {
         let item = match step_value(&iterator) {
             Ok(Some(item)) => item,
