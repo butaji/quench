@@ -38,13 +38,6 @@ impl NodeSpec {
 }
 
 /// All Node host capabilities. Stable ids; do not reorder.
-pub const SPEC_CONSOLE_LOG: NodeSpec = NodeSpec::new("console:log", 0x0200);
-pub const SPEC_CONSOLE_INFO: NodeSpec = NodeSpec::new("console:info", 0x0201);
-pub const SPEC_CONSOLE_WARN: NodeSpec = NodeSpec::new("console:warn", 0x0202);
-pub const SPEC_CONSOLE_ERROR: NodeSpec = NodeSpec::new("console:error", 0x0203);
-pub const SPEC_CONSOLE_DEBUG: NodeSpec = NodeSpec::new("console:debug", 0x0204);
-pub const SPEC_CONSOLE_TRACE: NodeSpec = NodeSpec::new("console:trace", 0x0205);
-
 pub const SPEC_UTIL_FORMAT: NodeSpec = NodeSpec::new("util:format", 0x0300);
 pub const SPEC_UTIL_INSPECT: NodeSpec = NodeSpec::new("util:inspect", 0x0301);
 pub const SPEC_UTIL_ABORTED: NodeSpec = NodeSpec::new("util:aborted", 0x0310);
@@ -111,6 +104,12 @@ pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
 pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
 
 node_api! {
+    (SPEC_CONSOLE_LOG, "console:log", 0x0200),
+    (SPEC_CONSOLE_INFO, "console:info", 0x0201),
+    (SPEC_CONSOLE_WARN, "console:warn", 0x0202),
+    (SPEC_CONSOLE_ERROR, "console:error", 0x0203),
+    (SPEC_CONSOLE_DEBUG, "console:debug", 0x0204),
+    (SPEC_CONSOLE_TRACE, "console:trace", 0x0205),
     (SPEC_EVENTS_NEW, "events:EventEmitter", 0x0100),
     (SPEC_EVENTS_FROM, "events:from", 0x0101),
     (SPEC_EVENTS_ON, "events:on", 0x0102),
