@@ -737,6 +737,9 @@ pub fn add_event_listener(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let event = type_arg(args)?;
+    // Node probes the options bag before validating the listener, so a
+    // passive getter is observable even when the listener is null.
+    let passive = passive_option(args);
     let callback = match callback_arg(args) {
         Ok(callback) => callback,
         Err(error) => {
@@ -776,7 +779,7 @@ pub fn add_event_listener(
             once: once_option(args),
             node_event: false,
             weak: weak_option(args, receiver.expect("validated receiver")),
-            passive: passive_option(args),
+            passive,
             signal,
         });
         if !weak_option(args, receiver.expect("validated receiver")) {
