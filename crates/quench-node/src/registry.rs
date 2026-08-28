@@ -143,6 +143,7 @@ node_api! {
     (SPEC_TARGET_DISPATCH, CAP_TARGET_DISPATCH, "eventTarget:dispatchEvent", 0x0115),
     (SPEC_EVENT_TARGET_NEW, CAP_EVENT_TARGET_NEW, "eventTarget:EventTarget", 0x0116),
     (SPEC_RUN_UNCAUGHT, CAP_RUN_UNCAUGHT, "process:runUncaught", 0x0117),
+    (SPEC_EVENT_TARGET_REJECTION, CAP_EVENT_TARGET_REJECTION, "eventTarget:promiseRejection", 0x0128),
     (SPEC_EVENTS_ABORT_LISTENER, CAP_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
     (SPEC_EVENTS_ABORT_DISPOSE, CAP_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
     (SPEC_EVENTS_ADD_ABORT, CAP_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
@@ -903,21 +904,60 @@ pub fn namespace_bindings(
         "console".to_string(),
         crate::modules::console::build_value(),
     ));
-    let event_target = crate::host::capability(crate::registry::NodeSpec::new(
-        "events:EventTarget",
-        0x0116,
-    ));
+    let event_target =
+        crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116));
+    let event_target_prototype = quench_runtime::execute::define_property(
+        crate::modules::event_target::prototype(),
+        "constructor",
+        crate::host::namespace_object_from_pairs(vec![
+            ("value".into(), event_target.clone()),
+            (
+                "writable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| crate::modules::event_target::prototype());
     let _ = quench_runtime::execute::set_callable_property(
         &event_target,
         "prototype",
-        crate::modules::event_target::prototype(),
+        event_target_prototype,
     );
     out.push(("EventTarget".to_string(), event_target));
     let event = crate::host::capability(crate::registry::SPEC_EVENT);
+    let event_prototype = quench_runtime::execute::define_property(
+        crate::host::namespace_object_from_pairs(Vec::new()),
+        "constructor",
+        crate::host::namespace_object_from_pairs(vec![
+            ("value".into(), event.clone()),
+            (
+                "writable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    let _ = quench_runtime::execute::set_callable_property(&event, "prototype", event_prototype);
     let _ = quench_runtime::execute::set_callable_property(
         &event,
-        "prototype",
-        crate::host::namespace_object_from_pairs(Vec::new()),
+        "length",
+        quench_runtime::value::Value::Number(1.0),
     );
     for (name, value) in [
         ("NONE", 0.0),

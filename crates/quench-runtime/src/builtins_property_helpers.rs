@@ -115,6 +115,13 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let descriptor = descriptor_fields(descriptor)?;
     let result = define_own_property(&target, &key, &descriptor)?;
     crate::locals::replace_value(&target, &result);
+    // Host-side callers (module construction and capability setup) do not
+    // have the opcode register file that normally publishes a global COW
+    // transition.  Synchronize that one derived object representative here;
+    // otherwise a hidden global property leaves subsequent global lookups on
+    // an unregistered snapshot and drops context-provided bindings.
+    let mut registers = crate::register_file::RegisterFile::new();
+    crate::vm::synchronize_global_object(&mut registers, &target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
 }

@@ -85,7 +85,7 @@ mod private_slots;
 mod promise;
 pub use promise::{
     drain_microtasks_all as drain_promise_jobs, has_pending_jobs as has_pending_promise_jobs,
-    reject_promise, resolve_promise, take_unhandled_rejections,
+    promise_then, reject_promise, resolve_promise, take_unhandled_rejections,
 };
 mod properties;
 mod property_define;
