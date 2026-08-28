@@ -38,10 +38,6 @@ impl NodeSpec {
 }
 
 /// All Node host capabilities. Stable ids; do not reorder.
-pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream", 0x0F12);
-pub const SPEC_VM_SOURCE_TEXT_MODULE: NodeSpec = NodeSpec::new("vm:SourceTextModule", 0x0F11);
-pub const SPEC_VM_MODULE_LINK: NodeSpec = NodeSpec::new("vm:SourceTextModule:link", 0x0F13);
-pub const SPEC_VM_MODULE_EVALUATE: NodeSpec = NodeSpec::new("vm:SourceTextModule:evaluate", 0x0F14);
 pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
 pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
 pub const SPEC_TEST_MOCK_FN: NodeSpec = NodeSpec::new("test:mock:fn", 0x1b02);
@@ -82,6 +78,10 @@ pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
 pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
 
 node_api! {
+    (SPEC_INTERNAL_JS_STREAM, "internal:js_stream", 0x0F12),
+    (SPEC_VM_SOURCE_TEXT_MODULE, "vm:SourceTextModule", 0x0F11),
+    (SPEC_VM_MODULE_LINK, "vm:SourceTextModule:link", 0x0F13),
+    (SPEC_VM_MODULE_EVALUATE, "vm:SourceTextModule:evaluate", 0x0F14),
     (SPEC_TEXT_DECODER_NEW, "TextDecoder:new", 0x0809),
     (SPEC_TEXT_DECODER_DECODE, "TextDecoder:decode", 0x080A),
     (SPEC_TEXT_ENCODER_NEW, "TextEncoder:new", 0x084C),
