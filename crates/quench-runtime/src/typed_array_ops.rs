@@ -15,7 +15,7 @@ macro_rules! set_number_view {
     };
 }
 
-fn typed_array_index(key: &str) -> Option<usize> {
+pub(crate) fn typed_array_index(key: &str) -> Option<usize> {
     if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
         return None;
     }
@@ -30,6 +30,35 @@ fn typed_array_index(key: &str) -> Option<usize> {
     }
     Some(index)
 }
+
+/// Classify CanonicalNumericIndexString keys before ordinary prototype lookup.
+/// Invalid numeric indices (for example `-1` or `1.1`) are still handled by
+/// the integer-indexed exotic object and must not expose inherited properties.
+pub(crate) fn canonical_numeric_index(key: &str) -> bool {
+    if key == "-0" {
+        return true;
+    }
+    if matches!(key, "NaN" | "Infinity" | "-Infinity") {
+        return true;
+    }
+    if key.starts_with('+') || key.as_bytes().iter().any(|byte| matches!(byte, b'e' | b'E')) {
+        return false;
+    }
+    let Ok(number) = key.parse::<f64>() else {
+        return false;
+    };
+    if !number.is_finite() || number.abs() >= 1e21 {
+        return false;
+    }
+    if key.contains('.') {
+        number.abs() >= 1e-6
+            && !key.ends_with('0')
+            && !key.ends_with('.')
+    } else {
+        key == "0" || !key.trim_start_matches('-').starts_with('0')
+    }
+}
+
 
 pub(crate) fn is_index_key(key: &str) -> bool {
     typed_array_index(key).is_some()
@@ -119,6 +148,9 @@ fn set_named_property(target: &Value, key: &str, value: Value) -> Option<Value> 
 }
 
 fn set_number_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
+    if canonical_numeric_index(key) && typed_array_index(key).is_none() {
+        return Some(Ok(target.clone()));
+    }
     set_float_property(target, key, value)
         .or_else(|| set_signed_property(target, key, value))
         .or_else(|| set_unsigned_property(target, key, value))
@@ -161,6 +193,9 @@ fn set_clamped_property(
 fn set_bigint_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
     if !matches!(target, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
         return None;
+    }
+    if canonical_numeric_index(key) && typed_array_index(key).is_none() {
+        return Some(Ok(target.clone()));
     }
     let index = typed_array_index(key)?;
     let bits = match crate::construct::bigint_bits(value) {
