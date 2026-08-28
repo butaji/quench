@@ -300,3 +300,21 @@ for captured, escaping, TDZ, direct-eval, `with`, async, generator, and host
 re-entry cases.  That is the only currently evidenced route capable of
 removing the roughly 26 million Earley environment activations rather than
 making each activation marginally cheaper.
+
+## Rejected environment-identity pool
+
+A conservative pool reused only the `Environment` object for a static body
+with no closure construction, eval, `with`, suspension, dynamic import, or
+private/static scope.  It reset name, TDZ, immutable, deletion, prefix, and
+suffix state on checkout; arguments-object calls and all failed admissions
+used the existing path.  Focused VM tests passed, but production EarleyBoyer
+measured score **109**, 87.53 wall seconds, 1,652,998,144-byte maximum RSS,
+and 1.816T instructions.  That is indistinguishable from the 108-score
+control and does not meet the x2 admission gate, so the pool was reverted.
+
+The result is causal enough to narrow the representation work: reusing only
+the environment allocation cannot matter while each activation still creates
+the parameter slot store and execution register file, materializes Values at
+their boundary, and retains the wide continuation transport.  The next frame
+experiment must replace that entire transport with one reusable contiguous
+word window, not pool one wrapper around it.
