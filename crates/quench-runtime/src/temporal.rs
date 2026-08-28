@@ -1881,11 +1881,13 @@ mod stubs {
             }) {
                 return Err(crate::value::error::throw_type_error("Invalid options"));
             }
-            let largest = options
+            let largest_value = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "largestUnit"))
                 .transpose()?
-                .filter(|value| !matches!(value, Value::Undefined))
+                .filter(|value| !matches!(value, Value::Undefined));
+            let largest_was_default = largest_value.is_none();
+            let largest = largest_value
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
                 .unwrap_or_else(|| "hour".into());
@@ -1893,6 +1895,9 @@ mod stubs {
                 .strip_suffix('s')
                 .unwrap_or(&largest)
                 .to_string();
+            if largest == "auto" {
+                largest = "hour".into();
+            }
             if !matches!(
                 largest.as_str(),
                 "year"
@@ -1942,8 +1947,28 @@ mod stubs {
                 .transpose()?
                 .unwrap_or_else(|| "nanosecond".into());
             let smallest = smallest.strip_suffix('s').unwrap_or(&smallest).to_string();
-            if largest == "hour" && matches!(smallest.as_str(), "year" | "month" | "week" | "day") {
+            let unit_rank = |unit: &str| match unit {
+                "year" => 0,
+                "month" => 1,
+                "week" => 2,
+                "day" => 3,
+                "hour" => 4,
+                "minute" => 5,
+                "second" => 6,
+                "millisecond" => 7,
+                "microsecond" => 8,
+                "nanosecond" => 9,
+                _ => usize::MAX,
+            };
+            if largest_was_default
+                && largest == "hour"
+                && matches!(smallest.as_str(), "year" | "month" | "week" | "day")
+            {
                 largest = smallest.clone();
+            } else if unit_rank(&smallest) < unit_rank(&largest) {
+                return Err(crate::value::error::throw_range_error(
+                    "smallestUnit larger than largestUnit",
+                ));
             }
             let scale: i128 = match smallest.as_str() {
                 "day" => 86_400_000_000_000,
@@ -1977,6 +2002,20 @@ mod stubs {
             } else {
                 1
             };
+            let increment_max = match smallest.as_str() {
+                "hour" => 24,
+                "minute" | "second" => 60,
+                "millisecond" | "microsecond" | "nanosecond" => 1_000,
+                _ => 0,
+            };
+            if (increment_max > 1 && increment >= increment_max)
+                || (increment_max > 1 && increment_max % increment != 0)
+                || (smallest == "day" && increment > 100_000_000)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingIncrement",
+                ));
+            }
             let rounding_mode = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "roundingMode"))
@@ -2011,7 +2050,7 @@ mod stubs {
                 "trunc" => delta < 0 && remainder != 0,
                 "floor" => false,
                 "ceil" => remainder != 0,
-                "expand" => remainder != 0,
+                "expand" => remainder != 0 && delta > 0,
                 "halfCeil" => remainder * 2 >= quantum,
                 "halfFloor" => remainder * 2 > quantum,
                 "halfTrunc" => remainder * 2 > quantum || (remainder * 2 == quantum && delta < 0),
