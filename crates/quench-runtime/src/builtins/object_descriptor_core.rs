@@ -57,7 +57,7 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
-    if let Ok(index) = key.parse::<usize>() {
+    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
         if crate::typed_array_prototype::index_exists(value, index) {
             return Some(descriptor_object_with_flags(
                 crate::execute::get_property(value, key),
@@ -66,6 +66,9 @@ fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
                 true,
             ));
         }
+    }
+    if crate::typed_array_ops::canonical_numeric_index(key) {
+        return None;
     }
     if let Some(metadata) = crate::typed_array_prototype::descriptor(value, key) {
         return Some(public_descriptor(&metadata));
