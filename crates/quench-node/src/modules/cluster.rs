@@ -55,6 +55,10 @@ impl ClusterState {
     pub(crate) fn worker_object(&self, id: u64) -> Option<Value> {
         self.workers.get(&id).map(|worker| worker.object.clone())
     }
+
+    pub(crate) fn module(&self) -> Option<Value> {
+        self.module.clone()
+    }
 }
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let workers = host_api::object(Vec::new());
@@ -256,7 +260,10 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
                 .cluster
                 .workers
                 .get(&id)
-                .is_some_and(|worker| worker.child_listeners.contains_key("message"));
+                .is_some_and(|worker| {
+                    worker.child_listeners.contains_key("message")
+                        || !worker.pending_messages.is_empty()
+                });
         (!waits_for_ipc && !net_work).then_some(0)
     });
     state.borrow_mut().process.exit_code = parent_exit_code;
@@ -748,11 +755,18 @@ pub fn send(
         return Ok(Value::Boolean(false));
     }
     let message = args.first().cloned().unwrap_or(Value::Undefined);
-    let _ = emit(
-        state,
-        Some(&obj),
-        &[Value::String("message".into()), message.clone()],
-    );
+    let child_context = state.borrow().cluster.worker_context == Some(id);
+    if child_context {
+        if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            worker.pending_messages.push(message.clone());
+        }
+    } else {
+        let _ = emit(
+            state,
+            Some(&obj),
+            &[Value::String("message".into()), message.clone()],
+        );
+    }
     if let Some(module) = state.borrow().cluster.module.clone() {
         let _ = crate::modules::events::method_emit(
             state,
