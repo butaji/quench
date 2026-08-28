@@ -1,5 +1,6 @@
 const GLOBAL_STATIC_SLOT: u32 = u32::MAX - 1;
 
+include!("vm_properties_virtual_cache.rs");
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
     // A materialized global binding can transiently leave the receiver nullish
@@ -48,6 +49,8 @@ pub(crate) fn get_named_property_result(
             ));
         } else if let Some(entry) = cacheable_immediate_prototype(object, key) {
             install_prototype_cache(cache, entry);
+        } else if let Some(entry) = cacheable_virtual_builtin_method(object, key, &result) {
+            install_virtual_builtin_cache(cache, entry);
         }
     }
     Ok(result)
@@ -138,6 +141,11 @@ pub(crate) fn get_named_cached_payload(
     }
     let layout = object.semantic_layout_id();
     let cached = cache.get();
+    if let Some(payload) = virtual_builtin_cache_hit(object, layout, cached, cache as *const _ as usize)
+    {
+        crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+        return Some(payload);
+    }
     if cached & PROTOTYPE_CACHE_TAG != 0 {
         if let Some(payload) =
             prototype_cache_hit(object, layout, cached, cache as *const _ as usize)
