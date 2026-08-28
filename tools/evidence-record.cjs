@@ -10,6 +10,10 @@ const os = require("node:os");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const v8V7Fixtures = [
+  "richards", "deltablue", "crypto", "raytrace",
+  "earley-boyer", "regexp", "splay", "navier-stokes",
+];
 const args = process.argv.slice(2);
 const option = (name, fallback = null) => {
   const index = args.indexOf(name);
@@ -57,14 +61,24 @@ function fixtureRecord(name, raw) {
   };
 }
 
-function leverage(fixtures) {
+function leverage(fixtures, requiredFixtures) {
   const valid = fixtures.filter((fixture) => fixture.valid && fixture.score.median > 0);
   const overall = geometricMean(valid.map((fixture) => fixture.score.median));
   const totalWall = valid.reduce((sum, fixture) => sum + fixture.wall_ms.median, 0);
+  const found = new Set(fixtures.map((fixture) => fixture.name.replace(/\.js$/, "")));
+  const missing = requiredFixtures.filter((fixture) => !found.has(fixture));
+  const requiredComplete = missing.length === 0
+    && fixtures.length === requiredFixtures.length
+    && valid.length === fixtures.length;
   return {
     valid_fixture_count: valid.length,
     all_valid: valid.length === fixtures.length,
-    geometric_score: valid.length === fixtures.length ? overall : null,
+    required_fixtures: requiredFixtures,
+    missing_required_fixtures: missing,
+    required_complete: requiredComplete,
+    // Never publish an aggregate score for a partial suite. The individual
+    // fixture data remains useful for diagnostics and leverage ranking.
+    geometric_score: requiredComplete ? overall : null,
     fixtures: fixtures.map((fixture) => ({
       name: fixture.name,
       score_log_weight: fixture.valid ? 1 / fixtures.length : null,
@@ -83,6 +97,9 @@ const append = option("--append");
 const raw = readJson(input);
 const results = raw.results || {};
 const fixtures = Object.entries(results).map(([name, entry]) => fixtureRecord(name, entry));
+const requiredFixtures = args.includes("--full-v8")
+  ? v8V7Fixtures
+  : fixtures.map((fixture) => fixture.name.replace(/\.js$/, ""));
 const dirtyDiff = command("git", ["diff", "--binary"]);
 const record = {
   schema: "quench.evidence-record/v1",
@@ -104,7 +121,7 @@ const record = {
   },
   raw_input: input,
   fixtures,
-  score_leverage: leverage(fixtures),
+  score_leverage: leverage(fixtures, requiredFixtures),
   unavailable: {
     instructions: null,
     cycles: null,
