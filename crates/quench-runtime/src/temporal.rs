@@ -191,6 +191,20 @@ fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
 }
 
 fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
+    if !date.contains('-') {
+        let (year_text, month_text, day_text) = match date.len() {
+            8 => (&date[..4], &date[4..6], &date[6..]),
+            11 if matches!(date.as_bytes().first(), Some(b'+' | b'-')) => {
+                (&date[..7], &date[7..9], &date[9..])
+            }
+            _ => return None,
+        };
+        return Some((
+            year_text.parse().ok()?,
+            month_text.parse().ok()?,
+            day_text.parse().ok()?,
+        ));
+    }
     let day_sep = date.rfind('-')?;
     let month_sep = date[..day_sep].rfind('-')?;
     Some((
@@ -316,6 +330,21 @@ fn valid_iso_offset(text: &str) -> bool {
         .split_once(['.', ','])
         .map_or((body, None), |(core, fraction)| (core, Some(fraction)));
     if fraction.is_some_and(|value| value.is_empty() || value.len() > 9 || !value.bytes().all(|b| b.is_ascii_digit())) {
+        return false;
+    }
+    let valid_shape = match core.len() {
+        2 | 4 | 6 => core.bytes().all(|b| b.is_ascii_digit()),
+        5 => core.as_bytes().get(2) == Some(&b':')
+            && core[..2].bytes().all(|b| b.is_ascii_digit())
+            && core[3..].bytes().all(|b| b.is_ascii_digit()),
+        8 => core.as_bytes().get(2) == Some(&b':')
+            && core.as_bytes().get(5) == Some(&b':')
+            && core[..2].bytes().all(|b| b.is_ascii_digit())
+            && core[3..5].bytes().all(|b| b.is_ascii_digit())
+            && core[6..].bytes().all(|b| b.is_ascii_digit()),
+        _ => false,
+    };
+    if !valid_shape {
         return false;
     }
     let digits = core.replace(':', "");
@@ -683,6 +712,43 @@ mod stubs {
             let text = crate::conversion::to_string(value)?;
             return zoned_from(Some(&Value::String(text)), options);
         }
+        if matches!(value, Value::String(text) if crate::conversion::is_symbol_string(text)) {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid ZonedDateTime value",
+            ));
+        }
+        if !matches!(
+            value,
+            Value::String(_)
+                | Value::Object(_)
+                | Value::Function(_)
+                | Value::BoundFunction(_)
+                | Value::Proxy(_)
+        ) {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid ZonedDateTime value",
+            ));
+        }
+        let option_string = |name: &str, allowed: &[&str], default: &str| -> Result<String, VmError> {
+            let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+                return Ok(default.to_string());
+            };
+            let option = crate::execute::get_property_result(options, name)?;
+            if matches!(option, Value::Undefined) {
+                return Ok(default.to_string());
+            }
+            let option = crate::conversion::to_string(&option)?;
+            if !allowed.contains(&option.as_str()) {
+                return Err(crate::value::error::throw_range_error("Invalid Temporal option"));
+            }
+            Ok(option)
+        };
+        let offset_mode = option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
+        let _disambiguation = option_string(
+            "disambiguation",
+            &["compatible", "earlier", "later", "reject"],
+            "compatible",
+        )?;
         if let Value::String(text) = value {
             if !text.contains('[') {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
@@ -696,10 +762,15 @@ mod stubs {
                 .split('Z')
                 .next()
                 .unwrap_or(text);
-            if !date_time.contains('T') && !date_time.contains('t') && !date_time.contains(' ') {
+            let has_time_separator = date_time.contains('T')
+                || date_time.contains('t')
+                || date_time.contains(' ');
+            if !has_time_separator && timezone_annotation.is_none() {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
-            let (date, time) = date_time.split_once('T').unwrap_or((date_time, "00:00:00"));
+            let (date, time) = date_time
+                .split_once(['T', 't', ' '])
+                .unwrap_or((date_time, "00:00:00"));
             if date.starts_with("-000000") {
                 return Err(crate::value::error::throw_range_error("Invalid year"));
             }
@@ -712,24 +783,41 @@ mod stubs {
             if offset_start.is_some() && !super::valid_iso_offset(offset_text) {
                 return Err(crate::value::error::throw_range_error("Invalid time"));
             }
-            if (clock.contains('.') || clock.contains(',')) && clock.split(':').count() < 3 {
-                return Err(crate::value::error::throw_range_error("Fractional minutes not allowed"));
-            }
-            if clock
+            let (clock_core, fraction_text) = clock
                 .split_once(['.', ','])
-                .map(|(_, fraction)| fraction.len() > 9)
-                .unwrap_or(false)
-            {
+                .map_or((clock, None), |(core, fraction)| (core, Some(fraction)));
+            if fraction_text.is_some_and(|fraction| fraction.is_empty() || fraction.len() > 9) {
                 return Err(crate::value::error::throw_range_error("Too many fractional digits"));
             }
-            let mut time_parts = clock
-                .split(':')
-                .map(|part| part.parse::<i64>().unwrap_or(0))
-                .collect::<Vec<_>>();
-            let fractional_nanos = clock
-                .split(':')
-                .nth(2)
-                .and_then(|part| part.split_once(['.', ',']).map(|(_, fraction)| fraction))
+            let mut time_parts = if clock_core.contains(':') {
+                let parts = clock_core.split(':').collect::<Vec<_>>();
+                if parts.len() > 3
+                    || parts.iter().any(|part| part.len() != 2)
+                    || (fraction_text.is_some() && parts.len() < 3)
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                parts
+                    .iter()
+                    .map(|part| part.parse::<i64>().unwrap_or(-1))
+                    .collect::<Vec<_>>()
+            } else {
+                if !matches!(clock_core.len(), 2 | 4 | 6)
+                    || !clock_core.chars().all(|ch| ch.is_ascii_digit())
+                    || (fraction_text.is_some() && clock_core.len() != 6)
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                let mut parts = vec![clock_core[0..2].parse::<i64>().unwrap_or(-1)];
+                if clock_core.len() >= 4 {
+                    parts.push(clock_core[2..4].parse::<i64>().unwrap_or(-1));
+                }
+                if clock_core.len() == 6 {
+                    parts.push(clock_core[4..6].parse::<i64>().unwrap_or(-1));
+                }
+                parts
+            };
+            let fractional_nanos = fraction_text
                 .map(|fraction| {
                     format!("{fraction:0<9}")
                         .chars()
@@ -739,16 +827,6 @@ mod stubs {
                         .unwrap_or(0)
                 })
                 .unwrap_or(0);
-            if let Some(second) = clock
-                .split(':')
-                .nth(2)
-                .and_then(|part| part.split(['.', ',']).next())
-                .and_then(|part| part.parse::<i64>().ok())
-            {
-                if time_parts.len() > 2 {
-                    time_parts[2] = second;
-                }
-            }
             if time_parts.get(2).is_some_and(|second| *second == 60) {
                 time_parts[2] = 59;
             }
@@ -792,13 +870,7 @@ mod stubs {
                 .unwrap_or(if has_z { "UTC" } else { offset_text });
             let timezone =
                 super::parse_timezone_identifier(&Value::String(timezone_text.to_string()))?;
-            let offset_mode = options
-                .filter(|value| !matches!(value, Value::Undefined))
-                .and_then(|value| crate::execute::get_property_result(value, "offset").ok())
-                .filter(|value| !matches!(value, Value::Undefined))
-                .and_then(|value| crate::conversion::to_string(&value).ok())
-                .unwrap_or_else(|| "reject".into());
-            if offset_start.is_some() && offset_mode != "ignore" {
+            if offset_start.is_some() && offset_mode == "reject" {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if supplied_offset != actual_offset {
@@ -807,8 +879,12 @@ mod stubs {
                     ));
                 }
             }
-            if offset_start.is_some() && offset_mode == "ignore" {
-                epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            if offset_start.is_some() && matches!(offset_mode.as_str(), "ignore" | "prefer") {
+                let supplied_offset = super::iso_offset_nanos(offset_text);
+                let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
+                if offset_mode == "ignore" || supplied_offset != actual_offset {
+                    epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+                }
             }
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
@@ -832,6 +908,24 @@ mod stubs {
             {
                 return Err(crate::value::error::throw_type_error("Missing ZonedDateTime field"));
             }
+            // Validate the offset's syntax before converting numeric fields. This
+            // preserves the specified RangeError precedence for malformed offsets.
+            let raw_offset = crate::execute::get_property_result(value, "offset")?;
+            let validated_offset = if matches!(raw_offset, Value::Undefined) {
+                None
+            } else {
+                if !matches!(raw_offset, Value::String(_) | Value::StringUnits(_)) {
+                    return Err(crate::value::error::throw_type_error("Invalid offset"));
+                }
+                let offset = crate::conversion::to_string(&raw_offset)?;
+                let normalized = if offset.eq_ignore_ascii_case("z") {
+                    Some("+00:00".to_string())
+                } else {
+                    super::normalize_offset_identifier(&offset)
+                }
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
+                Some(normalized)
+            };
             let year = crate::conversion::to_number(&year_value)? as i32;
             let month = if matches!(month_value, Value::Undefined) {
                 match month_code_value {
@@ -872,22 +966,7 @@ mod stubs {
             let timezone = super::parse_timezone_identifier(&crate::execute::get_property_result(
                 value, "timeZone",
             )?)?;
-            let offset = crate::execute::get_property_result(value, "offset")?;
-            let offset = if matches!(offset, Value::Undefined) {
-                None
-            } else {
-                if !matches!(offset, Value::String(_) | Value::StringUnits(_)) {
-                    return Err(crate::value::error::throw_type_error("Invalid offset"));
-                }
-                let offset = crate::conversion::to_string(&offset)?;
-                let normalized = if offset.eq_ignore_ascii_case("z") {
-                    Some("+00:00".to_string())
-                } else {
-                    super::normalize_offset_identifier(&offset)
-                }
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
-                Some(normalized)
-            };
+            let offset = validated_offset;
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
             let era = if year_adjusted >= 0 {
                 year_adjusted
