@@ -289,6 +289,13 @@ pub fn to_js_string(value: &crate::value::Value) -> Result<String, VmError> {
     crate::conversion::to_string(value)
 }
 
+/// JavaScript's explicit string form used by observable diagnostics. Unlike
+/// `to_js_string`, symbols render as `Symbol(description)` instead of
+/// throwing, matching APIs such as EventEmitter warning messages.
+pub fn to_js_string_explicit(value: &crate::value::Value) -> Result<String, VmError> {
+    crate::conversion::to_string_explicit(value)
+}
+
 /// Canonical `Number::toString` (radix 10) for host code.
 pub fn number_to_js_string(value: f64) -> String {
     crate::conversion::number_to_string(value)

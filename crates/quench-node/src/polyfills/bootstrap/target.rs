@@ -473,11 +473,19 @@ const __quenchEventsRequire = (value) => {
   };
   __quenchEventsModule.setMaxListeners = (limit, ...targets) => {
     __quenchValidateEventLimit(limit);
+    if (targets.length === 0 &&
+        typeof globalThis.__quench_events_set_max === "function") {
+      globalThis.__quench_events_set_max(limit);
+    }
     for (const target of targets) {
       if (!__quenchEventsTargetValid(target)) {
         throw Object.assign(new TypeError("The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       limits.set(target, limit);
+      if (target instanceof EventTarget &&
+          typeof globalThis.__quench_events_set_max === "function") {
+        globalThis.__quench_events_set_max(limit, target);
+      }
     }
     return targets[0];
   };

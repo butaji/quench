@@ -671,6 +671,7 @@ node_api! {
     (SPEC_NODE_EVENT_TARGET_SET_MAX, CAP_NODE_EVENT_TARGET_SET_MAX, "nodeEventTarget:setMaxListeners", 0x0142),
     (SPEC_NODE_EVENT_TARGET_GET_MAX, CAP_NODE_EVENT_TARGET_GET_MAX, "nodeEventTarget:getMaxListeners", 0x0143),
     (SPEC_NODE_EVENT_TARGET_EMIT, CAP_NODE_EVENT_TARGET_EMIT, "nodeEventTarget:emit", 0x0144),
+    (SPEC_MESSAGE_CHANNEL, CAP_MESSAGE_CHANNEL, "messageChannel:MessageChannel", 0x0145),
 }
 node_api! {
     (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
@@ -786,6 +787,10 @@ pub fn namespace_bindings(
     out.push((
         "queueMicrotask".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),
+    ));
+    out.push((
+        "__quench_events_set_max".to_string(),
+        crate::host::capability(SPEC_EVENTS_SET_MAX_STATIC),
     ));
     // QuickJS exposes the Float16 view storage but not its constructor.  The
     // Node facade still needs the two-byte view in common buffer-source paths;
@@ -947,7 +952,11 @@ pub fn namespace_bindings(
         event_target_prototype,
     );
     out.push(("EventTarget".to_string(), event_target));
-    let event = crate::host::capability(crate::registry::SPEC_EVENT);
+    out.push((
+        "MessageChannel".to_string(),
+        crate::host::capability(SPEC_MESSAGE_CHANNEL),
+    ));
+    let mut event = crate::host::capability(crate::registry::SPEC_EVENT);
     let event_prototype = quench_runtime::execute::define_property(
         crate::host::namespace_object_from_pairs(Vec::new()),
         "constructor",
@@ -985,14 +994,10 @@ pub fn namespace_bindings(
         ("AT_TARGET", 2.0),
         ("BUBBLING_PHASE", 3.0),
     ] {
-        let _ = quench_runtime::execute::set_callable_property(
-            &event,
-            name,
-            quench_runtime::value::Value::Number(value),
-        );
+        event = define_event_constant(event, name, value);
     }
     out.push(("Event".to_string(), event));
-    let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+    let mut custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
     let custom_event_prototype = install_custom_event_prototype(event_prototype.clone());
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
@@ -1005,11 +1010,7 @@ pub fn namespace_bindings(
         ("AT_TARGET", 2.0),
         ("BUBBLING_PHASE", 3.0),
     ] {
-        let _ = quench_runtime::execute::set_callable_property(
-            &custom_event,
-            name,
-            quench_runtime::value::Value::Number(value),
-        );
+        custom_event = define_event_constant(custom_event, name, value);
     }
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
@@ -1028,6 +1029,29 @@ pub fn namespace_bindings(
         crate::host::namespace_object_from_pairs(vec![]),
     ));
     out
+}
+
+fn define_event_constant(
+    target: quench_runtime::value::Value,
+    name: &str,
+    value: f64,
+) -> quench_runtime::value::Value {
+    let descriptor = quench_runtime::host_api::object(vec![
+        ("value".into(), quench_runtime::value::Value::Number(value)),
+        (
+            "writable".into(),
+            quench_runtime::value::Value::Boolean(false),
+        ),
+        (
+            "enumerable".into(),
+            quench_runtime::value::Value::Boolean(true),
+        ),
+        (
+            "configurable".into(),
+            quench_runtime::value::Value::Boolean(false),
+        ),
+    ]);
+    quench_runtime::execute::define_property(target.clone(), name, descriptor).unwrap_or(target)
 }
 
 fn push_bindings(
