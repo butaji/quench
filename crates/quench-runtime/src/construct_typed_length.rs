@@ -8,7 +8,12 @@ fn object_array_like(
     // A plain object with only data properties can be projected in one pass.
     // This keeps large array-like constructor inputs linear while leaving
     // accessors, prototypes, and iterators on the observable property path.
-    let plain = properties.original_prototype().is_none()
+    let plain = properties.original_prototype().is_none_or(|prototype| {
+        matches!(
+            prototype,
+            crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+        )
+    })
         && !properties.iter().any(|(name, _)| {
             name.starts_with('\0') || name == "Symbol.iterator"
     });
