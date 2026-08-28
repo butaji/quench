@@ -281,6 +281,7 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+#[inline(never)]
 pub(crate) fn execute_proven_leaf(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
@@ -436,7 +437,6 @@ fn validate_leaf_depth(
                 | crate::ir::Opcode::Mul
                 | crate::ir::Opcode::Div
                 | crate::ir::Opcode::Binary
-                | crate::ir::Opcode::CallN
                 | crate::ir::Opcode::Return
                 | crate::ir::Opcode::Slow
         )
@@ -468,9 +468,6 @@ fn validate_leaf_depth(
             && usize::from(op.c) >= LEAF_LOCAL_SLOTS
         {
             return Err(LeafReject::Register);
-        }
-        if op.opcode == crate::ir::Opcode::CallN {
-            (op.flags <= 2).then_some(()).ok_or(LeafReject::Call)?;
         }
         if op.opcode == crate::ir::Opcode::Slow {
             validate_leaf_control(

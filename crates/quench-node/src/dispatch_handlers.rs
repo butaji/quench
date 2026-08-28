@@ -6964,3 +6964,134 @@ pub fn util_type_predicate(
             .unwrap_or(&Value::Undefined),
     )))
 }
+
+pub fn util_aborted(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(args.first().cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn util_aborted_resolve(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(args.first().cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn os_endianness(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::String(
+        if cfg!(target_endian = "little") {
+            "LE"
+        } else {
+            "BE"
+        }
+        .into(),
+    ))
+}
+
+pub fn os_version(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::String(std::env::consts::OS.into()))
+}
+
+pub fn os_machine(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::String(std::env::consts::ARCH.into()))
+}
+
+pub fn os_user_info(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        (
+            "username".into(),
+            Value::String(std::env::var("USER").unwrap_or_default()),
+        ),
+        ("uid".into(), Value::Number(-1.0)),
+        ("gid".into(), Value::Number(-1.0)),
+        (
+            "homedir".into(),
+            Value::String(std::env::var("HOME").unwrap_or_default()),
+        ),
+        ("shell".into(), Value::Null),
+    ]))
+}
+
+pub fn test_mock_fn(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_call(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn event_trusted_get(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(false))
+}
+
+pub fn abort_controller_signal_get(
+    _: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn abort_signal_aborted_get(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(false))
+}
+
+pub fn abort_signal_has_instance(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(false))
+}
+
+pub fn abort_signal_throw_if_aborted(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn gc(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
