@@ -38,91 +38,84 @@ impl NodeSpec {
 }
 
 /// All Node host capabilities. Stable ids; do not reorder.
-pub const SPEC_EVENTS_NEW: NodeSpec = NodeSpec::new("events:EventEmitter", 0x0100);
-pub const SPEC_EVENTS_FROM: NodeSpec = NodeSpec::new("events:from", 0x0101);
-pub const SPEC_EVENTS_ON: NodeSpec = NodeSpec::new("events:on", 0x0102);
-pub const SPEC_EVENTS_EMIT: NodeSpec = NodeSpec::new("events:emit", 0x0103);
-pub const SPEC_EVENTS_CAPTURE_GET: NodeSpec = NodeSpec::new("events:captureRejections:get", 0x0104);
-pub const SPEC_EVENTS_CAPTURE_SET: NodeSpec = NodeSpec::new("events:captureRejections:set", 0x0119);
-pub const SPEC_EVENTS_DEFAULT_MAX_GET: NodeSpec =
-    NodeSpec::new("events:defaultMaxListeners:get", 0x0125);
-pub const SPEC_EVENTS_DEFAULT_MAX_SET: NodeSpec =
-    NodeSpec::new("events:defaultMaxListeners:set", 0x0126);
-pub const SPEC_EVENTS_RAW_LISTENERS: NodeSpec = NodeSpec::new("events:rawListeners", 0x0127);
-
-pub const SPEC_CONSOLE_LOG: NodeSpec = NodeSpec::new("console:log", 0x0200);
-pub const SPEC_CONSOLE_INFO: NodeSpec = NodeSpec::new("console:info", 0x0201);
-pub const SPEC_CONSOLE_WARN: NodeSpec = NodeSpec::new("console:warn", 0x0202);
-pub const SPEC_CONSOLE_ERROR: NodeSpec = NodeSpec::new("console:error", 0x0203);
-pub const SPEC_CONSOLE_DEBUG: NodeSpec = NodeSpec::new("console:debug", 0x0204);
-pub const SPEC_CONSOLE_TRACE: NodeSpec = NodeSpec::new("console:trace", 0x0205);
-
-pub const SPEC_UTIL_FORMAT: NodeSpec = NodeSpec::new("util:format", 0x0300);
-pub const SPEC_UTIL_INSPECT: NodeSpec = NodeSpec::new("util:inspect", 0x0301);
-pub const SPEC_UTIL_ABORTED: NodeSpec = NodeSpec::new("util:aborted", 0x0310);
-pub const SPEC_UTIL_ABORTED_RESOLVE: NodeSpec = NodeSpec::new("util:aborted:resolve", 0x0311);
-pub const SPEC_UTIL_TYPES: NodeSpec = NodeSpec::new("util:types", 0x0302);
-pub const SPEC_UTIL_GETCALLSITES: NodeSpec = NodeSpec::new("util:getCallSites", 0x0303);
-pub const SPEC_UTIL_IS: NodeSpec = NodeSpec::new("util:is", 0x030D);
-pub const SPEC_UTIL_INHERITS: NodeSpec = NodeSpec::new("util:inherits", 0x0304);
-pub const SPEC_UTIL_STRIP_VT: NodeSpec = NodeSpec::new("util:stripVTControlCharacters", 0x0305);
-pub const SPEC_UTIL_FORMAT_WITH_OPTIONS: NodeSpec = NodeSpec::new("util:formatWithOptions", 0x0306);
-pub const SPEC_UTIL_STYLE_TEXT: NodeSpec = NodeSpec::new("util:styleText", 0x0307);
-pub const SPEC_UTIL_IS_DEEP_STRICT_EQUAL: NodeSpec =
-    NodeSpec::new("util:isDeepStrictEqual", 0x0308);
-pub const SPEC_UTIL_TO_USV_STRING: NodeSpec = NodeSpec::new("util:toUSVString", 0x0309);
-pub const SPEC_UTIL_IS_NATIVE_ERROR: NodeSpec = NodeSpec::new("util.types:isNativeError", 0x030A);
-pub const SPEC_UTIL_PARSE_ENV: NodeSpec = NodeSpec::new("util:parseEnv", 0x030B);
-pub const SPEC_UTIL_TYPE_PREDICATE: NodeSpec = NodeSpec::new("util.types:predicate", 0x030C);
-pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream", 0x0F12);
-pub const SPEC_VM_SOURCE_TEXT_MODULE: NodeSpec = NodeSpec::new("vm:SourceTextModule", 0x0F11);
-pub const SPEC_VM_MODULE_LINK: NodeSpec = NodeSpec::new("vm:SourceTextModule:link", 0x0F13);
-pub const SPEC_VM_MODULE_EVALUATE: NodeSpec = NodeSpec::new("vm:SourceTextModule:evaluate", 0x0F14);
-pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
-pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
-pub const SPEC_TEXT_ENCODER_NEW: NodeSpec = NodeSpec::new("TextEncoder:new", 0x084C);
-pub const SPEC_TEXT_ENCODER_ENCODE: NodeSpec = NodeSpec::new("TextEncoder:encode", 0x084D);
-pub const SPEC_TEXT_ENCODER_ENCODE_INTO: NodeSpec = NodeSpec::new("TextEncoder:encodeInto", 0x084E);
-pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
-pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
-pub const SPEC_TEST_MOCK_FN: NodeSpec = NodeSpec::new("test:mock:fn", 0x1b02);
-pub const SPEC_TEST_MOCK_CALL: NodeSpec = NodeSpec::new("test:mock:call", 0x1b03);
-pub const SPEC_EVENT_TRUSTED_GET: NodeSpec = NodeSpec::new("event:isTrusted:get", 0x1b04);
-pub const SPEC_TEST_MOCK_METHOD: NodeSpec = NodeSpec::new("test:mock:method", 0x1b05);
-pub const SPEC_TEST_MOCK_RESTORE: NodeSpec = NodeSpec::new("test:mock:restore", 0x1b06);
-pub const SPEC_TEST_MOCK_BIND: NodeSpec = NodeSpec::new("test:mock:bind", 0x1b07);
-pub const SPEC_TEST_MOCK_BOUND_CALL: NodeSpec = NodeSpec::new("test:mock:bound-call", 0x1b08);
-pub const SPEC_TEST_MOCK_GETTER: NodeSpec = NodeSpec::new("test:mock:getter", 0x1b09);
-pub const SPEC_TEST_MOCK_SETTER: NodeSpec = NodeSpec::new("test:mock:setter", 0x1b0A);
-pub const SPEC_TEST_MOCK_CALL_COUNT: NodeSpec = NodeSpec::new("test:mock:callCount", 0x1b0B);
-pub const SPEC_TEST_MOCK_IMPLEMENTATION: NodeSpec =
-    NodeSpec::new("test:mock:implementation", 0x1b0C);
-pub const SPEC_TEST_MOCK_IMPLEMENTATION_ONCE: NodeSpec =
-    NodeSpec::new("test:mock:implementationOnce", 0x1b0D);
-pub const SPEC_TEST_BEFORE_EACH: NodeSpec = NodeSpec::new("test:beforeEach", 0x1b0E);
-pub const SPEC_TEST_AFTER_EACH: NodeSpec = NodeSpec::new("test:afterEach", 0x1b0F);
-pub const SPEC_TEST_NESTED: NodeSpec = NodeSpec::new("test:nested", 0x1b10);
-pub const SPEC_TEST_MOCK_RESET_CALLS: NodeSpec = NodeSpec::new("test:mock:resetCalls", 0x1b11);
-pub const SPEC_TEST_MOCK_RESET: NodeSpec = NodeSpec::new("test:mock:reset", 0x1b12);
-pub const SPEC_TEST_MOCK_PROPERTY: NodeSpec = NodeSpec::new("test:mock:property", 0x1b13);
-pub const SPEC_TEST_MOCK_ACCESS_COUNT: NodeSpec = NodeSpec::new("test:mock:accessCount", 0x1b14);
-pub const SPEC_TEST_MOCK_RESET_ACCESSES: NodeSpec =
-    NodeSpec::new("test:mock:resetAccesses", 0x1b15);
-pub const SPEC_TEST_MOCK_PROPERTY_GET: NodeSpec = NodeSpec::new("test:mock:propertyGet", 0x1b16);
-pub const SPEC_TEST_MOCK_PROPERTY_SET: NodeSpec = NodeSpec::new("test:mock:propertySet", 0x1b17);
-pub const SPEC_TEST_MOCK_PROPERTY_ONCE: NodeSpec = NodeSpec::new("test:mock:propertyOnce", 0x1b18);
-pub const SPEC_TEST_MOCK_TIMERS_ENABLE: NodeSpec = NodeSpec::new("test:mock:timers:enable", 0x1b19);
-pub const SPEC_TEST_MOCK_TIMERS_TICK: NodeSpec = NodeSpec::new("test:mock:timers:tick", 0x1b1A);
-pub const SPEC_TEST_MOCK_TIMERS_SETTIME: NodeSpec =
-    NodeSpec::new("test:mock:timers:setTime", 0x1b1B);
-pub const SPEC_TEST_MOCK_TIMERS_RESET: NodeSpec = NodeSpec::new("test:mock:timers:reset", 0x1b1C);
-pub const SPEC_TEST_MOCK_MODULE: NodeSpec = NodeSpec::new("test:mock:module", 0x1b1D);
-pub const SPEC_TEST_CONTEXT_SKIP: NodeSpec = NodeSpec::new("test:context:skip", 0x1b1E);
-pub const SPEC_TEST_CONTEXT_TODO: NodeSpec = NodeSpec::new("test:context:todo", 0x1b1F);
-pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
-pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
+node_api! {
+    (SPEC_TEST, "test:test", 0x1b00),
+    (SPEC_TEST_SKIP, "test:skip", 0x1b01),
+    (SPEC_TEST_MOCK_FN, "test:mock:fn", 0x1b02),
+    (SPEC_TEST_MOCK_CALL, "test:mock:call", 0x1b03),
+    (SPEC_EVENT_TRUSTED_GET, "event:isTrusted:get", 0x1b04),
+    (SPEC_TEST_MOCK_METHOD, "test:mock:method", 0x1b05),
+    (SPEC_TEST_MOCK_RESTORE, "test:mock:restore", 0x1b06),
+    (SPEC_TEST_MOCK_BIND, "test:mock:bind", 0x1b07),
+    (SPEC_TEST_MOCK_BOUND_CALL, "test:mock:bound-call", 0x1b08),
+    (SPEC_TEST_MOCK_GETTER, "test:mock:getter", 0x1b09),
+    (SPEC_TEST_MOCK_SETTER, "test:mock:setter", 0x1b0A),
+    (SPEC_TEST_MOCK_CALL_COUNT, "test:mock:callCount", 0x1b0B),
+    (SPEC_TEST_MOCK_IMPLEMENTATION, "test:mock:implementation", 0x1b0C),
+    (SPEC_TEST_MOCK_IMPLEMENTATION_ONCE, "test:mock:implementationOnce", 0x1b0D),
+    (SPEC_TEST_BEFORE_EACH, "test:beforeEach", 0x1b0E),
+    (SPEC_TEST_AFTER_EACH, "test:afterEach", 0x1b0F),
+    (SPEC_TEST_NESTED, "test:nested", 0x1b10),
+    (SPEC_TEST_MOCK_RESET_CALLS, "test:mock:resetCalls", 0x1b11),
+    (SPEC_TEST_MOCK_RESET, "test:mock:reset", 0x1b12),
+    (SPEC_TEST_MOCK_PROPERTY, "test:mock:property", 0x1b13),
+    (SPEC_TEST_MOCK_ACCESS_COUNT, "test:mock:accessCount", 0x1b14),
+    (SPEC_TEST_MOCK_RESET_ACCESSES, "test:mock:resetAccesses", 0x1b15),
+    (SPEC_TEST_MOCK_PROPERTY_GET, "test:mock:propertyGet", 0x1b16),
+    (SPEC_TEST_MOCK_PROPERTY_SET, "test:mock:propertySet", 0x1b17),
+    (SPEC_TEST_MOCK_PROPERTY_ONCE, "test:mock:propertyOnce", 0x1b18),
+    (SPEC_TEST_MOCK_TIMERS_ENABLE, "test:mock:timers:enable", 0x1b19),
+    (SPEC_TEST_MOCK_TIMERS_TICK, "test:mock:timers:tick", 0x1b1A),
+    (SPEC_TEST_MOCK_TIMERS_SETTIME, "test:mock:timers:setTime", 0x1b1B),
+    (SPEC_TEST_MOCK_TIMERS_RESET, "test:mock:timers:reset", 0x1b1C),
+    (SPEC_TEST_MOCK_MODULE, "test:mock:module", 0x1b1D),
+    (SPEC_TEST_CONTEXT_SKIP, "test:context:skip", 0x1b1E),
+    (SPEC_TEST_CONTEXT_TODO, "test:context:todo", 0x1b1F),
+    (SPEC_TEST_RUN_EMIT, "test:run:emit", 0x1b20),
+    (SPEC_TEST_GET_CONTEXT, "test:getTestContext", 0x1b21),
+}
 
 node_api! {
+    (SPEC_INTERNAL_JS_STREAM, "internal:js_stream", 0x0F12),
+    (SPEC_VM_SOURCE_TEXT_MODULE, "vm:SourceTextModule", 0x0F11),
+    (SPEC_VM_MODULE_LINK, "vm:SourceTextModule:link", 0x0F13),
+    (SPEC_VM_MODULE_EVALUATE, "vm:SourceTextModule:evaluate", 0x0F14),
+    (SPEC_TEXT_DECODER_NEW, "TextDecoder:new", 0x0809),
+    (SPEC_TEXT_DECODER_DECODE, "TextDecoder:decode", 0x080A),
+    (SPEC_TEXT_ENCODER_NEW, "TextEncoder:new", 0x084C),
+    (SPEC_TEXT_ENCODER_ENCODE, "TextEncoder:encode", 0x084D),
+    (SPEC_TEXT_ENCODER_ENCODE_INTO, "TextEncoder:encodeInto", 0x084E),
+    (SPEC_UTIL_FORMAT, "util:format", 0x0300),
+    (SPEC_UTIL_INSPECT, "util:inspect", 0x0301),
+    (SPEC_UTIL_ABORTED, "util:aborted", 0x0310),
+    (SPEC_UTIL_ABORTED_RESOLVE, "util:aborted:resolve", 0x0311),
+    (SPEC_UTIL_TYPES, "util:types", 0x0302),
+    (SPEC_UTIL_GETCALLSITES, "util:getCallSites", 0x0303),
+    (SPEC_UTIL_IS, "util:is", 0x030D),
+    (SPEC_UTIL_INHERITS, "util:inherits", 0x0304),
+    (SPEC_UTIL_STRIP_VT, "util:stripVTControlCharacters", 0x0305),
+    (SPEC_UTIL_FORMAT_WITH_OPTIONS, "util:formatWithOptions", 0x0306),
+    (SPEC_UTIL_STYLE_TEXT, "util:styleText", 0x0307),
+    (SPEC_UTIL_IS_DEEP_STRICT_EQUAL, "util:isDeepStrictEqual", 0x0308),
+    (SPEC_UTIL_TO_USV_STRING, "util:toUSVString", 0x0309),
+    (SPEC_UTIL_IS_NATIVE_ERROR, "util.types:isNativeError", 0x030A),
+    (SPEC_UTIL_PARSE_ENV, "util:parseEnv", 0x030B),
+    (SPEC_UTIL_TYPE_PREDICATE, "util.types:predicate", 0x030C),
+    (SPEC_CONSOLE_LOG, "console:log", 0x0200),
+    (SPEC_CONSOLE_INFO, "console:info", 0x0201),
+    (SPEC_CONSOLE_WARN, "console:warn", 0x0202),
+    (SPEC_CONSOLE_ERROR, "console:error", 0x0203),
+    (SPEC_CONSOLE_DEBUG, "console:debug", 0x0204),
+    (SPEC_CONSOLE_TRACE, "console:trace", 0x0205),
+    (SPEC_EVENTS_NEW, "events:EventEmitter", 0x0100),
+    (SPEC_EVENTS_FROM, "events:from", 0x0101),
+    (SPEC_EVENTS_ON, "events:on", 0x0102),
+    (SPEC_EVENTS_EMIT, "events:emit", 0x0103),
+    (SPEC_EVENTS_CAPTURE_GET, "events:captureRejections:get", 0x0104),
+    (SPEC_EVENTS_CAPTURE_SET, "events:captureRejections:set", 0x0119),
+    (SPEC_EVENTS_DEFAULT_MAX_GET, "events:defaultMaxListeners:get", 0x0125),
+    (SPEC_EVENTS_DEFAULT_MAX_SET, "events:defaultMaxListeners:set", 0x0126),
+    (SPEC_EVENTS_RAW_LISTENERS, "events:rawListeners", 0x0127),
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
     (SPEC_DIAGNOSTICS_SUBSCRIBE, "diagnostics_channel:subscribe", 0x1F01),
     (SPEC_DIAGNOSTICS_UNSUBSCRIBE, "diagnostics_channel:unsubscribe", 0x1F02),
