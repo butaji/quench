@@ -38,44 +38,42 @@ impl NodeSpec {
 }
 
 /// All Node host capabilities. Stable ids; do not reorder.
-pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
-pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
-pub const SPEC_TEST_MOCK_FN: NodeSpec = NodeSpec::new("test:mock:fn", 0x1b02);
-pub const SPEC_TEST_MOCK_CALL: NodeSpec = NodeSpec::new("test:mock:call", 0x1b03);
-pub const SPEC_EVENT_TRUSTED_GET: NodeSpec = NodeSpec::new("event:isTrusted:get", 0x1b04);
-pub const SPEC_TEST_MOCK_METHOD: NodeSpec = NodeSpec::new("test:mock:method", 0x1b05);
-pub const SPEC_TEST_MOCK_RESTORE: NodeSpec = NodeSpec::new("test:mock:restore", 0x1b06);
-pub const SPEC_TEST_MOCK_BIND: NodeSpec = NodeSpec::new("test:mock:bind", 0x1b07);
-pub const SPEC_TEST_MOCK_BOUND_CALL: NodeSpec = NodeSpec::new("test:mock:bound-call", 0x1b08);
-pub const SPEC_TEST_MOCK_GETTER: NodeSpec = NodeSpec::new("test:mock:getter", 0x1b09);
-pub const SPEC_TEST_MOCK_SETTER: NodeSpec = NodeSpec::new("test:mock:setter", 0x1b0A);
-pub const SPEC_TEST_MOCK_CALL_COUNT: NodeSpec = NodeSpec::new("test:mock:callCount", 0x1b0B);
-pub const SPEC_TEST_MOCK_IMPLEMENTATION: NodeSpec =
-    NodeSpec::new("test:mock:implementation", 0x1b0C);
-pub const SPEC_TEST_MOCK_IMPLEMENTATION_ONCE: NodeSpec =
-    NodeSpec::new("test:mock:implementationOnce", 0x1b0D);
-pub const SPEC_TEST_BEFORE_EACH: NodeSpec = NodeSpec::new("test:beforeEach", 0x1b0E);
-pub const SPEC_TEST_AFTER_EACH: NodeSpec = NodeSpec::new("test:afterEach", 0x1b0F);
-pub const SPEC_TEST_NESTED: NodeSpec = NodeSpec::new("test:nested", 0x1b10);
-pub const SPEC_TEST_MOCK_RESET_CALLS: NodeSpec = NodeSpec::new("test:mock:resetCalls", 0x1b11);
-pub const SPEC_TEST_MOCK_RESET: NodeSpec = NodeSpec::new("test:mock:reset", 0x1b12);
-pub const SPEC_TEST_MOCK_PROPERTY: NodeSpec = NodeSpec::new("test:mock:property", 0x1b13);
-pub const SPEC_TEST_MOCK_ACCESS_COUNT: NodeSpec = NodeSpec::new("test:mock:accessCount", 0x1b14);
-pub const SPEC_TEST_MOCK_RESET_ACCESSES: NodeSpec =
-    NodeSpec::new("test:mock:resetAccesses", 0x1b15);
-pub const SPEC_TEST_MOCK_PROPERTY_GET: NodeSpec = NodeSpec::new("test:mock:propertyGet", 0x1b16);
-pub const SPEC_TEST_MOCK_PROPERTY_SET: NodeSpec = NodeSpec::new("test:mock:propertySet", 0x1b17);
-pub const SPEC_TEST_MOCK_PROPERTY_ONCE: NodeSpec = NodeSpec::new("test:mock:propertyOnce", 0x1b18);
-pub const SPEC_TEST_MOCK_TIMERS_ENABLE: NodeSpec = NodeSpec::new("test:mock:timers:enable", 0x1b19);
-pub const SPEC_TEST_MOCK_TIMERS_TICK: NodeSpec = NodeSpec::new("test:mock:timers:tick", 0x1b1A);
-pub const SPEC_TEST_MOCK_TIMERS_SETTIME: NodeSpec =
-    NodeSpec::new("test:mock:timers:setTime", 0x1b1B);
-pub const SPEC_TEST_MOCK_TIMERS_RESET: NodeSpec = NodeSpec::new("test:mock:timers:reset", 0x1b1C);
-pub const SPEC_TEST_MOCK_MODULE: NodeSpec = NodeSpec::new("test:mock:module", 0x1b1D);
-pub const SPEC_TEST_CONTEXT_SKIP: NodeSpec = NodeSpec::new("test:context:skip", 0x1b1E);
-pub const SPEC_TEST_CONTEXT_TODO: NodeSpec = NodeSpec::new("test:context:todo", 0x1b1F);
-pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
-pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
+node_api! {
+    (SPEC_TEST, "test:test", 0x1b00),
+    (SPEC_TEST_SKIP, "test:skip", 0x1b01),
+    (SPEC_TEST_MOCK_FN, "test:mock:fn", 0x1b02),
+    (SPEC_TEST_MOCK_CALL, "test:mock:call", 0x1b03),
+    (SPEC_EVENT_TRUSTED_GET, "event:isTrusted:get", 0x1b04),
+    (SPEC_TEST_MOCK_METHOD, "test:mock:method", 0x1b05),
+    (SPEC_TEST_MOCK_RESTORE, "test:mock:restore", 0x1b06),
+    (SPEC_TEST_MOCK_BIND, "test:mock:bind", 0x1b07),
+    (SPEC_TEST_MOCK_BOUND_CALL, "test:mock:bound-call", 0x1b08),
+    (SPEC_TEST_MOCK_GETTER, "test:mock:getter", 0x1b09),
+    (SPEC_TEST_MOCK_SETTER, "test:mock:setter", 0x1b0A),
+    (SPEC_TEST_MOCK_CALL_COUNT, "test:mock:callCount", 0x1b0B),
+    (SPEC_TEST_MOCK_IMPLEMENTATION, "test:mock:implementation", 0x1b0C),
+    (SPEC_TEST_MOCK_IMPLEMENTATION_ONCE, "test:mock:implementationOnce", 0x1b0D),
+    (SPEC_TEST_BEFORE_EACH, "test:beforeEach", 0x1b0E),
+    (SPEC_TEST_AFTER_EACH, "test:afterEach", 0x1b0F),
+    (SPEC_TEST_NESTED, "test:nested", 0x1b10),
+    (SPEC_TEST_MOCK_RESET_CALLS, "test:mock:resetCalls", 0x1b11),
+    (SPEC_TEST_MOCK_RESET, "test:mock:reset", 0x1b12),
+    (SPEC_TEST_MOCK_PROPERTY, "test:mock:property", 0x1b13),
+    (SPEC_TEST_MOCK_ACCESS_COUNT, "test:mock:accessCount", 0x1b14),
+    (SPEC_TEST_MOCK_RESET_ACCESSES, "test:mock:resetAccesses", 0x1b15),
+    (SPEC_TEST_MOCK_PROPERTY_GET, "test:mock:propertyGet", 0x1b16),
+    (SPEC_TEST_MOCK_PROPERTY_SET, "test:mock:propertySet", 0x1b17),
+    (SPEC_TEST_MOCK_PROPERTY_ONCE, "test:mock:propertyOnce", 0x1b18),
+    (SPEC_TEST_MOCK_TIMERS_ENABLE, "test:mock:timers:enable", 0x1b19),
+    (SPEC_TEST_MOCK_TIMERS_TICK, "test:mock:timers:tick", 0x1b1A),
+    (SPEC_TEST_MOCK_TIMERS_SETTIME, "test:mock:timers:setTime", 0x1b1B),
+    (SPEC_TEST_MOCK_TIMERS_RESET, "test:mock:timers:reset", 0x1b1C),
+    (SPEC_TEST_MOCK_MODULE, "test:mock:module", 0x1b1D),
+    (SPEC_TEST_CONTEXT_SKIP, "test:context:skip", 0x1b1E),
+    (SPEC_TEST_CONTEXT_TODO, "test:context:todo", 0x1b1F),
+    (SPEC_TEST_RUN_EMIT, "test:run:emit", 0x1b20),
+    (SPEC_TEST_GET_CONTEXT, "test:getTestContext", 0x1b21),
+}
 
 node_api! {
     (SPEC_INTERNAL_JS_STREAM, "internal:js_stream", 0x0F12),
