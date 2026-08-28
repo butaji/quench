@@ -70,6 +70,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::TypedArrayFindLast => Some("findLast"),
         Builtin::ArrayFindLastIndex => Some("findLastIndex"),
         Builtin::TypedArrayFindLastIndex => Some("findLastIndex"),
+        Builtin::TypedArrayFill => Some("fill"),
         _ => fn_name_tail(builtin),
     }
 }
@@ -153,6 +154,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayPush
         | Builtin::ArrayUnshift
         | Builtin::ArrayFill
+        | Builtin::TypedArrayFill
         | Builtin::ArrayToSorted
         | Builtin::TypedArrayToSorted => Some(1.0),
         Builtin::TypedArraySet => Some(1.0),

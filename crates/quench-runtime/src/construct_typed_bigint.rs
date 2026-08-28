@@ -191,6 +191,9 @@ pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError>
         let primitive = crate::conversion::to_primitive(value, "number")?;
         return bigint_bits(&primitive);
     }
+    if crate::conversion::is_symbol(value) {
+        return Err(type_error("Cannot convert a Symbol value to BigInt"));
+    }
     let raw = match value {
         Value::BigInt(raw) | Value::String(raw) => raw.clone(),
         Value::StringUnits(units) => String::from_utf16(&units.to_vec())
