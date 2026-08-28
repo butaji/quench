@@ -508,12 +508,12 @@ mod stubs {
             )));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeFrom {
-            return Some(zoned_from(arguments.first()));
+            return Some(zoned_from(arguments.first(), arguments.get(1)));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeCompare {
             return Some((|| {
-                let left = zoned_from(arguments.first())?;
-                let right = zoned_from(arguments.get(1))?;
+                let left = zoned_from(arguments.first(), None)?;
+                let right = zoned_from(arguments.get(1), None)?;
                 let left = crate::execute::get_property_result(&left, "epochNanoseconds")?;
                 let right = crate::execute::get_property_result(&right, "epochNanoseconds")?;
                 let (Value::BigInt(left), Value::BigInt(right)) = (left, right) else {
@@ -648,12 +648,12 @@ mod stubs {
         ))))
     }
 
-    fn zoned_from(value: Option<&Value>) -> Result<Value, VmError> {
+    fn zoned_from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
         let value =
             value.ok_or_else(|| crate::value::error::throw_type_error("Invalid ZonedDateTime"))?;
         if matches!(value, Value::StringUnits(_)) {
             let text = crate::conversion::to_string(value)?;
-            return zoned_from(Some(&Value::String(text)));
+            return zoned_from(Some(&Value::String(text)), options);
         }
         if let Value::String(text) = value {
             if !text.contains('[') {
@@ -767,6 +767,24 @@ mod stubs {
                 .unwrap_or(if has_z { "UTC" } else { offset_text });
             let timezone =
                 super::parse_timezone_identifier(&Value::String(timezone_text.to_string()))?;
+            let offset_mode = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .and_then(|value| crate::execute::get_property_result(value, "offset").ok())
+                .filter(|value| !matches!(value, Value::Undefined))
+                .and_then(|value| crate::conversion::to_string(&value).ok())
+                .unwrap_or_else(|| "reject".into());
+            if offset_start.is_some() && offset_mode != "ignore" {
+                let supplied_offset = super::fixed_offset_nanos(offset_text);
+                let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
+                if supplied_offset != actual_offset {
+                    return Err(crate::value::error::throw_range_error(
+                        "Offset does not match time zone",
+                    ));
+                }
+            }
+            if offset_start.is_some() && offset_mode == "ignore" {
+                epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            }
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
             }
@@ -974,7 +992,7 @@ mod stubs {
             let other = arguments
                 .first()
                 .ok_or_else(|| crate::value::error::throw_type_error("Missing value"))?;
-            let other = zoned_from(Some(other))?;
+            let other = zoned_from(Some(other), None)?;
             return Ok(Value::Boolean(
                 ["epochNanoseconds", "timeZoneId", "calendarId"]
                     .iter()
@@ -1072,7 +1090,7 @@ mod stubs {
             }
             let result = zoned_from(Some(&Value::Object(std::rc::Rc::new(
                 crate::value::ObjectData::new(fields),
-            ))))?;
+            ))), None)?;
             return Ok(result);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone {
@@ -1492,7 +1510,7 @@ mod stubs {
             let other = arguments
                 .first()
                 .ok_or_else(|| crate::value::error::throw_type_error("Missing ZonedDateTime"))?;
-            let other = zoned_from(Some(other))?;
+            let other = zoned_from(Some(other), None)?;
             let options = arguments.get(1);
             if options.is_some_and(|value| {
                 !matches!(value, Value::Undefined) && !crate::value::is_object(value)
