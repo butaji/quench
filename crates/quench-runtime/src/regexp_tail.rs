@@ -26,7 +26,7 @@ fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError>
 
 /// Copy capture-group byte ranges out of a match so the borrow can end before
 /// a String is rebound.
-fn group_ranges(m: &regress::Match, passes: &mut Vec<Option<(usize, usize)>>) {
+fn group_ranges(m: &Match, passes: &mut Vec<Option<(usize, usize)>>) {
     passes.extend(
         m.groups()
             .skip(1)
@@ -580,7 +580,7 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
 fn replacer_args(
     s: &str,
     rest: &str,
-    m: &regress::Match,
+    m: &Match,
     end: usize,
 ) -> Vec<Value> {
     let mut args = vec![
@@ -614,7 +614,7 @@ fn next_char(text: &str, at: usize) -> usize {
     text[at..].chars().next().map_or(text.len(), |c| at + c.len_utf8())
 }
 
-fn expand_template(template: &str, input: &str, rest: &str, m: &regress::Match) -> String {
+fn expand_template(template: &str, input: &str, rest: &str, m: &Match) -> String {
     let mut out = String::new();
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;
@@ -635,7 +635,7 @@ fn expand_template_token(
     index: usize,
     input: &str,
     rest: &str,
-    m: &regress::Match,
+    m: &Match,
 ) -> Option<usize> {
     if chars.get(index) != Some(&'$') {
         return None;
@@ -691,17 +691,17 @@ fn expand_template_token(
     Some(index + 2)
 }
 
-fn replacement_prefix(input: &str, rest: &str, m: &regress::Match) -> String {
+fn replacement_prefix(input: &str, rest: &str, m: &Match) -> String {
     let offset = input.len() - rest.len();
     input[..offset + m.start()].to_string()
 }
 
-fn replacement_suffix(input: &str, rest: &str, m: &regress::Match) -> String {
+fn replacement_suffix(input: &str, rest: &str, m: &Match) -> String {
     let offset = input.len() - rest.len();
     input[offset + m.end()..].to_string()
 }
 
-fn template_group_number(m: &regress::Match, rest: &str, number: usize) -> Option<String> {
+fn template_group_number(m: &Match, rest: &str, number: usize) -> Option<String> {
     if number == 0 {
         return None;
     }
@@ -709,7 +709,7 @@ fn template_group_number(m: &regress::Match, rest: &str, number: usize) -> Optio
     Some(group.map_or_else(String::new, |(start, end)| rest[start..end].to_string()))
 }
 
-fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
+fn groups_at<'a>(m: &'a Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
     m.groups()
         .skip(1)
         .map(|group| group.map(|range| (range.start, range.end)))

@@ -3,7 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use crate::{
     execute::VmError,
     ops::Builtin,
-    regexp_backend::{Flags, Regex},
+    regexp_backend::{Flags, Match, Regex},
     value::Value,
 };
 
