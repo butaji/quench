@@ -20,16 +20,46 @@ fn from_impl(
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     reject_source(&source)?;
     let mapper = mapper(arguments)?;
-    let iterable =
-        !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) && has_iterator(&source)?;
-    if iterable {
-        if typed_mode {
-            return from_typed_iterable(receiver, source, mapper.as_ref(), arguments);
+    if typed_mode {
+        let method = crate::execute::get_property_result(&source, "Symbol.iterator")?;
+        if !matches!(method, Value::Undefined | Value::Null) {
+            return from_typed_iterable(receiver, source, mapper.as_ref(), arguments, method);
         }
+    }
+    let iterable = if typed_mode {
+        false
+    } else {
+        !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) && has_iterator(&source)?
+    };
+    if iterable {
         if is_default_array_iterator(&source)? {
             return from_live_array(receiver, source, mapper.as_ref(), arguments);
         }
         return from_iterable(receiver, source, mapper.as_ref(), arguments);
+    }
+    if uses_custom_result(receiver) {
+        let length = array_like_length(&source)?;
+        let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
+        let mut result = if typed_mode {
+            construct_typed_result(receiver, length)?
+        } else {
+            construct_result(receiver, length, false)?
+        };
+        if typed_array_result_unwritable(&result, length > 0) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot set an element on an invalid typed array",
+            ));
+        }
+        for index in 0..length {
+            let item = if let Value::Array(array) = &source {
+                array.get_index(index).unwrap_or(Value::Undefined)
+            } else {
+                crate::execute::get_property_result(&source, &index.to_string())?
+            };
+            let value = map_item(mapper.as_ref(), &this_arg, item, index)?;
+            result = write_result_element(result, index, value)?;
+        }
+        return Ok(result);
     }
     let mut values = Vec::new();
     if let Value::Array(array) = &source {
@@ -45,14 +75,21 @@ fn from_typed_iterable(
     source: Value,
     mapper: Option<&Value>,
     arguments: &[Value],
+    method: Value,
 ) -> Result<Value, crate::execute::VmError> {
     let mut source_values = Vec::new();
-    crate::collections::iterator::for_each_iterable(source, |item| {
+    let iterator = crate::collections::iterator::open_with_method(&source, method)?;
+    crate::collections::iterator::for_each_open_iterator(iterator, |item| {
         source_values.push(item);
         Ok(())
     })?;
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
-    let mut result = construct_result(receiver, source_values.len(), true)?;
+    let mut result = construct_typed_result(receiver, source_values.len())?;
+    if typed_array_result_unwritable(&result, !source_values.is_empty()) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set an element on an invalid typed array",
+        ));
+    }
     for (index, item) in source_values.into_iter().enumerate() {
         let value = map_item(mapper, &this_arg, item, index)?;
         result = write_result_element(result, index, value)?;
@@ -64,7 +101,11 @@ pub(crate) fn of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    create_result(receiver.filter(|value| is_constructor(value)), arguments.to_vec(), false)
+    create_result(
+        receiver.filter(|value| is_constructor(value)),
+        arguments.to_vec(),
+        false,
+    )
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
@@ -250,6 +291,26 @@ fn create_result(
     Ok(result)
 }
 
+fn typed_array_result_unwritable(result: &Value, require_element: bool) -> bool {
+    if !crate::typed_array_ops::is_view(result) {
+        return false;
+    }
+    if require_element && crate::typed_array_prototype::is_out_of_bounds(result) {
+        return true;
+    }
+    matches!(result, Value::Float64Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Float32Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Int8Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Int16Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Int32Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Uint8Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Uint8ClampedArray(view) if view.buffer.immutable)
+        || matches!(result, Value::Uint16Array(view) if view.buffer.immutable)
+        || matches!(result, Value::Uint32Array(view) if view.buffer.immutable)
+        || matches!(result, Value::BigInt64Array(view) if view.buffer.immutable)
+        || matches!(result, Value::BigUint64Array(view) if view.buffer.immutable)
+}
+
 fn set_result_length(result: Value, length: usize) -> Result<Value, crate::execute::VmError> {
     let updated =
         crate::properties::assign_set_property(&result, "length", Value::Number(length as f64))?;
@@ -267,9 +328,18 @@ fn write_result_element(
     // writable but non-configurable, so defining a fresh property would
     // incorrectly trip the ordinary-object read-only check.
     if crate::typed_array_ops::is_view(&result) {
-        let updated = crate::builtins::set_property(result.clone(), &key, value);
-        crate::locals::replace_value(&result, &updated);
-        return Ok(updated);
+        if typed_array_result_unwritable(&result, true)
+            || crate::typed_array_ops::logical_len(&result).is_some_and(|length| index >= length)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot set an element on an invalid typed array",
+            ));
+        }
+        if let Some(updated) = crate::typed_array_ops::set_property(&result, &key, &value) {
+            let updated = updated?;
+            crate::locals::replace_value(&result, &updated);
+            return Ok(updated);
+        }
     }
     let current =
         crate::builtins::object::descriptor(Some(&result), Some(&Value::String(key.clone())))?;
@@ -323,6 +393,45 @@ fn construct_result(
     length: usize,
     iterable: bool,
 ) -> Result<Value, crate::execute::VmError> {
+    construct_result_inner(receiver, length, iterable, false)
+}
+
+fn construct_typed_result(
+    receiver: Option<&Value>,
+    length: usize,
+) -> Result<Value, crate::execute::VmError> {
+    let result = construct_result_inner(receiver, length, true, true)?;
+    if !is_typed_array_result(&result) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray constructor did not return a TypedArray",
+        ));
+    }
+    Ok(result)
+}
+
+fn is_typed_array_result(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::Uint32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+    )
+}
+
+fn construct_result_inner(
+    receiver: Option<&Value>,
+    length: usize,
+    iterable: bool,
+    force_length: bool,
+) -> Result<Value, crate::execute::VmError> {
     let Some(constructor) = receiver else {
         return Ok(Value::array(Vec::new()));
     };
@@ -351,7 +460,7 @@ fn construct_result(
                 | crate::ops::Builtin::BigUint64Array
         )
     );
-    let arguments = if builtin_typed || !iterable {
+    let arguments = if force_length || builtin_typed || !iterable {
         vec![Value::Number(length as f64)]
     } else {
         Vec::new()

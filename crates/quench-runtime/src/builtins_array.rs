@@ -7,9 +7,14 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         return (target, deleted);
     }
     if crate::typed_array_ops::is_view(&target)
-        && crate::builtins::descriptor_flag(&target, key, "configurable") == Some(false)
+        && (crate::typed_array_prototype::own_property(&target, key).is_some()
+            || crate::typed_array_prototype::descriptor(&target, key).is_some())
     {
-        return (target, false);
+        if crate::builtins::descriptor_flag(&target, key, "configurable") == Some(false) {
+            return (target, false);
+        }
+        let removed = crate::typed_array_prototype::remove_own_property(&target, key);
+        return (target, removed);
     }
     match target {
         Value::Object(properties) => delete_object_property_value(properties, key),
