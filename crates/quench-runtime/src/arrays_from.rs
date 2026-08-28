@@ -26,11 +26,12 @@ pub(crate) fn of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let plain_array = receiver.is_none_or(|value| !is_constructor(value));
-    if plain_array {
-        return Ok(Value::array(arguments.to_vec()));
-    }
-    create_result(receiver, arguments.to_vec(), false)
+    let Some(receiver) = receiver.filter(|value| is_constructor(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.of called on a non-constructor",
+        ));
+    };
+    create_result(Some(receiver), arguments.to_vec(), false)
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
