@@ -15,9 +15,12 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::modules::emitter::{emitter_id, EmitterId, EventEmitter, Listener, EMITTER_ID_PROP};
 
+const CAPTURE_SUPPRESSED_PROP: &str = "\0quench:events:capture-suppressed";
+
 thread_local! {
     static CAPTURE_REJECTIONS: Cell<bool> = const { Cell::new(false) };
     static DEFAULT_MAX_LISTENERS: Cell<usize> = const { Cell::new(10) };
+    static CAPTURE_SUPPRESSION_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 pub fn default_max_get(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -298,8 +301,7 @@ fn warn_max_listeners(
         }
         _ => "[EventEmitter]".into(),
     };
-    let display = execute::to_js_string_explicit(event_value)
-        .unwrap_or_else(|_| event.to_string());
+    let display = execute::to_js_string_explicit(event_value).unwrap_or_else(|_| event.to_string());
     let message = format!(
         "Possible EventEmitter memory leak detected. {count} {display} listeners added to {label}. MaxListeners is {limit}. Use emitter.setMaxListeners() to increase limit"
     );
@@ -381,10 +383,33 @@ pub fn method_emit(
             execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]))?;
         }
     }
-    let capture_rejections = emitter.borrow().capture_rejections;
+    let capture_suppressed = CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
+        || matches!(
+            execute::get_property(receiver, CAPTURE_SUPPRESSED_PROP),
+            Value::Boolean(true)
+        );
+    let capture_rejections = emitter.borrow().capture_rejections && !capture_suppressed;
     let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
     if snapshot.is_empty() {
         if event == "error" {
+            if CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
+                || matches!(
+                    execute::get_property(receiver, CAPTURE_SUPPRESSED_PROP),
+                    Value::Boolean(true)
+                )
+            {
+                let emitted = crate::modules::process::emit(
+                    state,
+                    &[
+                        Value::String("uncaughtException".into()),
+                        args.get(1).cloned().unwrap_or(Value::Undefined),
+                        Value::String("unhandledRejection".into()),
+                    ],
+                )?;
+                if execute::is_truthy(&emitted) {
+                    return Ok(Value::Boolean(true));
+                }
+            }
             if let Some(result) = route_domain_error(state, receiver, args.get(1))? {
                 return Ok(result);
             }
@@ -417,9 +442,23 @@ pub fn method_emit(
                 )?;
             }
         }
-        let result = execute::call(&listener.callback, receiver, &rest)?;
+        let result = match execute::call(&listener.callback, receiver, &rest) {
+            Ok(result) => result,
+            Err(VmError::Thrown(reason)) if event == "error" => {
+                crate::modules::process::emit(
+                    state,
+                    &[
+                        Value::String("uncaughtException".into()),
+                        reason,
+                        Value::String("uncaughtException".into()),
+                    ],
+                )?;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(result, Value::Promise(_)) {
-            if capture_rejections {
+            if capture_rejections || capture_suppressed {
                 attach_rejection_handler(state, receiver, &event, &rest, &result)?;
             } else {
                 attach_unhandled_rejection(&result)?;
@@ -458,7 +497,16 @@ fn attach_rejection_handler(
             } catch (reason) {
               process.emit('unhandledRejection', reason);
             }
-          } else emitter.emit('error', error);
+          } else {
+            if (event === 'error') {
+              process.emit('unhandledRejection', error);
+            } else {
+              const key = "\0quench:events:capture-suppressed";
+              emitter[key] = true;
+              try { emitter.emit('error', error); }
+              finally { delete emitter[key]; }
+            }
+          }
         }"#,
     )?;
     let bind = execute::get_property_result(&handler, "bind")?;
@@ -476,11 +524,7 @@ fn attach_rejection_handler(
         Ok(then) => then,
         Err(error) => {
             if let VmError::Thrown(reason) = error {
-                let _ = method_emit(
-                    state,
-                    Some(receiver),
-                    &[Value::String("error".into()), reason],
-                )?;
+                let _ = emit_error_without_capture(state, receiver, reason)?;
             }
             return Ok(());
         }
@@ -488,19 +532,61 @@ fn attach_rejection_handler(
     if !quench_runtime::is_callable(&then) {
         return Ok(());
     }
-    let result = execute::call(&then, promise, &[Value::Undefined, bound]);
+    let rejection = execute::get_property(receiver, "Symbol.for.nodejs.rejection\0");
+    let result = if quench_runtime::is_callable(&rejection) {
+        execute::call(&then, promise, &[Value::Undefined, bound])
+    } else {
+        with_capture_disabled(state, receiver, || {
+            execute::call(&then, promise, &[Value::Undefined, bound])
+        })
+    };
     match result {
         Ok(Value::Promise(_child)) => {}
         Err(VmError::Thrown(reason)) => {
-            let _ = method_emit(
-                state,
-                Some(receiver),
-                &[Value::String("error".into()), reason],
-            )?;
+            let _ = emit_error_without_capture(state, receiver, reason)?;
         }
         _ => {}
     }
     Ok(())
+}
+
+/// Node disables rejection capture while routing a rejection to the error
+/// channel.  This makes an async `error` listener terminal instead of
+/// recursively capturing its own rejected promise.
+fn emit_error_without_capture(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    reason: Value,
+) -> Result<Value, VmError> {
+    with_capture_disabled(state, receiver, || {
+        method_emit(
+            state,
+            Some(receiver),
+            &[Value::String("error".into()), reason],
+        )
+    })
+}
+
+fn with_capture_disabled<T>(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let id = ensure_emitter(state, Some(receiver));
+    let emitter = id.and_then(|id| state.borrow().emitters.get(id));
+    let previous = emitter.as_ref().map(|emitter| {
+        let mut guard = emitter.borrow_mut();
+        let previous = guard.capture_rejections;
+        guard.capture_rejections = false;
+        previous
+    });
+    CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let result = operation();
+    CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    if let (Some(emitter), Some(previous)) = (emitter, previous) {
+        emitter.borrow_mut().capture_rejections = previous;
+    }
+    result
 }
 
 fn attach_unhandled_rejection(promise: &Value) -> Result<(), VmError> {
@@ -528,9 +614,12 @@ fn route_domain_error(
     if handler.is_none() || matches!(handler, Some(Value::Undefined | Value::Null)) {
         return Ok(None);
     }
-    let original = argument
-        .cloned()
-        .filter(|value| !matches!(value, Value::Null | Value::Undefined | Value::Boolean(false)));
+    let original = argument.cloned().filter(|value| {
+        !matches!(
+            value,
+            Value::Null | Value::Undefined | Value::Boolean(false)
+        )
+    });
     let error = original.clone().unwrap_or_else(|| {
         quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
@@ -1067,6 +1156,93 @@ pub fn build() -> Value {
     // consumers may delete or override methods just like native Node does.
     if let Ok(prototype) = emitter_prototype() {
         let _ = execute::set_callable_property(&value, "prototype", prototype);
+    }
+    let async_resource = crate::modules::async_hooks::build();
+    let resource_constructor = execute::get_property(&async_resource, "AsyncResource");
+    if let Ok(factory) = eval_function(
+        r#"(Base, Resource) => {
+          let asyncEmitterPrototype;
+          const Emitter = function(...args) {
+            const object = new Base(...args);
+            const prototype = asyncEmitterPrototype || Emitter.prototype;
+            let result = Object.setPrototypeOf(object, prototype);
+            if (asyncEmitterPrototype) {
+              for (const key of ['emit', 'emitDestroy', 'asyncId', 'triggerAsyncId', 'asyncResource']) {
+                const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
+                if (descriptor) result = Object.defineProperty(result, key, descriptor);
+              }
+            }
+            return result;
+          };
+          Emitter.prototype = Base.prototype;
+          const owners = new WeakMap();
+          const EventEmitterAsyncResource = class EventEmitterAsyncResource extends Emitter {
+          constructor(nameOrOptions, options) {
+            const config = nameOrOptions && typeof nameOrOptions === 'object'
+              ? nameOrOptions : (options || {});
+            const positionalType = typeof nameOrOptions === 'string' ? nameOrOptions : undefined;
+            super(config);
+            const type = positionalType || config.name || (new.target && new.target.name) || this.constructor.name || 'EventEmitterAsyncResource';
+            this._asyncResource = new Resource(type, config);
+            owners.set(this._asyncResource, this);
+            Object.defineProperty(this._asyncResource, 'eventEmitter', {
+              configurable: true,
+              get: () => owners.get(this._asyncResource),
+            });
+            return Object.setPrototypeOf(this, EventEmitterAsyncResource.prototype);
+          }
+          emit(event, ...args) {
+            if (!this._asyncResource) throw new TypeError('Cannot read private member');
+            this._asyncResource.emitBefore();
+            try { return Base.prototype.emit.call(this, event, ...args); }
+            finally { this._asyncResource.emitAfter(); }
+          }
+          emitDestroy() {
+            if (!this._asyncResource) throw new TypeError('Cannot read private member');
+            this._asyncResource.emitDestroy();
+            return this;
+          }
+          get asyncId() {
+            if (!this._asyncResource) {
+              const error = new TypeError('Cannot read private member');
+              error.stack = 'TypeError: Cannot read private member\\n    at get asyncId';
+              throw error;
+            }
+            return this._asyncResource.asyncId();
+          }
+          get triggerAsyncId() {
+            if (!this._asyncResource) {
+              const error = new TypeError('Cannot read private member');
+              error.stack = 'TypeError: Cannot read private member\\n    at get triggerAsyncId';
+              throw error;
+            }
+            return this._asyncResource.triggerAsyncId();
+          }
+          get asyncResource() {
+            if (!this._asyncResource) {
+              const error = new TypeError('Cannot read private member');
+              error.stack = 'TypeError: Cannot read private member\\n    at get asyncResource';
+              throw error;
+            }
+            owners.set(this._asyncResource, this);
+            return this._asyncResource;
+          }
+          };
+          asyncEmitterPrototype = EventEmitterAsyncResource.prototype;
+          return EventEmitterAsyncResource;
+        }"#,
+    ) {
+        if let Ok(async_emitter) = execute::call(
+            &factory,
+            &Value::Undefined,
+            &[value.clone(), resource_constructor],
+        ) {
+            let _ = execute::set_callable_property(
+                &value,
+                "EventEmitterAsyncResource",
+                async_emitter,
+            );
+        }
     }
     let once = eval_function(
         r#"(emitter, event, options) => {

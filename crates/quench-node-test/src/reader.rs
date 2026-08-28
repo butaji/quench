@@ -174,13 +174,17 @@ impl NodeRunner {
         let result = normalize_script_completion(
             quench_runtime::vm::execute_code_with_context(program.code(), &self.context),
         )
-            .and_then(|_| self.drive("__quench_run_loop__();"))
-            .and_then(|_| {
-                self.drive(
-                    "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
-                )
-            });
+        .and_then(|_| self.drive("__quench_run_loop__();"));
+        // Promise jobs may surface an uncaught rejection while the loop is
+        // draining. Route that lifecycle event before checking harness call
+        // counts; otherwise the verifier observes its own pending handler as
+        // missing and reports a false failure.
         let result = self.route_uncaught(result);
+        let result = result.and_then(|_| {
+            self.drive(
+                "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
+            )
+        });
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
             Err(error) => {
