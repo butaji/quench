@@ -318,3 +318,25 @@ the parameter slot store and execution register file, materializes Values at
 their boundary, and retains the wide continuation transport.  The next frame
 experiment must replace that entire transport with one reusable contiguous
 word window, not pool one wrapper around it.
+
+## Earley activation-origin probe
+
+A new fixed-atomic, heap-only probe separates environment origins without
+enabling the known-distorting HashMap instruction trace.  On the current
+EarleyBoyer program it observed 26,066,402 environment allocations, of which
+**25,902,809** were `Environment::child_registers`; `build_registers` recorded
+**25,902,806** function activations.  Root creation was 1, full capture was
+83, and selected capture was 163,592.  The ordinary call activation—not block
+capture—is therefore the allocation source to remove.
+
+The earlier full trace shows the frequently invoked functions do use a stable
+captured prefix (the 203,173-call shape has 12 lexical captures), so a
+non-capturing-only fast path would exclude the actual workload.  The next
+general frame representation must instead borrow the immutable captured-prefix
+view while owning one contiguous word window for parameters, local slots, and
+registers.  It may be reused only after no escaping closure/cell, TDZ,
+`arguments`, direct `eval`, `with`, async/generator suspension, host re-entry,
+exception handoff, or tail-call transfer is possible; every other case keeps
+the existing complete environment path.  Retain it only if it removes this
+origin volume and yields at least a twofold isolated Earley improvement before
+another full-suite score run.
