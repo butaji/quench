@@ -328,6 +328,13 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             .and_then(|value| trigger_id_of(state, value))
             .unwrap_or(parent_id)
     };
+    let inheritance_parent = if public_constructor {
+        parent_id
+    } else {
+        args.first()
+            .and_then(|value| trigger_id_of(state, value))
+            .unwrap_or(parent_id)
+    };
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let inherited: Vec<(u64, Value)> = state
         .borrow()
@@ -335,7 +342,7 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         .local_stores
         .iter()
         .filter_map(|((resource_id, local_id), value)| {
-            (*resource_id == parent_id).then(|| (*local_id, value.clone()))
+            (*resource_id == inheritance_parent).then(|| (*local_id, value.clone()))
         })
         .collect();
     for (local_id, value) in inherited {
