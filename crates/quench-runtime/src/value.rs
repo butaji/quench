@@ -1023,6 +1023,18 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        if let Some(index) = crate::arrays::array_index(key) {
+            let append = self.properties.iter().next_back().is_some_and(|(name, _)| {
+                crate::arrays::array_index(name.as_str()).is_some_and(|last| last < index)
+            });
+            if append {
+                self.properties.push((key.into(), value));
+                self.created.push(key.into());
+                self.layout_id.set(0);
+                self.deleted_marker_state.set(0);
+                return;
+            }
+        }
         let index = { self.properties.iter().rposition(|(name, _)| name == key) };
         if let Some(index) = index {
             if let Some((_, mut current)) = self.properties.iter_mut().nth(index) {
