@@ -356,6 +356,61 @@ fn parse_calendar_identifier(
     Err(crate::value::error::throw_type_error("Invalid calendar"))
 }
 
+fn parse_iso_annotations(text: &str) -> Result<(Option<String>, Option<String>), crate::execute::VmError> {
+    let mut rest = text;
+    let mut calendar = None;
+    let mut calendar_critical = false;
+    let mut timezone = None;
+    while let Some(start) = rest.find('[') {
+        let after = &rest[start + 1..];
+        let end = after
+            .find(']')
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+        let annotation = &after[..end];
+        if annotation.is_empty() {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
+        let (critical, body) = annotation
+            .strip_prefix('!')
+            .map_or((false, annotation), |body| (true, body));
+        if let Some((key, value)) = body.split_once('=') {
+            if key.bytes().any(|byte| byte.is_ascii_uppercase()) {
+                return Err(crate::value::error::throw_range_error("Annotation keys must be lowercase"));
+            }
+            if key != "u-ca" {
+                if critical {
+                    return Err(crate::value::error::throw_range_error("Unknown critical annotation"));
+                }
+            } else {
+                if !value.eq_ignore_ascii_case("iso8601") {
+                    if critical || calendar.is_none() {
+                        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+                    }
+                } else if calendar.is_some() {
+                    if critical || calendar_critical {
+                        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+                    }
+                    // A second non-critical calendar annotation is ignored.
+                    rest = &after[end + 1..];
+                    continue;
+                }
+                calendar = Some("iso8601".into());
+                calendar_critical |= critical;
+            }
+        } else {
+            if critical {
+                return Err(crate::value::error::throw_range_error("Unknown critical annotation"));
+            }
+            if timezone.is_some() {
+                return Err(crate::value::error::throw_range_error("Multiple time zones"));
+            }
+            timezone = Some(annotation.to_string());
+        }
+        rest = &after[end + 1..];
+    }
+    Ok((calendar, timezone))
+}
+
 fn zoned_record_with_calendar(
     epoch: i128,
     timezone: String,
@@ -409,6 +464,23 @@ mod stubs {
     ) -> Option<Result<Value, VmError>> {
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeFrom {
             return Some(zoned_from(arguments.first()));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeCompare {
+            return Some((|| {
+                let left = zoned_from(arguments.first())?;
+                let right = zoned_from(arguments.get(1))?;
+                let left = crate::execute::get_property_result(&left, "epochNanoseconds")?;
+                let right = crate::execute::get_property_result(&right, "epochNanoseconds")?;
+                let (Value::BigInt(left), Value::BigInt(right)) = (left, right) else {
+                    return Err(crate::value::error::throw_type_error("Invalid ZonedDateTime"));
+                };
+                let ordering = left.parse::<i128>().unwrap_or(0).cmp(&right.parse::<i128>().unwrap_or(0));
+                Ok(Value::Number(match ordering {
+                    std::cmp::Ordering::Less => -1.0,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => 1.0,
+                }))
+            })());
         }
         if matches!(
             builtin,
@@ -534,7 +606,15 @@ mod stubs {
     fn zoned_from(value: Option<&Value>) -> Result<Value, VmError> {
         let value =
             value.ok_or_else(|| crate::value::error::throw_type_error("Invalid ZonedDateTime"))?;
+        if matches!(value, Value::StringUnits(_)) {
+            let text = crate::conversion::to_string(value)?;
+            return zoned_from(Some(&Value::String(text)));
+        }
         if let Value::String(text) = value {
+            if !text.contains('[') {
+                return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
+            }
+            let (_calendar_annotation, timezone_annotation) = super::parse_iso_annotations(text)?;
             let has_z = text.split('[').next().unwrap_or(text).contains('Z');
             let date_time = text
                 .split('[')
@@ -550,6 +630,25 @@ mod stubs {
             let (clock, offset_text) = offset_start
                 .map(|index| (&time[..index], &time[index..]))
                 .unwrap_or((time, "+00:00"));
+            if time.contains('+') || time.contains('-') {
+                let suffix = time
+                    .rsplit_once(['+', '-'])
+                    .map(|(_, suffix)| suffix)
+                    .unwrap_or_default();
+                if suffix.matches(':').count() > 1 {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+            }
+            if clock.contains('.') && clock.split(':').count() < 3 {
+                return Err(crate::value::error::throw_range_error("Fractional minutes not allowed"));
+            }
+            if clock
+                .split_once('.')
+                .map(|(_, fraction)| fraction.len() > 9)
+                .unwrap_or(false)
+            {
+                return Err(crate::value::error::throw_range_error("Too many fractional digits"));
+            }
             let mut time_parts = clock
                 .split(':')
                 .map(|part| part.parse::<i64>().unwrap_or(0))
@@ -580,7 +679,10 @@ mod stubs {
             let year = parsed_year;
             let month = parsed_month;
             let day = parsed_day;
-            if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            if !(1..=12).contains(&month)
+                || !(1..=31).contains(&day)
+                || chrono::NaiveDate::from_ymd_opt(year, month, day).is_none()
+            {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid ZonedDateTime",
                 ));
@@ -603,10 +705,8 @@ mod stubs {
                 + time_parts.get(2).copied().unwrap_or(0) as i128 * 1_000_000_000
                 + fractional_nanos;
             let mut epoch = local_epoch - super::fixed_offset_nanos(offset_text);
-            let timezone_text = text
-                .split('[')
-                .nth(1)
-                .and_then(|part| part.split(']').next())
+            let timezone_text = timezone_annotation
+                .as_deref()
                 .unwrap_or(if has_z { "UTC" } else { offset_text });
             let timezone =
                 super::parse_timezone_identifier(&Value::String(timezone_text.to_string()))?;
