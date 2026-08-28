@@ -44,14 +44,15 @@ fn lexical_compare(left: &str, right: &str, ignore_punctuation: bool, sensitivit
     }
 }
 
-fn icu_ordering(
-    left: &str,
-    right: &str,
-    locale: &str,
-    spec: &CompareSpec<'_>,
-) -> Option<f64> {
+fn icu_ordering(left: &str, right: &str, locale: &str, spec: &CompareSpec<'_>) -> Option<f64> {
+    if !spec.ignore_punctuation
+        && ((left.is_empty() && punctuation_only(right))
+            || (right.is_empty() && punctuation_only(left)))
+    {
+        return None;
+    }
     let collation = locale_collation(locale).unwrap_or_else(|| "standard".to_string());
-    if !provider_has_collation(locale, &collation) {
+    if spec.usage == "search" && !provider_has_collation(locale, "search") {
         return None;
     }
     let locale = icu_locale_core::Locale::try_from_str(locale).ok()?;
@@ -63,6 +64,13 @@ fn icu_ordering(
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     })
+}
+
+fn punctuation_only(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_punctuation() || character.is_whitespace())
 }
 
 fn icu_preferences(
@@ -85,6 +93,12 @@ fn icu_preferences(
     });
     if usage == "search" {
         preferences.collation_type = Some(CollationType::Search);
+    } else if let Some(collation) = locale_collation(&locale.to_string()) {
+        if let Ok(value) = collation.parse::<icu_locale_core::extensions::unicode::Value>() {
+            if let Ok(collation_type) = CollationType::try_from(&value) {
+                preferences.collation_type = Some(collation_type);
+            }
+        }
     }
     preferences
 }
