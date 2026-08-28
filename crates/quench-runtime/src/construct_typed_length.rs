@@ -5,6 +5,41 @@ fn object_array_like(
     if let Ok(values) = crate::collections::iterator::collect_iterable(object.clone()) {
         return Ok(Some(values));
     }
+    // A plain object with only data properties can be projected in one pass.
+    // This keeps large array-like constructor inputs linear while leaving
+    // accessors, prototypes, and iterators on the observable property path.
+    let plain = properties.original_prototype().is_none()
+        && !properties.iter().any(|(name, _)| {
+            name.starts_with('\0') || name == "Symbol.iterator"
+    });
+    if plain {
+        let length = properties.value_for_key("length");
+        let Some(length) = length else {
+            return Ok(Some(Vec::new()));
+        };
+        if matches!(length, Value::Undefined) {
+            return Ok(Some(Vec::new()));
+        }
+        let length = crate::conversion::to_number(&length)?;
+        let length = if !length.is_finite() || length <= 0.0 {
+            if length.is_infinite() && length.is_sign_positive() {
+                usize::MAX
+            } else {
+                0
+            }
+        } else {
+            length.floor().min(usize::MAX as f64) as usize
+        };
+        let mut values = vec![Value::Undefined; length];
+        for (name, value) in properties.iter() {
+            if let Ok(index) = name.parse::<usize>() {
+                if index < length {
+                    values[index] = value.clone();
+                }
+            }
+        }
+        return Ok(Some(values));
+    }
     let length = crate::execute::get_property_result(&object, "length")?;
     if matches!(length, Value::Undefined) {
         return Ok(Some(Vec::new()));
