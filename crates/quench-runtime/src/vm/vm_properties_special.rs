@@ -18,27 +18,61 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
                     kind: crate::ops::HostCapabilityKind::Agent,
                 }),
             ));
-            let method = |kind| {
-                bind_method(&token, Value::Builtin(Builtin::HostCapability(kind)))
-            };
+            let method = |kind| bind_method(&token, Value::Builtin(Builtin::HostCapability(kind)));
             let value = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-                ("start".into(), method(crate::ops::HostCapabilityKind::AgentStart)),
-                ("broadcast".into(), method(crate::ops::HostCapabilityKind::AgentBroadcast)),
-                ("report".into(), method(crate::ops::HostCapabilityKind::AgentReport)),
-                ("getReport".into(), method(crate::ops::HostCapabilityKind::AgentGetReport)),
-                ("leaving".into(), method(crate::ops::HostCapabilityKind::AgentLeaving)),
-                ("receiveBroadcast".into(), method(crate::ops::HostCapabilityKind::AgentReceiveBroadcast)),
-                ("sleep".into(), method(crate::ops::HostCapabilityKind::AgentSleep)),
-                ("tryYield".into(), method(crate::ops::HostCapabilityKind::AgentTryYield)),
-                ("trySleep".into(), method(crate::ops::HostCapabilityKind::AgentTrySleep)),
-                ("setTimeout".into(), method(crate::ops::HostCapabilityKind::AgentSetTimeout)),
-                ("monotonicNow".into(), method(crate::ops::HostCapabilityKind::AgentMonotonicNow)),
-                ("timeouts".into(), Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-                    ("yield".into(), Value::Number(1.0)),
-                    ("small".into(), Value::Number(100.0)),
-                    ("long".into(), Value::Number(1_000.0)),
-                    ("huge".into(), Value::Number(10_000.0)),
-                ])))),
+                (
+                    "start".into(),
+                    method(crate::ops::HostCapabilityKind::AgentStart),
+                ),
+                (
+                    "broadcast".into(),
+                    method(crate::ops::HostCapabilityKind::AgentBroadcast),
+                ),
+                (
+                    "report".into(),
+                    method(crate::ops::HostCapabilityKind::AgentReport),
+                ),
+                (
+                    "getReport".into(),
+                    method(crate::ops::HostCapabilityKind::AgentGetReport),
+                ),
+                (
+                    "leaving".into(),
+                    method(crate::ops::HostCapabilityKind::AgentLeaving),
+                ),
+                (
+                    "receiveBroadcast".into(),
+                    method(crate::ops::HostCapabilityKind::AgentReceiveBroadcast),
+                ),
+                (
+                    "sleep".into(),
+                    method(crate::ops::HostCapabilityKind::AgentSleep),
+                ),
+                (
+                    "tryYield".into(),
+                    method(crate::ops::HostCapabilityKind::AgentTryYield),
+                ),
+                (
+                    "trySleep".into(),
+                    method(crate::ops::HostCapabilityKind::AgentTrySleep),
+                ),
+                (
+                    "setTimeout".into(),
+                    method(crate::ops::HostCapabilityKind::AgentSetTimeout),
+                ),
+                (
+                    "monotonicNow".into(),
+                    method(crate::ops::HostCapabilityKind::AgentMonotonicNow),
+                ),
+                (
+                    "timeouts".into(),
+                    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                        ("yield".into(), Value::Number(1.0)),
+                        ("small".into(), Value::Number(100.0)),
+                        ("long".into(), Value::Number(1_000.0)),
+                        ("huge".into(), Value::Number(10_000.0)),
+                    ]))),
+                ),
             ])));
             object.borrow_mut().replace(value.clone());
             value
@@ -105,7 +139,7 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     {
         return bind_method(value, property);
     }
-    if let Some(result) = constructor_property(builtin, key, property.clone()) {
+    if let Some(result) = constructor_property(value, builtin, key, property.clone()) {
         return result;
     }
     // Static Promise methods need the constructor as [[This]] when called
@@ -138,13 +172,22 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     callable_fallback(value, builtin, key)
 }
 
-fn constructor_property(builtin: Builtin, key: &str, property: Value) -> Option<Value> {
+fn constructor_property(
+    value: &Value,
+    builtin: Builtin,
+    key: &str,
+    property: Value,
+) -> Option<Value> {
     if !matches!(key, "prototype" | "constructor") {
         return None;
     }
     if key == "constructor" {
+        let realm = match value {
+            Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => bound.realm,
+            _ => crate::vm::current_context_or_default().realm(),
+        };
         return Some(match property {
-            Value::Builtin(target) => crate::vm::realm_intrinsic(target),
+            Value::Builtin(target) => crate::vm::realm_intrinsic_for(realm, target),
             Value::Undefined if crate::builtin_meta::constructor_name(builtin).is_some() => {
                 Value::Builtin(Builtin::Function)
             }
@@ -290,12 +333,13 @@ fn bound_constructor_prototype(bound: &crate::value::BoundFunctionValue) -> Valu
     let Value::Builtin(builtin) = bound.target else {
         return Value::Undefined;
     };
-    let prototype = crate::builtin_meta::instance_prototype(builtin).or_else(|| {
-        match crate::builtins::property(builtin, "prototype") {
-            Value::Builtin(prototype) => Some(prototype),
-            _ => None,
-        }
-    });
+    let prototype =
+        crate::builtin_meta::instance_prototype(builtin).or_else(
+            || match crate::builtins::property(builtin, "prototype") {
+                Value::Builtin(prototype) => Some(prototype),
+                _ => None,
+            },
+        );
     let Some(prototype) = prototype else {
         return Value::Undefined;
     };
@@ -387,15 +431,10 @@ fn bound_function_fallback(
     }
     if matches!(result, Value::Undefined) {
         if crate::conversion::is_callable(&bound.target) {
-            let function_prototype = crate::vm::realm_intrinsic_for(
-                bound.realm,
-                Builtin::FunctionPrototype,
-            );
-            if let Some(getter) = crate::property_define::accessor(
-                &function_prototype,
-                key,
-                "get",
-            ) {
+            let function_prototype =
+                crate::vm::realm_intrinsic_for(bound.realm, Builtin::FunctionPrototype);
+            if let Some(getter) = crate::property_define::accessor(&function_prototype, key, "get")
+            {
                 return match getter {
                     Value::Undefined => Value::Undefined,
                     getter => invoke_accessor(&getter, &receiver).unwrap_or(Value::Undefined),
