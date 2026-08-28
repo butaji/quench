@@ -11,7 +11,10 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
-    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
+    let normalized = normalize_legacy_identity_escapes(
+        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
+        flags,
+    );
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
@@ -39,7 +42,10 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
     let reg_flags: Flags = flags.into();
-    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
+    let normalized = normalize_legacy_identity_escapes(
+        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
+        flags,
+    );
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&normalized, reg_flags)
     }))
@@ -117,6 +123,42 @@ fn normalize_named_group_escapes(pattern: &str) -> String {
         index += 1;
     }
     output
+}
+
+fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
+    if flags.contains('u') || flags.contains('v') {
+        return pattern.to_string();
+    }
+    let chars: Vec<char> = pattern.chars().collect();
+    let has_named_group = pattern.as_bytes().windows(3).any(|window| window == b"(?<");
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '\\' || index + 1 == chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let next = chars[index + 1];
+        let malformed_k = next == 'k'
+            && (index + 2 == chars.len()
+                || chars[index + 2] != '<'
+                || !chars[index + 3..].contains(&'>')
+                || !has_named_group);
+        if legacy_identity_target(next) || malformed_k {
+            output.push(next);
+        } else {
+            output.push('\\');
+            output.push(next);
+        }
+        index += 2;
+    }
+    output
+}
+
+fn legacy_identity_target(ch: char) -> bool {
+    ch.is_ascii_alphabetic()
+        && !matches!(ch, 'b' | 'B' | 'c' | 'd' | 'D' | 'f' | 'k' | 'n' | 'p' | 'P' | 'r' | 's' | 'S' | 't' | 'u' | 'v' | 'w' | 'W' | 'x')
 }
 
 fn append_decoded_group_name(output: &mut String, name: &[char]) {
@@ -214,13 +256,17 @@ fn is_intrinsic_regexp_instance(value: &Value) -> bool {
     let Value::Object(properties) = value else {
         return false;
     };
-    matches!(
-        properties
-            .iter()
-            .rev()
-            .find_map(|(key, value)| (key == "\0prototype").then_some(value)),
-        Some(Value::Builtin(crate::ops::Builtin::RegExpPrototype))
-    )
+    match properties
+        .iter()
+        .rev()
+        .find_map(|(key, value)| (key == "\0prototype").then_some(value))
+    {
+        Some(Value::Builtin(crate::ops::Builtin::RegExpPrototype)) => true,
+        Some(Value::BoundFunction(bound)) => {
+            bound.target == Value::Builtin(crate::ops::Builtin::RegExpPrototype)
+        }
+        _ => false,
+    }
 }
 
 fn compile_arguments(arguments: &[Value]) -> Result<(String, String), VmError> {
