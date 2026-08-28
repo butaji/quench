@@ -98,6 +98,30 @@ and **Rejected** is an A/B result.  `P` means Time Profiler plus dSYM;
 | 49 | Observed | current fat LTO/one CGU release is the benchmark baseline; keep only after quiet A/B. |
 | 50 | Observed | UUID-matched dSYM and raw trace are retained; every proposed win requires P/C/D/A evidence. |
 
+## First native-code pass
+
+`execute_shape_kernel` begins at `0x1003c77ec` in the UUID-matched native
+binary.  Its 496-byte stack frame, calls to `shape_kernel_fact`,
+`intern_object_layout`, and `virtual_builtin_cache_hit`, and repeated guard
+branches are directly visible in `otool -tvV`.  This turns items 17, 18, 19,
+29, 32, 36, and 42 from design hypotheses into a concrete audit target: the
+admission/guard path is substantial, but it is not yet permission to delete a
+single guard.  The measured RegExp samples place this function among the
+hottest resolved frames.
+
+The CPU Counters trace collected on 2026-08-28 is unusable for per-PC
+decisions: its table of contents reports only the aggregate bottleneck modes
+and no exported counter call-stack table.  Items 2, 14--16, and 36--37 remain
+Unknown until a counter capture that exports source/PC samples is available.
+Time samples and disassembly remain the current authoritative data.
+
+Two isolated `quench-runtime` remark builds also produced no loop-vectorize
+remarks or `.opt.yaml` sidecar: first with LLVM pass arguments, then with the
+documented `rustc -C remark=loop-vectorize`.  Treat both as an unavailable
+measurement in this toolchain, not evidence that no loop vectorized.  Items
+9 and 34--35 continue to require a compiler/toolchain that exports the
+remarks or direct disassembly of a specifically numeric hot loop.
+
 ## Next experiment, ordered by impact / effort
 
 1. Produce a DeltaBlue-valid dSYM build by isolating the dirty semantic repair.
@@ -109,4 +133,3 @@ and **Rejected** is an A/B result.  `P` means Time Profiler plus dSYM;
 4. Before any result-elision, finish the explicit split between expression
    value, statement completion, and unobservable normal completion.  A
    discarded effect must still write the statement-completion register.
-
