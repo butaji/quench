@@ -2102,12 +2102,13 @@ mod stubs {
                         || crate::conversion::to_number(&value),
                         |text| Ok(text.parse::<f64>().unwrap_or(f64::NAN)),
                     )?;
+                    let value = value.floor();
                     if !value.is_finite() || !(0.0..=9.0).contains(&value) {
                         return Err(crate::value::error::throw_range_error(
                             "Invalid fractionalSecondDigits",
                         ));
                     }
-                    value.floor() as usize
+                    value as usize
                 }
             }
         };
