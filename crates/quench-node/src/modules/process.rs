@@ -297,6 +297,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
         ),
         (
+            "send",
+            crate::host::capability(crate::registry::SPEC_CLUSTER_WORKER_PROCESS_SEND),
+        ),
+        (
             "removeListener",
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
         ),
