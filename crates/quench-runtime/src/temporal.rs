@@ -52,7 +52,7 @@ pub(crate) fn zoned_construct(
     ))
 }
 
-fn zoned_record(
+pub(crate) fn zoned_record(
     epoch: i128,
     timezone: String,
     prototype: crate::ops::Builtin,
@@ -216,7 +216,7 @@ fn format_year(year: i32) -> String {
     }
 }
 
-fn parse_timezone_identifier(
+pub(crate) fn parse_timezone_identifier(
     value: &crate::value::Value,
 ) -> Result<String, crate::execute::VmError> {
     if matches!(
