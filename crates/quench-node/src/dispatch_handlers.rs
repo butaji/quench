@@ -4645,12 +4645,13 @@ pub fn fetch(
 }
 
 pub fn gc(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     GC_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
     quench_runtime::execute::collect_weak_refs();
+    crate::modules::async_hooks::collect_garbage(state)?;
     Ok(Value::Undefined)
 }
 
