@@ -296,13 +296,22 @@ fn warn_max_listeners(
     count: usize,
     limit: usize,
 ) {
+    let target_kind = target_id(target).and_then(|id| {
+        state
+            .borrow()
+            .targets
+            .get(id)
+            .map(|target| {
+                let target = target.borrow();
+                (target.node, target.message_port)
+            })
+    });
     let label = if is_abort_signal(target) {
         "[AbortSignal]"
-    } else if target_id(target)
-        .and_then(|id| state.borrow().targets.get(id))
-        .is_some_and(|target| target.borrow().message_port)
-    {
+    } else if target_kind.is_some_and(|(_, message_port)| message_port) {
         "[MessagePort [EventTarget]]"
+    } else if target_kind.is_some_and(|(node, _)| node) {
+        "NodeEventTarget"
     } else {
         "EventTarget"
     };
