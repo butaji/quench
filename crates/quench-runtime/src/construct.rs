@@ -189,6 +189,11 @@ fn construct_builtin_target(
         let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
         return apply_new_target_prototype(value, target, new_target, prototype);
     }
+    if is_typed_array_constructor_builtin(builtin) && needs_new_target {
+        let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        return apply_new_target_prototype(value, target, new_target, prototype);
+    }
     let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
@@ -204,6 +209,23 @@ fn construct_builtin_target(
     };
     validate_data_view(&value)?;
     Ok(value)
+}
+
+fn is_typed_array_constructor_builtin(builtin: crate::ops::Builtin) -> bool {
+    matches!(
+        builtin,
+        crate::ops::Builtin::Float64Array
+            | crate::ops::Builtin::Float32Array
+            | crate::ops::Builtin::Int8Array
+            | crate::ops::Builtin::Int16Array
+            | crate::ops::Builtin::Int32Array
+            | crate::ops::Builtin::Uint8Array
+            | crate::ops::Builtin::Uint8ClampedArray
+            | crate::ops::Builtin::Uint16Array
+            | crate::ops::Builtin::Uint32Array
+            | crate::ops::Builtin::BigInt64Array
+            | crate::ops::Builtin::BigUint64Array
+    )
 }
 
 fn is_dynamic_function_constructor(builtin: crate::ops::Builtin) -> bool {

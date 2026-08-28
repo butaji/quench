@@ -40,7 +40,11 @@ fn from_impl(
     if uses_custom_result(receiver) {
         let length = array_like_length(&source)?;
         let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
-        let mut result = construct_result(receiver, length, false)?;
+        let mut result = if typed_mode {
+            construct_typed_result(receiver, length)?
+        } else {
+            construct_result(receiver, length, false)?
+        };
         if typed_array_result_unwritable(&result, length > 0) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot set an element on an invalid typed array",
@@ -396,7 +400,30 @@ fn construct_typed_result(
     receiver: Option<&Value>,
     length: usize,
 ) -> Result<Value, crate::execute::VmError> {
-    construct_result_inner(receiver, length, true, true)
+    let result = construct_result_inner(receiver, length, true, true)?;
+    if !is_typed_array_result(&result) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray constructor did not return a TypedArray",
+        ));
+    }
+    Ok(result)
+}
+
+fn is_typed_array_result(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::Uint32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+    )
 }
 
 fn construct_result_inner(
