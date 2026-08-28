@@ -562,6 +562,7 @@ fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Va
 fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Result<Value, VmError> {
     let (re, flags) = compiled_regex(receiver)?;
     let global = flags.contains('g');
+    let unicode = unicode_mode(&flags);
     let mut out = String::new();
     let mut copied = 0;
     let mut search = 0;
@@ -569,7 +570,12 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
         let Some(m) = find_match_from(&re, s, search)? else { break };
         let start = m.start();
         let end = m.end();
-        let args = replacer_args(s, s, &m, end);
+        let index = if unicode {
+            crate::strings::byte_to_utf16(s, start)
+        } else {
+            start
+        };
+        let args = replacer_args(s, s, &m, end, index);
         out.push_str(&s[copied..start]);
         let replaced = crate::functions::execute_target(replacement, &Value::Undefined, &args)?;
         out.push_str(&crate::conversion::to_string(&replaced)?);
@@ -593,6 +599,7 @@ fn replacer_args(
     rest: &str,
     m: &Match,
     end: usize,
+    index: usize,
 ) -> Vec<Value> {
     let mut args = vec![
         Value::String(rest[m.start()..end].to_string()),
@@ -604,7 +611,7 @@ fn replacer_args(
         };
         args.push(value);
     }
-    args.push(Value::Number((s.len() - rest.len() + m.start()) as f64));
+    args.push(Value::Number((s.len() - rest.len() + index) as f64));
     args.push(Value::String(s.to_string()));
     if m.named_groups().next().is_some() {
         let mut groups = vec![("\0prototype".to_string(), Value::Null)];
