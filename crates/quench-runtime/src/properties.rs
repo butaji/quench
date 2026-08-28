@@ -732,6 +732,9 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
     if let crate::value::Value::BindingCell(cell) = &target {
         return object_is_extensible(&cell.borrow());
     }
+    if let Some(meta) = target.typed_array_meta() {
+        return meta.is_extensible();
+    }
     match &target {
         crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
         crate::value::Value::Builtin(builtin) => {
@@ -823,6 +826,12 @@ fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
         }
         crate::value::Value::BoundFunction(bound) => {
             mark_properties(&mut bound.properties.borrow_mut());
+            target.clone()
+        }
+        target if target.typed_array_meta().is_some() => {
+            if let Some(meta) = target.typed_array_meta() {
+                meta.set_extensible(false);
+            }
             target.clone()
         }
         _ => target.clone(),

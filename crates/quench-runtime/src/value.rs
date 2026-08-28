@@ -164,12 +164,25 @@ pub enum PromiseState {
 include!("value_promise.rs");
 
 /// Heap-allocated Promise data.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TypedArrayMeta {
     prototype: RefCell<Option<Value>>,
     properties: RefCell<Vec<(String, Value)>>,
     descriptors: RefCell<Vec<(String, Value)>>,
     buffer_materialized: Cell<bool>,
+    extensible: Cell<bool>,
+}
+
+impl Default for TypedArrayMeta {
+    fn default() -> Self {
+        Self {
+            prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
+            descriptors: RefCell::new(Vec::new()),
+            buffer_materialized: Cell::new(false),
+            extensible: Cell::new(true),
+        }
+    }
 }
 
 impl TypedArrayMeta {
@@ -179,6 +192,14 @@ impl TypedArrayMeta {
 
     pub(crate) fn buffer_materialized(&self) -> bool {
         self.buffer_materialized.get()
+    }
+
+    pub(crate) fn is_extensible(&self) -> bool {
+        self.extensible.get()
+    }
+
+    pub(crate) fn set_extensible(&self, extensible: bool) {
+        self.extensible.set(extensible);
     }
 
     pub(crate) fn prototype(&self) -> Option<Value> {
@@ -234,6 +255,14 @@ impl TypedArrayMeta {
 
     pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
         self.properties.borrow().clone()
+    }
+
+    pub(crate) fn descriptor_keys(&self) -> Vec<String> {
+        self.descriptors
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 }
 
