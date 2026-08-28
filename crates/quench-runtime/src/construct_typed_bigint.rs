@@ -195,13 +195,14 @@ pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError>
         Value::BigInt(raw) | Value::String(raw) => raw.clone(),
         Value::StringUnits(units) => String::from_utf16(&units.to_vec())
             .map_err(|_| type_error("Invalid BigInt value"))?,
+        Value::Boolean(value) => return Ok(u64::from(*value)),
         _ => {
             return Err(type_error("Cannot convert a non-BigInt value to BigInt"));
         }
     };
     let integer = raw
         .parse::<num_bigint::BigInt>()
-        .map_err(|_| type_error("Invalid BigInt value"))?;
+        .map_err(|_| crate::value::error::throw_syntax_error("Invalid BigInt value"))?;
     let fill = if integer.sign() == num_bigint::Sign::Minus {
         u8::MAX
     } else {
