@@ -38,23 +38,6 @@ impl NodeSpec {
 }
 
 /// All Node host capabilities. Stable ids; do not reorder.
-pub const SPEC_UTIL_FORMAT: NodeSpec = NodeSpec::new("util:format", 0x0300);
-pub const SPEC_UTIL_INSPECT: NodeSpec = NodeSpec::new("util:inspect", 0x0301);
-pub const SPEC_UTIL_ABORTED: NodeSpec = NodeSpec::new("util:aborted", 0x0310);
-pub const SPEC_UTIL_ABORTED_RESOLVE: NodeSpec = NodeSpec::new("util:aborted:resolve", 0x0311);
-pub const SPEC_UTIL_TYPES: NodeSpec = NodeSpec::new("util:types", 0x0302);
-pub const SPEC_UTIL_GETCALLSITES: NodeSpec = NodeSpec::new("util:getCallSites", 0x0303);
-pub const SPEC_UTIL_IS: NodeSpec = NodeSpec::new("util:is", 0x030D);
-pub const SPEC_UTIL_INHERITS: NodeSpec = NodeSpec::new("util:inherits", 0x0304);
-pub const SPEC_UTIL_STRIP_VT: NodeSpec = NodeSpec::new("util:stripVTControlCharacters", 0x0305);
-pub const SPEC_UTIL_FORMAT_WITH_OPTIONS: NodeSpec = NodeSpec::new("util:formatWithOptions", 0x0306);
-pub const SPEC_UTIL_STYLE_TEXT: NodeSpec = NodeSpec::new("util:styleText", 0x0307);
-pub const SPEC_UTIL_IS_DEEP_STRICT_EQUAL: NodeSpec =
-    NodeSpec::new("util:isDeepStrictEqual", 0x0308);
-pub const SPEC_UTIL_TO_USV_STRING: NodeSpec = NodeSpec::new("util:toUSVString", 0x0309);
-pub const SPEC_UTIL_IS_NATIVE_ERROR: NodeSpec = NodeSpec::new("util.types:isNativeError", 0x030A);
-pub const SPEC_UTIL_PARSE_ENV: NodeSpec = NodeSpec::new("util:parseEnv", 0x030B);
-pub const SPEC_UTIL_TYPE_PREDICATE: NodeSpec = NodeSpec::new("util.types:predicate", 0x030C);
 pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream", 0x0F12);
 pub const SPEC_VM_SOURCE_TEXT_MODULE: NodeSpec = NodeSpec::new("vm:SourceTextModule", 0x0F11);
 pub const SPEC_VM_MODULE_LINK: NodeSpec = NodeSpec::new("vm:SourceTextModule:link", 0x0F13);
@@ -104,6 +87,22 @@ pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
 pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
 
 node_api! {
+    (SPEC_UTIL_FORMAT, "util:format", 0x0300),
+    (SPEC_UTIL_INSPECT, "util:inspect", 0x0301),
+    (SPEC_UTIL_ABORTED, "util:aborted", 0x0310),
+    (SPEC_UTIL_ABORTED_RESOLVE, "util:aborted:resolve", 0x0311),
+    (SPEC_UTIL_TYPES, "util:types", 0x0302),
+    (SPEC_UTIL_GETCALLSITES, "util:getCallSites", 0x0303),
+    (SPEC_UTIL_IS, "util:is", 0x030D),
+    (SPEC_UTIL_INHERITS, "util:inherits", 0x0304),
+    (SPEC_UTIL_STRIP_VT, "util:stripVTControlCharacters", 0x0305),
+    (SPEC_UTIL_FORMAT_WITH_OPTIONS, "util:formatWithOptions", 0x0306),
+    (SPEC_UTIL_STYLE_TEXT, "util:styleText", 0x0307),
+    (SPEC_UTIL_IS_DEEP_STRICT_EQUAL, "util:isDeepStrictEqual", 0x0308),
+    (SPEC_UTIL_TO_USV_STRING, "util:toUSVString", 0x0309),
+    (SPEC_UTIL_IS_NATIVE_ERROR, "util.types:isNativeError", 0x030A),
+    (SPEC_UTIL_PARSE_ENV, "util:parseEnv", 0x030B),
+    (SPEC_UTIL_TYPE_PREDICATE, "util.types:predicate", 0x030C),
     (SPEC_CONSOLE_LOG, "console:log", 0x0200),
     (SPEC_CONSOLE_INFO, "console:info", 0x0201),
     (SPEC_CONSOLE_WARN, "console:warn", 0x0202),
