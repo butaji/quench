@@ -395,7 +395,7 @@ fn find_match_units(
     units: &[u16],
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
         let matched = regex.find_from_utf16(units, start).next();
         matched.filter(|found| !sticky || found.start() == start)
@@ -415,7 +415,7 @@ fn compile_and_find<'a>(
     text: &'a str,
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     #[cfg(feature = "execution-trace")]
     let compile_start = std::time::Instant::now();
     let regex = compiled_for(receiver, source, flags)?;
