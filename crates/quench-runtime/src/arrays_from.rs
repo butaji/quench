@@ -71,32 +71,30 @@ fn from_iterable(
     mapper: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    if !uses_custom_result(receiver) {
-        let mut values = Vec::new();
-        let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
-        let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
-        crate::collections::iterator::for_each_iterable(source, |item| {
-            let index = values.len();
-            values.push(map_item(mapper, &this_arg, item, index)?);
-            Ok(())
-        })?;
-        return Ok(Value::array(values));
-    }
-
-    let mut result = construct_result(receiver, 0, true)?;
-    let mut index = 0;
-    let mut values = Vec::new();
+    let mut source_values = Vec::new();
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
     crate::collections::iterator::for_each_iterable(source, |item| {
-        let value = map_item(mapper, &this_arg, item, index)?;
-        result = write_result_element(result.clone(), index, value)?;
-        values.push(Value::Undefined);
-        index += 1;
+        source_values.push(item);
         Ok(())
     })?;
-    result = set_result_length(result, values.len())?;
-    Ok(result)
+    let source_length = source_values.len();
+    let values = source_values
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| map_item(mapper, &this_arg, item, index))
+        .collect::<Result<Vec<_>, _>>()?;
+    if !uses_custom_result(receiver) {
+        return Ok(Value::array(values));
+    }
+    let mut result = construct_result(receiver, 0, true)?;
+    for (index, value) in values.into_iter().enumerate() {
+        result = write_result_element(result, index, value)?;
+    }
+    if crate::typed_array_ops::is_view(&result) {
+        return Ok(result);
+    }
+    set_result_length(result, source_length)
 }
 
 fn uses_custom_result(receiver: Option<&Value>) -> bool {
@@ -329,6 +327,7 @@ fn is_constructor(value: &Value) -> bool {
     match value {
         Value::Function(function) => crate::functions::is_constructible(function),
         Value::BoundFunction(bound) => is_constructor(&bound.target),
+        Value::Builtin(crate::ops::Builtin::TypedArray) => true,
         Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
         Value::Proxy(proxy) => is_constructor(&proxy.target),
         _ => false,
