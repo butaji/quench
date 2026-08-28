@@ -101,6 +101,7 @@ const requiredFixtures = args.includes("--full-v8")
   ? v8V7Fixtures
   : fixtures.map((fixture) => fixture.name.replace(/\.js$/, ""));
 const dirtyDiff = command("git", ["diff", "--binary"]);
+const worktreeStatus = command("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
 const record = {
   schema: "quench.evidence-record/v1",
   id: option("--id", crypto.randomUUID()),
@@ -111,6 +112,10 @@ const record = {
     binary,
     binary_sha256: sha256(binary),
     git_commit: command("git", ["rev-parse", "HEAD"]),
+    worktree_clean: worktreeStatus === "",
+    worktree_status_sha256: worktreeStatus
+      ? crypto.createHash("sha256").update(worktreeStatus).digest("hex")
+      : null,
     dirty_diff_sha256: dirtyDiff
       ? crypto.createHash("sha256").update(dirtyDiff).digest("hex")
       : null,
