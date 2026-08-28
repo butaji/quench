@@ -12,6 +12,7 @@ use crate::host::HostState;
 use crate::registry::{
     SPEC_DOMAIN_ADD, SPEC_DOMAIN_ADD_EMITTER, SPEC_DOMAIN_CONSTRUCTOR, SPEC_DOMAIN_CREATE,
     SPEC_DOMAIN_DISPOSE, SPEC_DOMAIN_ENTER, SPEC_DOMAIN_EXIT, SPEC_DOMAIN_ON, SPEC_DOMAIN_ONCE,
+    SPEC_DOMAIN_BIND, SPEC_DOMAIN_BIND_CALL, SPEC_DOMAIN_INTERCEPT, SPEC_DOMAIN_INTERCEPT_CALL,
     SPEC_DOMAIN_REMOVE, SPEC_DOMAIN_RUN,
 };
 
@@ -98,6 +99,11 @@ fn domain_object(id: u64) -> Value {
         ),
         ("on".into(), crate::host::capability(SPEC_DOMAIN_ON)),
         ("once".into(), crate::host::capability(SPEC_DOMAIN_ONCE)),
+        ("bind".into(), crate::host::capability(SPEC_DOMAIN_BIND)),
+        (
+            "intercept".into(),
+            crate::host::capability(SPEC_DOMAIN_INTERCEPT),
+        ),
         (
             "addEmitter".into(),
             crate::host::capability(SPEC_DOMAIN_ADD_EMITTER),
@@ -263,8 +269,18 @@ pub fn run(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("domain"))?;
     let callback = args.first().ok_or_else(|| type_error("function"))?;
+    run_callback(state, receiver, callback, &Value::Undefined, &[])
+}
+
+fn run_callback(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    callback: &Value,
+    this: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
     enter(state, Some(receiver), &[])?;
-    let result = execute::call(callback, &Value::Undefined, &[]);
+    let result = execute::call(callback, this, args);
     let handlers = {
         let domain = with_domain(state, receiver)?;
         let mut handlers = Vec::with_capacity(domain.extra_handlers.len() + 1);
@@ -278,21 +294,7 @@ pub fn run(
     match result {
         Ok(value) => Ok(value),
         Err(VmError::Thrown(value)) => {
-            let value = if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
-                execute::define_property(
-                    value,
-                    "domain",
-                    host_api::object(vec![
-                        ("configurable".into(), Value::Boolean(true)),
-                        ("enumerable".into(), Value::Boolean(false)),
-                        ("writable".into(), Value::Boolean(true)),
-                        ("value".into(), receiver.clone()),
-                    ]),
-                )?
-            } else {
-                value
-            };
-            let value = execute::set_property(value, "domainThrown", Value::Boolean(true));
+            let value = mark_error(&value, receiver, &Value::Undefined, true)?;
             if !handlers.is_empty() {
                 let mut result = Ok(Value::Undefined);
                 for (handler, once) in &handlers {
@@ -314,6 +316,106 @@ pub fn run(
             }
         }
         Err(error) => Err(error),
+    }
+}
+
+pub fn bind(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let domain = receiver.ok_or_else(|| type_error("domain"))?;
+    let callback = args.first().ok_or_else(|| type_error("function"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(type_error("function"));
+    }
+    Ok(host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(SPEC_DOMAIN_BIND_CALL),
+        vec![domain.clone(), callback.clone()],
+    ))
+}
+
+pub fn bind_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let domain = args.first().ok_or_else(|| type_error("domain"))?;
+    let callback = args.get(1).ok_or_else(|| type_error("function"))?;
+    run_callback(
+        state,
+        domain,
+        callback,
+        receiver.unwrap_or(&Value::Undefined),
+        args.get(2..).unwrap_or(&[]),
+    )
+}
+
+pub fn intercept(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let domain = receiver.ok_or_else(|| type_error("domain"))?;
+    let callback = args.first().ok_or_else(|| type_error("function"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(type_error("function"));
+    }
+    Ok(host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(SPEC_DOMAIN_INTERCEPT_CALL),
+        vec![domain.clone(), callback.clone()],
+    ))
+}
+
+pub fn intercept_call(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let domain = args.first().ok_or_else(|| type_error("domain"))?;
+    let callback = args.get(1).ok_or_else(|| type_error("function"))?;
+    let error = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if !matches!(error, Value::Undefined | Value::Null) {
+        let error = mark_error(&error, domain, callback, false)?;
+        return match error_handler(state, domain) {
+            Some(handler) => execute::call(&handler, &Value::Undefined, &[error]),
+            None => Err(VmError::Thrown(error)),
+        };
+    }
+    run_callback(
+        state,
+        domain,
+        callback,
+        &Value::Undefined,
+        args.get(3..).unwrap_or(&[]),
+    )
+}
+
+fn mark_error(
+    error: &Value,
+    domain: &Value,
+    callback: &Value,
+    thrown: bool,
+) -> Result<Value, VmError> {
+    let value = if matches!(error, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::define_property(
+            error.clone(),
+            "domain",
+            host_api::object(vec![
+                ("configurable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("writable".into(), Value::Boolean(true)),
+                ("value".into(), domain.clone()),
+            ]),
+        )?
+    } else {
+        error.clone()
+    };
+    let value = execute::set_property(value, "domainThrown", Value::Boolean(thrown));
+    if thrown {
+        Ok(value)
+    } else {
+        Ok(execute::set_property(value, "domainBound", callback.clone()))
     }
 }
 pub fn dispose(
