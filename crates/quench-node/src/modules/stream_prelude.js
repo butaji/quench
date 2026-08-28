@@ -1088,6 +1088,15 @@
     state.bufferedRequestCount = state.pending.length;
   }
 
+  // Keep the writev handoff as one explicit state projection.  Besides making
+  // the representation shared by corked and ordinary writes, this avoids
+  // invoking an Array callback through a host-bound property during a flush.
+  function writevChunks(pending) {
+    const chunks = [];
+    for (const item of pending) chunks.push({ chunk: item.chunk, encoding: item.encoding });
+    return chunks;
+  }
+
   function completeEndCallbacks(state, error) {
     const callbacks = state.endCallbacks.splice(0);
     const result = error === undefined ? null : error;
@@ -1175,7 +1184,7 @@
       };
       try {
         stream._writev(
-          pending.map((item) => ({ chunk: item.chunk, encoding: item.encoding })),
+          writevChunks(pending),
           complete
         );
       } catch (error) {
@@ -1342,7 +1351,7 @@
             const total = pending.reduce((sum, item) => sum + item.chunkLength, 0);
             try {
               this._writev(
-                pending.map((item) => ({ chunk: item.chunk, encoding: item.encoding })),
+                writevChunks(pending),
                 (batchError) => {
                   st.buffered -= total;
                   updateNeedDrain(st);
