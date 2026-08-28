@@ -225,11 +225,13 @@ pub const SPEC_URL_LEGACY_NEW: NodeSpec = NodeSpec::new("url:Url", 40);
 pub const SPEC_URL_RESOLVE_OBJECT: NodeSpec = NodeSpec::new("url:resolveObject", 0x0520);
 pub const SPEC_URL_SEARCHPARAMS_NEW: NodeSpec = NodeSpec::new("url:URLSearchParams", 0x0504);
 
-pub const SPEC_QS_PARSE: NodeSpec = NodeSpec::new("querystring:parse", 0x0600);
-pub const SPEC_QS_STRINGIFY: NodeSpec = NodeSpec::new("querystring:stringify", 0x0601);
-pub const SPEC_QS_ESCAPE: NodeSpec = NodeSpec::new("querystring:escape", 0x0602);
-pub const SPEC_QS_UNESCAPE: NodeSpec = NodeSpec::new("querystring:unescape", 0x0603);
-pub const SPEC_QS_UNESCAPE_BUFFER: NodeSpec = NodeSpec::new("querystring:unescapeBuffer", 0x0604);
+node_api! {
+    (SPEC_QS_PARSE, "querystring:parse", 0x0600),
+    (SPEC_QS_STRINGIFY, "querystring:stringify", 0x0601),
+    (SPEC_QS_ESCAPE, "querystring:escape", 0x0602),
+    (SPEC_QS_UNESCAPE, "querystring:unescape", 0x0603),
+    (SPEC_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
+}
 
 pub const SPEC_TIMERS_SETTIMEOUT: NodeSpec = NodeSpec::new("timers:setTimeout", 0x0700);
 pub const SPEC_TIMERS_CLEARTIMEOUT: NodeSpec = NodeSpec::new("timers:clearTimeout", 0x0701);
