@@ -423,6 +423,10 @@ fn run_source(source: &str) -> Result<(), String> {
 }
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+    // Each Test262 file is an independent Realm-like program. Clear the
+    // thread-local root global before installing the fresh execution scope so
+    // properties created by one fixture cannot leak into the next fixture.
+    quench_runtime::vm::reset_global_object();
     quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
