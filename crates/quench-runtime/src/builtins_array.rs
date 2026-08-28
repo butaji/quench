@@ -1,4 +1,16 @@
 pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
+    if crate::typed_array_ops::is_view(&target)
+        && crate::typed_array_ops::canonical_numeric_index(key)
+    {
+        let deleted = crate::typed_array_ops::typed_array_index(key)
+            .is_none_or(|index| !crate::typed_array_prototype::index_exists(&target, index));
+        return (target, deleted);
+    }
+    if crate::typed_array_ops::is_view(&target)
+        && crate::builtins::descriptor_flag(&target, key, "configurable") == Some(false)
+    {
+        return (target, false);
+    }
     match target {
         Value::Object(properties) => delete_object_property_value(properties, key),
         Value::ObjectAlias(alias) => delete_object_alias_property(alias, key),

@@ -621,9 +621,9 @@ pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
         let result = crate::proxy::proxy_has(value, key)?;
         return Ok(crate::execute::is_truthy(&result));
     }
-    if value.is_typed_array() && crate::typed_array_ops::is_index_key(key) {
-        let index = key.parse::<usize>().unwrap_or(usize::MAX);
-        return Ok(crate::typed_array_prototype::index_exists(value, index));
+    if value.is_typed_array() && crate::typed_array_ops::canonical_numeric_index(key) {
+        return Ok(crate::typed_array_ops::typed_array_index(key)
+            .is_some_and(|index| crate::typed_array_prototype::index_exists(value, index)));
     }
     let key_value = Value::String(key.to_string());
     let own = crate::builtins::object::has_own_property(Some(value), Some(&key_value));
