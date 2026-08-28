@@ -1273,6 +1273,9 @@ fn class_item_widths(
                 .map(|expected| expected.len())
                 .collect()
         }
+        ClassItem::Property { name, .. } if is_string_property(name) => {
+            string_property_widths(name, input, position)
+        }
         ClassItem::Nested(nested) => {
             class_match_widths(nested, input, position, ignore_case, unicode)
         }
@@ -1281,6 +1284,118 @@ fn class_item_widths(
             .filter(|unit| class_item_matches(item, unit.value, ignore_case, unicode))
             .map_or_else(Vec::new, |_| vec![1]),
     }
+}
+
+fn is_string_property(name: &str) -> bool {
+    matches!(
+        name,
+        "Basic_Emoji"
+            | "RGI_Emoji"
+            | "RGI_Emoji_Flag_Sequence"
+            | "RGI_Emoji_Modifier_Sequence"
+            | "RGI_Emoji_Tag_Sequence"
+            | "RGI_Emoji_ZWJ_Sequence"
+    )
+}
+
+fn string_property_widths(name: &str, input: &[Unit], position: usize) -> Vec<usize> {
+    let mut widths = Vec::new();
+    for width in 1..=input.len().saturating_sub(position).min(16) {
+        let Some(text) = units_to_string(&input[position..position + width]) else {
+            continue;
+        };
+        if string_property_matches(name, &text) {
+            widths.push(width);
+        }
+    }
+    widths
+}
+
+fn units_to_string(units: &[Unit]) -> Option<String> {
+    let mut output = String::new();
+    for unit in units {
+        output.push(char::from_u32(unit.value)?);
+    }
+    Some(output)
+}
+
+fn string_property_matches(name: &str, text: &str) -> bool {
+    match name {
+        "Basic_Emoji" => {
+            icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>()
+                .contains_str(text)
+        }
+        "RGI_Emoji_Flag_Sequence" => is_flag_sequence(text),
+        "RGI_Emoji_Modifier_Sequence" => is_modifier_sequence(text),
+        "RGI_Emoji_Tag_Sequence" => is_tag_sequence(text),
+        "RGI_Emoji_ZWJ_Sequence" => is_zwj_sequence(text),
+        "RGI_Emoji" => {
+            string_property_matches("Basic_Emoji", text)
+                || is_keycap_sequence(text)
+                || is_flag_sequence(text)
+                || is_modifier_sequence(text)
+                || is_tag_sequence(text)
+                || is_zwj_sequence(text)
+        }
+        _ => false,
+    }
+}
+
+fn is_keycap_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    matches!(
+        units.as_slice(),
+        [35, 0xFE0F, 0x20E3] | [42, 0xFE0F, 0x20E3] | [0x30..=0x39, 0xFE0F, 0x20E3]
+    )
+}
+
+fn is_flag_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    units.len() == 2 && units.iter().all(|value| (0x1F1E6..=0x1F1FF).contains(value))
+}
+
+fn is_modifier_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    if !units
+        .last()
+        .is_some_and(|value| (0x1F3FB..=0x1F3FF).contains(value))
+    {
+        return false;
+    }
+    let mut base = &units[..units.len().saturating_sub(1)];
+    if base.last() == Some(&0xFE0F) {
+        base = &base[..base.len() - 1];
+    }
+    base.len() == 1 && is_basic_emoji_code_point(base[0])
+}
+
+fn is_tag_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    units.len() >= 3
+        && units.first() == Some(&0x1F3F4)
+        && units.last() == Some(&0xE007F)
+        && units[1..units.len() - 1]
+            .iter()
+            .all(|value| (0xE0020..=0xE007E).contains(value))
+}
+
+fn is_zwj_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    units.contains(&0x200D)
+        && units
+            .split(|value| *value == 0x200D)
+            .all(|part| {
+                !part.is_empty()
+                    && part.iter().all(|value| {
+                        *value == 0xFE0F
+                            || (0x1F3FB..=0x1F3FF).contains(value)
+                            || is_basic_emoji_code_point(*value)
+                    })
+            })
+}
+
+fn is_basic_emoji_code_point(value: u32) -> bool {
+    property_matches("Emoji", None, value)
 }
 
 fn class_match_widths(
