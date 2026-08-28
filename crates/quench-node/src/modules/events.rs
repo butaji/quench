@@ -975,7 +975,11 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
             emitter.borrow_mut().capture_rejections = capture;
         }
     }
-    install_emitter_props(object, false)
+    let object = install_emitter_props(object, false)?;
+    if let Some(domain) = crate::modules::domain::current(state) {
+        return crate::modules::domain::attach_member(state, &domain, object);
+    }
+    Ok(object)
 }
 
 /// Build a fresh EventEmitter-backed object with all standard emitter
