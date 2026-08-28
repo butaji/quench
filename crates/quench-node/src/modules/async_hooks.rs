@@ -18,6 +18,12 @@ const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 const HOOK_ID: &str = "\0quench:async_hooks:hook";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
+const LOCAL_DEFAULT: &str = "\0quench:async_hooks:local:default";
+const SCOPE_ID: &str = "\0quench:async_hooks:scope:id";
+const SCOPE_RESOURCE: &str = "\0quench:async_hooks:scope:resource";
+const SCOPE_PREVIOUS: &str = "\0quench:async_hooks:scope:previous";
+const SCOPE_HAD_PREVIOUS: &str = "\0quench:async_hooks:scope:had_previous";
+const SCOPE_ACTIVE: &str = "\0quench:async_hooks:scope:active";
 
 #[derive(Clone, Debug, Default)]
 struct Hook {
@@ -146,10 +152,14 @@ pub fn new_async_local_storage(
     let mut host = state.borrow_mut();
     let id = host.async_hooks.next_local_id;
     host.async_hooks.next_local_id += 1;
-    let object = crate::host::namespace_object_from_pairs(vec![(
-        LOCAL_ID.to_string(),
-        Value::Number(id as f64),
-    )]);
+    let default = args
+        .first()
+        .and_then(|options| id_property(options, "defaultValue"))
+        .unwrap_or(Value::Undefined);
+    let object = crate::host::namespace_object_from_pairs(vec![
+        (LOCAL_ID.to_string(), Value::Number(id as f64)),
+        (LOCAL_DEFAULT.to_string(), default),
+    ]);
     let object = execute::set_property(
         object,
         "getStore",
@@ -166,6 +176,11 @@ pub fn new_async_local_storage(
         object,
         "exit",
         crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_EXIT),
+    );
+    let object = execute::set_property(
+        object,
+        "withScope",
+        crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_SCOPE),
     );
     Ok(execute::set_property(
         object,
@@ -188,13 +203,14 @@ pub fn local_get_store(
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
     let resource_id = state.borrow().async_hooks.current_id;
-    Ok(state
+    let store = state
         .borrow()
         .async_hooks
         .local_stores
         .get(&(resource_id, id))
         .cloned()
-        .unwrap_or(Value::Undefined))
+        .unwrap_or_else(|| receiver.map(|value| execute::get_property(value, LOCAL_DEFAULT)).unwrap_or(Value::Undefined));
+    Ok(store)
 }
 
 pub fn local_enter_with(
@@ -255,6 +271,51 @@ pub fn local_exit(
             .insert((resource_id, id), value);
     }
     result
+}
+
+pub fn local_scope(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let id = local_id(receiver).unwrap_or_default();
+    let resource = state.borrow().async_hooks.current_id;
+    let previous = state.borrow_mut().async_hooks.local_stores.insert(
+        (resource, id),
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
+    let dispose = crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_SCOPE_DISPOSE);
+    Ok(host_api::object(vec![
+        (SCOPE_ID.into(), Value::Number(id as f64)),
+        (SCOPE_RESOURCE.into(), Value::Number(resource as f64)),
+        (SCOPE_PREVIOUS.into(), previous.clone().unwrap_or(Value::Undefined)),
+        (SCOPE_HAD_PREVIOUS.into(), Value::Boolean(previous.is_some())),
+        (SCOPE_ACTIVE.into(), Value::Boolean(true)),
+        ("dispose".into(), dispose.clone()),
+        ("Symbol.dispose".into(), dispose),
+    ]))
+}
+
+pub fn local_scope_dispose(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let Some(scope) = receiver else { return Err(VmError::NotCallable); };
+    if !matches!(execute::get_property(scope, SCOPE_ACTIVE), Value::Boolean(true)) {
+        return Ok(Value::Undefined);
+    }
+    let resource = number(execute::get_property(scope, SCOPE_RESOURCE)).unwrap_or(1);
+    let id = number(execute::get_property(scope, SCOPE_ID)).unwrap_or_default();
+    let previous = execute::get_property(scope, SCOPE_PREVIOUS);
+    let had_previous = matches!(execute::get_property(scope, SCOPE_HAD_PREVIOUS), Value::Boolean(true));
+    if had_previous {
+        state.borrow_mut().async_hooks.local_stores.insert((resource, id), previous);
+    } else {
+        state.borrow_mut().async_hooks.local_stores.remove(&(resource, id));
+    }
+    let _ = execute::set_property_in_place(scope, SCOPE_ACTIVE, Value::Boolean(false));
+    Ok(Value::Undefined)
 }
 
 pub fn local_run(

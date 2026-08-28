@@ -153,6 +153,8 @@ const CAP_ASYNC_LOCAL_ENTER: u16 = crate::registry::SPEC_ASYNC_LOCAL_ENTER.cap;
 const CAP_ASYNC_LOCAL_DISABLE: u16 = crate::registry::SPEC_ASYNC_LOCAL_DISABLE.cap;
 const CAP_ASYNC_LOCAL_STORAGE: u16 = crate::registry::SPEC_ASYNC_LOCAL_STORAGE.cap;
 const CAP_ASYNC_LOCAL_EXIT: u16 = crate::registry::SPEC_ASYNC_LOCAL_EXIT.cap;
+const CAP_ASYNC_LOCAL_SCOPE: u16 = crate::registry::SPEC_ASYNC_LOCAL_SCOPE.cap;
+const CAP_ASYNC_LOCAL_SCOPE_DISPOSE: u16 = crate::registry::SPEC_ASYNC_LOCAL_SCOPE_DISPOSE.cap;
 const CAP_ASYNC_WORKER_RESOURCE: u16 = crate::registry::SPEC_ASYNC_WORKER_RESOURCE.cap;
 const CAP_INSPECTOR_SESSION: u16 = crate::registry::SPEC_INSPECTOR_SESSION.cap;
 const CAP_INSPECTOR_CONNECT: u16 = crate::registry::SPEC_INSPECTOR_CONNECT.cap;
@@ -851,6 +853,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASYNC_LOCAL_ENTER => crate::modules::async_hooks::local_enter_with,
         CAP_ASYNC_LOCAL_DISABLE => crate::modules::async_hooks::local_disable,
         CAP_ASYNC_LOCAL_EXIT => crate::modules::async_hooks::local_exit,
+        CAP_ASYNC_LOCAL_SCOPE => crate::modules::async_hooks::local_scope,
+        CAP_ASYNC_LOCAL_SCOPE_DISPOSE => crate::modules::async_hooks::local_scope_dispose,
         CAP_ASYNC_WORKER_RESOURCE => crate::modules::async_hooks::worker_resource,
         CAP_INSPECTOR_CONNECT => crate::modules::inspector::connect,
         CAP_INSPECTOR_CONNECT_MAIN => crate::modules::inspector::connect,
