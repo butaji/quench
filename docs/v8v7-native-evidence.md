@@ -146,6 +146,24 @@ measurement in this toolchain, not evidence that no loop vectorized.  Items
 9 and 34--35 continue to require a compiler/toolchain that exports the
 remarks or direct disassembly of a specifically numeric hot loop.
 
+## Valid RegExp profile: allocation and ownership dominate
+
+The 20-second Time Profiler capture from the current UUID-matched binary
+contains 8,117 raw samples.  Its most frequent active leaf frames include
+`regex_automata` SipHash writes (275 samples), `Value` drop glue (259),
+`Value::clone` (121), `String::clone` (90), `TaggedValue::decode` (52), and
+Quench property/locals paths (`builtin_method`, `resolved_replacement`, and
+`resolved_object_replacement`).  Native allocator/deallocator leaves
+(`_xzm_free`, `_xzm_xzone_malloc`, `_free`, `_malloc_zone_malloc`, and
+`_platform_memmove`) account for more than 1,800 leaf samples combined.
+
+This closes the priority question for items 1, 6--7, 12, and 45: repeated
+ownership traffic is measured in the only score-blocking fixture.  The next
+candidate must remove a reusable allocation/copy from ordinary RegExp or
+property semantics, retain ordinary fallback behavior, and then be measured
+against this same full-suite baseline.  It does *not* justify result discard,
+unchecked access, tag reordering, or a benchmark-specific path.
+
 ## Next experiment, ordered by impact / effort
 
 1. Produce a DeltaBlue-valid dSYM build by isolating the dirty semantic repair.
