@@ -488,6 +488,9 @@
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
           requestRead(this);
+          if (st.decoder && !st.objectMode) {
+            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          }
         }
         return chunk;
       }
@@ -506,6 +509,9 @@
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
           requestRead(this);
+          if (st.decoder && !st.objectMode) {
+            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          }
         }
         return chunk;
       }
