@@ -164,6 +164,12 @@ property semantics, retain ordinary fallback behavior, and then be measured
 against this same full-suite baseline.  It does *not* justify result discard,
 unchecked access, tag reordering, or a benchmark-specific path.
 
+An isolated array copy-on-write experiment removed the artificial owner clone
+before `Rc::make_mut` for unique arrays, while retaining the old replacement
+path for aliased arrays.  DeltaBlue remained valid (57.7), but official RegExp
+still timed out at 240.003 s.  It was reverted: safe local allocation removal
+without a measured V8 score win is not retained while the score gate remains.
+
 ## Next experiment, ordered by impact / effort
 
 1. Produce a DeltaBlue-valid dSYM build by isolating the dirty semantic repair.
