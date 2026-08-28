@@ -668,17 +668,10 @@ fn to_zoned_date_time(
     if !(-INSTANT_LIMIT..=INSTANT_LIMIT).contains(&epoch) {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
-    Ok(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![
-            ("epochNanoseconds".into(), Value::BigInt(epoch.to_string())),
-            ("calendarId".into(), Value::String("iso8601".into())),
-            ("timeZoneId".into(), Value::String(time_zone)),
-            (
-                "\0prototype".into(),
-                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
-            ),
-        ]),
-    )))
+    crate::temporal::zoned_construct(&[
+        Value::BigInt(epoch.to_string()),
+        Value::String(time_zone),
+    ])
 }
 
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
