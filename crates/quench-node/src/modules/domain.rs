@@ -45,6 +45,7 @@ impl DomainState {
 }
 
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
+    install_promise_bridge();
     let module = crate::host::namespace_object(vec![
         ("active", Value::Null),
         ("_stack", host_api::array(Vec::new())),
@@ -55,6 +56,43 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     .unwrap_or(Value::Undefined);
     state.borrow_mut().domain.module = Some(module.clone());
     module
+}
+
+fn install_promise_bridge() {
+    let global = quench_runtime::vm::current_global_object();
+    if matches!(
+        execute::get_property(&global, "__quench_domain_promises_patched"),
+        Value::Boolean(true)
+    ) {
+        return;
+    }
+    let source = r#"(() => {
+      const originalThen = Promise.prototype.then;
+      const wrap = (callback) => {
+        const domain = globalThis.process?.domain;
+        if (typeof callback !== "function" || !domain) return callback;
+        return (...args) => domain.run(() => callback(...args));
+      };
+      Object.defineProperty(Promise.prototype, "then", {
+        configurable: true,
+        writable: true,
+        value: function(onFulfilled, onRejected) {
+          return originalThen.call(this, wrap(onFulfilled), wrap(onRejected));
+        },
+      });
+      Object.defineProperty(globalThis, "__quench_domain_promises_patched", {
+        configurable: true,
+        value: true,
+      });
+    })()"#;
+    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else {
+        return;
+    };
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    let _ = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
+    });
 }
 
 pub fn create(
