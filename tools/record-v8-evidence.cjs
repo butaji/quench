@@ -26,6 +26,7 @@ const only = option("--only");
 const append = option("--append");
 const identifier = option("--id");
 const parent = option("--parent");
+const artifactGitCommit = option("--artifact-git-commit");
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
 const runnerArgs = [
@@ -44,5 +45,6 @@ if (!only) recordArgs.push("--full-v8");
 if (append) recordArgs.push("--append", path.resolve(append));
 if (identifier) recordArgs.push("--id", identifier);
 if (parent) recordArgs.push("--parent", parent);
+if (artifactGitCommit) recordArgs.push("--artifact-git-commit", artifactGitCommit);
 const record = cp.spawnSync(process.execPath, recordArgs, { cwd: root, stdio: "inherit" });
 process.exit(record.status ?? 1);

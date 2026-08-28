@@ -27,7 +27,13 @@ const required = (name) => {
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const command = (program, argv) => {
-  const result = cp.spawnSync(program, argv, { cwd: root, encoding: "utf8" });
+  const result = cp.spawnSync(program, argv, {
+    cwd: root,
+    encoding: "utf8",
+    // Worktrees with generated artifacts can legitimately have a large
+    // porcelain listing. A truncated listing is not an identity fact.
+    maxBuffer: 64 * 1024 * 1024,
+  });
   return result.status === 0 ? result.stdout.trim() : null;
 };
 const median = (values) => {
@@ -111,7 +117,10 @@ const record = {
   artifact: {
     binary,
     binary_sha256: sha256(binary),
-    git_commit: command("git", ["rev-parse", "HEAD"]),
+    // A standalone executable does not encode the source revision that built
+    // it. Record it only when the build command supplied that fact; never
+    // substitute the revision of this later reporting invocation.
+    build_git_commit: option("--artifact-git-commit"),
     worktree_clean: worktreeStatus === "",
     worktree_status_sha256: worktreeStatus
       ? crypto.createHash("sha256").update(worktreeStatus).digest("hex")
@@ -125,6 +134,7 @@ const record = {
     cpu: os.cpus()[0]?.model || null,
   },
   raw_input: input,
+  recorder_git_commit: command("git", ["rev-parse", "HEAD"]),
   fixtures,
   score_leverage: leverage(fixtures, requiredFixtures),
   unavailable: {
