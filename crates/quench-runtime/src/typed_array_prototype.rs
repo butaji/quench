@@ -221,6 +221,9 @@ pub(crate) fn constructor_override(value: &Value) -> Option<Value> {
                 .find_map(|(name, value)| (name == "value").then_some(value.clone()));
             value
         }
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            crate::execute::get_property_result(&prototype, "constructor").ok()
+        }
         _ => None,
     }
 }
