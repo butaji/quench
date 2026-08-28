@@ -340,3 +340,21 @@ exception handoff, or tail-call transfer is possible; every other case keeps
 the existing complete environment path.  Retain it only if it removes this
 origin volume and yields at least a twofold isolated Earley improvement before
 another full-suite score run.
+
+## Rejected execution-register pool
+
+A bounded TLS pool reused only the execution `RegisterFile` for every
+non-async/non-`with` `ActiveCall`, including functions with a captured lexical
+prefix. Checkout reset every word to `undefined` and released owned payloads;
+the existing `Environment`, lexical slots, continuation, and all observable
+state remained unchanged. VM tests passed, but a production EarleyBoyer run
+measured score **111**, 84.75 user seconds, 1,226,113,024-byte maximum RSS,
+and 1.814T instructions. Against the 108-score/88.07-second control this is
+only a small run-level improvement, not the required x2 result, so it was
+reverted.
+
+This falsifies reusing one of the two physical activation vectors. The next
+experiment must eliminate the boundary itself: one contiguous frame word
+window with disjoint parameter/local and temporary-register views, rather
+than two independently owned `RegisterFile` allocations plus an environment
+wrapper.
