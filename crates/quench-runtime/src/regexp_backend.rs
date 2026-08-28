@@ -3,7 +3,7 @@
 //! OXC supplies syntax facts; the VM owns the executable representation and
 //! matching algorithm. No third-party regular-expression engine is involved.
 
-use std::ops::Range;
+use std::{collections::VecDeque, ops::Range};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -738,6 +738,9 @@ fn repeat_options(
     max: Option<usize>,
     greedy: bool,
 ) -> Vec<State> {
+    if matches!(body, Expr::Literal(_) | Expr::Dot | Expr::Class(_)) {
+        return repeat_simple_options(body, input, state, flags, min, max, greedy);
+    }
     let limit = max.unwrap_or(input.len().saturating_add(1));
     fn visit(
         body: &Expr,
@@ -784,6 +787,49 @@ fn repeat_options(
         .into_iter()
         .take(MAX_BACKTRACK_STATES)
         .collect()
+}
+
+fn repeat_simple_options(
+    body: &Expr,
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+    min: usize,
+    max: Option<usize>,
+    greedy: bool,
+) -> Vec<State> {
+    let limit = max.unwrap_or(input.len().saturating_add(1));
+    let mut states = VecDeque::new();
+    let mut current = state.clone();
+    let mut count = 0;
+    while count < limit {
+        let Some(next) = match_expr(body, input, current.clone(), flags) else {
+            break;
+        };
+        if next.position == current.position {
+            break;
+        }
+        count += 1;
+        current = next;
+        if count >= min {
+            if states.len() == MAX_BACKTRACK_STATES {
+                states.pop_front();
+            }
+            states.push_back(current.clone());
+        }
+    }
+    if !greedy && min == 0 {
+        states.push_front(state.clone());
+        states.truncate(MAX_BACKTRACK_STATES);
+    }
+    let mut result: Vec<State> = states.into_iter().collect();
+    if greedy {
+        result.reverse();
+        if min == 0 {
+            result.push(state);
+        }
+    }
+    result
 }
 
 fn capture_indices(expr: &Expr) -> Vec<usize> {
