@@ -1073,12 +1073,24 @@ mod stubs {
                 };
                 finite_integer(&value)
             };
-            let hour = field("hour")?;
-            let minute = field("minute")?;
-            let second = field("second")?;
-            let millisecond = field("millisecond")?;
-            let microsecond = field("microsecond")?;
-            let nanosecond = field("nanosecond")?;
+            let mut time = [
+                field("hour")?,
+                field("minute")?,
+                field("second")?,
+                field("millisecond")?,
+                field("microsecond")?,
+                field("nanosecond")?,
+            ];
+            let limits = [23, 59, 59, 999, 999, 999];
+            for (value, limit) in time.iter_mut().zip(limits) {
+                if overflow_mode == "reject" && !(*value >= 0 && *value <= limit) {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                if overflow_mode == "constrain" {
+                    *value = (*value).clamp(0, limit);
+                }
+            }
+            let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
             let calendar = crate::execute::get_property_result(value, "calendar")?;
             if !matches!(calendar, Value::Undefined) {
                 super::parse_calendar_identifier(&calendar)?;
