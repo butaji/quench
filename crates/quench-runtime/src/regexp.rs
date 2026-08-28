@@ -5,6 +5,9 @@ include!("regexp_cache.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
+    if flags.contains('u') || flags.contains('v') {
+        validate_unicode_escapes(pattern, flags.contains('v'))?;
+    }
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
@@ -28,6 +31,10 @@ pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> 
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    if flags.contains('u') || flags.contains('v') {
+        validate_unicode_escapes(pattern, flags.contains('v'))
+            .map_err(|_| "SyntaxError: invalid regular expression".to_string())?;
+    }
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
