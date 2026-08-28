@@ -2474,7 +2474,15 @@ mod stubs {
                     (anchor, (end_date - anchor).num_days())
                 };
                 let date_days = (end_date - start_date).num_days() as i128;
-                let time_remainder = delta - date_days * 86_400_000_000_000;
+                let mut time_remainder = delta - date_days * 86_400_000_000_000;
+                let mut days = days;
+                if time_remainder < 0 {
+                    days -= 1;
+                    time_remainder += 86_400_000_000_000;
+                } else if time_remainder >= 86_400_000_000_000 {
+                    days += 1;
+                    time_remainder -= 86_400_000_000_000;
+                }
                 if largest == "year" {
                     fields[0] = Value::Number(years as f64);
                     fields[1] = Value::Number(months as f64);
@@ -2595,6 +2603,59 @@ mod stubs {
                     fields[1] = Value::Number(0.0);
                     fields[3] = Value::Number(0.0);
                     fields[4..].fill(Value::Number(0.0));
+                }
+                let date_sign = fields
+                    .iter()
+                    .take(4)
+                    .find_map(|value| match value {
+                        Value::Number(number) if *number != 0.0 => Some(number.signum()),
+                        _ => None,
+                    });
+                let time_total = fields
+                    .iter()
+                    .skip(4)
+                    .zip([
+                        3_600_000_000_000_i128,
+                        60_000_000_000,
+                        1_000_000_000,
+                        1_000_000,
+                        1_000,
+                        1,
+                    ])
+                    .map(|(value, scale)| match value {
+                        Value::Number(number) => *number as i128 * scale,
+                        _ => 0,
+                    })
+                    .sum::<i128>();
+                if let Some(sign) = date_sign {
+                    let balanced_time = if sign < 0.0 && time_total > 0 {
+                        if let Value::Number(days) = &mut fields[3] {
+                            *days += 1.0;
+                        }
+                        -(86_400_000_000_000_i128 - time_total)
+                    } else if sign > 0.0 && time_total < 0 {
+                        if let Value::Number(days) = &mut fields[3] {
+                            *days -= 1.0;
+                        }
+                        86_400_000_000_000_i128 + time_total
+                    } else {
+                        time_total
+                    };
+                    let mut remainder = balanced_time.abs();
+                    for (index, scale) in [
+                        (4, 3_600_000_000_000_i128),
+                        (5, 60_000_000_000),
+                        (6, 1_000_000_000),
+                        (7, 1_000_000),
+                        (8, 1_000),
+                        (9, 1),
+                    ] {
+                        let value = remainder / scale;
+                        remainder %= scale;
+                        if let Value::Number(slot) = &mut fields[index] {
+                            *slot = value as f64 * sign;
+                        }
+                    }
                 }
                 return crate::temporal::duration::construct(&fields);
             }
