@@ -921,7 +921,7 @@ mod tests {
         StringEncoding, StringSourceEncoding, StringView, MAX_STRING_BYTES,
     };
 
-    use crate::value::Value;
+    use crate::{construct::construct_value, ops::Builtin, value::Value};
     #[test]
     fn materialize_is_the_explicit_utf16_boundary() {
         let units = from_units(vec![0x41, 0xd800, 0x42]);
@@ -1147,5 +1147,23 @@ mod tests {
         let oversized = from_units(vec![0; MAX_STRING_BYTES / 2 + 1]);
         let result = concat(Some(&oversized), &[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn discard_replace_executes_intrinsic_regexp_protocol() {
+        let regexp = construct_value(
+            &Value::Builtin(Builtin::RegExp),
+            &[
+                Value::String("^\\s*|\\s*$".into()),
+                Value::String("g".into()),
+            ],
+        )
+        .expect("regexp construction");
+        super::replace(
+            Some(&Value::String("  value  ".into())),
+            &[regexp, Value::String(String::new())],
+            false,
+        )
+        .expect("discarded replace");
     }
 }
