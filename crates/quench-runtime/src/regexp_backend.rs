@@ -1273,6 +1273,9 @@ fn class_item_widths(
                 .map(|expected| expected.len())
                 .collect()
         }
+        ClassItem::Property { name, .. } if is_string_property(name) => {
+            string_property_widths(name, input, position)
+        }
         ClassItem::Nested(nested) => {
             class_match_widths(nested, input, position, ignore_case, unicode)
         }
@@ -1281,6 +1284,118 @@ fn class_item_widths(
             .filter(|unit| class_item_matches(item, unit.value, ignore_case, unicode))
             .map_or_else(Vec::new, |_| vec![1]),
     }
+}
+
+fn is_string_property(name: &str) -> bool {
+    matches!(
+        name,
+        "Basic_Emoji"
+            | "RGI_Emoji"
+            | "RGI_Emoji_Flag_Sequence"
+            | "RGI_Emoji_Modifier_Sequence"
+            | "RGI_Emoji_Tag_Sequence"
+            | "RGI_Emoji_ZWJ_Sequence"
+    )
+}
+
+fn string_property_widths(name: &str, input: &[Unit], position: usize) -> Vec<usize> {
+    let mut widths = Vec::new();
+    for width in 1..=input.len().saturating_sub(position).min(16) {
+        let Some(text) = units_to_string(&input[position..position + width]) else {
+            continue;
+        };
+        if string_property_matches(name, &text) {
+            widths.push(width);
+        }
+    }
+    widths
+}
+
+fn units_to_string(units: &[Unit]) -> Option<String> {
+    let mut output = String::new();
+    for unit in units {
+        output.push(char::from_u32(unit.value)?);
+    }
+    Some(output)
+}
+
+fn string_property_matches(name: &str, text: &str) -> bool {
+    match name {
+        "Basic_Emoji" => {
+            icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>()
+                .contains_str(text)
+        }
+        "RGI_Emoji_Flag_Sequence" => is_flag_sequence(text),
+        "RGI_Emoji_Modifier_Sequence" => is_modifier_sequence(text),
+        "RGI_Emoji_Tag_Sequence" => is_tag_sequence(text),
+        "RGI_Emoji_ZWJ_Sequence" => is_zwj_sequence(text),
+        "RGI_Emoji" => {
+            string_property_matches("Basic_Emoji", text)
+                || is_keycap_sequence(text)
+                || is_flag_sequence(text)
+                || is_modifier_sequence(text)
+                || is_tag_sequence(text)
+                || is_zwj_sequence(text)
+        }
+        _ => false,
+    }
+}
+
+fn is_keycap_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    matches!(
+        units.as_slice(),
+        [35, 0xFE0F, 0x20E3] | [42, 0xFE0F, 0x20E3] | [0x30..=0x39, 0xFE0F, 0x20E3]
+    )
+}
+
+fn is_flag_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    units.len() == 2 && units.iter().all(|value| (0x1F1E6..=0x1F1FF).contains(value))
+}
+
+fn is_modifier_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    if !units
+        .last()
+        .is_some_and(|value| (0x1F3FB..=0x1F3FF).contains(value))
+    {
+        return false;
+    }
+    let mut base = &units[..units.len().saturating_sub(1)];
+    if base.last() == Some(&0xFE0F) {
+        base = &base[..base.len() - 1];
+    }
+    base.len() == 1 && is_basic_emoji_code_point(base[0])
+}
+
+fn is_tag_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    units.len() >= 3
+        && units.first() == Some(&0x1F3F4)
+        && units.last() == Some(&0xE007F)
+        && units[1..units.len() - 1]
+            .iter()
+            .all(|value| (0xE0020..=0xE007E).contains(value))
+}
+
+fn is_zwj_sequence(text: &str) -> bool {
+    let units: Vec<u32> = text.chars().map(u32::from).collect();
+    units.contains(&0x200D)
+        && units
+            .split(|value| *value == 0x200D)
+            .all(|part| {
+                !part.is_empty()
+                    && part.iter().all(|value| {
+                        *value == 0xFE0F
+                            || (0x1F3FB..=0x1F3FF).contains(value)
+                            || is_basic_emoji_code_point(*value)
+                    })
+            })
+}
+
+fn is_basic_emoji_code_point(value: u32) -> bool {
+    property_matches("Emoji", None, value)
 }
 
 fn class_match_widths(
@@ -1376,7 +1491,7 @@ fn escape_matches(
     }
 }
 
-fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
+pub(crate) fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     let Some(character) = char::from_u32(character) else {
         return false;
     };
@@ -1415,38 +1530,81 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     }
 }
 
-fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
-    use icu_properties::{props, CodePointMapData, CodePointSetData, PropertyParser};
-    if name == "Assigned" {
-        return Some(
-            CodePointMapData::<props::GeneralCategory>::new().get(character)
-                != props::GeneralCategory::Unassigned,
-        );
-    }
-    if matches!(name, "Script" | "sc") {
-        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
-        return Some(CodePointMapData::<props::Script>::new().get(character) == target);
-    }
-    if matches!(name, "General_Category" | "gc") {
-        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
-            return Some(
-                CodePointMapData::<props::GeneralCategory>::new().get(character) == target,
-            );
-        }
-        let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
-        return Some(
-            target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character)),
-        );
-    }
-    macro_rules! binary_property {
-        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
-            match name {
-                $( $( $property => Some(CodePointSetData::new::<props::$kind>().contains(character)), )+ )*
-                _ => None,
+#[derive(Clone, Copy)]
+pub(crate) struct PropertyMatcher {
+    kind: PropertyMatcherKind,
+}
+
+#[derive(Clone, Copy)]
+enum PropertyMatcherKind {
+    Assigned,
+    Script(icu_properties::props::Script),
+    ScriptExtensions(icu_properties::props::Script),
+    GeneralCategory(icu_properties::props::GeneralCategory),
+    GeneralCategoryGroup(icu_properties::props::GeneralCategoryGroup),
+    Binary(fn(char) -> bool),
+}
+
+impl PropertyMatcher {
+    pub(crate) fn matches(self, character: char) -> bool {
+        use icu_properties::{props, CodePointMapData};
+        match self.kind {
+            PropertyMatcherKind::Assigned => {
+                CodePointMapData::<props::GeneralCategory>::new().get(character)
+                    != props::GeneralCategory::Unassigned
             }
-        };
+            PropertyMatcherKind::Script(target) => {
+                CodePointMapData::<props::Script>::new().get(character) == target
+            }
+            PropertyMatcherKind::ScriptExtensions(target) => {
+                icu_properties::script::ScriptWithExtensions::new().has_script(character, target)
+            }
+            PropertyMatcherKind::GeneralCategory(target) => {
+                CodePointMapData::<props::GeneralCategory>::new().get(character) == target
+            }
+            PropertyMatcherKind::GeneralCategoryGroup(target) => {
+                target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character))
+            }
+            PropertyMatcherKind::Binary(matcher) => matcher(character),
+        }
     }
-    binary_property!(
+}
+
+fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: char) -> bool {
+    icu_properties::CodePointSetData::new::<P>().contains(character)
+}
+
+pub(crate) fn compile_property_matcher(
+    name: &str,
+    value: Option<&str>,
+) -> Option<PropertyMatcher> {
+    use icu_properties::{props, PropertyParser};
+    let kind = if name == "Assigned" {
+        PropertyMatcherKind::Assigned
+    } else if matches!(name, "Script" | "sc") {
+        PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
+    } else if matches!(name, "Script_Extensions" | "scx") {
+        PropertyMatcherKind::ScriptExtensions(
+            PropertyParser::<props::Script>::new().get_loose(value?)?,
+        )
+    } else if matches!(name, "General_Category" | "gc") {
+        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
+            PropertyMatcherKind::GeneralCategory(target)
+        } else {
+            PropertyMatcherKind::GeneralCategoryGroup(
+                PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?,
+            )
+        }
+    } else {
+        macro_rules! binary_property {
+            ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
+                match name {
+                    $( $( $property => PropertyMatcherKind::Binary(binary_property_matches::<props::$kind>), )+ )*
+                    _ => return None,
+                }
+            };
+        }
+        binary_property!(
         "ASCII_Hex_Digit" => AsciiHexDigit,
         "AHex" => AsciiHexDigit,
         "Alphabetic" => Alphabetic,
@@ -1477,13 +1635,15 @@ fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Opt
         "Extender" | "Ext" => Extender,
         "Grapheme_Base" | "Gr_Base" => GraphemeBase,
         "Grapheme_Extend" | "Gr_Ext" => GraphemeExtend,
-        "Hex_Digit" => HexDigit,
+        "Hex_Digit" | "Hex" => HexDigit,
         "ID_Continue" | "IDC" => IdContinue,
         "ID_Start" | "IDS" => IdStart,
-        "Ideographic" => Ideographic,
+        "Ideographic" | "Ideo" => Ideographic,
+        "IDS_Binary_Operator" | "IDSB" => IdsBinaryOperator,
+        "IDS_Trinary_Operator" | "IDST" => IdsTrinaryOperator,
         "Join_Control" | "Join_C" => JoinControl,
         "Logical_Order_Exception" | "LOE" => LogicalOrderException,
-        "Lowercase" => Lowercase,
+        "Lowercase" | "Lower" => Lowercase,
         "Math" => Math,
         "Noncharacter_Code_Point" | "NChar" => NoncharacterCodePoint,
         "Pattern_Syntax" | "Pat_Syn" => PatternSyntax,
@@ -1491,12 +1651,22 @@ fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Opt
         "Quotation_Mark" | "QMark" => QuotationMark,
         "Radical" => Radical,
         "Regional_Indicator" | "RI" => RegionalIndicator,
-        "Uppercase" => Uppercase,
+        "Sentence_Terminal" | "STerm" => SentenceTerminal,
+        "Soft_Dotted" | "SD" => SoftDotted,
+        "Terminal_Punctuation" | "Term" => TerminalPunctuation,
+        "Unified_Ideograph" | "UIdeo" => UnifiedIdeograph,
+        "Uppercase" | "Upper" => Uppercase,
         "Variation_Selector" | "VS" => VariationSelector,
         "White_Space" | "space" | "WSpace" => WhiteSpace,
         "XID_Continue" | "XIDC" => XidContinue,
         "XID_Start" | "XIDS" => XidStart,
-    )
+        )
+    };
+    Some(PropertyMatcher { kind })
+}
+
+fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
+    Some(compile_property_matcher(name, value)?.matches(character))
 }
 
 fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
@@ -1517,7 +1687,7 @@ fn canonical(value: u32, unicode: bool) -> u32 {
 }
 fn lower(value: u32) -> u32 {
     char::from_u32(value)
-        .and_then(|character| character.to_lowercase().next())
+        .map(|character| icu_casemap::CaseMapper::new().simple_fold(character))
         .map_or(value, u32::from)
 }
 fn is_word(value: u32) -> bool {
@@ -1542,6 +1712,7 @@ mod tests {
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
     }
+
 
     #[test]
     fn unicode_string_class_matches() {
