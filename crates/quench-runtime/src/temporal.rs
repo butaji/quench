@@ -310,6 +310,37 @@ fn normalize_offset_identifier(text: &str) -> Option<String> {
     Some(format!("{}{:02}:{:02}", bytes[0] as char, hour, minute))
 }
 
+fn valid_iso_offset(text: &str) -> bool {
+    let body = text.get(1..).unwrap_or_default();
+    let (core, fraction) = body
+        .split_once(['.', ','])
+        .map_or((body, None), |(core, fraction)| (core, Some(fraction)));
+    if fraction.is_some_and(|value| value.is_empty() || value.len() > 9 || !value.bytes().all(|b| b.is_ascii_digit())) {
+        return false;
+    }
+    let digits = core.replace(':', "");
+    if !matches!(digits.len(), 2 | 4 | 6) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let hour = digits[0..2].parse::<u8>().unwrap_or(99);
+    let minute = if digits.len() >= 4 { digits[2..4].parse::<u8>().unwrap_or(99) } else { 0 };
+    let second = if digits.len() == 6 { digits[4..6].parse::<u8>().unwrap_or(99) } else { 0 };
+    hour <= 23 && minute <= 59 && second == 0
+}
+
+fn iso_offset_nanos(text: &str) -> i128 {
+    let sign = if text.starts_with('-') { -1 } else { 1 };
+    let body = &text[1..];
+    let digits = body
+        .split_once(['.', ','])
+        .map_or(body, |(core, _)| core)
+        .replace(':', "");
+    let hour = digits.get(0..2).and_then(|v| v.parse::<i128>().ok()).unwrap_or(0);
+    let minute = digits.get(2..4).and_then(|v| v.parse::<i128>().ok()).unwrap_or(0);
+    let second = digits.get(4..6).and_then(|v| v.parse::<i128>().ok()).unwrap_or(0);
+    sign * (hour * 3_600 + minute * 60 + second) * 1_000_000_000
+}
+
 fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     if depth > 4 {
         return false;
@@ -665,6 +696,9 @@ mod stubs {
                 .split('Z')
                 .next()
                 .unwrap_or(text);
+            if !date_time.contains('T') && !date_time.contains('t') && !date_time.contains(' ') {
+                return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
+            }
             let (date, time) = date_time.split_once('T').unwrap_or((date_time, "00:00:00"));
             if date.starts_with("-000000") {
                 return Err(crate::value::error::throw_range_error("Invalid year"));
@@ -675,20 +709,14 @@ mod stubs {
             let (clock, offset_text) = offset_start
                 .map(|index| (&time[..index], &time[index..]))
                 .unwrap_or((time, "+00:00"));
-            if time.contains('+') || time.contains('-') {
-                let suffix = time
-                    .rsplit_once(['+', '-'])
-                    .map(|(_, suffix)| suffix)
-                    .unwrap_or_default();
-                if suffix.matches(':').count() > 1 {
-                    return Err(crate::value::error::throw_range_error("Invalid time"));
-                }
+            if offset_start.is_some() && !super::valid_iso_offset(offset_text) {
+                return Err(crate::value::error::throw_range_error("Invalid time"));
             }
-            if clock.contains('.') && clock.split(':').count() < 3 {
+            if (clock.contains('.') || clock.contains(',')) && clock.split(':').count() < 3 {
                 return Err(crate::value::error::throw_range_error("Fractional minutes not allowed"));
             }
             if clock
-                .split_once('.')
+                .split_once(['.', ','])
                 .map(|(_, fraction)| fraction.len() > 9)
                 .unwrap_or(false)
             {
@@ -701,7 +729,7 @@ mod stubs {
             let fractional_nanos = clock
                 .split(':')
                 .nth(2)
-                .and_then(|part| part.split_once('.').map(|(_, fraction)| fraction))
+                .and_then(|part| part.split_once(['.', ',']).map(|(_, fraction)| fraction))
                 .map(|fraction| {
                     format!("{fraction:0<9}")
                         .chars()
@@ -714,7 +742,7 @@ mod stubs {
             if let Some(second) = clock
                 .split(':')
                 .nth(2)
-                .and_then(|part| part.split('.').next())
+                .and_then(|part| part.split(['.', ',']).next())
                 .and_then(|part| part.parse::<i64>().ok())
             {
                 if time_parts.len() > 2 {
@@ -758,7 +786,7 @@ mod stubs {
                 + time_parts.get(1).copied().unwrap_or(0) as i128 * 60_000_000_000
                 + time_parts.get(2).copied().unwrap_or(0) as i128 * 1_000_000_000
                 + fractional_nanos;
-            let mut epoch = local_epoch - super::fixed_offset_nanos(offset_text);
+            let mut epoch = local_epoch - super::iso_offset_nanos(offset_text);
             let timezone_text = timezone_annotation
                 .as_deref()
                 .unwrap_or(if has_z { "UTC" } else { offset_text });
@@ -771,7 +799,7 @@ mod stubs {
                 .and_then(|value| crate::conversion::to_string(&value).ok())
                 .unwrap_or_else(|| "reject".into());
             if offset_start.is_some() && offset_mode != "ignore" {
-                let supplied_offset = super::fixed_offset_nanos(offset_text);
+                let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if supplied_offset != actual_offset {
                     return Err(crate::value::error::throw_range_error(
