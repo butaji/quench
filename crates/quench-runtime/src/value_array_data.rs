@@ -451,6 +451,18 @@ impl ArrayData {
             && self.argument_live.is_none()
     }
 
+    /// Prove that indexed writes cannot be intercepted by array metadata.
+    /// Holes are allowed because fill materializes every slot in its range.
+    #[inline]
+    pub(crate) fn can_fast_fill(&self) -> bool {
+        self.properties.is_empty()
+            && self.indexed_descriptors_plain()
+            && self.has_default_array_prototype()
+            && !self.arguments
+            && self.argument_live.is_none()
+            && self.mapped.is_empty()
+    }
+
     /// Whether every logical slot is an own numeric value, even when the
     /// monotonic kind is conservatively marked holey after a length reset.
     /// The deleted bitmap remains the authoritative hole proof.
@@ -813,6 +825,24 @@ impl ArrayData {
     #[inline]
     pub(crate) fn set_numeric_index(&mut self, index: usize, number: f64) {
         self.set_index(index, Value::Number(number));
+    }
+
+    pub(crate) fn fill_numeric_constant(&mut self, start: usize, end: usize, number: f64) {
+        debug_assert_eq!(start, 0);
+        self.values.resize_numeric(end);
+        if let DenseElements::Numbers(values) = &self.values {
+            for slot in values.borrow()[start..end].iter() {
+                slot.set(number);
+            }
+        } else {
+            for index in start..end {
+                self.values.set(index, Value::Number(number));
+            }
+        }
+        self.deleted.clear();
+        self.length.set(end);
+        self.kind
+            .set(self.values.kind_with_holes(&self.deleted, end));
     }
 
     pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
