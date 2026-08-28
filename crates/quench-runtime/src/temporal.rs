@@ -420,6 +420,37 @@ fn parse_iso_annotations(text: &str) -> Result<(Option<String>, Option<String>),
     Ok((calendar, timezone))
 }
 
+fn validate_plain_time_annotations(text: &str) -> Result<(), crate::execute::VmError> {
+    let mut calendars = 0;
+    let mut time_zones = 0;
+    let mut critical_calendar = false;
+    for part in text.split('[').skip(1) {
+        let annotation = part
+            .strip_suffix(']')
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid annotation"))?;
+        let (critical, body) = annotation
+            .strip_prefix('!')
+            .map_or((false, annotation), |body| (true, body));
+        if let Some((key, _)) = body.split_once('=') {
+            if key.bytes().any(|byte| byte.is_ascii_uppercase()) {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
+            if key == "u-ca" {
+                calendars += 1;
+                critical_calendar |= critical;
+            } else if critical {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
+        } else {
+            time_zones += 1;
+        }
+    }
+    if time_zones > 1 || calendars > 1 && critical_calendar {
+        return Err(crate::value::error::throw_range_error("Invalid annotation"));
+    }
+    Ok(())
+}
+
 fn zoned_record_with_calendar(
     epoch: i128,
     timezone: String,
@@ -1091,6 +1122,10 @@ mod stubs {
                 .map_or(false, crate::conversion::is_symbol)
             {
                 return Err(crate::value::error::throw_type_error("Invalid time"));
+            }
+            if let Some(value @ (Value::String(_) | Value::StringUnits(_))) = arguments.first() {
+                let text = crate::conversion::to_string(value)?;
+                super::validate_plain_time_annotations(&text)?;
             }
             if let Some(Value::String(text)) = arguments.first() {
                 let base = text.split('[').next().unwrap_or(text);
