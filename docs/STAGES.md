@@ -1,26 +1,9 @@
-# Test262 staging rules
+# Test262 stages
 
-Test262 work is organized by dependency-ordered semantic domains. Stage names
-are planning labels, not progress totals or compatibility claims.
-
-## Rules
-
-- Run the canonical `quench-test262` runner against the pinned test262 tree.
-- Compose the exact declared harness; never override or replace harness code.
-- Complete language semantics before dependent built-ins, Annex B, or Intl
-  behavior.
-- Keep discovery, module ordering, isolation, and outcome classification
-  deterministic.
-- Compare observable behavior at execution time; do not infer support from
-  inventory counts or skipped assertions.
-- Proposal-only staging is not stable conformance and must not be counted as
-  such.
-- Benchmark measurements are external diagnostics and never alter execution.
-
-## Canonical stage paths
-
-The runner reads these paths as configuration. They describe no completion
-status or historical result.
+The runner reads this ordered configuration. Stages are dependency order, not
+progress claims: use the pinned tree and declared harness, keep discovery and
+classification deterministic, and compare observable execution rather than
+inventory. Proposal staging is not conformance; benchmarks never alter it.
 
 - Stage 0: `test/harness`
 - Stage 1: `language/arguments-object`
