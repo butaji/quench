@@ -170,6 +170,25 @@ path for aliased arrays.  DeltaBlue remained valid (57.7), but official RegExp
 still timed out at 240.003 s.  It was reverted: safe local allocation removal
 without a measured V8 score win is not retained while the score gate remains.
 
+## RegExp causal trace and test262 import
+
+An isolated production build with `execution-trace` ran the RegExp block in
+16.5 s (score 231).  It recorded 2,705,797 cache hits and 108 misses; the
+per-pattern combined cache/engine timing is sub-second, so compiling or
+hashing patterns cannot explain the timeout.  The same run recorded
+986,605 match-result allocations, 1,290,094 other allocations, 125,107,781
+owned-word reads, 12,709,857 value decodes, and 2,710,528 built-in calls.
+`string_replace_call` was admitted 437,155 times yet still traversed ordinary
+call/result machinery.
+
+`../quench-test262:test262` was fetched as `quench-test262/test262` at
+`7bfaa7f56` and built in an isolated worktree.  It passes direct DeltaBlue
+(55.7), carries the more complete native RegExp backend/correctness history,
+but its official RegExp run also reached the 240 s watchdog.  It is a source
+of semantic fixes, not unproven performance evidence.  Do not merge its
+divergent runtime wholesale into the dirty worktree; evaluate its RegExp
+commits through isolated compatibility and score gates.
+
 ## Next experiment, ordered by impact / effort
 
 1. Produce a DeltaBlue-valid dSYM build by isolating the dirty semantic repair.
