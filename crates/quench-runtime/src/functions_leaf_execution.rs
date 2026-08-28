@@ -346,11 +346,11 @@ fn proven_leaf(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     code: crate::machine::CodeView<'_>,
 ) -> Result<bool, LeafReject> {
-    let arguments_slot = function.captures.len() as u16 + function.params;
+    let arguments_slot = function.captures.captured_len() as u16 + function.params;
     if function.code.uses_slot(arguments_slot) || function.mapped_arguments {
         return Err(LeafReject::Opcode("Arguments"));
     }
-    if !function.captures.is_empty()
+    if function.captures.captured_len() != 0
         && (0..code.len()).any(|pc| {
             code.instruction(pc)
                 .is_some_and(|op| op.opcode == crate::ir::Opcode::CallN)
