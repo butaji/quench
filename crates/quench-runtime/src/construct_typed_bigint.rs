@@ -203,6 +203,10 @@ pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError>
             return Err(type_error("Cannot convert a non-BigInt value to BigInt"));
         }
     };
+    let raw = raw.trim().to_string();
+    if raw.is_empty() {
+        return Ok(0);
+    }
     let integer = raw
         .parse::<num_bigint::BigInt>()
         .map_err(|_| crate::value::error::throw_syntax_error("Invalid BigInt value"))?;
