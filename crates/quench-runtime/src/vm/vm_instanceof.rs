@@ -19,9 +19,10 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if (matches!(crate::execute::get_property(&constructor, "name"), Value::String(name) if name == "DOMException")
         || intrinsic_builtin(&constructor) == Some(Builtin::Error))
         && matches!(
-        crate::execute::get_property(&value, "\0domexception"),
-        Value::Boolean(true)
-    ) {
+            crate::execute::get_property(&value, "\0domexception"),
+            Value::Boolean(true)
+        )
+    {
         return Ok(true);
     }
     if let Some(result) = builtin_instanceof(&value, &constructor) {
@@ -194,6 +195,13 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
                 }
             }
         }
+        // Bound functions have no own `prototype`; OrdinaryHasInstance
+        // delegates to their target instead of treating that absence as an
+        // invalid prototype. This also preserves subclass and cross-realm
+        // identity through arbitrarily nested binds.
+        if crate::conversion::is_callable(&bound.target) {
+            return ordinary_instanceof(value, &bound.target);
+        }
         let prototype = crate::execute::get_property_result(constructor, "prototype")?;
         if !crate::value::is_object(&prototype) {
             return Err(type_error("Function has non-object prototype"));
@@ -209,7 +217,6 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
 }
-
 
 fn boxed_primitive_instance(value: &Value, constructor: &Value) -> Option<bool> {
     let Value::Object(properties) = value else {
@@ -358,7 +365,8 @@ fn same_intrinsic_value(left: &Value, right: &Value) -> bool {
     if crate::builtins::same_value(Some(left), Some(right)) {
         return true;
     }
-    let (Some(left_builtin), Some(right_builtin)) = (intrinsic_builtin(left), intrinsic_builtin(right))
+    let (Some(left_builtin), Some(right_builtin)) =
+        (intrinsic_builtin(left), intrinsic_builtin(right))
     else {
         return false;
     };
