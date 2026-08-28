@@ -145,6 +145,7 @@ const CAP_ASYNC_RESOURCE_AFTER: u16 = crate::registry::SPEC_ASYNC_RESOURCE_AFTER
 const CAP_ASYNC_RESOURCE_DESTROY: u16 = crate::registry::SPEC_ASYNC_RESOURCE_DESTROY.cap;
 const CAP_ASYNC_RESOURCE_ID: u16 = crate::registry::SPEC_ASYNC_RESOURCE_ID.cap;
 const CAP_ASYNC_RESOURCE_TRIGGER: u16 = crate::registry::SPEC_ASYNC_RESOURCE_TRIGGER.cap;
+const CAP_ASYNC_RESOURCE_DOMAIN: u16 = crate::registry::SPEC_ASYNC_RESOURCE_DOMAIN.cap;
 const CAP_ASYNC_HOOK_ENABLE: u16 = crate::registry::SPEC_ASYNC_HOOK_ENABLE.cap;
 const CAP_ASYNC_HOOK_DISABLE: u16 = crate::registry::SPEC_ASYNC_HOOK_DISABLE.cap;
 const CAP_ASYNC_LOCAL_GET: u16 = crate::registry::SPEC_ASYNC_LOCAL_GET.cap;
@@ -860,6 +861,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASYNC_RESOURCE_DESTROY => crate::modules::async_hooks::resource_destroy,
         CAP_ASYNC_RESOURCE_ID => crate::modules::async_hooks::resource_id,
         CAP_ASYNC_RESOURCE_TRIGGER => crate::modules::async_hooks::resource_trigger,
+        CAP_ASYNC_RESOURCE_DOMAIN => crate::modules::async_hooks::resource_domain,
         CAP_ASYNC_HOOK_ENABLE => crate::modules::async_hooks::hook_enable,
         CAP_ASYNC_HOOK_DISABLE => crate::modules::async_hooks::hook_disable,
         CAP_ASYNC_LOCAL_GET => crate::modules::async_hooks::local_get_store,
