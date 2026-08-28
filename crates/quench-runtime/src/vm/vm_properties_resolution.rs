@@ -456,6 +456,23 @@ pub(crate) fn get_property_with_receiver(
                     crate::reflect::note_shadow_method_realm(bound.realm);
                     return Ok(Value::Builtin(Builtin::ShadowRealmEvaluate));
                 }
+                if bound.target == Value::Builtin(Builtin::RegExpPrototype)
+                    && key == "compile"
+                    && crate::regexp::has_regexp_internal_slot(receiver)
+                {
+                    let property = crate::execute::get_property(&value, key);
+                    let method = crate::vm::with_realm(bound.realm, || match property.clone() {
+                        Value::BoundFunction(method) => match method.target {
+                            Value::Builtin(builtin) => {
+                                crate::vm::bind_method(receiver, Value::Builtin(builtin))
+                            }
+                            _ => Value::BoundFunction(method),
+                        },
+                        property => property,
+                    })
+                    .unwrap_or(property);
+                    return Ok(method);
+                }
                 return Ok(crate::execute::get_property(&value, key));
             }
         }
