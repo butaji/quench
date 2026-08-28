@@ -331,11 +331,7 @@ fn build_re_flags(flags: &str) -> String {
     f
 }
 
-fn find_match<'a>(
-    regex: &'a Regex,
-    text: &'a str,
-    sticky: bool,
-) -> Result<Option<Match>, VmError> {
+fn find_match<'a>(regex: &'a Regex, text: &'a str, sticky: bool) -> Result<Option<Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
         regex
             .find_from(text, 0)
@@ -395,7 +391,7 @@ fn find_match_units(
     units: &[u16],
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
         let matched = regex.find_from_utf16(units, start).next();
         matched.filter(|found| !sticky || found.start() == start)
@@ -415,7 +411,7 @@ fn compile_and_find<'a>(
     text: &'a str,
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     #[cfg(feature = "execution-trace")]
     let compile_start = std::time::Instant::now();
     let regex = compiled_for(receiver, source, flags)?;
@@ -692,8 +688,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
         if let Some(Value::StringUnits(units)) = arguments.first() {
-            if let Some(matched) = crate::regexp_native::test_units(&source, &flags, units, 0) {
-                return Ok(Value::Boolean(matched));
+            if crate::regexp_native::find_units(&source, &flags, units, 0).is_some() {
+                return Ok(Value::Boolean(true));
             }
         }
     }
@@ -704,16 +700,13 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             return Ok(Value::Boolean(false));
         }
         let search_start = if global_or_sticky { last_index } else { 0 };
-        if let Some(matched) = crate::regexp_native::test_units(&source, &flags, units, search_start) {
+        if let Some(matched) =
+            crate::regexp_native::find_units(&source, &flags, units, search_start)
+        {
             if global_or_sticky {
-                let next = if matched {
-                    search_start.saturating_add(source.len())
-                } else {
-                    0
-                };
-                set_last_index(receiver, next as f64)?;
+                set_last_index(receiver, matched.end as f64)?;
             }
-            return Ok(Value::Boolean(matched));
+            return Ok(Value::Boolean(true));
         }
         let pattern = if source.is_empty() { "(?:)" } else { &source };
         let re_flags = build_re_flags(&flags);
@@ -734,8 +727,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
-        if let Some(matched) = crate::regexp_native::test_str(&source, &flags, &s, 0) {
-            return Ok(Value::Boolean(matched));
+        if crate::regexp_native::find_str(&source, &flags, &s, 0).is_some() {
+            return Ok(Value::Boolean(true));
         }
     }
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
@@ -743,16 +736,12 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(false));
     }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
-    if let Some(matched) = crate::regexp_native::test_str(&source, &flags, &s, search_start) {
+    if let Some(matched) = crate::regexp_native::find_str(&source, &flags, &s, search_start) {
         if flags.contains('g') || flags.contains('y') {
-            let next = if matched {
-                crate::strings::byte_to_utf16(&s, search_start.saturating_add(source.len()))
-            } else {
-                0
-            };
+            let next = crate::strings::byte_to_utf16(&s, matched.end);
             set_last_index(receiver, next as f64)?;
         }
-        return Ok(Value::Boolean(matched));
+        return Ok(Value::Boolean(true));
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
@@ -865,6 +854,9 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Null);
     }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
+    if let Some(matched) = crate::regexp_native::find_str(&source, &flags, &s, search_start) {
+        return build_native_match_result(receiver, &s, matched, &flags);
+    }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     if let Some(m) = anchored_match(&source, &flags, last_index, &s)
@@ -931,6 +923,36 @@ fn build_match_result(
             result,
             "indices",
             match_indices(s, &m, search_start, !split_astral),
+        );
+    }
+    Ok(result)
+}
+
+fn build_native_match_result(
+    receiver: &Value,
+    input: &str,
+    matched: crate::regexp_native::NativeMatch,
+    flags: &str,
+) -> Result<Value, VmError> {
+    let end = crate::strings::byte_to_utf16(input, matched.end);
+    if flags.contains('g') || flags.contains('y') {
+        set_last_index(receiver, end as f64)?;
+    }
+    let start = crate::strings::byte_to_utf16(input, matched.start);
+    let value = Value::String(input[matched.start..matched.end].to_string());
+    let mut result = match_result(vec![value], Value::Number(start as f64), input, None);
+    if flags.contains('d') {
+        result = crate::builtins::set_property(
+            result,
+            "indices",
+            crate::builtins::set_property(
+                Value::array(vec![Value::array(vec![
+                    Value::Number(start as f64),
+                    Value::Number(end as f64),
+                ])]),
+                "groups",
+                Value::Undefined,
+            ),
         );
     }
     Ok(result)
