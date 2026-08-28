@@ -1572,7 +1572,7 @@ fn canonical(value: u32, unicode: bool) -> u32 {
 }
 fn lower(value: u32) -> u32 {
     char::from_u32(value)
-        .and_then(|character| character.to_lowercase().next())
+        .map(|character| icu_casemap::CaseMapper::new().simple_fold(character))
         .map_or(value, u32::from)
 }
 fn is_word(value: u32) -> bool {
@@ -1597,6 +1597,7 @@ mod tests {
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
     }
+
 
     #[test]
     fn unicode_string_class_matches() {
