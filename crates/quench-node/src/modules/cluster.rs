@@ -51,6 +51,10 @@ impl ClusterState {
         self.worker_context
             .and_then(|id| self.workers.get(&id).map(|worker| worker.object.clone()))
     }
+
+    pub(crate) fn worker_object(&self, id: u64) -> Option<Value> {
+        self.workers.get(&id).map(|worker| worker.object.clone())
+    }
 }
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let workers = host_api::object(Vec::new());
@@ -260,7 +264,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         state.borrow_mut().cluster.worker_context = None;
     }
     if let Some(code) = child_exit_code {
-        close_worker_net(state);
+        close_worker_net(state, id);
         if let Some(worker_state) = state.borrow_mut().cluster.workers.get_mut(&id) {
             worker_state.connected = false;
             worker_state.dead = true;
@@ -278,7 +282,12 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     }
 }
 
-fn set_worker_mode(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value, child: bool) {
+pub(crate) fn set_worker_mode(
+    state: &Rc<RefCell<HostState>>,
+    id: u64,
+    worker: &Value,
+    child: bool,
+) {
     if let Some(module) = state.borrow().cluster.module.clone() {
         for (key, value) in [
             ("isPrimary", Value::Boolean(!child)),
@@ -299,7 +308,28 @@ fn set_worker_mode(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value, chil
     }
 }
 
-fn close_worker_net(state: &Rc<RefCell<HostState>>) {
+fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
+    let server_info = state
+        .borrow()
+        .net
+        .servers
+        .values()
+        .filter_map(|server| {
+            let server = server.borrow();
+            server
+                .owner_worker
+                .filter(|owner| *owner == worker_id)
+                .map(|_| (server.id, server.bind_addr))
+        })
+        .collect::<Vec<_>>();
+    let server_ids = server_info
+        .iter()
+        .map(|(id, _)| *id)
+        .collect::<std::collections::HashSet<_>>();
+    let server_addrs = server_info
+        .iter()
+        .filter_map(|(_, address)| *address)
+        .collect::<Vec<_>>();
     let servers = state
         .borrow()
         .net
@@ -309,9 +339,33 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>) {
         .collect::<Vec<_>>();
     for server in servers {
         let mut server = server.borrow_mut();
-        server.listener.take();
-        server.listening = false;
-        server.closed = true;
+        if server.owner_worker == Some(worker_id) {
+            server.listener.take();
+            server.listening = false;
+            server.closed = true;
+        }
+    }
+    let sockets = state
+        .borrow()
+        .net
+        .sockets
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for socket in sockets {
+        let mut socket = socket.borrow_mut();
+        if socket.server_id.is_some_and(|id| server_ids.contains(&id))
+            || socket
+                .local
+                .is_some_and(|address| server_addrs.contains(&address))
+            || socket
+                .peer
+                .is_some_and(|address| server_addrs.contains(&address))
+        {
+            socket.stream.take();
+            socket.state = crate::modules::net::SocketState::Closed;
+            socket.read_eof = true;
+        }
     }
 }
 
@@ -473,11 +527,38 @@ pub fn on(
                     "state",
                     Value::String("listening".into()),
                 );
+                let address = state
+                    .borrow()
+                    .net
+                    .servers
+                    .values()
+                    .find_map(|server| {
+                        let server = server.borrow();
+                        (server.listening && server.bind_addr.is_some()).then(|| server.bind_addr)
+                    })
+                    .flatten();
                 let info = host_api::object(vec![
-                    ("address".into(), Value::String("127.0.0.1".into())),
-                    ("addressType".into(), Value::Number(4.0)),
+                    (
+                        "address".into(),
+                        Value::String(
+                            address
+                                .map(|address| address.ip().to_string())
+                                .unwrap_or_else(|| "127.0.0.1".into()),
+                        ),
+                    ),
+                    (
+                        "addressType".into(),
+                        Value::Number(if address.is_some_and(|address| address.is_ipv6()) {
+                            6.0
+                        } else {
+                            4.0
+                        }),
+                    ),
                     ("fd".into(), Value::Undefined),
-                    ("port".into(), Value::Number(1.0)),
+                    (
+                        "port".into(),
+                        Value::Number(address.map_or(1, |address| address.port()) as f64),
+                    ),
                 ]);
                 // A worker's listening notification is asynchronous. Queue
                 // the callback so the parent can finish registering its
@@ -562,7 +643,7 @@ pub fn disconnect(
     set_worker_mode(state, id, &obj, false);
     if child_result.is_err() || child_exit.is_some() {
         let code = child_exit.unwrap_or(1);
-        close_worker_net(state);
+        close_worker_net(state, id);
         if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
             w.dead = true;
         }
@@ -601,6 +682,7 @@ pub fn kill(
 ) -> Result<Value, VmError> {
     let (id, obj) = worker(state, r)?;
     let cb = args.iter().find(|v| quench_runtime::is_callable(v));
+    close_worker_net(state, id);
     if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
         w.connected = false;
         w.dead = true;
@@ -657,6 +739,17 @@ pub fn send(
         Some(&obj),
         &[Value::String("message".into()), message.clone()],
     );
+    if let Some(module) = state.borrow().cluster.module.clone() {
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(&module),
+            &[
+                Value::String("message".into()),
+                obj.clone(),
+                message.clone(),
+            ],
+        );
+    }
     let previous_context = state.borrow().cluster.worker_context;
     set_worker_mode(state, id, &obj, true);
     state.borrow_mut().cluster.worker_context = Some(id);
