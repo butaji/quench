@@ -962,7 +962,18 @@ mod stubs {
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
                 Some(normalized)
             };
-            let year = crate::conversion::to_number(&year_value)? as i32;
+            let finite_integer = |value: &Value| -> Result<i128, VmError> {
+                let number = crate::conversion::to_number(value)?;
+                if !number.is_finite() || number.abs() > 1.0e12 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid ZonedDateTime field",
+                    ));
+                }
+                Ok(number.trunc() as i128)
+            };
+            let year = i32::try_from(finite_integer(&year_value)?).map_err(|_| {
+                crate::value::error::throw_range_error("Invalid ZonedDateTime field")
+            })?;
             let month = if matches!(month_value, Value::Undefined) {
                 match month_code_value {
                     Value::String(code) if code.len() == 3 && code.starts_with('M') => code[1..]
@@ -971,30 +982,29 @@ mod stubs {
                     _ => return Err(crate::value::error::throw_range_error("Invalid monthCode")),
                 }
             } else {
-                crate::conversion::to_number(&month_value)? as u32
+                u32::try_from(finite_integer(&month_value)?).map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid month")
+                })?
             };
-            let day = crate::conversion::to_number(&day_value)? as u32;
-            let hour = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "hour").unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let minute = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "minute").unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let second = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "second").unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let millisecond = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "millisecond")
-                    .unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let microsecond = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "microsecond")
-                    .unwrap_or(Value::Number(0.0)),
-            )? as i128;
-            let nanosecond = crate::conversion::to_number(
-                &crate::execute::get_property_result(value, "nanosecond")
-                    .unwrap_or(Value::Number(0.0)),
-            )? as i128;
+            let day = u32::try_from(finite_integer(&day_value)?).map_err(|_| {
+                crate::value::error::throw_range_error("Invalid day")
+            })?;
+            let field = |name: &str| -> Result<i128, VmError> {
+                let value = crate::execute::get_property_result(value, name)
+                    .unwrap_or(Value::Number(0.0));
+                let value = if matches!(value, Value::Undefined) {
+                    Value::Number(0.0)
+                } else {
+                    value
+                };
+                finite_integer(&value)
+            };
+            let hour = field("hour")?;
+            let minute = field("minute")?;
+            let second = field("second")?;
+            let millisecond = field("millisecond")?;
+            let microsecond = field("microsecond")?;
+            let nanosecond = field("nanosecond")?;
             let calendar = crate::execute::get_property_result(value, "calendar")?;
             if !matches!(calendar, Value::Undefined) {
                 super::parse_calendar_identifier(&calendar)?;
