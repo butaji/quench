@@ -16,6 +16,11 @@ enum CharacterClass {
 enum NativePattern<'a> {
     Literal(&'a [u8]),
     CharacterClass(CharacterClass),
+    PropertyRepeat {
+        name: &'a str,
+        value: Option<&'a str>,
+        negative: bool,
+    },
     Repeat {
         unit: u8,
         min: usize,
@@ -64,6 +69,11 @@ pub(crate) fn find_str(
                 end: start + offset + character.len_utf8(),
             })
         }
+        NativePattern::PropertyRepeat {
+            name,
+            value,
+            negative,
+        } => find_property_repeat_str(name, value, negative, input, start),
         NativePattern::Repeat { unit, min, max } => {
             find_repeat(tail.as_bytes(), unit, min, max, sticky).map(|matched| NativeMatch {
                 start: start + matched.start,
@@ -120,6 +130,11 @@ pub(crate) fn find_units(
                 end: start + offset + 1,
             })
         }
+        NativePattern::PropertyRepeat {
+            name,
+            value,
+            negative,
+        } => find_property_repeat_units(name, value, negative, flags, input, start),
         NativePattern::Repeat { unit, min, max } => find_repeat_units(tail, unit, min, max, sticky)
             .map(|matched| NativeMatch {
                 start: start + matched.start,
@@ -137,6 +152,9 @@ pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize)
 }
 
 fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
+    if let Some(property) = parse_property_repeat(source, flags) {
+        return Some(property);
+    }
     if let Some(class) = source
         .strip_prefix("\\\\")
         .or_else(|| source.strip_prefix('\\'))
@@ -159,6 +177,102 @@ fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
         return None;
     }
     Some(NativePattern::Literal(source.as_bytes()))
+}
+
+fn parse_property_repeat<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
+    if !flags.contains(['u', 'v']) {
+        return None;
+    }
+    let (negative, body) = source
+        .strip_prefix("^\\p{")
+        .map(|body| (false, body))
+        .or_else(|| source.strip_prefix("^\\P{").map(|body| (true, body)))?;
+    let body = body.strip_suffix("}+$")?;
+    let (name, value) = body
+        .split_once('=')
+        .map_or((body, None), |(name, value)| (name, Some(value)));
+    (!name.is_empty() && value.is_none_or(|value| !value.is_empty())).then_some(
+        NativePattern::PropertyRepeat {
+            name,
+            value,
+            negative,
+        },
+    )
+}
+
+fn property_matches(
+    matcher: crate::regexp_backend::PropertyMatcher,
+    negative: bool,
+    character: char,
+) -> bool {
+    let matched = matcher.matches(character);
+    if negative {
+        !matched
+    } else {
+        matched
+    }
+}
+
+fn find_property_repeat_str(
+    name: &str,
+    value: Option<&str>,
+    negative: bool,
+    input: &str,
+    start: usize,
+) -> Option<NativeMatch> {
+    if start != 0 {
+        return None;
+    }
+    let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
+    let mut count = 0;
+    for character in input.chars() {
+        if !property_matches(matcher, negative, character) {
+            return None;
+        }
+        count += character.len_utf8();
+    }
+    (count > 0).then_some(NativeMatch { start: 0, end: count })
+}
+
+fn find_property_repeat_units(
+    name: &str,
+    value: Option<&str>,
+    negative: bool,
+    flags: &str,
+    input: &[u16],
+    start: usize,
+) -> Option<NativeMatch> {
+    if start != 0 {
+        return None;
+    }
+    let unicode = flags.contains('u') || flags.contains('v');
+    let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
+    let mut index = 0;
+    let mut count = 0;
+    while index < input.len() {
+        let (character, width) = next_code_point(input, index, unicode)?;
+        if !property_matches(matcher, negative, character) {
+            return None;
+        }
+        index += width;
+        count += width;
+    }
+    (count > 0).then_some(NativeMatch { start: 0, end: count })
+}
+
+fn next_code_point(input: &[u16], index: usize, unicode: bool) -> Option<(char, usize)> {
+    let first = *input.get(index)?;
+    if unicode && (0xD800..=0xDBFF).contains(&first) {
+        let second = *input.get(index + 1)?;
+        if (0xDC00..=0xDFFF).contains(&second) {
+            let code = 0x1_0000
+                + ((u32::from(first) - 0xD800) << 10)
+                + u32::from(second)
+                - 0xDC00;
+            return Some((char::from_u32(code)?, 2));
+        }
+    }
+    Some((char::from_u32(u32::from(first))?, 1))
 }
 
 fn parse_repeat(source: &str) -> Option<NativePattern<'_>> {
@@ -328,6 +442,20 @@ mod tests {
         assert_eq!(
             find_units("\\d", "y", &[b'7' as u16], 0),
             Some(super::NativeMatch { start: 0, end: 1 })
+        );
+    }
+
+    #[test]
+    fn property_repetition_reuses_compiled_unicode_data() {
+        assert_eq!(test_str("^\\p{Assigned}+$", "u", "abc", 0), Some(true));
+        assert_eq!(test_str("^\\P{Assigned}+$", "u", "\u{38b}", 0), Some(true));
+        assert_eq!(
+            test_str("^\\p{Script_Extensions=Latin}+$", "u", "Aª", 0),
+            Some(true)
+        );
+        assert_eq!(
+            test_units("^\\p{Assigned}+$", "u", &[b'a' as u16, b'b' as u16], 0),
+            Some(true)
         );
     }
 }
