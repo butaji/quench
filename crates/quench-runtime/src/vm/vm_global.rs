@@ -428,6 +428,20 @@ pub struct SharedGlobal {
     previous: Option<ObjectProperties>,
 }
 
+/// Drop the thread-local root global between independent top-level programs.
+/// Nested executions retain the caller's object through `SharedGlobal`; only a
+/// top-level runner may clear this slot to give each conformance test a fresh
+/// global environment.
+pub fn reset_global_object() {
+    if SHARED_GLOBAL.with(|count| count.get() != 0) {
+        return;
+    }
+    GLOBAL_OBJECT.with(|global| global.take());
+    GLOBAL_DECLARATION_BASE.with(|base| base.take());
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.take());
+    GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(false));
+}
+
 impl SharedGlobal {
     pub fn install() -> Self {
         let previous = GLOBAL_OBJECT.with(|global| global.borrow().clone());
