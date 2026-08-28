@@ -1,7 +1,11 @@
-use regress::{Flags, Regex};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::{execute::VmError, ops::Builtin, value::Value};
+use crate::{
+    execute::VmError,
+    ops::Builtin,
+    regexp_backend::{Flags, Regex},
+    value::Value,
+};
 
 pub fn validate_literal(body: &str) -> Result<(), String> {
     let bytes = body.as_bytes();
