@@ -1300,6 +1300,10 @@ fn with(
     if !matches!(calendar, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
+    let time_zone = crate::execute::get_property_result(changes, "timeZone")?;
+    if !matches!(time_zone, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    }
     let month_code = crate::execute::get_property_result(changes, "monthCode")?;
     let month = crate::execute::get_property_result(changes, "month")?;
     if !matches!(month_code, Value::Undefined) {
