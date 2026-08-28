@@ -112,7 +112,7 @@ enum Lookaround {
 #[derive(Clone)]
 enum Backreference {
     Index(usize),
-    Name(String),
+    Named(Vec<usize>),
 }
 #[derive(Clone, Copy, Default)]
 struct ModeFlags {
@@ -149,6 +149,7 @@ enum ClassItem {
 
 struct Lowering {
     names: Vec<String>,
+    next_capture: usize,
 }
 #[derive(Clone, Copy)]
 struct Unit {
@@ -178,7 +179,12 @@ impl Regex {
         let parsed = LiteralParser::new(&allocator, source, Some(&flag_text), Options::default())
             .parse()
             .map_err(|error| error.to_string())?;
-        let mut lowering = Lowering { names: Vec::new() };
+        let mut names = Vec::new();
+        collect_names(&parsed.body, &mut names);
+        let mut lowering = Lowering {
+            names,
+            next_capture: 0,
+        };
         let program = lower_disjunction(&parsed.body, &mut lowering);
         Ok(Self {
             program,
@@ -367,13 +373,8 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
         }),
         ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering)),
         ast::Term::CapturingGroup(group) => {
-            let index = lowering.names.len();
-            lowering.names.push(
-                group
-                    .name
-                    .as_ref()
-                    .map_or_else(String::new, |name| name.to_string()),
-            );
+            let index = lowering.next_capture;
+            lowering.next_capture += 1;
             Expr::Capture {
                 index,
                 body: Box::new(lower_disjunction(&group.body, lowering)),
@@ -410,13 +411,54 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
             Expr::Backreference(Backreference::Index(reference.index as usize))
         }
         ast::Term::NamedReference(reference) => {
-            let index = lowering
+            let indices = lowering
                 .names
                 .iter()
-                .position(|name| name == reference.name.as_str())
-                .map_or(0, |index| index + 1);
-            Expr::Backreference(Backreference::Index(index))
+                .enumerate()
+                .filter_map(|(index, name)| (name == reference.name.as_str()).then_some(index + 1))
+                .collect();
+            Expr::Backreference(Backreference::Named(indices))
         }
+    }
+}
+
+fn collect_names(disjunction: &ast::Disjunction<'_>, names: &mut Vec<String>) {
+    for alternative in &disjunction.body {
+        for term in &alternative.body {
+            match term {
+                ast::Term::CapturingGroup(group) => {
+                    names.push(
+                        group
+                            .name
+                            .as_ref()
+                            .map_or_else(String::new, |name| name.to_string()),
+                    );
+                    collect_names(&group.body, names);
+                }
+                ast::Term::LookAroundAssertion(assertion) => collect_names(&assertion.body, names),
+                ast::Term::Quantifier(quantifier) => collect_term_names(&quantifier.body, names),
+                ast::Term::IgnoreGroup(group) => collect_names(&group.body, names),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn collect_term_names(term: &ast::Term<'_>, names: &mut Vec<String>) {
+    match term {
+        ast::Term::CapturingGroup(group) => {
+            names.push(
+                group
+                    .name
+                    .as_ref()
+                    .map_or_else(String::new, |name| name.to_string()),
+            );
+            collect_names(&group.body, names);
+        }
+        ast::Term::IgnoreGroup(group) => collect_names(&group.body, names),
+        ast::Term::LookAroundAssertion(assertion) => collect_names(&assertion.body, names),
+        ast::Term::Quantifier(quantifier) => collect_term_names(&quantifier.body, names),
+        _ => {}
     }
 }
 
@@ -540,11 +582,19 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
         }
         Expr::Lookaround { kind, body } => lookaround_match(*kind, body, input, state, flags),
         Expr::Backreference(reference) => {
-            let index = match reference {
-                Backreference::Index(index) => index.saturating_sub(1),
-                Backreference::Name(_) => return None,
+            let range = match reference {
+                Backreference::Index(index) => state
+                    .captures
+                    .get(index.saturating_sub(1))
+                    .and_then(Option::as_ref),
+                Backreference::Named(indices) => indices.iter().find_map(|index| {
+                    state
+                        .captures
+                        .get(index.saturating_sub(1))
+                        .and_then(Option::as_ref)
+                }),
             };
-            let Some(range) = state.captures.get(index).and_then(Option::as_ref) else {
+            let Some(range) = range else {
                 return Some(state);
             };
             let width = range.end.saturating_sub(range.start);
@@ -632,6 +682,9 @@ fn match_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec
                 .take(MAX_BACKTRACK_STATES)
                 .collect()
         }
+        Expr::Mode { body, flags: local } => {
+            match_options(body, input, state, merge_flags(flags, *local))
+        }
         _ => match_expr(expr, input, state, flags).into_iter().collect(),
     }
 }
@@ -660,7 +713,15 @@ fn repeat_options(
         let continuations = if count >= limit {
             Vec::new()
         } else {
-            match_options(body, input, state.clone(), flags)
+            let mut iteration_state = state.clone();
+            if !flags.reverse {
+                for index in capture_indices(body) {
+                    if let Some(capture) = iteration_state.captures.get_mut(index) {
+                        *capture = None;
+                    }
+                }
+            }
+            match_options(body, input, iteration_state, flags)
                 .into_iter()
                 .filter(|next| next.position != state.position || count < min)
                 .flat_map(|next| visit(body, input, next, flags, count + 1, min, limit, greedy))
@@ -683,6 +744,29 @@ fn repeat_options(
         .into_iter()
         .take(MAX_BACKTRACK_STATES)
         .collect()
+}
+
+fn capture_indices(expr: &Expr) -> Vec<usize> {
+    let mut indices = Vec::new();
+    fn visit(expr: &Expr, indices: &mut Vec<usize>) {
+        match expr {
+            Expr::Capture { index, body } => {
+                indices.push(*index);
+                visit(body, indices);
+            }
+            Expr::Sequence(parts) | Expr::Alternation(parts) => {
+                parts.iter().for_each(|part| visit(part, indices))
+            }
+            Expr::Repeat { body, .. } | Expr::Lookaround { body, .. } | Expr::Mode { body, .. } => {
+                visit(body, indices)
+            }
+            _ => {}
+        }
+    }
+    visit(expr, &mut indices);
+    indices.sort_unstable();
+    indices.dedup();
+    indices
 }
 
 fn assertion_matches(assertion: Assertion, input: &[Unit], position: usize, flags: Flags) -> bool {
@@ -1013,5 +1097,14 @@ mod tests {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
         let input = "abcdefdef".encode_utf16().collect::<Vec<_>>();
         assert!(regex.find_from_utf16(&input, 0).next().is_some());
+    }
+    #[test]
+    fn duplicate_group_properties_pattern_matches() {
+        let regex = Regex::with_flags(
+            "(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))",
+            Flags::default(),
+        )
+        .unwrap();
+        assert!(regex.find_from("abc", 0).next().is_some());
     }
 }
