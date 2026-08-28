@@ -112,8 +112,11 @@ fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &
 }
 
 fn typed_array_owns(value: &Value, key: &str) -> bool {
-    if let Ok(index) = key.parse::<usize>() {
+    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
         return crate::typed_array_prototype::index_exists(value, index);
+    }
+    if crate::typed_array_ops::canonical_numeric_index(key) {
+        return false;
     }
     crate::typed_array_prototype::own_property(value, key).is_some()
         || crate::typed_array_prototype::descriptor(value, key).is_some()
