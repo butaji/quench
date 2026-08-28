@@ -735,12 +735,20 @@ mod stubs {
         }
         let epoch = crate::execute::get_property_result(value, "epochNanoseconds");
         if epoch.is_err() || matches!(&epoch, Ok(Value::Undefined)) {
-            let year =
-                crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?
-                    as i32;
+            let year_value = crate::execute::get_property_result(value, "year")?;
+            let day_value = crate::execute::get_property_result(value, "day")?;
             let month_value = crate::execute::get_property_result(value, "month")?;
+            let month_code_value = crate::execute::get_property_result(value, "monthCode")?;
+            if matches!(year_value, Value::Undefined)
+                || matches!(day_value, Value::Undefined)
+                || (matches!(month_value, Value::Undefined)
+                    && matches!(month_code_value, Value::Undefined))
+            {
+                return Err(crate::value::error::throw_type_error("Missing ZonedDateTime field"));
+            }
+            let year = crate::conversion::to_number(&year_value)? as i32;
             let month = if matches!(month_value, Value::Undefined) {
-                match crate::execute::get_property_result(value, "monthCode")? {
+                match month_code_value {
                     Value::String(code) if code.len() == 3 && code.starts_with('M') => code[1..]
                         .parse::<u32>()
                         .map_err(|_| crate::value::error::throw_range_error("Invalid monthCode"))?,
@@ -749,9 +757,7 @@ mod stubs {
             } else {
                 crate::conversion::to_number(&month_value)? as u32
             };
-            let day =
-                crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?
-                    as u32;
+            let day = crate::conversion::to_number(&day_value)? as u32;
             let hour = crate::conversion::to_number(
                 &crate::execute::get_property_result(value, "hour").unwrap_or(Value::Number(0.0)),
             )? as i128;
