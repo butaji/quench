@@ -2501,6 +2501,13 @@ mod stubs {
                     ))
                 }
             };
+            if smallest == "day"
+                && epoch.unsigned_abs() >= super::MAX_EPOCH_NANOSECONDS as u128
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
             let offset = match property("offsetNanoseconds")? {
                 Value::Number(value) => value as i128,
                 _ => 0,
