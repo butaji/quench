@@ -612,39 +612,34 @@ node_api! {
     (SPEC_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
     (SPEC_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
 }
-pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1F36);
-pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
-pub const SPEC_GC: NodeSpec = NodeSpec::new("gc", 0x2117);
-pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1F22);
-pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1F25);
-pub const SPEC_ABORT_CONTROLLER_SIGNAL_GET: NodeSpec =
-    NodeSpec::new("AbortController.signal:get", 0x1F27);
-pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
-pub const SPEC_ABORT_SIGNAL_ABORTED_GET: NodeSpec =
-    NodeSpec::new("AbortSignal.aborted:get", 0x1F28);
-pub const SPEC_ABORT_SIGNAL_HAS_INSTANCE: NodeSpec =
-    NodeSpec::new("AbortSignal.hasInstance", 0x1F29);
-pub const SPEC_ABORT_SIGNAL_THROW_IF_ABORTED: NodeSpec =
-    NodeSpec::new("AbortSignal.throwIfAborted", 0x1F2A);
-pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
-pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F40);
-pub const SPEC_ABORT_SIGNAL_ANY: NodeSpec = NodeSpec::new("AbortSignal.any", 0x1F41);
-pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1F26);
-pub const SPEC_EVENT: NodeSpec = NodeSpec::new("Event", 0x0118);
-pub const SPEC_EVENT_PREVENT_DEFAULT: NodeSpec = NodeSpec::new("Event.preventDefault", 0x011a);
-pub const SPEC_EVENT_STOP_PROPAGATION: NodeSpec = NodeSpec::new("Event.stopPropagation", 0x011b);
-pub const SPEC_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("Event.stopImmediatePropagation", 0x011c);
-pub const SPEC_EVENT_COMPOSED_PATH: NodeSpec = NodeSpec::new("Event.composedPath", 0x011d);
-pub const SPEC_EVENT_GET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.get", 0x011e);
-pub const SPEC_EVENT_SET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.set", 0x011f);
-pub const SPEC_DEFINE_EVENT_HANDLER: NodeSpec =
-    NodeSpec::new("internal:eventTarget:defineEventHandler", 0x0120);
-pub const SPEC_EVENT_HANDLER_GET: NodeSpec = NodeSpec::new("EventHandler.get", 0x0121);
-pub const SPEC_EVENT_HANDLER_SET: NodeSpec = NodeSpec::new("EventHandler.set", 0x0122);
-pub const SPEC_CUSTOM_EVENT: NodeSpec = NodeSpec::new("CustomEvent", 0x0123);
-pub const SPEC_EVENT_SOURCE: NodeSpec = NodeSpec::new("EventSource", 0x0124);
+node_api! {
+    (SPEC_STRUCTURED_CLONE, "structuredClone", 0x1F36),
+    (SPEC_FETCH, "fetch", 0x1F21),
+    (SPEC_GC, "gc", 0x2117),
+    (SPEC_ABORT_CONTROLLER, "AbortController", 0x1F22),
+    (SPEC_ABORT_CONTROLLER_ABORT, "AbortController.abort", 0x1F25),
+    (SPEC_ABORT_CONTROLLER_SIGNAL_GET, "AbortController.signal:get", 0x1F27),
+    (SPEC_ABORT_SIGNAL, "AbortSignal", 0x1F23),
+    (SPEC_ABORT_SIGNAL_ABORTED_GET, "AbortSignal.aborted:get", 0x1F28),
+    (SPEC_ABORT_SIGNAL_HAS_INSTANCE, "AbortSignal.hasInstance", 0x1F29),
+    (SPEC_ABORT_SIGNAL_THROW_IF_ABORTED, "AbortSignal.throwIfAborted", 0x1F2A),
+    (SPEC_ABORT_SIGNAL_ABORT, "AbortSignal.abort", 0x1F24),
+    (SPEC_ABORT_SIGNAL_TIMEOUT, "AbortSignal.timeout", 0x1F40),
+    (SPEC_ABORT_SIGNAL_ANY, "AbortSignal.any", 0x1F41),
+    (SPEC_ABORT_EVENT_STOP_IMMEDIATE, "AbortEvent.stopImmediatePropagation", 0x1F26),
+    (SPEC_EVENT, "Event", 0x0118),
+    (SPEC_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
+    (SPEC_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
+    (SPEC_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
+    (SPEC_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
+    (SPEC_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
+    (SPEC_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
+    (SPEC_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
+    (SPEC_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
+    (SPEC_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
+    (SPEC_CUSTOM_EVENT, "CustomEvent", 0x0123),
+    (SPEC_EVENT_SOURCE, "EventSource", 0x0124),
+}
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1420);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1421);
