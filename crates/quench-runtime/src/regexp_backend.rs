@@ -1214,7 +1214,7 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
                 || character.is_ascii_punctuation()
                 || character.is_whitespace()
         }
-        ("Letter", _) | ("Alphabetic", _) | ("L", _) => character.is_alphabetic(),
+        ("Letter", _) | ("Alphabetic", _) | ("Alpha", _) | ("L", _) => character.is_alphabetic(),
         ("Number", _) | ("N", _) | ("Decimal_Number", _) | ("Nd", _) => character.is_numeric(),
         ("Lowercase_Letter", _)
         | ("Ll", _)
@@ -1226,7 +1226,7 @@ fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
         | ("General_Category", Some("Lu")) => character.is_uppercase(),
         ("General_Category", Some("Letter")) => character.is_alphabetic(),
         ("White_Space", _) | ("space", _) => character.is_whitespace(),
-        ("ASCII_Hex_Digit", _) => character.is_ascii_hexdigit(),
+        ("ASCII_Hex_Digit", _) | ("AHex", _) | ("Hex_Digit", _) => character.is_ascii_hexdigit(),
         ("Script", Some("Latin")) | ("Script_Extensions", Some("Latin")) => {
             character.is_ascii_alphabetic()
         }
@@ -1283,21 +1283,6 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn duplicate_group_cases_match() {
-        let pattern = "(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))";
-        let regex = Regex::with_flags(pattern, Flags::default()).unwrap();
-        for input in ["abc", "ad"] {
-            eprintln!("{input}: {}", regex.find_from(input, 0).next().is_some());
-        }
-        let repeated =
-            Regex::with_flags("(?:(?:(?<x>a)|(?<x>b)|c)\\k<x>){2}", Flags::default()).unwrap();
-        eprintln!(
-            "aac repeated: {}",
-            repeated.find_from("aac", 0).next().is_some()
-        );
-    }
-
     #[test]
     fn lookbehind_sticky_prefix() {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
