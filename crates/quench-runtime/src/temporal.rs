@@ -2212,7 +2212,10 @@ mod stubs {
             } else {
                 remainder
             };
-            let round_up = match rounding_mode.as_str() {
+            let round_up = if remainder == 0 {
+                false
+            } else {
+                match rounding_mode.as_str() {
                 "trunc" => delta < 0 && remainder != 0,
                 "floor" => false,
                 "ceil" => remainder != 0,
@@ -2236,7 +2239,8 @@ mod stubs {
                         distance * 2 < quantum || (distance * 2 == quantum && quotient % 2 != 0)
                     }
                 }
-                _ => remainder * 2 >= quantum,
+                    _ => remainder * 2 >= quantum,
+                }
             };
             delta = (quotient + i128::from(round_up)) * quantum;
             let scales = [
