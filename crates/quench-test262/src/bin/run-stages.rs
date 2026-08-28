@@ -3,7 +3,10 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::ExitCode,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc,
+    },
 };
 
 use quench_test262::{
@@ -325,6 +328,7 @@ fn run_stage_files(
     root: &Path,
     files: Vec<PathBuf>,
 ) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
+    const WORK_BATCH: usize = 32;
     let worker_count = env::var("QUENCH_STAGE_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -332,21 +336,31 @@ fn run_stage_files(
         .unwrap_or(4)
         .min(files.len());
     let files = Arc::new(files);
+    let next = Arc::new(AtomicUsize::new(0));
     let (sender, receiver) = mpsc::channel();
     let mut workers = Vec::with_capacity(worker_count);
     for worker in 0..worker_count {
         let files = Arc::clone(&files);
+        let next = Arc::clone(&next);
         let root = root.to_path_buf();
         let sender = sender.clone();
         workers.push(
             std::thread::Builder::new()
                 .name(format!("stage-files-{worker}"))
                 .spawn(move || {
-                    for index in (worker..files.len()).step_by(worker_count) {
-                        let path = files[index].clone();
-                        let outcome = run_isolated_file(&root, &path);
-                        if sender.send((index, path, outcome)).is_err() {
+                    let _ = worker;
+                    loop {
+                        let start = next.fetch_add(WORK_BATCH, Ordering::Relaxed);
+                        if start >= files.len() {
                             break;
+                        }
+                        let stop = (start + WORK_BATCH).min(files.len());
+                        for index in start..stop {
+                            let path = files[index].clone();
+                            let outcome = run_isolated_file(&root, &path);
+                            if sender.send((index, path, outcome)).is_err() {
+                                return;
+                            }
                         }
                     }
                 })

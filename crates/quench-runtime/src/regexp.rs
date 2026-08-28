@@ -704,6 +704,17 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             return Ok(Value::Boolean(false));
         }
         let search_start = if global_or_sticky { last_index } else { 0 };
+        if let Some(matched) = simple_literal_test_units(&source, &flags, units, search_start) {
+            if global_or_sticky {
+                let next = if matched {
+                    search_start.saturating_add(source.len())
+                } else {
+                    0
+                };
+                set_last_index(receiver, next as f64)?;
+            }
+            return Ok(Value::Boolean(matched));
+        }
         let pattern = if source.is_empty() { "(?:)" } else { &source };
         let re_flags = build_re_flags(&flags);
         let found = anchored_match_units(&source, &flags, last_index, units)
@@ -732,6 +743,17 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(false));
     }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
+    if let Some(matched) = simple_literal_test(&source, &flags, &s, search_start) {
+        if flags.contains('g') || flags.contains('y') {
+            let next = if matched {
+                crate::strings::byte_to_utf16(&s, search_start.saturating_add(source.len()))
+            } else {
+                0
+            };
+            set_last_index(receiver, next as f64)?;
+        }
+        return Ok(Value::Boolean(matched));
+    }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let found = anchored_match(&source, &flags, last_index, &s)
@@ -837,17 +859,76 @@ fn simple_character_class_test_units(source: &str, input: &[u16]) -> Option<bool
         "D" => !(b'0' as u16..=b'9' as u16).contains(unit),
         "s" => char::from_u32(u32::from(*unit)).is_some_and(is_ecma_whitespace),
         "S" => !char::from_u32(u32::from(*unit)).is_some_and(is_ecma_whitespace),
-        "w" => (b'0' as u16..=b'9' as u16).contains(unit)
-            || (b'a' as u16..=b'z' as u16).contains(unit)
-            || (b'A' as u16..=b'Z' as u16).contains(unit)
-            || *unit == b'_' as u16,
-        "W" => !((b'0' as u16..=b'9' as u16).contains(unit)
-            || (b'a' as u16..=b'z' as u16).contains(unit)
-            || (b'A' as u16..=b'Z' as u16).contains(unit)
-            || *unit == b'_' as u16),
+        "w" => {
+            (b'0' as u16..=b'9' as u16).contains(unit)
+                || (b'a' as u16..=b'z' as u16).contains(unit)
+                || (b'A' as u16..=b'Z' as u16).contains(unit)
+                || *unit == b'_' as u16
+        }
+        "W" => {
+            !((b'0' as u16..=b'9' as u16).contains(unit)
+                || (b'a' as u16..=b'z' as u16).contains(unit)
+                || (b'A' as u16..=b'Z' as u16).contains(unit)
+                || *unit == b'_' as u16)
+        }
         _ => false,
     };
     Some(input.iter().any(matches_class))
+}
+
+/// Match plain ASCII literals without entering the general regex interpreter.
+/// The guard excludes every syntax-bearing character and flags whose semantics
+/// require Unicode/case-folding or line handling, so this path is observationally
+/// equivalent to the full engine while keeping auxiliary memory O(1).
+fn simple_literal_test(source: &str, flags: &str, input: &str, start: usize) -> Option<bool> {
+    if source.is_empty()
+        || !source.is_ascii()
+        || flags.contains(['i', 'm', 'u', 'v'])
+        || source
+            .bytes()
+            .any(|byte| b"\\.^$*+?()[]{}|".contains(&byte))
+    {
+        return None;
+    }
+    let tail = input.get(start..)?;
+    Some(if flags.contains('y') {
+        tail.starts_with(source)
+    } else {
+        tail.contains(source)
+    })
+}
+
+fn simple_literal_test_units(
+    source: &str,
+    flags: &str,
+    input: &[u16],
+    start: usize,
+) -> Option<bool> {
+    if source.is_empty()
+        || !source.is_ascii()
+        || flags.contains(['i', 'm', 'u', 'v'])
+        || source
+            .bytes()
+            .any(|byte| b"\\.^$*+?()[]{}|".contains(&byte))
+    {
+        return None;
+    }
+    let pattern = source.as_bytes();
+    if flags.contains('y') {
+        return Some(input.get(start..).is_some_and(|tail| {
+            tail.len() >= pattern.len()
+                && tail[..pattern.len()]
+                    .iter()
+                    .zip(pattern)
+                    .all(|(unit, byte)| *unit == u16::from(*byte))
+        }));
+    }
+    Some(input.windows(pattern.len()).skip(start).any(|window| {
+        window
+            .iter()
+            .zip(pattern)
+            .all(|(unit, byte)| *unit == u16::from(*byte))
+    }))
 }
 
 pub(crate) fn is_ecma_whitespace(character: char) -> bool {
