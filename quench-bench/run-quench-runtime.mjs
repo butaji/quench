@@ -115,12 +115,11 @@ for (const fixture of selected) {
     outputEqual: nodeRuns.at(-1).stdout === quenchRuns.at(-1).stdout
   };
   console.log(JSON.stringify(summary));
-  const sample = quenchRuns.at(-1);
   results[fixture.slice(0, -3)] = {
-    Score: sample.score,
-    __time_ms: sample.wallNs / 1e6,
+    node: summary.node,
+    quench: summary.quench,
     valid,
-    timed_out: sample.timedOut
+    output_equal: summary.outputEqual
   };
 }
 if (output) writeFileSync(output, JSON.stringify({ results }, null, 2) + "\n");
