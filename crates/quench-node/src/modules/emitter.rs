@@ -39,8 +39,6 @@ pub struct EventEmitter {
     pub events: Vec<(String, Vec<Listener>)>,
     /// Per-emitter override of the max-listener count.
     pub max: Option<usize>,
-    /// Whether the max-listeners warning already fired.
-    pub warned: bool,
     /// Route rejected promises returned by listeners to the error channel.
     pub capture_rejections: bool,
 }
@@ -56,7 +54,6 @@ impl EventEmitter {
         Self {
             events: Vec::new(),
             max: None,
-            warned: false,
             capture_rejections: false,
         }
     }
