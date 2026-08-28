@@ -1412,10 +1412,14 @@ mod stubs {
             let time_arg = arguments.first().and_then(|value| match value {
                 Value::String(text) => {
                     let source = text.split('[').next().unwrap_or(text);
-                    let mut text = source
-                        .rfind(['T', 't', ' '])
-                        .map(|index| source[index + 1..].to_string())
-                        .unwrap_or_else(|| source.trim_start_matches(['T', 't']).to_string());
+                    let mut text = if source.starts_with(['T', 't']) {
+                        source.to_string()
+                    } else {
+                        source
+                            .rfind(['T', 't', ' '])
+                            .map(|index| source[index + 1..].to_string())
+                            .unwrap_or_else(|| source.to_string())
+                    };
                     if text.ends_with('Z') {
                         text.pop();
                     }
