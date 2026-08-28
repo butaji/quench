@@ -445,6 +445,7 @@ pub(crate) fn get_property_with_receiver(
                 ) && key == "evaluate"
                 {
                     crate::reflect::note_shadow_method_realm(bound.realm);
+                    return Ok(Value::Builtin(Builtin::ShadowRealmEvaluate));
                 }
                 return Ok(crate::execute::get_property(&value, key));
             }
