@@ -9,6 +9,7 @@
 //! reserved (sentinel).
 
 use crate::envelope::NodeObject;
+use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 
 /// Stable capability id. Stays under `u16` to fit the runtime's
 /// `HostCapabilityKind::Custom` representation.
@@ -967,6 +968,7 @@ pub fn namespace_bindings(
         ]),
     )
     .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    let event_prototype = install_event_prototype(event_prototype);
     let _ = quench_runtime::execute::set_callable_property(
         &event,
         "prototype",
@@ -991,7 +993,7 @@ pub fn namespace_bindings(
     }
     out.push(("Event".to_string(), event));
     let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
-    let custom_event_prototype = crate::host::namespace_object_from_pairs(Vec::new());
+    let custom_event_prototype = install_custom_event_prototype(event_prototype.clone());
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
         "prototype",
@@ -1042,6 +1044,125 @@ fn push_bindings(
         crate::modules::process::build(argv, exec_path),
     ));
     out.push(("Buffer".to_string(), crate::modules::buffer::build_object()));
+}
+
+fn install_event_prototype(
+    mut prototype: quench_runtime::value::Value,
+) -> quench_runtime::value::Value {
+    for (name, value) in [
+        (
+            "preventDefault",
+            crate::host::capability(SPEC_EVENT_PREVENT_DEFAULT),
+        ),
+        (
+            "stopPropagation",
+            crate::host::capability(SPEC_EVENT_STOP_PROPAGATION),
+        ),
+        (
+            "stopImmediatePropagation",
+            crate::host::capability(SPEC_EVENT_STOP_IMMEDIATE),
+        ),
+        (
+            "composedPath",
+            crate::host::capability(SPEC_EVENT_COMPOSED_PATH),
+        ),
+    ] {
+        quench_runtime::execute::set_property_in_place(&prototype, name, value);
+    }
+    let accessors = [
+        "target",
+        "currentTarget",
+        "srcElement",
+        "type",
+        "cancelable",
+        "defaultPrevented",
+        "timeStamp",
+        "returnValue",
+        "bubbles",
+        "composed",
+        "eventPhase",
+    ];
+    for name in accessors {
+        let getter = quench_runtime::host_api::bound_capability_with_arguments(
+            HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::Custom(SPEC_EVENT_GET_PROPERTY.cap),
+            },
+            vec![quench_runtime::value::Value::String(name.into())],
+        );
+        prototype = quench_runtime::execute::define_property(
+            prototype,
+            name,
+            quench_runtime::host_api::object(vec![
+                ("get".into(), getter),
+                (
+                    "enumerable".into(),
+                    quench_runtime::value::Value::Boolean(true),
+                ),
+                (
+                    "configurable".into(),
+                    quench_runtime::value::Value::Boolean(true),
+                ),
+            ]),
+        )
+        .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+    }
+    quench_runtime::execute::define_property(
+        prototype,
+        "cancelBubble",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                crate::host::capability(SPEC_EVENT_GET_CANCEL_BUBBLE),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(SPEC_EVENT_SET_CANCEL_BUBBLE),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()))
+}
+
+fn install_custom_event_prototype(
+    event_prototype: quench_runtime::value::Value,
+) -> quench_runtime::value::Value {
+    let prototype = quench_runtime::host_api::object(Vec::new());
+    let prototype = quench_runtime::execute::set_prototype_of(&prototype, &event_prototype)
+        .unwrap_or(prototype);
+    quench_runtime::execute::define_property(
+        prototype,
+        "detail",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                quench_runtime::host_api::bound_capability_with_arguments(
+                    HostCapabilityRef {
+                        realm: RealmId::ROOT,
+                        kind: HostCapabilityKind::Custom(SPEC_EVENT_GET_PROPERTY.cap),
+                    },
+                    vec![quench_runtime::value::Value::String("detail".into())],
+                ),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()))
 }
 
 fn timers_binding(
