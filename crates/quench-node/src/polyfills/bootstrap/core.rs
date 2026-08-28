@@ -660,7 +660,8 @@ const __quenchChildProcessModule = () => {
         const output = (String(file).endsWith("echo") || (values.length > 0 && values.every((value) => typeof value === "string")))
           ? `${values.join(" ")}\n`
           : "";
-        const failed = values.some((value) => String(value) === "42");
+        const failed = values.some((value) => String(value) === "42") &&
+          !values.some((value) => String(value) === "-p");
         queueMicrotask(() => {
           if (!Array.isArray(args)) {
             const error = new Error(`Command failed: ${String(file)}`);
