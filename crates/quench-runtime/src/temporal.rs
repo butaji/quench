@@ -2043,17 +2043,44 @@ mod stubs {
                 .transpose()?
                 .filter(|value| !matches!(value, Value::Undefined));
             let largest_was_default = largest_value.is_none();
-            let largest = largest_value
+            let mut largest = largest_value
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
                 .unwrap_or_else(|| "hour".into());
-            let mut largest = largest
+            largest = largest
                 .strip_suffix('s')
-                .unwrap_or(&largest)
-                .to_string();
+                .map_or(largest.clone(), str::to_string);
             if largest == "auto" {
                 largest = "hour".into();
             }
+            let increment_value = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "roundingIncrement"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined));
+            let increment_number = increment_value
+                .as_ref()
+                .map(crate::conversion::to_number)
+                .transpose()?;
+            let rounding_mode = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "roundingMode"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::conversion::to_string(&value))
+                .transpose()?
+                .unwrap_or_else(|| "trunc".into());
+            let smallest = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "smallestUnit"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::conversion::to_string(&value))
+                .transpose()?
+                .unwrap_or_else(|| "nanosecond".into());
+            let smallest = smallest
+                .strip_suffix('s')
+                .map_or(smallest.clone(), str::to_string);
             if !matches!(
                 largest.as_str(),
                 "year"
@@ -2094,15 +2121,6 @@ mod stubs {
                 1
             };
             let mut delta = (right_epoch - left_epoch) * direction;
-            let smallest = options
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(|value| crate::execute::get_property_result(value, "smallestUnit"))
-                .transpose()?
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(|value| crate::conversion::to_string(&value))
-                .transpose()?
-                .unwrap_or_else(|| "nanosecond".into());
-            let smallest = smallest.strip_suffix('s').unwrap_or(&smallest).to_string();
             let unit_rank = |unit: &str| match unit {
                 "year" => 0,
                 "month" => 1,
@@ -2142,14 +2160,8 @@ mod stubs {
                     ))
                 }
             };
-            let increment = if let Some(value) = options
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(|value| crate::execute::get_property_result(value, "roundingIncrement"))
-                .transpose()?
-                .filter(|value| !matches!(value, Value::Undefined))
-            {
-                let increment = crate::conversion::to_number(&value)?;
-                if !increment.is_finite() || increment <= 0.0 || increment.fract() != 0.0 {
+            let increment = if let Some(increment) = increment_number {
+                if !increment.is_finite() || increment <= 0.0 {
                     return Err(crate::value::error::throw_range_error(
                         "Invalid roundingIncrement",
                     ));
@@ -2164,7 +2176,8 @@ mod stubs {
                 "millisecond" | "microsecond" | "nanosecond" => 1_000,
                 _ => 0,
             };
-            if (increment_max > 1 && increment >= increment_max)
+            if increment < 1
+                || (increment_max > 1 && increment >= increment_max)
                 || (increment_max > 1 && increment_max % increment != 0)
                 || (smallest == "day" && increment > 100_000_000)
             {
@@ -2172,14 +2185,6 @@ mod stubs {
                     "Invalid roundingIncrement",
                 ));
             }
-            let rounding_mode = options
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(|value| crate::execute::get_property_result(value, "roundingMode"))
-                .transpose()?
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(|value| crate::conversion::to_string(&value))
-                .transpose()?
-                .unwrap_or_else(|| "trunc".into());
             if ![
                 "ceil",
                 "floor",
