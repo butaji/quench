@@ -2405,14 +2405,53 @@ mod stubs {
                     number(start, "year")?,
                     number(start, "month")? as u32,
                     number(start, "day")? as u32,
-                )
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                );
                 let end_date = chrono::NaiveDate::from_ymd_opt(
                     number(end, "year")?,
                     number(end, "month")? as u32,
                     number(end, "day")? as u32,
-                )
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                );
+                if start_date.is_none() || end_date.is_none() {
+                    let start_year = number(start, "year")?;
+                    let start_month = number(start, "month")?;
+                    let start_day = number(start, "day")?;
+                    let end_year = number(end, "year")?;
+                    let end_month = number(end, "month")?;
+                    let end_day = number(end, "day")?;
+                    let date_days = i128::from(
+                        super::plain_date::date_serial(
+                            end_year as f64,
+                            end_month as f64,
+                            end_day as f64,
+                        ) - super::plain_date::date_serial(
+                            start_year as f64,
+                            start_month as f64,
+                            start_day as f64,
+                        ),
+                    );
+                    let _ = date_days;
+                    let day_count = delta / 86_400_000_000_000;
+                    let time_remainder = delta - day_count * 86_400_000_000_000;
+                    fields[3] = Value::Number(day_count as f64);
+                    let mut remainder = time_remainder;
+                    for (index, unit_scale) in [
+                        (4, 3_600_000_000_000_i128),
+                        (5, 60_000_000_000),
+                        (6, 1_000_000_000),
+                        (7, 1_000_000),
+                        (8, 1_000),
+                        (9, 1),
+                    ] {
+                        if unit_scale < scale {
+                            continue;
+                        }
+                        fields[index] = Value::Number((remainder / unit_scale) as f64);
+                        remainder %= unit_scale;
+                    }
+                    return crate::temporal::duration::construct(&fields);
+                }
+                let start_date = start_date.expect("checked above");
+                let end_date = end_date.expect("checked above");
                 let mut month_delta = (end_date.year() - start_date.year()) * 12
                     + end_date.month() as i32
                     - start_date.month() as i32;
