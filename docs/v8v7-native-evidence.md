@@ -358,3 +358,15 @@ experiment must eliminate the boundary itself: one contiguous frame word
 window with disjoint parameter/local and temporary-register views, rather
 than two independently owned `RegisterFile` allocations plus an environment
 wrapper.
+
+## Rejected forced compact-dispatch inlining
+
+The ordinary compact loop calls `run_instruction` for every non-branch
+instruction. A release experiment changed its measured boundary from
+`#[inline(never)]` to `#[inline(always)]`; `nm` confirmed the helper symbol
+disappeared, so LLVM did inline the dispatch into its caller. Production
+EarleyBoyer still measured score **111**, 85.16 user seconds, 1.814T retired
+instructions, and 1,056,047,104-byte maximum RSS. That is not a twofold win,
+so the attribute was reverted. The required next unit is semantic-operation
+reduction—fewer Value/ownership/environment operations—not another compiler
+boundary tweak.
