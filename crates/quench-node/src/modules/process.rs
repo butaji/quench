@@ -740,12 +740,22 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
                     .filter(|(name, _, _)| name == event)
                     .map(|(_, handler, once)| (handler.clone(), *once))
                     .collect::<Vec<_>>();
+                let worker = guard.cluster.active_worker();
                 drop(guard);
                 for (handler, once) in callbacks {
                     if once {
                         remove_other_handler(state, event, &handler);
                     }
                     quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
+                }
+                if let Some(worker) = worker {
+                    let _ = crate::modules::cluster::emit(
+                        state,
+                        Some(&worker),
+                        &std::iter::once(Value::String(event.clone()))
+                            .chain(values.iter().cloned())
+                            .collect::<Vec<_>>(),
+                    )?;
                 }
                 return Ok(Value::Boolean(true));
             }
