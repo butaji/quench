@@ -736,6 +736,8 @@ pub const SPEC_VM_RUN_IN_NEW_CONTEXT: NodeSpec = NodeSpec::new("vm:runInNewConte
 pub const SPEC_VM_CREATE_CONTEXT: NodeSpec = NodeSpec::new("vm:createContext", 0x1601);
 pub const SPEC_VM_RUN_IN_CONTEXT: NodeSpec = NodeSpec::new("vm:runInContext", 0x1602);
 pub const SPEC_VM_IS_CONTEXT: NodeSpec = NodeSpec::new("vm:isContext", 0x1603);
+pub const SPEC_HTTPS_REQUEST: NodeSpec = NodeSpec::new("https:request", 0x1604);
+pub const SPEC_HTTPS_GET: NodeSpec = NodeSpec::new("https:get", 0x1605);
 
 /// Host globals whose value must be materialized before callbacks can outlive
 /// the installing frame. This is policy data, not a second dispatch path.
