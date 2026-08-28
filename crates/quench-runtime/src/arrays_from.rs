@@ -2,12 +2,30 @@ pub(crate) fn from(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    from_impl(receiver, arguments, false)
+}
+
+pub(crate) fn typed_from(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    from_impl(receiver, arguments, true)
+}
+
+fn from_impl(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    typed_mode: bool,
+) -> Result<Value, crate::execute::VmError> {
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     reject_source(&source)?;
     let mapper = mapper(arguments)?;
     let iterable =
         !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) && has_iterator(&source)?;
     if iterable {
+        if typed_mode {
+            return from_typed_iterable(receiver, source, mapper.as_ref(), arguments);
+        }
         if is_default_array_iterator(&source)? {
             return from_live_array(receiver, source, mapper.as_ref(), arguments);
         }
@@ -20,6 +38,26 @@ pub(crate) fn from(
         collect_array_like(&source, mapper.as_ref(), arguments, &mut values)?;
     }
     create_result(receiver, values, iterable)
+}
+
+fn from_typed_iterable(
+    receiver: Option<&Value>,
+    source: Value,
+    mapper: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let mut source_values = Vec::new();
+    crate::collections::iterator::for_each_iterable(source, |item| {
+        source_values.push(item);
+        Ok(())
+    })?;
+    let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
+    let mut result = construct_result(receiver, source_values.len(), true)?;
+    for (index, item) in source_values.into_iter().enumerate() {
+        let value = map_item(mapper, &this_arg, item, index)?;
+        result = write_result_element(result, index, value)?;
+    }
+    Ok(result)
 }
 
 pub(crate) fn of(
