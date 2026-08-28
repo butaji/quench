@@ -1434,6 +1434,12 @@ mod stubs {
             };
             let month = crate::execute::get_property_result(partial, "month")?;
             let month_code = crate::execute::get_property_result(partial, "monthCode")?;
+            if !matches!(month_code, Value::Undefined) {
+                let code = crate::conversion::to_string(&month_code)?;
+                if code.ends_with('L') {
+                    return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+                }
+            }
             if !matches!(month, Value::Undefined) && !matches!(month_code, Value::Undefined) {
                 let month_number = crate::conversion::to_number(&month)?;
                 let code = crate::conversion::to_string(&month_code)?;
@@ -1441,7 +1447,7 @@ mod stubs {
                     .strip_prefix('M')
                     .and_then(|value| value.parse::<f64>().ok())
                     .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
-                if month_number != code_number {
+                if month_number.trunc() != code_number {
                     return Err(crate::value::error::throw_range_error("Month mismatch"));
                 }
             }
