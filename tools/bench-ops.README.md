@@ -1,10 +1,6 @@
-# Per-operation measurement rules
+# Per-operation measurement
 
-- Keep microbenchmarks bounded, deterministic, and representative of reusable
-  operations rather than named benchmark fixtures.
-- Report time, memory, allocation proxies, and missing or timed-out samples
-  explicitly; never turn unavailable data into a passing zero.
-- Use measurements to find regressions and representation costs, not to select
-  runtime semantics.
-- Every measured operation must remain observable-equivalent to the ordinary
-  Node-compatible VM path.
+Use bounded deterministic probes of reusable VM operations, not named
+fixtures. Report time, memory, allocation proxies, and missing/timed-out data
+explicitly. Probes preserve the ordinary VM's observable behavior and inform
+engineering; they never choose runtime semantics.
