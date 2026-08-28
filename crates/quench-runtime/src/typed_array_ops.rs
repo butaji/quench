@@ -314,30 +314,6 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     Ok(Value::Undefined)
 }
 
-fn view_length(value: &Value) -> Option<usize> {
-    macro_rules! len {
-        ($($variant:ident),+) => {
-            match value {
-                $(Value::$variant(view) => view.length,)+
-                _ => return None,
-            }
-        };
-    }
-    Some(len!(
-        Float64Array,
-        Float32Array,
-        Int8Array,
-        Int16Array,
-        Int32Array,
-        BigInt64Array,
-        BigUint64Array,
-        Uint32Array,
-        Uint8Array,
-        Uint8ClampedArray,
-        Uint16Array
-    ))
-}
-
 fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
     let Some(value) = arguments.get(1) else {
         return Ok(0);
@@ -365,7 +341,7 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
             "TypedArray.prototype.set called on immutable buffer",
         ));
     }
-    let target_length = view_length(&target).ok_or_else(|| {
+    let target_length = logical_len(&target).ok_or_else(|| {
         crate::value::error::throw_type_error(
             "TypedArray.prototype.set called on incompatible receiver",
         )
@@ -374,13 +350,16 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
     let offset = set_offset(arguments)?;
     if crate::arrays::typed_array_is_detached(&target)
         || crate::typed_array_ops::is_view(&source)
-            && crate::arrays::typed_array_is_detached(&source)
+            && (crate::arrays::typed_array_is_detached(&source)
+                || crate::typed_array_prototype::is_out_of_bounds(&source))
     {
         return Err(crate::value::error::throw_type_error(
             "TypedArray.prototype.set called on detached buffer",
         ));
     }
-    let source_length = if let Some(length) = view_length(&source) {
+    let source_length = if crate::conversion::is_symbol(&source) {
+        0
+    } else if let Some(length) = logical_len(&source) {
         length
     } else {
         let source_length = crate::intl::tolocale::value::to_number_result(Some(
@@ -393,7 +372,7 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
             "offset is out of bounds",
         ));
     }
-    if view_length(&source).is_some() {
+    if logical_len(&source).is_some() {
         // Typed-array sources may overlap the target, so snapshot them before
         // the first write.
         let values = (0..source_length)
