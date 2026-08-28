@@ -26,6 +26,12 @@ pub struct NodeSpec {
 /// namespace construction, capability dispatch, and future generated
 /// evidence tables; mechanical registrations should not repeat ids inline.
 macro_rules! node_api {
+    ($(($name:ident, $cap_name:ident, $label:literal, $cap:expr)),* $(,)?) => {
+        $(
+            pub const $name: NodeSpec = NodeSpec::new($label, $cap);
+            pub const $cap_name: CapId = $cap;
+        )*
+    };
     ($(($name:ident, $label:literal, $cap:expr)),* $(,)?) => {
         $(pub const $name: NodeSpec = NodeSpec::new($label, $cap);)*
     };
@@ -107,34 +113,41 @@ node_api! {
     (SPEC_CONSOLE_ERROR, "console:error", 0x0203),
     (SPEC_CONSOLE_DEBUG, "console:debug", 0x0204),
     (SPEC_CONSOLE_TRACE, "console:trace", 0x0205),
-    (SPEC_EVENTS_NEW, "events:EventEmitter", 0x0100),
-    (SPEC_EVENTS_FROM, "events:from", 0x0101),
-    (SPEC_EVENTS_ON, "events:on", 0x0102),
-    (SPEC_EVENTS_EMIT, "events:emit", 0x0103),
-    (SPEC_EVENTS_CAPTURE_GET, "events:captureRejections:get", 0x0104),
-    (SPEC_EVENTS_CAPTURE_SET, "events:captureRejections:set", 0x0119),
-    (SPEC_EVENTS_DEFAULT_MAX_GET, "events:defaultMaxListeners:get", 0x0125),
-    (SPEC_EVENTS_DEFAULT_MAX_SET, "events:defaultMaxListeners:set", 0x0126),
-    (SPEC_EVENTS_RAW_LISTENERS, "events:rawListeners", 0x0127),
-    (SPEC_EVENTS_ONCE, "events:once", 0x0105),
-    (SPEC_EVENTS_REMOVE_LISTENER, "events:removeListener", 0x0106),
-    (SPEC_EVENTS_REMOVE_ALL, "events:removeAllListeners", 0x0107),
-    (SPEC_EVENTS_LISTENERS, "events:listeners", 0x0108),
-    (SPEC_EVENTS_EVENT_NAMES, "events:eventNames", 0x0109),
-    (SPEC_EVENTS_LISTENER_COUNT, "events:listenerCount", 0x010A),
-    (SPEC_EVENTS_PREPEND, "events:prependListener", 0x010B),
-    (SPEC_EVENTS_PREPEND_ONCE, "events:prependOnceListener", 0x010C),
-    (SPEC_EVENTS_SET_MAX, "events:setMaxListeners", 0x010D),
-    (SPEC_EVENTS_GET_MAX, "events:getMaxListeners", 0x010E),
-    (SPEC_EVENTS_SET_MAX_STATIC, "events:setMaxListeners:static", 0x010F),
-    (SPEC_EVENTS_GET_LISTENERS, "events:getEventListeners", 0x0110),
-    (SPEC_EVENTS_LISTENER_COUNT_STATIC, "events:listenerCount:static", 0x0111),
-    (SPEC_EVENTS_GET_MAX_STATIC, "events:getMaxListeners:static", 0x0112),
-    (SPEC_TARGET_ADD, "eventTarget:addEventListener", 0x0113),
-    (SPEC_TARGET_REMOVE, "eventTarget:removeEventListener", 0x0114),
-    (SPEC_TARGET_DISPATCH, "eventTarget:dispatchEvent", 0x0115),
-    (SPEC_EVENT_TARGET_NEW, "eventTarget:EventTarget", 0x0116),
-    (SPEC_RUN_UNCAUGHT, "process:runUncaught", 0x0117),
+}
+node_api! {
+    (SPEC_EVENTS_NEW, CAP_EVENTS_NEW, "events:EventEmitter", 0x0100),
+    (SPEC_EVENTS_FROM, CAP_EVENTS_FROM, "events:from", 0x0101),
+    (SPEC_EVENTS_ON, CAP_EVENTS_ON, "events:on", 0x0102),
+    (SPEC_EVENTS_EMIT, CAP_EVENTS_EMIT, "events:emit", 0x0103),
+    (SPEC_EVENTS_CAPTURE_GET, CAP_EVENTS_CAPTURE_GET, "events:captureRejections:get", 0x0104),
+    (SPEC_EVENTS_CAPTURE_SET, CAP_EVENTS_CAPTURE_SET, "events:captureRejections:set", 0x0119),
+    (SPEC_EVENTS_DEFAULT_MAX_GET, CAP_EVENTS_DEFAULT_MAX_GET, "events:defaultMaxListeners:get", 0x0125),
+    (SPEC_EVENTS_DEFAULT_MAX_SET, CAP_EVENTS_DEFAULT_MAX_SET, "events:defaultMaxListeners:set", 0x0126),
+    (SPEC_EVENTS_RAW_LISTENERS, CAP_EVENTS_RAW_LISTENERS, "events:rawListeners", 0x0127),
+    (SPEC_EVENTS_ONCE, CAP_EVENTS_ONCE, "events:once", 0x0105),
+    (SPEC_EVENTS_REMOVE_LISTENER, CAP_EVENTS_REMOVE_LISTENER, "events:removeListener", 0x0106),
+    (SPEC_EVENTS_REMOVE_ALL, CAP_EVENTS_REMOVE_ALL, "events:removeAllListeners", 0x0107),
+    (SPEC_EVENTS_LISTENERS, CAP_EVENTS_LISTENERS, "events:listeners", 0x0108),
+    (SPEC_EVENTS_EVENT_NAMES, CAP_EVENTS_EVENT_NAMES, "events:eventNames", 0x0109),
+    (SPEC_EVENTS_LISTENER_COUNT, CAP_EVENTS_LISTENER_COUNT, "events:listenerCount", 0x010A),
+    (SPEC_EVENTS_PREPEND, CAP_EVENTS_PREPEND, "events:prependListener", 0x010B),
+    (SPEC_EVENTS_PREPEND_ONCE, CAP_EVENTS_PREPEND_ONCE, "events:prependOnceListener", 0x010C),
+    (SPEC_EVENTS_SET_MAX, CAP_EVENTS_SET_MAX, "events:setMaxListeners", 0x010D),
+    (SPEC_EVENTS_GET_MAX, CAP_EVENTS_GET_MAX, "events:getMaxListeners", 0x010E),
+    (SPEC_EVENTS_SET_MAX_STATIC, CAP_EVENTS_SET_MAX_STATIC, "events:setMaxListeners:static", 0x010F),
+    (SPEC_EVENTS_GET_LISTENERS, CAP_EVENTS_GET_LISTENERS, "events:getEventListeners", 0x0110),
+    (SPEC_EVENTS_LISTENER_COUNT_STATIC, CAP_EVENTS_LISTENER_COUNT_STATIC, "events:listenerCount:static", 0x0111),
+    (SPEC_EVENTS_GET_MAX_STATIC, CAP_EVENTS_GET_MAX_STATIC, "events:getMaxListeners:static", 0x0112),
+    (SPEC_TARGET_ADD, CAP_TARGET_ADD, "eventTarget:addEventListener", 0x0113),
+    (SPEC_TARGET_REMOVE, CAP_TARGET_REMOVE, "eventTarget:removeEventListener", 0x0114),
+    (SPEC_TARGET_DISPATCH, CAP_TARGET_DISPATCH, "eventTarget:dispatchEvent", 0x0115),
+    (SPEC_EVENT_TARGET_NEW, CAP_EVENT_TARGET_NEW, "eventTarget:EventTarget", 0x0116),
+    (SPEC_RUN_UNCAUGHT, CAP_RUN_UNCAUGHT, "process:runUncaught", 0x0117),
+    (SPEC_EVENTS_ABORT_LISTENER, CAP_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
+    (SPEC_EVENTS_ABORT_DISPOSE, CAP_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
+    (SPEC_EVENTS_ADD_ABORT, CAP_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
+}
+node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
     (SPEC_DIAGNOSTICS_SUBSCRIBE, "diagnostics_channel:subscribe", 0x1F01),
     (SPEC_DIAGNOSTICS_UNSUBSCRIBE, "diagnostics_channel:unsubscribe", 0x1F02),
@@ -167,9 +180,6 @@ node_api! {
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),
     (SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC, "diagnostics_channel:TracingChannel:traceSync", 0x1F0D),
-    (SPEC_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
-    (SPEC_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
-    (SPEC_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
     (SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, "diagnostics_channel:boundedChannel", 0x1F0E),
     (SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, "diagnostics_channel:BoundedChannel:subscribe", 0x1F0F),
     (SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE, "diagnostics_channel:BoundedChannel:unsubscribe", 0x1F10),
@@ -646,18 +656,20 @@ node_api! {
     (SPEC_ABORT_SIGNAL_TIMEOUT, "AbortSignal.timeout", 0x1F40),
     (SPEC_ABORT_SIGNAL_ANY, "AbortSignal.any", 0x1F41),
     (SPEC_ABORT_EVENT_STOP_IMMEDIATE, "AbortEvent.stopImmediatePropagation", 0x1F26),
-    (SPEC_EVENT, "Event", 0x0118),
-    (SPEC_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
-    (SPEC_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
-    (SPEC_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
-    (SPEC_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
-    (SPEC_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
-    (SPEC_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
-    (SPEC_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
-    (SPEC_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
-    (SPEC_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
-    (SPEC_CUSTOM_EVENT, "CustomEvent", 0x0123),
-    (SPEC_EVENT_SOURCE, "EventSource", 0x0124),
+}
+node_api! {
+    (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
+    (SPEC_EVENT_PREVENT_DEFAULT, CAP_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
+    (SPEC_EVENT_STOP_PROPAGATION, CAP_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
+    (SPEC_EVENT_STOP_IMMEDIATE, CAP_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
+    (SPEC_EVENT_COMPOSED_PATH, CAP_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
+    (SPEC_EVENT_GET_CANCEL_BUBBLE, CAP_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
+    (SPEC_EVENT_SET_CANCEL_BUBBLE, CAP_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
+    (SPEC_DEFINE_EVENT_HANDLER, CAP_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
+    (SPEC_EVENT_HANDLER_GET, CAP_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
+    (SPEC_EVENT_HANDLER_SET, CAP_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
+    (SPEC_CUSTOM_EVENT, CAP_CUSTOM_EVENT, "CustomEvent", 0x0123),
+    (SPEC_EVENT_SOURCE, CAP_EVENT_SOURCE, "EventSource", 0x0124),
 }
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1420);
