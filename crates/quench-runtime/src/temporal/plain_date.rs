@@ -71,6 +71,10 @@ fn days_in_month(year: f64, month: f64) -> f64 {
     }
 }
 
+pub(crate) fn days_in_month_for_record(year: i32, month: u32) -> u32 {
+    days_in_month(f64::from(year), f64::from(month)) as u32
+}
+
 fn is_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
