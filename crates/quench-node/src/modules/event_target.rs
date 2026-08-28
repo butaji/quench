@@ -132,7 +132,16 @@ fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, 
             .unwrap_or_else(prototype)
     } else {
         let global = quench_runtime::vm::current_global_object();
-        execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype")
+        let global_prototype =
+            execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype");
+        if quench_runtime::is_callable(&execute::get_property(
+            &global_prototype,
+            "addEventListener",
+        )) {
+            global_prototype
+        } else {
+            prototype()
+        }
     };
     let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&object, &prototype)?
