@@ -46,6 +46,7 @@ pub enum SocketState {
 
 pub struct NetServer {
     pub id: u64,
+    pub owner_worker: Option<u64>,
     pub listener: Option<TcpListener>,
     pub bind_addr: Option<SocketAddr>,
     pub js: Value,
@@ -303,10 +304,12 @@ fn register_server(
     // registers without one; listen() registers with one).
     let is_listening = listener.is_some();
     let bind_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
+    let owner_worker = state.borrow().cluster.worker_context;
     state.borrow_mut().net.servers.insert(
         id,
         Rc::new(RefCell::new(NetServer {
             id,
+            owner_worker,
             listener,
             bind_addr,
             js: js.clone(),
