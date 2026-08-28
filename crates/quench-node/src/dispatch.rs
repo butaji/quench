@@ -214,6 +214,7 @@ const CAP_DOMAIN_RUN: u16 = crate::registry::SPEC_DOMAIN_RUN.cap;
 const CAP_DOMAIN_DISPOSE: u16 = crate::registry::SPEC_DOMAIN_DISPOSE.cap;
 const CAP_DOMAIN_ON: u16 = crate::registry::SPEC_DOMAIN_ON.cap;
 const CAP_DOMAIN_ADD_EMITTER: u16 = crate::registry::SPEC_DOMAIN_ADD_EMITTER.cap;
+const CAP_DOMAIN_ONCE: u16 = crate::registry::SPEC_DOMAIN_ONCE.cap;
 const CAP_CLUSTER_FORK: u16 = crate::registry::SPEC_CLUSTER_FORK.cap;
 const CAP_CLUSTER_DISCONNECT: u16 = crate::registry::SPEC_CLUSTER_DISCONNECT.cap;
 const CAP_CLUSTER_WORKER_IS_DEAD: u16 = crate::registry::SPEC_CLUSTER_WORKER_IS_DEAD.cap;
@@ -625,6 +626,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DOMAIN_DISPOSE => crate::modules::domain::dispose,
         CAP_DOMAIN_ON => crate::modules::domain::on,
         CAP_DOMAIN_ADD_EMITTER => crate::modules::domain::add_emitter,
+        CAP_DOMAIN_ONCE => crate::modules::domain::once,
         CAP_CLUSTER_FORK => crate::modules::cluster::fork,
         CAP_CLUSTER_DISCONNECT => crate::modules::cluster::disconnect_all,
         CAP_CLUSTER_WORKER_IS_DEAD => crate::modules::cluster::is_dead,

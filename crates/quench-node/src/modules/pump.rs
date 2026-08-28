@@ -539,7 +539,17 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         }
         crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
-        let result = call_guarded_report(state, &timer.callback, &timer.object, &timer.args);
+        let result = match timer.domain.as_ref() {
+            Some(domain) => call_timer(
+                state,
+                Some(domain),
+                &timer.callback,
+                &timer.object,
+                &timer.args,
+            )
+            .map(|_| false),
+            None => call_guarded_report(state, &timer.callback, &timer.object, &timer.args),
+        };
         crate::modules::async_hooks::resource_after(state, None, &[])?;
         super::timers::async_destroy(&timer.async_resource);
         defer_ticks |= result?;
