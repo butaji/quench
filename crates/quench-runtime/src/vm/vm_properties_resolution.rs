@@ -372,7 +372,8 @@ pub(crate) fn get_property_with_receiver(
     // A script's `this` is a derived global view. Global declaration batches
     // replace the canonical owner with a copy-on-write object; resolve the
     // view before reading so `this.x` observes the same binding as `x`.
-    if matches!(&value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)) {
+    if matches!(&value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    {
         let owner = crate::vm::current_global_object();
         let distinct_storage = match (&owner, &value) {
             (Value::Object(owner), Value::Object(view)) => !std::rc::Rc::ptr_eq(owner, view),
@@ -414,7 +415,10 @@ pub(crate) fn get_property_with_receiver(
             {
                 return Ok(crate::vm::get_property(&value, key));
             }
-            return get_property_with_receiver(&bound.target, key, receiver);
+            return crate::vm::with_realm(bound.realm, || {
+                get_property_with_receiver(&bound.target, key, receiver)
+            })
+            .unwrap_or_else(|| get_property_with_receiver(&bound.target, key, receiver));
         }
     }
     if matches!(&value, Value::BoundFunction(_))
