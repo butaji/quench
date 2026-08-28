@@ -83,7 +83,7 @@ const CONSOLE_CLASS: &str = r#"(class Console {
     if (!this._stderr) this._stderr = globalThis?.process?.stderr;
   }
   log(...args) {
-    const output = this._stdout;
+    const output = this._stdout || process?.stdout;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
     if (!this._tickPending) {
       this._tickPending = true;
@@ -97,7 +97,7 @@ const CONSOLE_CLASS: &str = r#"(class Console {
   timeEnd(label = "default") { this._times?.delete(label); }
   timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
-    const output = this._stderr;
+    const output = this._stderr || process?.stderr;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
   }
   error(...args) { this.warn(...args); }
