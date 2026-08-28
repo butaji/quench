@@ -133,13 +133,48 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
     let has_named_group = pattern.as_bytes().windows(3).any(|window| window == b"(?<");
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0;
+    let mut in_class = false;
     while index < chars.len() {
+        if chars[index] == '[' {
+            in_class = true;
+            output.push('[');
+            index += 1;
+            continue;
+        }
+        if chars[index] == ']' {
+            in_class = false;
+            output.push(']');
+            index += 1;
+            continue;
+        }
         if chars[index] != '\\' || index + 1 == chars.len() {
             output.push(chars[index]);
             index += 1;
             continue;
         }
         let next = chars[index + 1];
+        if in_class && next == 'c' {
+            if let Some(control) = chars
+                .get(index + 2)
+                .copied()
+                .filter(|ch| ch.is_ascii_digit() || *ch == '_')
+            {
+                output.push_str(&format!(r"\x{:02x}", (control as u32) % 32));
+                index += 3;
+                continue;
+            }
+        }
+        if next >= '4' && next < '8' {
+            let mut end = index + 2;
+            if end < chars.len() && chars[end] >= '0' && chars[end] < '8' {
+                end += 1;
+            }
+            let digits: String = chars[index + 1..end].iter().collect();
+            let value = u32::from_str_radix(&digits, 8).unwrap_or(0);
+            output.push_str(&format!(r"\x{:02x}", value));
+            index = end;
+            continue;
+        }
         let malformed_k = next == 'k'
             && (index + 2 == chars.len()
                 || chars[index + 2] != '<'
