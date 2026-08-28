@@ -227,6 +227,15 @@ pub fn add(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("domain"))?;
     let member = args.first().cloned().unwrap_or(Value::Undefined);
+    let _ = attach_member(state, receiver, member)?;
+    Ok(receiver.clone())
+}
+
+pub(crate) fn attach_member(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    member: Value,
+) -> Result<Value, VmError> {
     let mut domain = with_domain(state, receiver)?;
     if !domain.disposed && !domain.members.iter().any(|v| *v == member) {
         let member = execute::define_property(
@@ -242,8 +251,9 @@ pub fn add(
         domain.members.push(member);
         let members = host_api::array(domain.members.clone());
         execute::set_property_in_place(receiver, "members", members);
+        return Ok(domain.members.last().cloned().unwrap_or(Value::Undefined));
     }
-    Ok(receiver.clone())
+    Ok(member)
 }
 pub fn remove(
     state: &Rc<RefCell<HostState>>,
