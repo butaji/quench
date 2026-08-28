@@ -78,6 +78,12 @@ pub(crate) fn integrity_apply(
             integrity_function(&mut properties, frozen);
             Ok(target.clone())
         }
+        target if target.typed_array_meta().is_some() => {
+            if let Some(meta) = target.typed_array_meta() {
+                meta.set_extensible(false);
+            }
+            Ok(target.clone())
+        }
         _ => Ok(target.clone()),
     }
 }
@@ -293,10 +299,7 @@ fn descriptor_object(fields: Vec<(String, crate::value::Value)>) -> crate::value
 
 fn push_non_extensible(properties: &mut crate::value::ObjectData) {
     if !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
-        properties.push((
-            NON_EXTENSIBLE.into(),
-            crate::value::Value::Boolean(true),
-        ));
+        properties.push((NON_EXTENSIBLE.into(), crate::value::Value::Boolean(true)));
     }
 }
 

@@ -328,9 +328,7 @@ fn write_result_element(
     // writable but non-configurable, so defining a fresh property would
     // incorrectly trip the ordinary-object read-only check.
     if crate::typed_array_ops::is_view(&result) {
-        if typed_array_result_unwritable(&result, true)
-            || crate::typed_array_ops::logical_len(&result).is_some_and(|length| index >= length)
-        {
+        if typed_array_result_unwritable(&result, false) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot set an element on an invalid typed array",
             ));

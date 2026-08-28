@@ -5,9 +5,17 @@ pub(crate) fn set_with_receiver(
     receiver: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
     if !crate::value::is_object(receiver) {
+        if target.typed_array_meta().is_some()
+            && crate::typed_array_ops::is_index_key(key)
+            && (crate::typed_array_prototype::is_out_of_bounds(target)
+                || crate::typed_array_ops::logical_len(target)
+                    .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+        {
+            return Ok(true);
+        }
         return Ok(false);
     }
-    if crate::typed_array_ops::is_view(target) {
+    if target.typed_array_meta().is_some() {
         let same_receiver = crate::builtins::same_value(Some(target), Some(receiver));
         if crate::typed_array_ops::canonical_numeric_index(key)
             && !crate::typed_array_ops::is_index_key(key)
@@ -22,9 +30,9 @@ pub(crate) fn set_with_receiver(
             if !same_receiver && out_of_bounds {
                 return Ok(true);
             }
-            if let Some(result) = crate::typed_array_ops::set_property(target, key, value) {
-                result?;
-                if same_receiver {
+            if same_receiver {
+                if let Some(result) = crate::typed_array_ops::set_property(target, key, value) {
+                    result?;
                     return Ok(true);
                 }
             }
@@ -60,6 +68,22 @@ pub(crate) fn set_with_receiver(
         return set_receiver_data(receiver, key, value);
     }
     let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
+    if parent.typed_array_meta().is_some()
+        && crate::typed_array_ops::is_index_key(key)
+        && (crate::typed_array_prototype::is_out_of_bounds(&parent)
+            || crate::typed_array_ops::logical_len(&parent)
+                .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+    {
+        if matches!(
+            parent,
+            crate::value::Value::BigInt64Array(_) | crate::value::Value::BigUint64Array(_)
+        ) {
+            crate::construct::bigint_bits(value)?;
+        } else {
+            crate::conversion::to_number(value)?;
+        }
+        return Ok(true);
+    }
     if matches!(parent, crate::value::Value::Proxy(_)) {
         return crate::proxy::proxy_set(&parent, key, value, Some(receiver))
             .map(|result| crate::execute::is_truthy(&result));

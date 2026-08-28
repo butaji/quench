@@ -105,6 +105,19 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
     if !matches!(direct, Value::Undefined) {
         return direct;
     }
+    if value.typed_array_meta().is_some() {
+        if let Some(prototype) = crate::typed_array_prototype::get(value) {
+            let inherited = get_property(&prototype, key);
+            if !matches!(inherited, Value::Undefined) {
+                return inherited;
+            }
+            if let Ok(inherited) = crate::vm::get_property_with_receiver(&prototype, key, value) {
+                if !matches!(inherited, Value::Undefined) {
+                    return inherited;
+                }
+            }
+        }
+    }
     primitive_prototype_property(value, key)
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
