@@ -471,6 +471,11 @@ mod stubs {
         _receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
+        if builtin == crate::ops::Builtin::TemporalZonedDateTime {
+            return Some(Err(crate::value::error::throw_type_error(
+                "Temporal.ZonedDateTime requires new",
+            )));
+        }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeFrom {
             return Some(zoned_from(arguments.first()));
         }
