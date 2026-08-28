@@ -2707,6 +2707,16 @@ pub fn cp_spawn(
         "Symbol.dispose",
         crate::host::capability(crate::registry::SPEC_CP_KILL),
     );
+    // `spawn()` returns a ChildProcess instance.  Keep the host-created
+    // object (and its event identity) while linking it to the one public
+    // constructor prototype used by `instanceof` in Node code.
+    let global = quench_runtime::vm::current_global_object();
+    let prototype = execute::get_property(&global, "__nodeChildProcessPrototype");
+    let child = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_prototype_of(&child, &prototype).unwrap_or(child)
+    } else {
+        child
+    };
     state.borrow_mut().identity_roots.push(child.clone());
     if let Ok(signal) = execute::get_property_result(&options, "signal") {
         if matches!(
