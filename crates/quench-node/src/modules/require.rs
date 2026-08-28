@@ -498,6 +498,9 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         )])),
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "cluster" => {
+            if let Some(module) = state.borrow().cluster.module() {
+                return Some(module);
+            }
             let global = quench_runtime::vm::current_global_object();
             let existing = quench_runtime::execute::get_property(&global, "__nodeCluster");
             if !matches!(existing, Value::Undefined) {
