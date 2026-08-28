@@ -1474,26 +1474,36 @@ mod stubs {
             } else if !matches!(month_code, Value::Undefined) {
                 fields.push(("monthCode".to_string(), month_code));
             }
-            let year = fields
+            let year_number = fields
                 .iter()
                 .find(|(name, _)| name == "year")
                 .map(|(_, value)| crate::conversion::to_number(value))
                 .transpose()?
-                .unwrap_or(0.0) as i32;
-            let month = if let Some((_, value)) = fields.iter().find(|(name, _)| name == "month") {
-                crate::conversion::to_number(value)? as u32
+                .unwrap_or(0.0);
+            if !year_number.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid date"));
+            }
+            let year = year_number as i32;
+            let month_number = if let Some((_, value)) = fields.iter().find(|(name, _)| name == "month") {
+                crate::conversion::to_number(value)?
             } else if let Some((_, Value::String(code))) =
                 fields.iter().find(|(name, _)| name == "monthCode")
             {
                 code.get(1..)
                     .and_then(|value| value.parse::<u32>().ok())
-                    .unwrap_or(0)
+                    .unwrap_or(0) as f64
             } else {
-                0
+                0.0
             };
+            if !month_number.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid date"));
+            }
+            let month = month_number as u32;
             if let Some((_, day)) = fields.iter_mut().find(|(name, _)| name == "day") {
                 let day_number_value = crate::conversion::to_number(day)?;
-                if primitive_options && (!day_number_value.is_finite() || day_number_value < 1.0) {
+                if !day_number_value.is_finite()
+                    || primitive_options && day_number_value < 1.0
+                {
                     return Err(crate::value::error::throw_range_error("Invalid date"));
                 }
                 let day_number = day_number_value as u32;
@@ -1521,6 +1531,12 @@ mod stubs {
             ])));
             let result = if matches!(partial_offset, Value::Undefined) {
                 let number = |name: &str| -> Result<i128, VmError> {
+                    if name == "year" {
+                        return Ok(year_number.trunc() as i128);
+                    }
+                    if name == "month" && field_entries.iter().any(|(key, _)| key == "month") {
+                        return Ok(month_number.trunc() as i128);
+                    }
                     let value = field_entries
                         .iter()
                         .find(|(key, _)| key == name)
