@@ -767,6 +767,7 @@ mod stubs {
             &["compatible", "earlier", "later", "reject"],
             "compatible",
         )?;
+        let overflow_mode = option_string("overflow", &["constrain", "reject"], "constrain")?;
         if let Value::String(text) = value {
             if !text.contains('[') || !text.ends_with(']') {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
@@ -785,10 +786,8 @@ mod stubs {
                 || date_time.contains(' ');
             if !has_time_separator
                 && (timezone_annotation.is_none()
-                    || date_time.ends_with('Z')
-                    || date_time
-                        .rfind(['+', '-'])
-                        .is_some_and(|index| index > 0))
+                    || has_z
+                    || super::parse_date_parts(date_time).is_none())
             {
                 return Err(crate::value::error::throw_range_error("Invalid ZonedDateTime"));
             }
@@ -982,13 +981,31 @@ mod stubs {
                     _ => return Err(crate::value::error::throw_range_error("Invalid monthCode")),
                 }
             } else {
-                u32::try_from(finite_integer(&month_value)?).map_err(|_| {
-                    crate::value::error::throw_range_error("Invalid month")
-                })?
+                let month = finite_integer(&month_value)?;
+                if month < 1 {
+                    return Err(crate::value::error::throw_range_error("Invalid month"));
+                }
+                if overflow_mode == "reject" && month > 12 {
+                    return Err(crate::value::error::throw_range_error("Invalid month"));
+                }
+                month.clamp(1, 12) as u32
             };
-            let day = u32::try_from(finite_integer(&day_value)?).map_err(|_| {
-                crate::value::error::throw_range_error("Invalid day")
-            })?;
+            let day = finite_integer(&day_value)?;
+            if day < 1 {
+                return Err(crate::value::error::throw_range_error("Invalid day"));
+            }
+            let day = if overflow_mode == "reject" {
+                u32::try_from(day).map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid day")
+                })?
+            } else {
+                day.min(i128::from(super::plain_date::days_in_month_for_record(year, month))) as u32
+            };
+            if overflow_mode == "reject"
+                && day > super::plain_date::days_in_month_for_record(year, month)
+            {
+                return Err(crate::value::error::throw_range_error("Invalid day"));
+            }
             let field = |name: &str| -> Result<i128, VmError> {
                 let value = crate::execute::get_property_result(value, name)
                     .unwrap_or(Value::Number(0.0));
