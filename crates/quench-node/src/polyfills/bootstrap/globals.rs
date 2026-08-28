@@ -142,6 +142,8 @@ globalThis.__nodeFormat = (args) =>
     })
     .join(" ");
 globalThis.console = globalThis.console || {};
+globalThis.console._stdout ||= globalThis.process?.stdout;
+globalThis.console._stderr ||= globalThis.process?.stderr;
 const __nodeConsoleWrite = (line) => {
   if (globalThis.process?.stdout?.write) {
     globalThis.process.stdout.write(line + "\n");
@@ -230,7 +232,8 @@ const __nodeProcessKill = (pid, signal) => {
 const __quenchOriginalCwdGet = globalThis.__quench_cwd_get;
 const __quenchDisplayCwd = () => __quenchOriginalCwdGet();
 globalThis.__quench_cwd_get = __quenchDisplayCwd;
-globalThis.process = {
+const __quenchProcessHost = globalThis.process;
+globalThis.process = Object.assign(__quenchProcessHost || {}, {
   env: new Proxy(
     {},
     {
@@ -429,6 +432,8 @@ globalThis.process = {
     }
     return [seconds, nanos];
   }
-};
+});
 if (!globalThis.process.argv0) globalThis.process.argv0 = globalThis.process.execPath;
+globalThis.console._stdout ||= globalThis.process?.stdout;
+globalThis.console._stderr ||= globalThis.process?.stderr;
 "#);
