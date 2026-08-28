@@ -905,8 +905,7 @@ pub fn namespace_bindings(
         "console".to_string(),
         crate::modules::console::build_value(),
     ));
-    let event_target =
-        crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116));
+    let event_target = crate::host::capability(SPEC_EVENT_TARGET_NEW);
     let event_target_prototype = quench_runtime::execute::define_property(
         crate::modules::event_target::prototype(),
         "constructor",

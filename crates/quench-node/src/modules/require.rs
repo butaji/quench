@@ -371,10 +371,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             }
             let node_event_target =
                 match quench_runtime::execute::get_property(&global, "NodeEventTarget") {
-                    Value::Undefined => crate::host::capability(crate::registry::NodeSpec::new(
-                        "event_target:NodeEventTarget",
-                        0x0116,
-                    )),
+                    Value::Undefined =>
+                        crate::host::capability(crate::registry::SPEC_EVENT_TARGET_NEW),
                     value => value,
                 };
             let custom_event = quench_runtime::execute::get_property(&global, "CustomEvent");
