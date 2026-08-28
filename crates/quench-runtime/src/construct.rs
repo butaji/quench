@@ -514,7 +514,14 @@ fn construct_function(
     if is_default_derived_constructor(function) {
         let super_constructor = derived_constructor(function)?;
         let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
-        return initialize_instance_fields(function, receiver);
+        let receiver = initialize_instance_fields(function, receiver)?;
+        let prototype =
+            crate::execute::get_property(&Value::Function(function.clone()), "prototype");
+        return if crate::value::is_object(&prototype) {
+            set_internal_prototype(receiver, prototype)
+        } else {
+            Ok(receiver)
+        };
     }
     if crate::functions::is_derived_constructor(function) {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
