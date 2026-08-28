@@ -592,6 +592,7 @@ fn tail_constructor_dispatch(
 ) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
     let message = match builtin {
+        Builtin::TypedArray => "TypedArray is not directly constructible",
         Builtin::ArrayBuffer => "Constructor ArrayBuffer requires 'new'",
         Builtin::DataView => "Constructor DataView requires 'new'",
         Builtin::SharedArrayBuffer => "Constructor SharedArrayBuffer requires 'new'",

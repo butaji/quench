@@ -471,6 +471,11 @@ fn construct_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if builtin == crate::ops::Builtin::TypedArray {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray is not directly constructible",
+        ));
+    }
     if is_error_builtin(builtin) {
         return construct_error(&builtin, arguments);
     }
