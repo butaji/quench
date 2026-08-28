@@ -345,6 +345,14 @@ pub fn capability(spec: NodeSpec) -> Value {
     quench_runtime::execute::set_property(function, "name", Value::String(name.to_string()))
 }
 
+/// Build the stable capability descriptor used by bound host callbacks.
+pub fn capability_ref(spec: NodeSpec) -> HostCapabilityRef {
+    HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind: HostCapabilityKind::Custom(spec.cap),
+    }
+}
+
 /// Build a properly-described namespace object. Each named
 /// property is stored as the actual value at `key`, and a
 /// parallel descriptor entry is stored under the runtime's
