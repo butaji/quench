@@ -744,7 +744,10 @@ fn lookaround_match(
     if negative {
         found.is_none().then_some(state)
     } else {
-        found
+        found.map(|found| State {
+            position: state.position,
+            captures: found.captures,
+        })
     }
 }
 
