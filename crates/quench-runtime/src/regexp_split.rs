@@ -138,11 +138,6 @@ fn split_limit(arguments: &[Value]) -> Result<usize, VmError> {
 fn split_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     let flags = if flags.contains('y') { flags.to_string() } else { format!("{flags}y") };
     let constructor = regexp_species_constructor(receiver)?;
-    if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp))
-        && crate::regexp::has_regexp_internal_slot(receiver)
-    {
-        return Ok(receiver.clone());
-    }
     crate::construct::construct_value(&constructor, &[receiver.clone(), Value::String(flags)])
 }
 
