@@ -190,32 +190,32 @@ node_api! {
     (SPEC_WASI_IMPORT_OBJECT, "wasi:WASI:getImportObject", 0x1C03),
 }
 
-pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
-pub const SPEC_PATH_RESOLVE: NodeSpec = NodeSpec::new("path:resolve", 0x0401);
-pub const SPEC_PATH_NORMALIZE: NodeSpec = NodeSpec::new("path:normalize", 0x0402);
-pub const SPEC_PATH_DIRNAME: NodeSpec = NodeSpec::new("path:dirname", 0x0403);
-pub const SPEC_PATH_BASENAME: NodeSpec = NodeSpec::new("path:basename", 0x0404);
-pub const SPEC_PATH_EXTNAME: NodeSpec = NodeSpec::new("path:extname", 0x0405);
-pub const SPEC_PATH_ISABSOLUTE: NodeSpec = NodeSpec::new("path:isAbsolute", 0x0406);
-pub const SPEC_PATH_RELATIVE: NodeSpec = NodeSpec::new("path:relative", 0x0409);
-pub const SPEC_PATH_PARSE: NodeSpec = NodeSpec::new("path:parse", 0x040A);
-pub const SPEC_PATH_FORMAT: NodeSpec = NodeSpec::new("path:format", 0x040B);
-pub const SPEC_PATH_TO_NAMESPACED: NodeSpec = NodeSpec::new("path:toNamespacedPath", 0x040C);
-pub const SPEC_PATH_MATCHES_GLOB: NodeSpec = NodeSpec::new("path:matchesGlob", 0x040D);
-
-pub const SPEC_PATH_WIN32_JOIN: NodeSpec = NodeSpec::new("path.win32:join", 0x0410);
-pub const SPEC_PATH_WIN32_RESOLVE: NodeSpec = NodeSpec::new("path.win32:resolve", 0x0411);
-pub const SPEC_PATH_WIN32_NORMALIZE: NodeSpec = NodeSpec::new("path.win32:normalize", 0x0412);
-pub const SPEC_PATH_WIN32_DIRNAME: NodeSpec = NodeSpec::new("path.win32:dirname", 0x0413);
-pub const SPEC_PATH_WIN32_BASENAME: NodeSpec = NodeSpec::new("path.win32:basename", 0x0414);
-pub const SPEC_PATH_WIN32_EXTNAME: NodeSpec = NodeSpec::new("path.win32:extname", 0x0415);
-pub const SPEC_PATH_WIN32_ISABSOLUTE: NodeSpec = NodeSpec::new("path.win32:isAbsolute", 0x0416);
-pub const SPEC_PATH_WIN32_RELATIVE: NodeSpec = NodeSpec::new("path.win32:relative", 0x0417);
-pub const SPEC_PATH_WIN32_PARSE: NodeSpec = NodeSpec::new("path.win32:parse", 0x0418);
-pub const SPEC_PATH_WIN32_FORMAT: NodeSpec = NodeSpec::new("path.win32:format", 0x0419);
-pub const SPEC_PATH_WIN32_TO_NAMESPACED: NodeSpec =
-    NodeSpec::new("path.win32:toNamespacedPath", 0x041A);
-pub const SPEC_PATH_WIN32_MATCHES_GLOB: NodeSpec = NodeSpec::new("path.win32:matchesGlob", 0x041B);
+node_api! {
+    (SPEC_PATH_JOIN, "path:join", 0x0400),
+    (SPEC_PATH_RESOLVE, "path:resolve", 0x0401),
+    (SPEC_PATH_NORMALIZE, "path:normalize", 0x0402),
+    (SPEC_PATH_DIRNAME, "path:dirname", 0x0403),
+    (SPEC_PATH_BASENAME, "path:basename", 0x0404),
+    (SPEC_PATH_EXTNAME, "path:extname", 0x0405),
+    (SPEC_PATH_ISABSOLUTE, "path:isAbsolute", 0x0406),
+    (SPEC_PATH_RELATIVE, "path:relative", 0x0409),
+    (SPEC_PATH_PARSE, "path:parse", 0x040A),
+    (SPEC_PATH_FORMAT, "path:format", 0x040B),
+    (SPEC_PATH_TO_NAMESPACED, "path:toNamespacedPath", 0x040C),
+    (SPEC_PATH_MATCHES_GLOB, "path:matchesGlob", 0x040D),
+    (SPEC_PATH_WIN32_JOIN, "path.win32:join", 0x0410),
+    (SPEC_PATH_WIN32_RESOLVE, "path.win32:resolve", 0x0411),
+    (SPEC_PATH_WIN32_NORMALIZE, "path.win32:normalize", 0x0412),
+    (SPEC_PATH_WIN32_DIRNAME, "path.win32:dirname", 0x0413),
+    (SPEC_PATH_WIN32_BASENAME, "path.win32:basename", 0x0414),
+    (SPEC_PATH_WIN32_EXTNAME, "path.win32:extname", 0x0415),
+    (SPEC_PATH_WIN32_ISABSOLUTE, "path.win32:isAbsolute", 0x0416),
+    (SPEC_PATH_WIN32_RELATIVE, "path.win32:relative", 0x0417),
+    (SPEC_PATH_WIN32_PARSE, "path.win32:parse", 0x0418),
+    (SPEC_PATH_WIN32_FORMAT, "path.win32:format", 0x0419),
+    (SPEC_PATH_WIN32_TO_NAMESPACED, "path.win32:toNamespacedPath", 0x041A),
+    (SPEC_PATH_WIN32_MATCHES_GLOB, "path.win32:matchesGlob", 0x041B),
+}
 
 node_api! {
     (SPEC_URL_PARSE, "url:parse", 0x0500),
