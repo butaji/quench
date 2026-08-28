@@ -268,8 +268,13 @@ fn dynamic_exec(receiver: &Value, global: bool) -> bool {
     let flags_global = extract_flags(receiver).contains('g');
     let sticky = extract_flags(receiver).contains('y');
     let exec = crate::execute::get_property(receiver, "exec");
-    global
-        || sticky
+    // Global matching is not itself dynamic.  Once the observable `flags`
+    // and `exec` lookups below prove the ordinary built-in protocol, the
+    // template kernel can perform the whole global scan without allocating a
+    // JavaScript exec-result array for every match.  Sticky matching remains
+    // on the general path because its observable lastIndex progression is
+    // part of each RegExpExec invocation.
+    sticky
         || global != flags_global
         || !matches!(exec, Value::Builtin(crate::ops::Builtin::RegExpExec))
 }
@@ -524,6 +529,12 @@ fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<()
 fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Value, VmError> {
     let (re, flags) = compiled_regex(receiver)?;
     let global = flags.contains('g');
+    // RegExp.prototype[@@replace] resets lastIndex before a global scan.
+    // Keeping that observable state transition here lets the direct matcher
+    // replace the equivalent sequence of ordinary RegExpExec calls.
+    if global {
+        set_last_index(receiver, 0.0)?;
+    }
     let mut out = String::new();
     let mut copied = 0;
     let mut search = 0;
