@@ -228,7 +228,13 @@ impl Regex {
                 );
                 let end = input.get(found.position).map_or_else(
                     || input.last().map_or(start, |unit| unit.offset_end),
-                    |unit| unit.offset_start,
+                    |unit| {
+                        if found.position > 0 {
+                            input[found.position - 1].offset_end
+                        } else {
+                            unit.offset_start
+                        }
+                    },
                 );
                 let captures = found
                     .captures
@@ -237,8 +243,13 @@ impl Regex {
                         capture.take().map(|range| {
                             let capture_start =
                                 input.get(range.start).map_or(end, |unit| unit.offset_start);
-                            let capture_end =
-                                input.get(range.end).map_or(end, |unit| unit.offset_start);
+                            let capture_end = input.get(range.end).map_or(end, |unit| {
+                                if range.end > 0 {
+                                    input[range.end - 1].offset_end
+                                } else {
+                                    unit.offset_start
+                                }
+                            });
                             capture_start..capture_end
                         })
                     })
@@ -904,7 +915,30 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool) -> bool {
             negative,
             name,
             value: property,
-        } => property_matches(name, property.as_deref(), value) != *negative,
+        } => {
+            if ignore_case
+                && *negative
+                && (matches!(
+                    name.as_str(),
+                    "Lu" | "Ll" | "Uppercase_Letter" | "Lowercase_Letter"
+                ) || matches!(
+                    property.as_deref(),
+                    Some("Lu" | "Ll" | "Uppercase_Letter" | "Lowercase_Letter")
+                ))
+            {
+                return true;
+            }
+            let matches = property_matches(name, property.as_deref(), value)
+                || (ignore_case
+                    && char::from_u32(value).is_some_and(|character| {
+                        character
+                            .to_uppercase()
+                            .chain(character.to_lowercase())
+                            .map(u32::from)
+                            .any(|variant| property_matches(name, property.as_deref(), variant))
+                    }));
+            matches != *negative
+        }
         ClassItem::Nested(nested) => class_matches(nested, value, ignore_case),
         ClassItem::String(_) => false,
     }
