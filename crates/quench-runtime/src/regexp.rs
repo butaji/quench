@@ -197,7 +197,10 @@ pub(crate) fn compile_method_for_vm(
             "RegExp.prototype.compile requires RegExp",
         ));
     };
-    if !has_regexp_internal_slot(receiver) {
+    if !has_regexp_internal_slot(receiver)
+        || !is_current_realm(receiver)
+        || !is_intrinsic_regexp_instance(receiver)
+    {
         return Err(crate::value::error::throw_type_error(
             "RegExp.prototype.compile requires RegExp",
         ));
@@ -205,6 +208,19 @@ pub(crate) fn compile_method_for_vm(
     let (pattern, flags) = compile_arguments(arguments)?;
     compile(&pattern, &flags).map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     update_compiled_receiver(receiver, &pattern, &flags)
+}
+
+fn is_intrinsic_regexp_instance(value: &Value) -> bool {
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    matches!(
+        properties
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == "\0prototype").then_some(value)),
+        Some(Value::Builtin(crate::ops::Builtin::RegExpPrototype))
+    )
 }
 
 fn compile_arguments(arguments: &[Value]) -> Result<(String, String), VmError> {
@@ -271,6 +287,7 @@ fn update_compiled_receiver(
             "RegExp.prototype.compile requires RegExp",
         ));
     };
+    let mut updates = Vec::new();
     for (key, value) in properties.iter() {
         let next = match key.as_str() {
             "source" => Some(Value::String(pattern.to_string())),
@@ -279,9 +296,22 @@ fn update_compiled_receiver(
             "\0regexp_flags" => Some(Value::String(flags.to_string())),
             _ => None,
         };
-        if let (Some(next), Value::BindingCell(cell)) = (next, value) {
-            cell.replace(next);
+        if let Some(next) = next {
+            if let Value::BindingCell(cell) = value {
+                cell.replace(next);
+            } else {
+                updates.push((key.clone(), next));
+            }
         }
+    }
+    let mut current = receiver.clone();
+    for (key, value) in updates {
+        let Value::Object(object) = crate::locals::resolved_replacement(current.clone()) else {
+            break;
+        };
+        let updated = crate::builtins::object_alias::set(object, &key, value);
+        crate::locals::replace_value(&current, &updated);
+        current = updated;
     }
     crate::properties::assign_set_property(receiver, "lastIndex", Value::Number(0.0))?;
     Ok(receiver.clone())
