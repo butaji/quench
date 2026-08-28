@@ -474,6 +474,9 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    if args.len() == 1 && args.first().is_some_and(quench_runtime::is_callable) {
+        return Ok(receiver);
+    }
     if let Some(Value::String(path)) = args.first() {
         if path.starts_with('/') {
             state
