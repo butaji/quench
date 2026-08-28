@@ -1881,16 +1881,17 @@ mod stubs {
             }) {
                 return Err(crate::value::error::throw_type_error("Invalid options"));
             }
-            let mut largest = options
+            let largest = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "largestUnit"))
                 .transpose()?
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
-                .unwrap_or_else(|| "hour".into())
+                .unwrap_or_else(|| "hour".into());
+            let mut largest = largest
                 .strip_suffix('s')
-                .unwrap_or("hour")
+                .unwrap_or(&largest)
                 .to_string();
             if !matches!(
                 largest.as_str(),
