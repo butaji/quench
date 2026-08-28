@@ -19,7 +19,7 @@ fn typed_array_from(
             "TypedArray.from called on a non-constructor",
         ));
     };
-    from(Some(receiver), arguments)
+    crate::arrays::typed_from(Some(receiver), arguments)
 }
 
 fn typed_array_of(
