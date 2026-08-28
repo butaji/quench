@@ -1,0 +1,10 @@
+'use strict';
+const assert = require('assert');
+const { EventTarget } = require('internal/event_target');
+assert.strictEqual(typeof EventTarget.prototype.addEventListener, 'function');
+assert.strictEqual(typeof EventTarget.prototype.removeEventListener, 'function');
+assert.strictEqual(typeof EventTarget.prototype.dispatchEvent, 'function');
+const first = new EventTarget();
+const second = new EventTarget();
+assert.strictEqual(EventTarget.prototype.dispatchEvent.call(second, new Event('x')), true);
+assert.strictEqual(first.dispatchEvent(new Event('x')), true);
