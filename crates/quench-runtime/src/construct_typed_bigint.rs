@@ -80,10 +80,13 @@ fn new_biguint64_data(
 
 fn bigint_object_values(
     properties: &Rc<crate::value::ObjectData>,
-    name: &str,
+    _name: &str,
 ) -> Result<Vec<Value>, crate::execute::VmError> {
     let object = Value::Object(properties.clone());
-    let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => values, Err(_) => object_array_like(properties)?.ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?, };
+    let values = match crate::collections::iterator::collect_iterable(object.clone()) {
+        Ok(values) => values,
+        Err(_) => object_array_like(properties)?.unwrap_or_default(),
+    };
     Ok(values)
 }
 
