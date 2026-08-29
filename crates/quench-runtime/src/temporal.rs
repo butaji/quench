@@ -1436,13 +1436,20 @@ mod stubs {
             let era_value = crate::execute::get_property_result(value, "era")?;
             let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
             let mut year_value = crate::execute::get_property_result(value, "year")?;
+            let year_was_provided = !matches!(year_value, Value::Undefined);
             if matches!(year_value, Value::Undefined)
                 && !matches!(era_value, Value::Undefined)
                 && !matches!(era_year_value, Value::Undefined)
             {
                 let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
                 let era = super::plain_date::canonical_era_name(&calendar_name, &era)
-                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+                    .ok_or_else(|| {
+                        if matches!(calendar_name.as_str(), "iso8601" | "chinese" | "dangi") {
+                            crate::value::error::throw_type_error("Calendar does not use eras")
+                        } else {
+                            crate::value::error::throw_range_error("Invalid era")
+                        }
+                    })?;
                 let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
                 if !era_year.is_finite() {
                     return Err(crate::value::error::throw_range_error("Invalid eraYear"));
@@ -1578,7 +1585,8 @@ mod stubs {
             }
             let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
             let calendar = calendar_name;
-            if !matches!(era_value, Value::Undefined)
+            if !year_was_provided
+                && !matches!(era_value, Value::Undefined)
                 && !matches!(calendar.as_str(), "iso8601" | "chinese" | "dangi")
             {
                 let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
@@ -1601,7 +1609,7 @@ mod stubs {
             // calendar conversion does not represent the BCE/AA zero edge
             // consistently. Ordinary calendar fields still project through
             // the shared ICU conversion.
-            let era_text = (!matches!(era_value, Value::Undefined))
+            let era_text = (!year_was_provided && !matches!(era_value, Value::Undefined))
                 .then(|| crate::conversion::to_string(&era_value).ok())
                 .flatten()
                 .map(|value| value.to_ascii_lowercase());
