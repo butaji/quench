@@ -573,7 +573,8 @@
         st.ended = true;
         st.needReadable = false;
         if (st.buffer.length > 0 && this.listenerCount("readable") > 0) {
-          st.readableEofPending = st.unshiftedSinceRead ? 2 : 0;
+          st.readableEofPending = st.unshiftedSinceRead ? 2 :
+            ((!st.readableListenerTurnPending || this._isTransform) ? 1 : 0);
         }
         if (this._isDuplex && !this.allowHalfOpen &&
             !this._writableState.ended && !this._writableState.finished) {
