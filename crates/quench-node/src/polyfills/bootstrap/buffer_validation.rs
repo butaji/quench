@@ -38,49 +38,6 @@ const __nodeBufferValidateDoubleOffset = (length, offset) => {
       }. Received ${offset}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
-const __nodeBufferSearchNeedle = (value, encoding) =>
-  typeof value === "number"
-    ? new Uint8Array([value & 0xff])
-    : typeof value === "string"
-      ? NodeBuffer.from(value, encoding)
-      : value;
-const __nodeBufferSearchStart = (length, offset) => {
-  let start = Number(offset);
-  if (Number.isNaN(start) || start === -Infinity) start = 0;
-  if (start < 0) start = Math.max(length + Math.trunc(start), 0);
-  return Math.trunc(start);
-};
-const __nodeBufferSearchMatch = (buffer, needle, start, step) => {
-  for (
-    let index = start;
-    index >= 0 && index + needle.length <= buffer.length;
-    index += step
-  ) {
-    let match = true;
-    for (let offset = 0; offset < needle.length; offset++) {
-      if (buffer[index + offset] !== needle[offset]) match = false;
-    }
-    if (match) return index;
-  }
-  return -1;
-};
-const __nodeBufferIncludesValidate = (value) => {
-  if (
-    typeof value !== "number" &&
-    typeof value !== "string" &&
-    !(value instanceof Uint8Array)
-  ) {
-    const error = new TypeError(
-      `The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array.${__nodeBufferFromReceived(
-        value
-      )}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-};
-const __nodeBufferSearchAligned = (encoding, start) =>
-  ["ucs2", "ucs-2", "utf16le"].includes(encoding) && start % 2 !== 0;
 const __nodeBufferWriteArguments = (offset, length, encoding) => {
   if (typeof offset === "string") {
     if (length !== undefined) {
@@ -117,56 +74,6 @@ const __nodeBufferWriteUtf8Count = (value, encoding, count) => {
   return complete;
 };
 NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
-  includes(value, byteOffset = 0, encoding) {
-    __nodeBufferIncludesValidate(value);
-    let start = Number(byteOffset);
-    if (Number.isNaN(start) || start === -Infinity) start = 0;
-    if (start === Infinity) {
-      return (
-        value === "" || (value instanceof Uint8Array && value.length === 0)
-      );
-    }
-    start =
-      start < 0
-        ? Math.max(this.length + Math.trunc(start), 0)
-        : Math.trunc(start);
-    if (__nodeBufferSearchAligned(encoding, start)) return false;
-    const needle = __nodeBufferSearchNeedle(value, encoding);
-    if (needle.length === 0) return true;
-    return __nodeBufferSearchMatch(this, needle, start, 1) >= 0;
-  }
-  indexOf(value, byteOffset = 0, encoding) {
-    if (typeof byteOffset === "string") {
-      encoding = byteOffset;
-      byteOffset = 0;
-    }
-    const needle = __nodeBufferSearchNeedle(value, encoding);
-    const start = __nodeBufferSearchStart(this.length, byteOffset);
-    if (__nodeBufferSearchAligned(encoding, start)) return -1;
-    if (start > this.length || start === Infinity) {
-      return needle.length === 0 ? this.length : -1;
-    }
-    if (needle.length === 0) return start;
-    return __nodeBufferSearchMatch(this, needle, start, 1);
-  }
-  lastIndexOf(value, byteOffset = this.length - 1, encoding) {
-    if (typeof byteOffset === "string") {
-      encoding = byteOffset;
-      byteOffset = this.length - 1;
-    }
-    const needle = __nodeBufferSearchNeedle(value, encoding);
-    let end = Number(byteOffset);
-    end =
-      Number.isNaN(end) || end === Infinity ? this.length - 1 : Math.trunc(end);
-    if (end < 0) end = this.length + end;
-    if (needle.length === 0) return Math.max(0, Math.min(end, this.length));
-    return __nodeBufferSearchMatch(
-      this,
-      needle,
-      Math.min(end, this.length - needle.length),
-      -1
-    );
-  }
   write(value, offset = 0, length, encoding = "utf8") {
     ({ offset, length, encoding } = __nodeBufferWriteArguments(
       offset,
