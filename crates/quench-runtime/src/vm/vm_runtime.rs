@@ -191,6 +191,14 @@ fn run_instruction_hot(
         Opcode::AGetI => return run_array_get_hot(registers, instruction),
         Opcode::GetN => return run_length_get_hot(code, pc, registers, instruction),
         Opcode::ASetI => return run_array_set_hot(registers, instruction),
+        Opcode::Slow => {
+            let Some(crate::ops::Op::RequireObjectCoercible { src }) = code.cold(instruction)
+            else {
+                return None;
+            };
+            return (registers.word_is_non_nullish(usize::from(*src)) == Some(true))
+                .then_some(Ok(None));
+        }
         Opcode::Return => read_register(registers, instruction.a)
             .map(crate::completion::Completion::Return)
             .map(Some),
