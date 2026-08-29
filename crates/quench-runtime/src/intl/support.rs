@@ -26,17 +26,50 @@ pub(crate) fn construct_with_legacy_receiver(
         let slots = crate::execute::get_property(&initialized, slot);
         let symbol = crate::vm::intl_fallback_symbol(realm)
             .ok_or_else(|| runtime_error("TypeError: missing Intl fallback symbol"))?;
-        let receiver = crate::builtins::set_property(receiver.clone(), slot, slots);
+        let receiver = set_property_preserving_identity(receiver, slot, slots);
         let key = fallback_symbol_key(&symbol)?;
-        return Ok(crate::builtins::set_property(receiver, &key, initialized));
+        return Ok(set_property_preserving_identity(
+            &receiver,
+            &key,
+            initialized,
+        ));
     };
     let realm = receiver_realm.unwrap_or_else(|| crate::vm::current_context_or_default().realm());
     let slots = crate::execute::get_property(&initialized, slot);
     let symbol = crate::vm::intl_fallback_symbol(realm)
         .ok_or_else(|| runtime_error("TypeError: missing Intl fallback symbol"))?;
-    let receiver = crate::builtins::set_property(receiver.clone(), slot, slots);
+    let receiver = set_property_preserving_identity(receiver, slot, slots);
     let key = fallback_symbol_key(&symbol)?;
-    Ok(crate::builtins::set_property(receiver, &key, initialized))
+    Ok(set_property_preserving_identity(
+        &receiver,
+        &key,
+        initialized,
+    ))
+}
+
+fn set_property_preserving_identity(target: &Value, key: &str, value: Value) -> Value {
+    let Value::Object(properties) = target else {
+        return crate::builtins::set_property(target.clone(), key, value);
+    };
+    let object =
+        unsafe { &mut *(std::rc::Rc::as_ptr(properties) as *mut crate::value::ObjectData) };
+    let descriptor_value = value.clone();
+    object.set_property_in_place(key, value);
+    if key.starts_with("Symbol.IntlLegacyConstructedSymbol\0") {
+        object
+            .properties
+            .retain(|(name, _)| name != &crate::builtins::descriptor_key(key));
+        object.properties.push((
+            crate::builtins::descriptor_key(key).into(),
+            Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                ("value".to_string(), descriptor_value),
+                ("writable".to_string(), Value::Boolean(false)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(false)),
+            ]))),
+        ));
+    }
+    target.clone()
 }
 
 fn legacy_receiver_realm(
