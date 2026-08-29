@@ -320,9 +320,20 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
         install_resume_input(generator, &mut state, input);
     }
     if !direct_suspension {
-        if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
-            generator.state.replace(Some(state));
-            return Ok(result);
+        match resume_suspended_contexts(generator, &mut state, &completion) {
+            Ok(Some(result)) => {
+                generator.state.replace(Some(state));
+                return Ok(result);
+            }
+            Ok(None) => {}
+            Err(error @ crate::execute::VmError::Suspended(_)) => {
+                // Context-specific resumptions can suspend again (for
+                // example an awaited async-for-of body). Preserve the
+                // updated state before propagating that suspension.
+                generator.state.replace(Some(state));
+                return Err(error);
+            }
+            Err(error) => return Err(error),
         }
     }
     let step = execute_generator_step(generator, &mut state, completion)?;
