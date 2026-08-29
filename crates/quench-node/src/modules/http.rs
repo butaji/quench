@@ -17,6 +17,7 @@ use crate::modules::net;
 /// Hidden property mapping a `res` object to its host-side state.
 pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
+const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 
 pub struct HttpState {
     next_res: u64,
@@ -45,6 +46,7 @@ pub struct Conn {
     pub response_done: bool,
     /// Whether the peer keeps this connection alive for the next request.
     pub keep_alive: bool,
+    pub require_host_header: bool,
 }
 
 /// One pending response, keyed by `RES_ID_PROP` on the `res` object.
@@ -80,7 +82,22 @@ impl HttpState {
 /// parses HTTP on each connection and emits `'request'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let object = net::create_server(state, &[])?;
-    if let Some(cb) = args.first() {
+    let (options, callback) = match args.first() {
+        Some(value) if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) => {
+            (Some(value), args.get(1))
+        }
+        _ => (None, args.first()),
+    };
+    let require_host_header = options
+        .map(|value| !matches!(execute::get_property(value, "requireHostHeader"), Value::Boolean(false)))
+        .unwrap_or(true);
+    let updated = execute::set_property(
+        object.clone(),
+        REQUIRE_HOST_HEADER_PROP,
+        Value::Boolean(require_host_header),
+    );
+    execute::replace_value(&object, &updated);
+    if let Some(cb) = callback {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
                 state,
@@ -109,6 +126,9 @@ pub fn connection_handler(
     let Some(socket_id) = net::net_id(&socket) else {
         return Ok(Value::Undefined);
     };
+    let require_host_header = receiver
+        .map(|server| matches!(execute::get_property(server, REQUIRE_HOST_HEADER_PROP), Value::Boolean(true)))
+        .unwrap_or(true);
     state.borrow_mut().http.conns.insert(
         socket_id,
         Conn {
@@ -121,6 +141,7 @@ pub fn connection_handler(
             head_parsed: false,
             response_done: false,
             keep_alive: true,
+            require_host_header,
         },
     );
     let data_cap = crate::host::capability(crate::registry::SPEC_HTTP_DATA);
@@ -266,6 +287,29 @@ fn emit_request(
             .map(|conn| conn.server.clone())
             .unwrap_or(Value::Undefined)
     };
+    let missing_host = matches!(
+        execute::get_property(&req, "headers"),
+        Value::Object(_) | Value::ObjectAlias(_)
+    ) && matches!(
+        execute::get_property(
+            &execute::get_property(&req, "headers"),
+            "host"
+        ),
+        Value::Undefined
+    );
+    let require_host_header = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .map(|conn| conn.require_host_header)
+        .unwrap_or(true);
+    if require_host_header && missing_host {
+        execute::set_property_in_place(&res, "statusCode", Value::Number(400.0));
+        execute::set_property_in_place(&res, "statusMessage", Value::String("Bad Request".into()));
+        res_end(state, Some(&res), &[])?;
+        return Ok(Value::Undefined);
+    }
     net::emit(state, &server, "request", vec![req.clone(), res])?;
     let body_done = state
         .borrow()
