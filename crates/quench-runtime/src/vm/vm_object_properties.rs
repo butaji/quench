@@ -50,7 +50,6 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
-    if key == "format" { eprintln!("DEBUG object_property {:?}", properties.iter().collect::<Vec<_>>()); }
     let is_global = realm::id_for_global(properties).is_some()
         || GLOBAL_OBJECT.with(|global| {
             global
@@ -104,7 +103,6 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                 )
         )
         {
-            eprintln!("DEBUG direct format value {:?}", value);
             return Some(crate::vm::bind_receiver_property(
                 value.clone(),
                 &Value::Object(properties.clone()),

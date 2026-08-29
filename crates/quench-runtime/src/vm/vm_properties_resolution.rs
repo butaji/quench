@@ -356,6 +356,16 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
         }
     }
     let (slot, value) = own?;
+    if key == "format"
+        && matches!(
+            value,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        return None;
+    }
     if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
@@ -370,7 +380,6 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
-    if key == "format" { eprintln!("DEBUG get format value {:?} receiver {:?}", value, receiver); }
     if matches!(value, Value::Builtin(crate::ops::Builtin::RegExp))
         && crate::builtins::object::is_regexp_legacy_accessor(key)
     {
@@ -561,10 +570,21 @@ pub(crate) fn proven_own_word<'a>(
             metadata = object.hot_properties().slot_value(slot);
         }
     }
+    let own = own?;
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
         return None;
     }
-    own
+    if key == "format"
+        && matches!(
+            own.load(),
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        return None;
+    }
+    Some(own)
 }
 
 fn accessor_descriptor(value: &Value) -> bool {
@@ -1173,9 +1193,6 @@ fn is_intl_number_format_property(property: &Value) -> bool {
 }
 
 pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
-    if matches!(property, Value::Builtin(Builtin::IntlNumberFormatFormat)) {
-        eprintln!("DEBUG bind nf receiver {:?}", receiver);
-    }
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)

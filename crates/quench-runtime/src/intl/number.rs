@@ -299,7 +299,6 @@ impl NumberOptions {
     }
 
     fn build_object(&self) -> Value {
-        eprintln!("DEBUG build number object");
         let properties = vec![
             (
                 "format".to_string(),

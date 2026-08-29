@@ -35,7 +35,11 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
         (Some("hour"), _) => "hr",
         (Some("minute"), "long") => "minutes",
         (Some("minute"), _) => "min",
-        _ => "",
+        // Keep every sanctioned unit observable even when this compact table
+        // has no locale-specific spelling yet. A raw unit label is still
+        // semantically distinct from decimal formatting and can be refined
+        // by adding one data row without changing the renderer.
+        _ => unit.unwrap_or(""),
     };
     if suffix.is_empty() {
         text.to_string()
