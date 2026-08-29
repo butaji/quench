@@ -309,7 +309,7 @@ impl DateTimeOptions {
     }
 
     fn resolve_hour(&mut self) {
-        if !self.contains("hour") {
+        if !self.contains("hour") && !self.contains("timeStyle") {
             return;
         }
         if self.hour12.is_some() {
@@ -380,7 +380,7 @@ impl DateTimeOptions {
     }
 
     fn push_hour_properties(&self, props: &mut Vec<(String, Value)>) {
-        if !self.contains("hour") {
+        if !self.contains("hour") && !self.contains("timeStyle") {
             return;
         }
         if let Some((_, value)) = self.components.iter().find(|(key, _)| key == "hourCycle") {
@@ -499,6 +499,9 @@ fn prototype_result(
             if start == end {
                 return Ok(Value::String(start));
             }
+            if let Some(collapsed) = collapse_range(&start, &end) {
+                return Ok(Value::String(collapsed));
+            }
             Ok(Value::String(format!("{start} – {end}")))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
@@ -513,6 +516,23 @@ fn prototype_result(
                 .collect(),
         )),
         _ => Err(runtime_error("TypeError: method not found")),
+    }
+}
+
+fn collapse_range(start: &str, end: &str) -> Option<String> {
+    let (start_prefix, start_suffix) = start.rsplit_once(", ")?;
+    let (end_prefix, end_suffix) = end.rsplit_once(", ")?;
+    if start_suffix != end_suffix {
+        return None;
+    }
+    let (start_month, start_day) = start_prefix.rsplit_once(' ')?;
+    let (end_month, end_day) = end_prefix.rsplit_once(' ')?;
+    if start_month == end_month {
+        Some(format!("{start_month} {start_day} – {end_day}, {start_suffix}"))
+    } else {
+        Some(format!(
+            "{start_month} {start_day} – {end_month} {end_day}, {start_suffix}"
+        ))
     }
 }
 

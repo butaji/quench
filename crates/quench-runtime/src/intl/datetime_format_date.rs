@@ -44,7 +44,7 @@ pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) 
     }
     let mut text = time_str;
     append_fractional(&mut text, slots, ms);
-    Some(format!("{} {}", date_str, text))
+    Some(format!("{date_str}, {text}"))
 }
 
 /// Format Temporal plain values directly from their calendar fields. Unlike
@@ -157,32 +157,34 @@ fn compose_date_string_with_weekday(
         .as_deref()
         .is_some_and(|m| !m.chars().all(|c| c.is_ascii_digit()));
     let mut parts: Vec<String> = Vec::new();
-    if let Some(wd) = weekday_str {
+    if let Some(wd) = weekday_str.clone() {
         parts.push(wd);
     }
-    if let Some(m) = month_str {
+    if let Some(m) = month_str.clone() {
         parts.push(m);
     }
-    if let Some(d) = day_str {
+    if let Some(d) = day_str.clone() {
         parts.push(d);
     }
-    if let Some(y) = year_str {
+    if let Some(y) = year_str.clone() {
         parts.push(y);
     }
     if month_is_name {
-        // Component options are independent; never assume a month implies
-        // both day and year. Preserve the locale order without indexing
-        // absent components.
         let mut out = String::new();
-        for (index, part) in parts.iter().enumerate() {
-            if index > 0 {
-                if index == 2 && parts.len() >= 3 {
-                    out.push_str(", ");
-                } else {
-                    out.push(' ');
-                }
-            }
-            out.push_str(part);
+        if let Some(wd) = weekday_str {
+            out.push_str(&wd);
+            out.push_str(", ");
+        }
+        if let Some(month) = month_str {
+            out.push_str(&month);
+        }
+        if let Some(day) = day_str {
+            out.push(' ');
+            out.push_str(&day);
+        }
+        if let Some(year) = year_str {
+            out.push_str(", ");
+            out.push_str(&year);
         }
         return out;
     }
@@ -348,6 +350,13 @@ fn compose_time_string(
     } else if hour12 {
         out.push(' ');
         out.push_str(if hour < 12 { "AM" } else { "PM" });
+    }
+    if let Some(zone_style) = lookup_slot_string(slots, "timeZoneName") {
+        out.push(' ');
+        out.push_str(match zone_style.as_str() {
+            "long" => "Coordinated Universal Time",
+            _ => "UTC",
+        });
     }
     out
 }
