@@ -918,6 +918,10 @@ fn with(
     // constrain to the corresponding ordinary month as required by Temporal.
     if month_code.is_none() && matches!(month_value, Value::Undefined) {
         if let Value::String(receiver_code) = field(Some(receiver), "monthCode")? {
+            if receiver_calendar != "iso8601" && receiver_calendar != "gregory" {
+                month_code_text = Some(receiver_code.clone());
+                month_code = Some(parse_month_code(&receiver_code)?);
+            }
             if receiver_code.ends_with('L') {
                 if crate::temporal::plain_date::calendar_date_from_code(
                     year as i32,
