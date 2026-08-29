@@ -46,17 +46,20 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     date_arguments.push(Value::String(calendar.clone()));
     if month_code_override.is_none() || calendar == "iso8601" || calendar == "gregory" {
         crate::temporal::plain_date::construct(&date_arguments)?;
-    } else if calendar != "iso8601"
-        && calendar != "gregory"
-        && crate::temporal::plain_date::calendar_date_from_code(
+    } else if calendar != "iso8601" && calendar != "gregory" {
+        let valid = crate::temporal::plain_date::calendar_date_from_code(
             fields[0] as i32,
             month_code_override.as_deref().unwrap_or_default(),
             fields[2] as u32,
             &calendar,
         )
-        .is_none()
-    {
-        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+        .is_some();
+        // ICU's lunisolar data has a deliberately bounded accuracy range.
+        // Preserve Temporal's supported date range outside that window while
+        // still rejecting malformed or impossible month codes nearby.
+        if !valid && (-10_000..=10_000).contains(&(fields[0] as i32)) {
+            return Err(crate::value::error::throw_range_error("Invalid date-time"));
+        }
     }
     validate(&fields)?;
     let month_code = month_code_override.unwrap_or_else(|| format!("M{:02}", fields[1] as u32));
@@ -831,7 +834,10 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
-    let calendar = crate::conversion::to_string(calendar)?;
+    let calendar = crate::temporal::plain_date::canonical_calendar_id(
+        &crate::conversion::to_string(calendar)?,
+    )
+    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
     let values = fields(receiver)?;
     let month_code = format!("M{:02}", values[1] as u32);
     let properties = NAMES
@@ -986,28 +992,65 @@ fn calendar_getter(
             .unwrap_or_else(|| "iso8601".into()),
         _ => "iso8601".into(),
     };
+    let month_code = match receiver {
+        Some(Value::Object(object)) => object
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "monthCode").then(|| match value {
+                    Value::String(value) => Some(value.clone()),
+                    _ => None,
+                })
+            })
+            .flatten(),
+        _ => None,
+    };
+    let month_length = month_code
+        .as_deref()
+        .and_then(|code| {
+            crate::temporal::plain_date::calendar_days_in_month_for_code(year, code, &calendar)
+        })
+        .or_else(|| crate::temporal::plain_date::calendar_days_in_month(year, month, &calendar))
+        .unwrap_or_else(|| days_in_month(year, month));
     Ok(match builtin {
         crate::ops::Builtin::TemporalPlainDateTimeDayOfWeekGetter => {
             Value::Number(proleptic_weekday(year, month, day) as f64)
         }
         crate::ops::Builtin::TemporalPlainDateTimeDayOfYearGetter => Value::Number(
-            (1..month).map(|m| days_in_month(year, m)).sum::<u32>() as f64 + day as f64,
+            month_code
+                .as_deref()
+                .and_then(|code| {
+                    crate::temporal::plain_date::calendar_day_of_year_for_code(
+                        year, code, day, &calendar,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    (1..month).map(|m| days_in_month(year, m)).sum::<u32>() + day
+                }) as f64,
         ),
         crate::ops::Builtin::TemporalPlainDateTimeDaysInMonthGetter => {
-            Value::Number(days_in_month(year, month) as f64)
+            Value::Number(month_length as f64)
         }
         crate::ops::Builtin::TemporalPlainDateTimeDaysInWeekGetter => Value::Number(7.0),
-        crate::ops::Builtin::TemporalPlainDateTimeDaysInYearGetter => {
-            Value::Number(if chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some() {
-                366.0
-            } else {
-                365.0
-            })
-        }
-        crate::ops::Builtin::TemporalPlainDateTimeMonthsInYearGetter => Value::Number(12.0),
-        crate::ops::Builtin::TemporalPlainDateTimeInLeapYearGetter => {
-            Value::Boolean(chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some())
-        }
+        crate::ops::Builtin::TemporalPlainDateTimeDaysInYearGetter => Value::Number(
+            crate::temporal::plain_date::calendar_days_in_year(year, month, &calendar)
+                .map(f64::from)
+                .unwrap_or_else(|| {
+                    if chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some() {
+                        366.0
+                    } else {
+                        365.0
+                    }
+                }),
+        ),
+        crate::ops::Builtin::TemporalPlainDateTimeMonthsInYearGetter => Value::Number(
+            crate::temporal::plain_date::calendar_months_in_year(year, month, &calendar)
+                .map(f64::from)
+                .unwrap_or(12.0),
+        ),
+        crate::ops::Builtin::TemporalPlainDateTimeInLeapYearGetter => Value::Boolean(
+            crate::temporal::plain_date::calendar_is_leap_year(year, month, &calendar)
+                .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some()),
+        ),
         crate::ops::Builtin::TemporalPlainDateTimeEraGetter => {
             crate::temporal::plain_date::era_for_calendar_date(
                 &calendar,
@@ -1560,6 +1603,13 @@ fn with(
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
     let mut values = fields(receiver)?;
+    let receiver_calendar = crate::execute::get_property_result(receiver, "calendarId")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| "iso8601".into());
     if crate::temporal::plain_date::is_temporal_date_like(changes) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
@@ -1604,7 +1654,15 @@ fn with(
                 month_code = value.clone();
                 let number = crate::conversion::to_number(&month_code_number(&value)?)?;
                 month_code_number_value = Some(number);
-                values[1] = number;
+                let text = month_code_text(&value)?;
+                values[1] = crate::temporal::plain_date::calendar_date_from_code(
+                    values[0] as i32,
+                    &text,
+                    values[2] as u32,
+                    &receiver_calendar,
+                )
+                .map(|(ordinal, _)| ordinal as f64)
+                .unwrap_or(number);
             }
             "day" => values[2] = crate::conversion::to_number(&value)?.trunc(),
             "hour" => values[3] = crate::conversion::to_number(&value)?.trunc(),
@@ -1633,9 +1691,6 @@ fn with(
     if overflow != "constrain" && overflow != "reject" {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
-    if month_code_number_value.is_some_and(f64::is_nan) {
-        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
-    }
     if !matches!(month_code, Value::Undefined)
         && month != Value::Undefined
         && month_number_value.unwrap_or_default() != month_code_number_value.unwrap_or_default()
@@ -1655,10 +1710,41 @@ fn with(
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    values[1] = values[1].min(12.0);
-    if values[2] > days_in_month(values[0] as i32, values[1] as u32) as f64 {
+    let code = if matches!(month_code, Value::Undefined) {
+        crate::execute::get_property_result(receiver, "monthCode")?
+    } else {
+        month_code.clone()
+    };
+    let code_text = match &code {
+        Value::String(value) => Some(value.as_str()),
+        _ => None,
+    };
+    let max_month = crate::temporal::plain_date::calendar_months_in_year(
+        values[0] as i32,
+        values[1] as u32,
+        &receiver_calendar,
+    )
+    .unwrap_or(12);
+    values[1] = values[1].min(max_month as f64);
+    let max_day = code_text
+        .and_then(|text| {
+            crate::temporal::plain_date::calendar_days_in_month_for_code(
+                values[0] as i32,
+                text,
+                &receiver_calendar,
+            )
+        })
+        .or_else(|| {
+            crate::temporal::plain_date::calendar_days_in_month(
+                values[0] as i32,
+                values[1] as u32,
+                &receiver_calendar,
+            )
+        })
+        .unwrap_or_else(|| days_in_month(values[0] as i32, values[1] as u32));
+    if values[2] > max_day as f64 {
         if overflow == "constrain" {
-            values[2] = days_in_month(values[0] as i32, values[1] as u32) as f64;
+            values[2] = max_day as f64;
         } else {
             return Err(crate::value::error::throw_range_error("Invalid date-time"));
         }
@@ -1682,7 +1768,10 @@ fn with(
     if options_primitive {
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
-    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+    let calendar = crate::execute::get_property_result(receiver, "calendarId")?;
+    let mut rebuilt = values.into_iter().map(Value::Number).collect::<Vec<_>>();
+    rebuilt.extend([calendar, code]);
+    construct(&rebuilt)
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
@@ -2038,8 +2127,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     };
     let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
-        let leap_month = month_code.is_nan();
-        if !leap_month && !(1.0..=13.0).contains(&month_code) {
+        if !(1.0..=13.0).contains(&month_code) {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
         let month_number = month_code_text_value
@@ -2064,6 +2152,15 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 1,
                 &calendar_id,
             )
+            .or_else(|| {
+                let ordinal = code
+                    .strip_suffix('L')
+                    .unwrap_or(&code)
+                    .strip_prefix('M')?
+                    .parse::<u32>()
+                    .ok()?;
+                Some((ordinal, code.clone()))
+            })
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
             if present[1] && numeric[1] != ordinal as f64 {
                 return Err(crate::value::error::throw_range_error("Month mismatch"));
@@ -2114,9 +2211,6 @@ fn from_overflow_option(options: Option<&Value>) -> Result<String, VmError> {
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
     let code = month_code_text(value)?;
     let core = code.strip_suffix('L').unwrap_or(&code);
-    if code.ends_with('L') {
-        return Ok(Value::Number(f64::NAN));
-    }
     Ok(Value::Number(core[1..].parse::<f64>().unwrap_or(f64::NAN)))
 }
 
