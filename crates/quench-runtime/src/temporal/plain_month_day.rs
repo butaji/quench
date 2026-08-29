@@ -507,23 +507,36 @@ fn apply_overflow(year: f64, month: f64, day: f64, reject: bool) -> Result<f64, 
 }
 
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
-    let (month, day) =
-        fields(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
+    let receiver = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
+    let (month, day) = fields(receiver)?;
     let name = calendar_name(options)?;
+    let calendar = crate::execute::get_property_result(receiver, "calendarId")
+        .ok()
+        .and_then(|value| crate::conversion::to_string(&value).ok())
+        .unwrap_or_else(|| "iso8601".into());
     let month = month.trim_start_matches('M');
-    if matches!(name.as_str(), "always" | "critical") {
-        let year = receiver
-            .and_then(|value| crate::execute::get_property_result(value, "referenceISODay").ok())
-            .and_then(|value| crate::conversion::to_number(&value).ok())
-            .unwrap_or(1972.0) as i32;
-        let marker = if name == "critical" {
-            "[!u-ca=iso8601]"
-        } else {
-            "[u-ca=iso8601]"
-        };
-        return Ok(Value::String(format!("{year:04}-{month}-{day:02}{marker}")));
+    let year = crate::execute::get_property_result(receiver, "referenceISODay")
+        .ok()
+        .and_then(|value| crate::conversion::to_number(&value).ok())
+        .unwrap_or(1972.0) as i32;
+    if calendar == "iso8601" && matches!(name.as_str(), "auto" | "never") {
+        return Ok(Value::String(format!("{month}-{day:02}")));
     }
-    Ok(Value::String(format!("{month}-{day:02}")))
+    let year_text = if year < 0 {
+        format!("-{0:06}", year.unsigned_abs())
+    } else if year > 9999 {
+        format!("+{year:06}")
+    } else {
+        format!("{year:04}")
+    };
+    let date = format!("{year_text}-{month}-{day:02}");
+    let suffix = match name.as_str() {
+        "never" => "".to_string(),
+        "critical" => format!("[!u-ca={calendar}]"),
+        _ => format!("[u-ca={calendar}]"),
+    };
+    Ok(Value::String(format!("{date}{suffix}")))
 }
 
 fn calendar_name(options: Option<&Value>) -> Result<String, VmError> {
