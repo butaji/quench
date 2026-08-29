@@ -524,7 +524,20 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             }
         }
     }
-    if destroy && !converted {
+    // A one-shot timeout normally disappears after its callback.  `refresh()`
+    // is the observable exception: it reactivates the same registry entry
+    // while the callback is running, so retain it with its updated deadline.
+    let refreshed = destroy
+        && !converted
+        && state
+            .borrow()
+            .timers
+            .timers
+            .get(&id)
+            .is_some_and(|timer| {
+                timer.active && matches!(*timer.destroyed.borrow(), Value::Boolean(false))
+            });
+    if destroy && !converted && !refreshed {
         if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
             super::timers::mark_destroyed(&timer);
         }
