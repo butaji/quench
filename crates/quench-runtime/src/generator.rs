@@ -32,13 +32,20 @@ pub(crate) fn create(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let (state, registers, pc, environment) = initialize_parameters(function, receiver, arguments)?;
+    let (state, mut registers, pc, environment) = initialize_parameters(function, receiver, arguments)?;
     let deferred_arguments = if state.is_none() {
         arguments.to_vec()
     } else {
         Vec::new()
     };
-    let register_count = function.code.len().clamp(32, usize::from(u16::MAX)) as u16;
+    let register_count = function
+        .code
+        .register_capacity()
+        .max(registers.len())
+        .clamp(32, usize::from(u16::MAX)) as u16;
+    while registers.len() < usize::from(register_count) {
+        registers.push(Value::Undefined);
+    }
     let mut machine = crate::machine::Machine::with_function(
         &function.code,
         crate::machine::EnvironmentRef(0),
@@ -674,11 +681,20 @@ fn initialize_state(generator: &GeneratorData) {
     if state.is_some() {
         return;
     }
-    let (registers, environment) = crate::functions::build_registers(
+    let (mut registers, environment) = crate::functions::build_registers(
         &generator.function,
         &generator.receiver,
         &generator.arguments,
     );
+    let register_count = generator
+        .function
+        .code
+        .register_capacity()
+        .max(registers.len())
+        .clamp(32, usize::from(u16::MAX));
+    while registers.len() < register_count {
+        registers.push(Value::Undefined);
+    }
     generator.machine.borrow_mut().registers.values = registers;
     generator.machine.borrow_mut().pc = 0;
     generator
