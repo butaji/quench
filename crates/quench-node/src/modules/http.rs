@@ -61,6 +61,8 @@ pub struct Res {
     pub body: Vec<u8>,
     pub socket: Value,
     pub keep_alive: bool,
+    pub headers_sent: bool,
+    pub sent_body: usize,
 }
 
 impl Default for HttpState {
@@ -569,6 +571,8 @@ fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep
             body: Vec::new(),
             socket,
             keep_alive,
+            headers_sent: false,
+            sent_body: 0,
         },
     );
 }
