@@ -93,4 +93,67 @@ if (!globalThis.navigator) {
   }
   globalThis.navigator = Object.freeze(navigator);
 }
+if (typeof globalThis.Blob !== "function" ||
+    typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
+  const __nodeBlobPart = (part) => {
+    if (typeof part === "string") return NodeBuffer.from(part);
+    if (part instanceof ArrayBuffer) return NodeBuffer.from(part);
+    if (ArrayBuffer.isView(part)) return NodeBuffer.from(part);
+    if (part && part._data && typeof part._data.byteLength === "number") {
+      return NodeBuffer.from(part._data);
+    }
+    return NodeBuffer.from(String(part));
+  };
+  class Blob {
+    constructor(parts = [], options = {}) {
+      if (!Array.isArray(parts)) {
+        throw Object.assign(
+          new TypeError('The "sources" argument must be an instance of Array'),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      }
+      this._data = NodeBuffer.concat(parts.map(__nodeBlobPart));
+      this.size = this._data.byteLength;
+      const type = String(options?.type || "").toLowerCase();
+      this.type = /^[\x20-\x7e]*$/.test(type) ? type : "";
+    }
+    async arrayBuffer() {
+      return this._data.buffer.slice(
+        this._data.byteOffset,
+        this._data.byteOffset + this._data.byteLength
+      );
+    }
+    async text() {
+      return this._data.toString();
+    }
+    slice(start = 0, end = this.size, type = "") {
+      const normalize = (value, fallback) => {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return fallback;
+        return number < 0 ? Math.max(this.size + number, 0) : Math.min(number, this.size);
+      };
+      return new Blob([
+        this._data.subarray(normalize(start, 0), normalize(end, this.size))
+      ], { type });
+    }
+    stream() {
+      const data = this._data;
+      return new __quenchReadableStream({
+        start(controller) {
+          controller.enqueue(data);
+          controller.close();
+        }
+      });
+    }
+  }
+  for (const name of ["arrayBuffer", "text", "slice", "stream"]) {
+    Object.defineProperty(Blob.prototype, name, {
+      value: Blob.prototype[name], enumerable: true, configurable: true, writable: true
+    });
+  }
+  Object.defineProperty(Blob.prototype, Symbol.toStringTag, {
+    value: "Blob", configurable: true
+  });
+  globalThis.Blob = Blob;
+}
 "#);
