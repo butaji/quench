@@ -183,7 +183,7 @@ fn fixed_offset_nanos(timezone: &str) -> i128 {
     sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
 }
 
-fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
+pub(crate) fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
     let fixed = fixed_offset_nanos(timezone);
     if fixed != 0 || timezone.starts_with(['+', '-']) {
         return fixed;
