@@ -356,7 +356,7 @@ fn validate_property_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
-    if value.eq_ignore_ascii_case("iso8601") {
+    if value.eq_ignore_ascii_case("iso8601") || value.eq_ignore_ascii_case("gregory") {
         return true;
     }
     let (base, annotation) = value
