@@ -314,10 +314,7 @@ pub(crate) fn calendar_fields_from_iso(
     };
     Some(CalendarDateFields {
         year,
-        // `ordinal` includes an intercalary month in the calendar sequence;
-        // `number` is only the month-of-year base number (so a Chinese M05L
-        // would otherwise be reported as month 5 instead of ordinal 6).
-        month: u32::from(date.month().ordinal),
+        month: u32::from(date.month().number()),
         day: u32::from(date.day_of_month().0),
         month_code: date.month().to_input().code().0.to_string(),
         related_year,

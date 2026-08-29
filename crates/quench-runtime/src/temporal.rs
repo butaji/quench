@@ -724,97 +724,9 @@ fn zoned_record_with_calendar(
         timezone,
         crate::ops::Builtin::TemporalZonedDateTimePrototype,
     );
-    let iso_date = {
-        let iso_year = crate::execute::get_property_result(&record, "year")
-            .ok()
-            .and_then(|value| crate::conversion::to_number(&value).ok())
-            .unwrap_or(1970.0) as i32;
-        let iso_month = crate::execute::get_property_result(&record, "month")
-            .ok()
-            .and_then(|value| crate::conversion::to_number(&value).ok())
-            .unwrap_or(1.0) as u32;
-        let iso_day = crate::execute::get_property_result(&record, "day")
-            .ok()
-            .and_then(|value| crate::conversion::to_number(&value).ok())
-            .unwrap_or(1.0) as u32;
-        (iso_year, iso_month, iso_day)
-    };
-    let iso_fields = if calendar != "iso8601" {
-        crate::temporal::plain_date::calendar_fields_from_iso(
-            iso_date.0, iso_date.1, iso_date.2, &calendar,
-        )
-    } else {
-        None
-    };
     if let crate::value::Value::Object(object) = &mut record {
-        let object = std::rc::Rc::make_mut(object);
-        if let Some(fields) = iso_fields {
-                object.set_property_in_place("year", crate::value::Value::Number(fields.year as f64));
-                object.set_property_in_place("month", crate::value::Value::Number(fields.month as f64));
-                object.set_property_in_place("day", crate::value::Value::Number(fields.day as f64));
-                object.set_property_in_place("monthCode", crate::value::Value::String(fields.month_code.clone()));
-                let days = if calendar == "japanese" {
-                    Some(crate::temporal::plain_date::days_in_month_for_record(
-                        iso_date.0, iso_date.1,
-                    ))
-                } else {
-                    crate::temporal::plain_date::calendar_days_in_month_for_code(
-                        fields.year,
-                        &fields.month_code,
-                        &calendar,
-                    )
-                };
-                if let Some(days) = days {
-                    object.set_property_in_place("daysInMonth", crate::value::Value::Number(days as f64));
-                }
-                let months = if calendar == "japanese" {
-                    Some(12)
-                } else {
-                    crate::temporal::plain_date::calendar_months_in_year(
-                        fields.year,
-                        fields.month,
-                        &calendar,
-                    )
-                };
-                if let Some(months) = months {
-                    object.set_property_in_place("monthsInYear", crate::value::Value::Number(months as f64));
-                }
-                let leap = if calendar == "japanese" {
-                    chrono::NaiveDate::from_ymd_opt(iso_date.0, 2, 29).map(|_| true)
-                } else {
-                    crate::temporal::plain_date::calendar_is_leap_year(
-                        fields.year,
-                        fields.month,
-                        &calendar,
-                    )
-                };
-                if let Some(leap) = leap {
-                    object.set_property_in_place("inLeapYear", crate::value::Value::Boolean(leap));
-                }
-                let era = crate::temporal::plain_date::era_for_calendar_date(
-                    &calendar,
-                    fields.year as f64,
-                    fields.month as f64,
-                    fields.day as f64,
-                );
-                object.set_property_in_place(
-                    "era",
-                    era.map_or(crate::value::Value::Undefined, |value| {
-                        crate::value::Value::String(value.into())
-                    }),
-                );
-                let era_year = crate::temporal::plain_date::era_year_for_calendar_date(
-                    &calendar,
-                    fields.year as f64,
-                    fields.month as f64,
-                    fields.day as f64,
-                );
-                object.set_property_in_place(
-                    "eraYear",
-                    era_year.map_or(crate::value::Value::Undefined, crate::value::Value::Number),
-                );
-        }
-        object.set_property_in_place("calendarId", crate::value::Value::String(calendar));
+        std::rc::Rc::make_mut(object)
+            .set_property_in_place("calendarId", crate::value::Value::String(calendar));
     }
     record
 }
@@ -1356,30 +1268,10 @@ mod stubs {
                 if month < 1 {
                     return Err(crate::value::error::throw_range_error("Invalid month"));
                 }
-                if overflow_mode == "reject"
-                    && month > 12
-                    && !(month == 13
-                        && super::plain_date::calendar_supports_month13(&calendar_name))
-                {
+                if overflow_mode == "reject" && month > 12 {
                     return Err(crate::value::error::throw_range_error("Invalid month"));
                 }
-                let leap_month_calendar = matches!(
-                    calendar_name.as_str(),
-                    "chinese" | "dangi" | "hebrew"
-                ) && super::plain_date::calendar_is_leap_year(
-                    year,
-                    1,
-                    &calendar_name,
-                )
-                .unwrap_or(false);
-                let max_month = if super::plain_date::calendar_supports_month13(&calendar_name)
-                    || leap_month_calendar
-                {
-                    13
-                } else {
-                    12
-                };
-                month.clamp(1, max_month) as u32
+                month.clamp(1, 12) as u32
             };
             let day = day_number;
             if day < 1 {
@@ -1434,34 +1326,16 @@ mod stubs {
             }
             let timezone = super::parse_timezone_identifier(&timezone_value)?;
             let offset = validated_offset;
-            // Property-bag fields are expressed in the requested calendar;
-            // convert the civil date to ISO only at the epoch/time-zone edge.
-            let (iso_year, iso_month, iso_day) = if calendar != "iso8601" {
-                let calendar_month = month_code
-                    .filter(|(_, leap)| *leap)
-                    .map_or(month, |(month, _)| month + 1);
-                let serial = super::plain_date::calendar_date_serial(
-                    year as f64,
-                    calendar_month as f64,
-                    day as f64,
-                    &calendar,
-                )
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                super::plain_date::civil_from_serial(serial)
-            } else {
-                (year, month, day)
-            };
-            let year_adjusted = i128::from(iso_year) - i128::from(iso_month <= 2);
+            let year_adjusted = i128::from(year) - i128::from(month <= 2);
             let era = if year_adjusted >= 0 {
                 year_adjusted
             } else {
                 year_adjusted - 399
             } / 400;
             let year_of_era = year_adjusted - era * 400;
-            let month_i = i128::from(iso_month);
-            let day_of_year = (153 * (month_i + if month_i > 2 { -3 } else { 9 }) + 2) / 5
-                + i128::from(iso_day)
-                - 1;
+            let month_i = i128::from(month);
+            let day_of_year =
+                (153 * (month_i + if month_i > 2 { -3 } else { 9 }) + 2) / 5 + i128::from(day) - 1;
             let days = era * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100
                 + day_of_year
                 - 719_468;
@@ -3352,7 +3226,6 @@ mod stubs {
             ]);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainDateTime {
-            let month_code = property("monthCode")?;
             let mut result = crate::temporal::plain_date_time::construct(&[
                 Value::Number(year),
                 Value::Number(month),
@@ -3365,10 +3238,7 @@ mod stubs {
                 property("nanosecond")?,
             ])?;
             if let Value::Object(object) = &mut result {
-                let object = std::rc::Rc::make_mut(object);
-                object.set_property_in_place("calendarId", calendar);
-                object.set_property_in_place("monthCode", month_code.clone());
-                object.set_property_in_place("\0temporal-slot:\0monthCode", month_code);
+                std::rc::Rc::make_mut(object).set_property_in_place("calendarId", calendar);
             }
             return Ok(result);
         }
