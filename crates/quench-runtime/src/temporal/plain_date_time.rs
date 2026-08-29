@@ -956,14 +956,18 @@ fn calendar_getter(
         crate::ops::Builtin::TemporalPlainDateTimeInLeapYearGetter => {
             Value::Boolean(chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some())
         }
-        crate::ops::Builtin::TemporalPlainDateTimeEraGetter => crate::temporal::plain_date::era_for_calendar(
+        crate::ops::Builtin::TemporalPlainDateTimeEraGetter => crate::temporal::plain_date::era_for_calendar_date(
             &calendar,
             f64::from(year),
+            f64::from(month),
+            f64::from(day),
         )
         .map_or(Value::Undefined, |value| Value::String(value.into())),
-        crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => crate::temporal::plain_date::era_year_for_calendar(
+        crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => crate::temporal::plain_date::era_year_for_calendar_date(
             &calendar,
             f64::from(year),
+            f64::from(month),
+            f64::from(day),
         )
         .map_or(Value::Undefined, Value::Number),
         crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => Value::Number(
