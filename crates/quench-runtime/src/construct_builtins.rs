@@ -104,11 +104,28 @@ fn construct_builtin_tail(
                     return Err(crate::value::error::throw_type_error("Invalid calendar"));
                 }
                 let calendar = crate::conversion::to_string(calendar)?;
-                if !calendar.eq_ignore_ascii_case("iso8601")
-                    && !calendar.eq_ignore_ascii_case("gregory")
-                {
+                if !crate::temporal::plain_date::is_supported_calendar_name(&calendar) {
                     return Err(crate::value::error::throw_range_error("Invalid calendar"));
                 }
+                let calendar = crate::temporal::plain_date::canonical_calendar_id(&calendar)
+                    .unwrap_or(calendar);
+                if let Some(reference_day) = arguments
+                    .get(3)
+                    .filter(|value| !matches!(value, Value::Undefined))
+                {
+                    let reference_day = crate::conversion::to_number(reference_day)?;
+                    return crate::temporal::plain_year_month::construct_with_reference_calendar(
+                        year,
+                        month,
+                        reference_day,
+                        &calendar,
+                    );
+                }
+                return crate::temporal::plain_year_month::construct_with_calendar(
+                    year,
+                    month,
+                    &calendar,
+                );
             }
             if let Some(reference_day) = arguments
                 .get(3)

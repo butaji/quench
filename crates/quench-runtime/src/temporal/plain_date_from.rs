@@ -307,6 +307,11 @@ pub(crate) fn derive_year_from_era(calendar: &str, era: &str, era_year: f64) -> 
     match (calendar, era) {
         ("gregory" | "japanese", "bce") => Some(1.0 - era_year),
         ("gregory" | "japanese", "ce") => Some(era_year),
+        ("japanese", "reiwa") => Some(era_year + 2018.0),
+        ("japanese", "heisei") => Some(era_year + 1988.0),
+        ("japanese", "showa") => Some(era_year + 1925.0),
+        ("japanese", "taisho") => Some(era_year + 1911.0),
+        ("japanese", "meiji") => Some(era_year + 1867.0),
         ("ethiopic", "aa") => Some(era_year - 5500.0),
         ("roc", "broc") => Some(1.0 - era_year),
         ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "bh") => {
