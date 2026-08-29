@@ -192,6 +192,7 @@ mod tests {
             bootstrap,
             vec![
                 "globals-extra",
+                "performance",
                 "support",
                 "dns",
                 "dgram-head",
