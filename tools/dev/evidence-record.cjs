@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const v8V7Fixtures = [
   "richards", "deltablue", "crypto", "raytrace",
   "earley-boyer", "regexp", "splay", "navier-stokes",

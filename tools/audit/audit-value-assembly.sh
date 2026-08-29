@@ -2,8 +2,8 @@
 # Compile the runtime and audit compiler-output contracts for hot and cold
 # helpers. Source annotations are canonical intent; assembly proves cold code.
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-target_dir=${CARGO_TARGET_DIR:-"$root/target-value-assembly"}
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+target_dir=${CARGO_TARGET_DIR:-"$root/target/audit-value-asm"}
 cargo rustc --manifest-path "$root/Cargo.toml" -p quench-runtime --release --lib \
   --target-dir "$target_dir" -- --emit=asm >/dev/null
 asm=$(find "$target_dir/release/deps" -maxdepth 1 -name 'quench_runtime-*.s' -type f -print | sort | tail -n 1)

@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 if [ "$#" -ne 1 ]; then
-  echo "usage: tools/run-node-tests.sh <fixture.js>" >&2
+  echo "usage: tools/dev/run-node-tests.sh <fixture.js>" >&2
   exit 2
 fi
 

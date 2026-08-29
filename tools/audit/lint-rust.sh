@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root_dir"
 
 rg_bin="$(command -v rg || true)"
@@ -16,7 +16,7 @@ if [[ -z "$rg_bin" ]]; then
     exit 1
 fi
 
-tools/check-boundaries.sh
+tools/audit/check-boundaries.sh
 
 fail=0
 while IFS= read -r file; do

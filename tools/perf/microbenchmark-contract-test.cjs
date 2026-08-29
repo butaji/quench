@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { COUNTER_FIELDS, COUNTER_VERSION, validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const scripts = [
   ["value", "value-representation-benchmark.cjs", "QUENCH_VALUE_ITERATIONS", 257],
   ["dispatch", "dispatch-benchmark.cjs", "QUENCH_DISPATCH_ITERATIONS", 257],
@@ -26,7 +26,7 @@ function normalized(value) {
 }
 for (const [name, script, variable, iterations] of scripts) {
   const nodeResult = run(process.execPath, script, variable, iterations);
-  const quench = process.env.QUENCH_NODE || path.join(root, "target-native/release-thin/quench-node");
+  const quench = process.env.QUENCH_NODE || path.join(root, "target/release-thin/quench-node");
   const quenchResult = run(quench, script, variable, iterations);
   assert.equal(normalized(quenchResult), normalized(nodeResult), `${name} output contract`);
   assert.ok(nodeResult.results.length >= 2, `${name} has comparison results`);

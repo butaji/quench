@@ -4,7 +4,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { formatViolations, violations } = require("./lib/profile-contracts.cjs");
+const { formatViolations, violations } = require("../lib/profile-contracts.cjs");
 
 const contracts = {
   defaults: { "ratios.decode": { max: 0.02 } },
@@ -22,7 +22,7 @@ const missing = violations({ score: 5000, ratios: {}, lanes: { l3: { handlers: 0
 assert.equal(missing[0].reason, "missing numeric measurement");
 
 const declared = JSON.parse(fs.readFileSync(
-  path.join(__dirname, "../crates/quench-bench/profile-contracts.json"), "utf8"));
+  path.join(__dirname, "../../crates/quench-bench/profile-contracts.json"), "utf8"));
 assert.deepEqual(Object.keys(declared.benchmarks).sort(), [
   "crypto", "deltablue", "earley-boyer", "navier-stokes",
   "raytrace", "regexp", "richards", "splay",

@@ -5,7 +5,7 @@ const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const lanes = path.join(root, "tests/lanes");
 const binary = path.resolve(root, process.env.QUENCH_TRACE_BINARY ||
   "target-exec-trace/bench-throughput/quench-node");

@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const cp = require("child_process");
 
-const root = path.resolve(process.argv[2] || path.join(__dirname, ".."));
+const root = path.resolve(process.argv[2] || path.join(__dirname, "..", ".."));
 const output = process.argv[3] ? path.resolve(process.argv[3]) : null;
 const readJson = (file) => {
   try {
@@ -146,7 +146,7 @@ if (!exists(appMetrics)) {
     7,
     "release",
     "No application-gate result snapshot exists",
-    "Run tools/check-application-stages.sh on every compatibility checkpoint.",
+    "Run tools/audit/check-application-stages.sh on every compatibility checkpoint.",
     appStages.join(","),
   );
 } else {

@@ -2,7 +2,7 @@
 # Enforce the repository Rust function limits that Clippy does not parameterize.
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
 status=0

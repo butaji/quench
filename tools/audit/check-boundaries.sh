@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runtime_dir="$root_dir/crates/quench-runtime"
 rg_bin="$(command -v rg || true)"
 for candidate in /opt/homebrew/bin/rg /usr/local/bin/rg /usr/bin/rg; do
