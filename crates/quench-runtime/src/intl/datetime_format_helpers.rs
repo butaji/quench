@@ -32,7 +32,15 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
             }
         }
     }
-    let format_slots = effective_format_slots(slots);
+    let format_slots = if let Some(fields) = arguments.first().and_then(temporal_fields) {
+        if fields.kind == TemporalKind::Instant {
+            temporal_slots(slots, &fields)?
+        } else {
+            effective_format_slots(slots)
+        }
+    } else {
+        effective_format_slots(slots)
+    };
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
     let has_era = slot_string(&format_slots, "era").is_some();
     let has_date = slot_string(&format_slots, "year").is_some()
@@ -218,7 +226,14 @@ fn temporal_slots(
         && !has_date_style
         && !has_time_style
         && has_default_date
-        && fields.kind == TemporalKind::PlainDateTime
+        && (fields.kind == TemporalKind::PlainDateTime
+            || (fields.kind == TemporalKind::Instant
+                && !filtered.iter().any(|(name, _)| {
+                    matches!(
+                        name.as_str(),
+                        "weekday" | "era" | "dayPeriod" | "timeZoneName"
+                    )
+                })))
     {
         filtered.extend([
             ("hour".into(), Value::String("numeric".into())),
@@ -249,7 +264,14 @@ fn temporal_slots(
             .unwrap_or(false);
         resolved.push(("hour12".into(), Value::Boolean(hour12)));
     }
-    if fields.kind != TemporalKind::ZonedDateTime {
+    if matches!(
+        fields.kind,
+        TemporalKind::PlainDate
+            | TemporalKind::PlainDateTime
+            | TemporalKind::PlainTime
+            | TemporalKind::PlainMonthDay
+            | TemporalKind::PlainYearMonth
+    ) {
         resolved.retain(|(name, _)| name != "timeZoneName");
     }
     resolved.retain(|(name, _)| match fields.kind {
@@ -507,7 +529,15 @@ fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value,
             }
         }
     }
-    let slots = effective_format_slots(slots);
+    let slots = if let Some(fields) = arguments.first().and_then(temporal_fields) {
+        if fields.kind == TemporalKind::Instant {
+            temporal_slots(slots, &fields)?
+        } else {
+            effective_format_slots(slots)
+        }
+    } else {
+        effective_format_slots(slots)
+    };
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if let Some(parts) = date_time_parts(&slots, number) {
         return Ok(make_array(localize_parts(parts, &slots)));
@@ -573,8 +603,14 @@ fn date_time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>>
     {
         return None;
     }
+    let mut parts_slots = slots.to_vec();
+    parts_slots.extend([
+        ("\0isoYear".into(), Value::Number(f64::from(year))),
+        ("\0isoMonth".into(), Value::Number(f64::from(month))),
+        ("\0isoDay".into(), Value::Number(f64::from(day))),
+    ]);
     Some(parts_for_fields(
-        slots, year, month, day, hour, minute, second, millis,
+        &parts_slots, year, month, day, hour, minute, second, millis,
     ))
 }
 

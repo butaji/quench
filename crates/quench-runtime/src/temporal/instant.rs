@@ -425,7 +425,10 @@ fn unit_scale(unit: &str) -> Option<i128> {
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let epoch_milliseconds = get_epoch_milliseconds(receiver)?;
-    let formatter = crate::intl::datetime::construct(arguments)?;
+    let formatter = crate::intl::datetime::construct_with_defaults(
+        arguments,
+        Some(&["year", "month", "day", "hour", "minute", "second"]),
+    )?;
     crate::intl::datetime::prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat,
         std::slice::from_ref(&epoch_milliseconds),
