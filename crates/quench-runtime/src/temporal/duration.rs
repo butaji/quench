@@ -713,11 +713,13 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                         let Ok(epoch) = epoch.parse::<i128>() else {
                             return true;
                         };
-                        super::timezone_offset_nanos(&timezone, epoch)
-                            != super::timezone_offset_nanos(
-                                &timezone,
-                                epoch + 180 * 86_400_000_000_000,
-                            )
+                        [1_i128, 2, 90, 180, 270, 365].into_iter().any(|days| {
+                            super::timezone_offset_nanos(&timezone, epoch)
+                                != super::timezone_offset_nanos(
+                                    &timezone,
+                                    epoch + days * 86_400_000_000_000,
+                                )
+                        })
                     })
             })
     {
@@ -808,6 +810,39 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         && relative_is_zoned(options)
         && requested_largest.is_none_or(|largest| largest >= 4)
     {
+        if duration_field(object, "days") != 0 {
+            if let Some(relative) = relative_option(options).and_then(|value| zoned_relative_value(&value)) {
+                let duration = construct(&duration_fields(object))?;
+                let actual = duration_epoch_delta(&duration, &relative)?;
+                let increment = rounding_increment(options, index)? as i128;
+                let quantum = [
+                    3_600_000_000_000_i128,
+                    60_000_000_000,
+                    1_000_000_000,
+                    1_000_000,
+                    1_000,
+                    1,
+                ][index - 4] * increment;
+                let rounded = round_integer(actual, quantum, &rounding_mode(options)?) * quantum;
+                let largest_index = requested_largest.unwrap_or(index);
+                let scales = [
+                    86_400_000_000_000_i128,
+                    86_400_000_000_000_i128,
+                    604_800_000_000_000_i128,
+                    86_400_000_000_000_i128,
+                    3_600_000_000_000_i128,
+                    60_000_000_000_i128,
+                    1_000_000_000_i128,
+                    1_000_000_i128,
+                    1_000_i128,
+                    1_i128,
+                ];
+                let mut fields = vec![Value::Number(0.0); 10];
+                fields[largest_index] =
+                    Value::Number((rounded / scales[largest_index]) as f64);
+                return construct(&fields);
+            }
+        }
         return zoned_time_round(object, options, index);
     }
     if index >= 4 && requested_largest == Some(3) && relative_is_zoned(options) {
@@ -1095,6 +1130,9 @@ fn relative_is_zoned(options: Option<&Value>) -> bool {
     let Some((_, relative)) = object.iter().find(|(key, _)| key == "relativeTo") else {
         return false;
     };
+    if matches!(&relative, Value::String(text) if text.contains('[')) {
+        return zoned_relative_value(&relative).is_some();
+    }
     let resolved = crate::locals::resolved_replacement(relative.clone());
     matches!(
         resolved,
