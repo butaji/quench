@@ -44,8 +44,11 @@ pub fn agent_call(
     Ok(host_api::object(Vec::new()))
 }
 
-pub fn agent_construct(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(host_api::object(Vec::new()))
+pub fn agent_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::new_emitter_object(state)
 }
 
 pub fn res_set_encoding(
