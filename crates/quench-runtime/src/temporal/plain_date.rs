@@ -177,6 +177,11 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(calendar) = arguments.get(3).filter(|value| !matches!(value, Value::Undefined)) {
+        if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+    }
     if let Some(calendar) = arguments
         .get(3)
         .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
@@ -2514,8 +2519,18 @@ fn with(
     if !matches!(calendar, Value::Undefined) || !matches!(time_zone, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid fields"));
     }
-    let mut day = number_or_field(changes, "day", day)?;
-    let mut explicit_month = number_or_field(changes, "month", month)?;
+    let day_value = crate::execute::get_property_result(changes, "day")?;
+    let mut day = if matches!(day_value, Value::Undefined) {
+        day
+    } else {
+        crate::conversion::to_number(&day_value)?.trunc()
+    };
+    let month_value = crate::execute::get_property_result(changes, "month")?;
+    let mut explicit_month = if matches!(month_value, Value::Undefined) {
+        month
+    } else {
+        crate::conversion::to_number(&month_value)?.trunc()
+    };
     let month_code = crate::execute::get_property_result(changes, "monthCode")?;
     let mut month_code_text = if matches!(month_code, Value::Undefined) {
         None
@@ -2523,8 +2538,14 @@ fn with(
         Some(month_code_text(&month_code)?)
     };
     let year_value = crate::execute::get_property_result(changes, "year")?;
-    let era_value = crate::execute::get_property_result(changes, "era")?;
-    let era_year_value = crate::execute::get_property_result(changes, "eraYear")?;
+    let (era_value, era_year_value) = if receiver_calendar == "iso8601" {
+        (Value::Undefined, Value::Undefined)
+    } else {
+        (
+            crate::execute::get_property_result(changes, "era")?,
+            crate::execute::get_property_result(changes, "eraYear")?,
+        )
+    };
     let year_provided = !matches!(year_value, Value::Undefined);
     let era_provided = !matches!(era_value, Value::Undefined);
     let era_year_provided = !matches!(era_year_value, Value::Undefined);
@@ -2533,7 +2554,11 @@ fn with(
             "era and eraYear must be provided together",
         ));
     }
-    let mut year = number_or_field(changes, "year", year)?;
+    let mut year = if matches!(year_value, Value::Undefined) {
+        year
+    } else {
+        crate::conversion::to_number(&year_value)?.trunc()
+    };
     if !year_provided && era_provided {
         let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
         let era = canonical_era_name(&receiver_calendar, &era)
@@ -2562,10 +2587,7 @@ fn with(
     } else {
         option_string(&overflow)?
     };
-    let month_was_provided = !matches!(
-        crate::execute::get_property_result(changes, "month")?,
-        Value::Undefined
-    );
+    let month_was_provided = !matches!(month_value, Value::Undefined);
     if month_code_text.is_none() && !month_was_provided {
         if let Value::String(code) =
             crate::execute::get_property_result(receiver.unwrap(), "monthCode")?
