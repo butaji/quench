@@ -615,6 +615,7 @@ pub const SPEC_FS_HANDLE_READ: NodeSpec = NodeSpec::new("fs:FileHandle:read", 0x
 pub const SPEC_FS_HANDLE_CLOSE: NodeSpec = NodeSpec::new("fs:FileHandle:close", 0x116C);
 pub const SPEC_FS_DIR: NodeSpec = NodeSpec::new("fs:Dir", 0x116D);
 pub const SPEC_FS_CLOSE: NodeSpec = NodeSpec::new("fs:close", 0x116E);
+pub const SPEC_FS_HANDLE_READFILE: NodeSpec = NodeSpec::new("fs:FileHandle:readFile", 0x116F);
 pub const SPEC_FSP_READFILE: NodeSpec = NodeSpec::new("fs:promises:readFile", 0x1140);
 pub const SPEC_FSP_WRITEFILE: NodeSpec = NodeSpec::new("fs:promises:writeFile", 0x1141);
 pub const SPEC_FSP_APPENDFILE: NodeSpec = NodeSpec::new("fs:promises:appendFile", 0x1142);
