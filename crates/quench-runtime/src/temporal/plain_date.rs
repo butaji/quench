@@ -2407,7 +2407,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         field(object, "year"),
         field(object, "month"),
         field(object, "day"),
-        calendar.clone(),
+        Value::String(target),
     ])
 }
 
