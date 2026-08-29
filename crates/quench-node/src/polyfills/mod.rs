@@ -199,6 +199,7 @@ mod tests {
                 "dgram",
                 "dgram-tail",
                 "membership",
+                "async-resource",
                 "web-streams",
             ]
         );
