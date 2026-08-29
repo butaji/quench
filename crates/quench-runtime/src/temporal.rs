@@ -187,11 +187,23 @@ fn fixed_offset_nanos(timezone: &str) -> i128 {
         return iso_offset_nanos(timezone);
     }
     let bytes = timezone.as_bytes();
-    if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
+    if !matches!(bytes.first(), Some(b'+' | b'-')) {
         return 0;
     }
-    let hour = timezone[1..3].parse::<i128>().unwrap_or(0);
-    let minute = timezone[4..6].parse::<i128>().unwrap_or(0);
+    let (hour, minute) = match bytes.len() {
+        3 if bytes[1..].iter().all(u8::is_ascii_digit) => {
+            (timezone[1..3].parse::<i128>().unwrap_or(0), 0)
+        }
+        5 if bytes[1..].iter().all(u8::is_ascii_digit) => (
+            timezone[1..3].parse::<i128>().unwrap_or(0),
+            timezone[3..5].parse::<i128>().unwrap_or(0),
+        ),
+        6 if bytes[3] == b':' => (
+            timezone[1..3].parse::<i128>().unwrap_or(0),
+            timezone[4..6].parse::<i128>().unwrap_or(0),
+        ),
+        _ => return 0,
+    };
     let sign = if bytes[0] == b'-' { -1 } else { 1 };
     sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
 }
@@ -851,8 +863,6 @@ fn parse_iso_annotations(
                     ));
                 }
             } else {
-                let canonical = crate::temporal::plain_date::canonical_calendar_id(value)
-                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
                 if calendar.is_some() {
                     if critical || calendar_critical {
                         return Err(crate::value::error::throw_range_error("Invalid calendar"));
@@ -861,6 +871,8 @@ fn parse_iso_annotations(
                     rest = &after[end + 1..];
                     continue;
                 }
+                let canonical = crate::temporal::plain_date::canonical_calendar_id(value)
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
                 calendar = Some(canonical);
                 calendar_critical |= critical;
             }
@@ -1203,6 +1215,19 @@ mod stubs {
                 if !crate::value::is_object(options) {
                     return Err(crate::value::error::throw_type_error("Invalid options"));
                 }
+                let validate_option = |name: &str, allowed: &[&str]| -> Result<(), VmError> {
+                    let value = crate::execute::get_property_result(options, name)?;
+                    if !matches!(value, Value::Undefined) {
+                        let value = crate::conversion::to_string(&value)?;
+                        if !allowed.contains(&value.as_str()) {
+                            return Err(crate::value::error::throw_range_error("Invalid Temporal option"));
+                        }
+                    }
+                    Ok(())
+                };
+                validate_option("disambiguation", &["compatible", "earlier", "later", "reject"])?;
+                validate_option("offset", &["prefer", "use", "ignore", "reject"])?;
+                validate_option("overflow", &["constrain", "reject"])?;
             }
             let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
             let epoch = match epoch {
@@ -1392,10 +1417,7 @@ mod stubs {
             if offset_start.is_some() && offset_mode == "reject" {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
-                if supplied_offset != actual_offset
-                    && (super::iso_offset_has_seconds(offset_text)
-                        || timezone.starts_with(['+', '-']))
-                {
+                if supplied_offset != actual_offset {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
                     ));
@@ -1588,8 +1610,14 @@ mod stubs {
                 finite_integer(&second_value)?
             };
             let timezone_value = crate::execute::get_property_result(value, "timeZone")?;
-            let era_value = crate::execute::get_property_result(value, "era")?;
-            let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+            let (era_value, era_year_value) = if calendar_name == "iso8601" {
+                (Value::Undefined, Value::Undefined)
+            } else {
+                (
+                    crate::execute::get_property_result(value, "era")?,
+                    crate::execute::get_property_result(value, "eraYear")?,
+                )
+            };
             let mut year_value = crate::execute::get_property_result(value, "year")?;
             let year_was_provided = !matches!(year_value, Value::Undefined);
             if matches!(year_value, Value::Undefined)
@@ -4892,11 +4920,23 @@ mod stubs {
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             if smallest == "day" {
+                let local_midnight = || -> Option<i128> {
+                    let year = crate::conversion::to_number(&property("year").ok()?).ok()? as f64;
+                    let month = crate::conversion::to_number(&property("month").ok()?).ok()? as f64;
+                    let day = crate::conversion::to_number(&property("day").ok()?).ok()? as f64;
+                    Some((super::plain_date::date_serial(year, month, day)
+                        - super::plain_date::date_serial(1970.0, 1.0, 1.0))
+                        as i128
+                        * 86_400_000_000_000)
+                };
                 let start = super::timezone_start_of_day_epoch(&timezone, epoch)
-                    .unwrap_or(epoch - 86_400_000_000_000);
-                let next =
-                    super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
-                        .unwrap_or(start + 86_400_000_000_000);
+                    .or_else(|| local_midnight().map(|local| local - super::timezone_offset_nanos(&timezone, local)));
+                let Some(start) = start else {
+                    return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
+                };
+                let next = super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
+                    .or_else(|| local_midnight().map(|local| local + 86_400_000_000_000 - super::timezone_offset_nanos(&timezone, local + 86_400_000_000_000)))
+                    .unwrap_or(start + 86_400_000_000_000);
                 let length = (next - start).max(1);
                 let elapsed = (epoch - start).clamp(0, length);
                 let round_up = match mode.as_str() {

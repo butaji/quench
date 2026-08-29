@@ -2407,7 +2407,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         field(object, "year"),
         field(object, "month"),
         field(object, "day"),
-        calendar.clone(),
+        Value::String(target),
     ])
 }
 
@@ -2968,6 +2968,7 @@ pub(crate) fn is_supported_calendar_name(value: &str) -> bool {
 pub(crate) fn canonical_calendar_id(value: &str) -> Option<String> {
     let value = value.to_ascii_lowercase();
     let canonical = match value.as_str() {
+        "iso8601" => "iso8601",
         "islamicc" => "islamic-civil",
         "ethiopic-amete-alem" => "ethioaa",
         other if is_supported_calendar_name(other) => other,
