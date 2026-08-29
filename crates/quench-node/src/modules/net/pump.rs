@@ -23,6 +23,10 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     for (receiver, error) in errors {
         emit(state, &receiver, "error", vec![error])?;
     }
+    let writes = std::mem::take(&mut state.borrow_mut().net.pending_writes);
+    for (socket, bytes) in writes {
+        socket_write(state, Some(&socket), &[quench_runtime::host_api::bytes(&bytes)])?;
+    }
     poll_accept(state)?;
     poll_sockets(state)?;
     finalize(state)?;

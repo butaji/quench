@@ -25,7 +25,7 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, connect_existing, create_server, server_address, server_close, server_listen,
+    connect, connect_existing, connect_path, create_server, server_address, server_close, server_listen,
     server_ref, server_unref, socket_address, socket_construct, socket_destroy, socket_end,
     socket_pause, socket_ref, socket_resume, socket_set_encoding, socket_set_keep_alive,
     socket_set_no_delay, socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
@@ -48,6 +48,7 @@ pub struct NetServer {
     pub id: u64,
     pub owner_worker: Option<u64>,
     pub listener: Option<TcpListener>,
+    pub path: Option<String>,
     pub bind_addr: Option<SocketAddr>,
     pub js: Value,
     pub listening: bool,
@@ -81,6 +82,8 @@ pub struct NetState {
     pub pending_errors: Vec<(Value, Value)>,
     pub lookup_result: Option<Value>,
     pub pending_events: Vec<(Value, String, Vec<Value>)>,
+    pub paths: HashMap<String, u16>,
+    pub pending_writes: Vec<(Value, Vec<u8>)>,
 }
 
 impl Default for NetState {
@@ -98,6 +101,8 @@ impl NetState {
             pending_errors: Vec::new(),
             lookup_result: None,
             pending_events: Vec::new(),
+            paths: HashMap::new(),
+            pending_writes: Vec::new(),
         }
     }
 }
@@ -294,6 +299,15 @@ fn register_server(
     js: &Value,
     listener: Option<TcpListener>,
 ) -> Result<u64, VmError> {
+    register_server_path(state, js, listener, None)
+}
+
+fn register_server_path(
+    state: &Rc<RefCell<HostState>>,
+    js: &Value,
+    listener: Option<TcpListener>,
+    path: Option<String>,
+) -> Result<u64, VmError> {
     let id = net_id(js).ok_or_else(|| execute::type_error("not a net object"))?;
     // A bound listener means the server is listening (createServer
     // registers without one; listen() registers with one).
@@ -306,6 +320,7 @@ fn register_server(
             id,
             owner_worker,
             listener,
+            path,
             bind_addr,
             js: js.clone(),
             listening: is_listening,
