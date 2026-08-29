@@ -17,6 +17,7 @@ use crate::modules::net;
 /// Hidden property mapping a `res` object to its host-side state.
 pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
+pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 
 pub struct HttpState {
@@ -150,7 +151,78 @@ pub fn connection_handler(
         Some(&socket),
         &[Value::String("data".to_string()), data_cap],
     )?;
+    let close_cap = crate::host::capability(crate::registry::SPEC_HTTP_REQCLOSE);
+    crate::modules::events::method_on(
+        state,
+        Some(&socket),
+        &[Value::String("close".to_string()), close_cap],
+    )?;
     Ok(Value::Undefined)
+}
+
+/// Allocate the one internal AbortSignal representation used by HTTP
+/// IncomingMessage instances. The signal's own `aborted` property is the
+/// canonical mutable fact; callers only retain the object identity.
+pub(crate) fn new_http_signal(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    let signal = crate::modules::event_target::new_target(state, &[])?;
+    let signal = execute::set_property(
+        signal,
+        crate::modules::event_target::ABORT_SIGNAL_BRAND,
+        Value::Boolean(true),
+    );
+    let signal = execute::set_property(signal, "aborted", Value::Boolean(false));
+    let signal = execute::set_property(signal, "reason", Value::Undefined);
+    let signal = execute::set_property(
+        signal,
+        "throwIfAborted",
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
+    );
+    Ok(execute::set_property(
+        signal,
+        "Symbol.toStringTag",
+        Value::String("AbortSignal".into()),
+    ))
+}
+
+/// Transition an HTTP signal exactly once and deliver its observable abort
+/// notification. EventTarget listeners and the `onabort` property share the
+/// same transition, so no subsystem invents a second abort state.
+pub(crate) fn abort_http_signal(
+    state: &Rc<RefCell<HostState>>,
+    signal: &Value,
+) -> Result<(), VmError> {
+    if matches!(execute::get_property(signal, "aborted"), Value::Boolean(true)) {
+        return Ok(());
+    }
+    execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
+    let event = host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+    crate::modules::event_target::dispatch_event(state, Some(signal), &[event])?;
+    Ok(())
+}
+
+/// Abort an in-flight server request when its socket is destroyed. A normal
+/// completed response deliberately leaves the signal non-aborted.
+pub(crate) fn abort_server_signal(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let Some(socket_id) = net::net_id(socket) else {
+        return Ok(());
+    };
+    let signal = {
+        let guard = state.borrow();
+        guard.http.conns.get(&socket_id).and_then(|conn| {
+            (!conn.response_done).then(|| {
+                conn.req
+                    .as_ref()
+                    .map(|req| execute::get_property(req, "signal"))
+            })
+        }).flatten()
+    };
+    if let Some(signal) = signal.filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+        abort_http_signal(state, &signal)?;
+    }
+    Ok(())
 }
 
 /// `'data'` handler: buffer bytes, then parse the head and stream body.
@@ -237,6 +309,9 @@ fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmEr
         if done {
             if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
                 conn.body_done = true;
+                if let Some(req) = conn.req.as_ref() {
+                    execute::set_property_in_place(req, "complete", Value::Boolean(true));
+                }
             }
             net::emit(state, &req, "end", Vec::new())?;
         }
@@ -390,6 +465,10 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
                 "destroy".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_DESTROY),
             ),
+            ("signal".to_string(), new_http_signal(state)?),
+            ("aborted".to_string(), Value::Boolean(false)),
+            ("complete".to_string(), Value::Boolean(false)),
+            (REQ_CLOSE_PROP.to_string(), Value::Boolean(false)),
         ],
     )?;
     Ok((req, content_length, keep_alive))
@@ -420,6 +499,10 @@ pub fn request_destroy(
     execute::set_property_in_place(&req, "destroyed", Value::Boolean(true));
     execute::set_property_in_place(&req, "aborted", Value::Boolean(true));
     execute::set_property_in_place(&req, "readable", Value::Boolean(false));
+    let signal = execute::get_property(&req, "signal");
+    if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+        abort_http_signal(state, &signal)?;
+    }
     let body_complete = state
         .borrow()
         .http
@@ -571,6 +654,14 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             "end".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_END),
         ),
+        (
+            "destroy".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_DESTROY),
+        ),
+        (
+            "flushHeaders".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_FLUSH_HEADERS),
+        ),
         ("statusCode".to_string(), Value::Number(200.0)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
     ]);
@@ -583,6 +674,42 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 
 // Response methods live in `http_res`; re-exported here for dispatch.
 pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
+pub use crate::modules::http_res::{res_destroy, res_flush_headers};
+
+/// Construct an IncomingMessage with the same signal/destroy state used by
+/// network-created messages. This keeps the public constructor useful for
+/// detached messages without inventing a second object model.
+pub fn incoming_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let object = crate::modules::events::new_emitter_object(state)?;
+    install_req_props(
+        object,
+        vec![
+            ("signal".into(), new_http_signal(state)?),
+            ("destroy".into(), crate::host::capability(crate::registry::SPEC_HTTP_INCOMING_DESTROY)),
+            ("aborted".into(), Value::Boolean(false)),
+            ("complete".into(), Value::Boolean(false)),
+        ],
+    )
+}
+
+pub fn incoming_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    execute::set_property_in_place(receiver, "aborted", Value::Boolean(true));
+    let signal = execute::get_property(receiver, "signal");
+    if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+        abort_http_signal(state, &signal)?;
+    }
+    Ok(receiver.clone())
+}
 
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -633,7 +760,7 @@ pub fn build() -> Value {
         ),
         (
             "IncomingMessage",
-            Value::Builtin(quench_runtime::ops::Builtin::Object),
+            crate::host::capability(crate::registry::SPEC_HTTP_INCOMING),
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined);
