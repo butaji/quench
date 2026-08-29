@@ -312,26 +312,28 @@ impl DateTimeOptions {
                     | "hour" | "minute" | "second"
             )
         });
+        if (self.fractional_second_digits.is_some() || self.contains("dayPeriod"))
+            && !has_core_component
+        {
+            for key in keys.iter().filter(|key| {
+                matches!(**key, "hour" | "minute" | "second")
+            }) {
+                self.set_component(key, "numeric".to_string());
+            }
+            return;
+        }
+        if self.contains("dayPeriod")
+            && !self.contains("hour")
+            && !self.contains("minute")
+            && !self.contains("second")
+        {
+            for key in keys.iter().filter(|key| {
+                matches!(**key, "hour" | "minute" | "second")
+            }) {
+                self.set_component(key, "numeric".to_string());
+            }
+        }
         if has_core_component {
-            if !self.contains("year")
-                && !self.contains("month")
-                && !self.contains("day")
-                && (self.contains("era") || self.contains("weekday"))
-            {
-                for key in keys {
-                    self.set_component(key, "numeric".to_string());
-                }
-            }
-            // Date/Time.prototype helpers add their own component defaults
-            // when the caller supplied only the opposite half (for example,
-            // toLocaleDateString({hour: "numeric"})). Preserve partial
-            // component options when at least one default component was
-            // explicitly requested.
-            if defaults.is_some() && keys.iter().all(|key| !self.contains(key)) {
-                for key in keys {
-                    self.set_component(key, "numeric".to_string());
-                }
-            }
             return;
         }
         for key in keys {
