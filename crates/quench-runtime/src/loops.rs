@@ -580,6 +580,7 @@ fn iterate_loop_values(
         iterator: iterator.clone(),
         dst,
         await_dst: 0,
+        body_pc: 0,
     };
     loop {
         let value = match if await_values {
@@ -601,7 +602,12 @@ fn iterate_loop_values(
             return Ok(crate::completion::Completion::Normal);
         };
         let _binding = bind_iteration(registers, slot, value, per_iteration, iteration_slots);
-        match execute_loop_body(registers, label, body)? {
+        let (body_result, body_pc) = if await_values {
+            execute_async_loop_body(registers, body, label, 0)?
+        } else {
+            (execute_loop_body(registers, label, body)?, 0)
+        };
+        match body_result {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
                 return crate::collections::iterator::close(
@@ -611,7 +617,13 @@ fn iterate_loop_values(
             }
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
-                    remember_for_of(iterator);
+                    if await_values {
+                        let mut pending = pending.clone();
+                        pending.body_pc = body_pc;
+                        remember_pending_async_for_of(pending);
+                    } else {
+                        remember_for_of(iterator);
+                    }
                     return Ok(completion);
                 }
                 let completion = attach_loop_completion(registers, dst, completion)?;
@@ -635,8 +647,51 @@ pub(crate) fn resume_async_for_of(
     let Some(body) = spec.body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let mut next_value = crate::collections::iterator::resume_async_result(&spec.iterator, input)?;
+    let mut body_pc = spec.body_pc;
+    let mut next_value = if body_pc == 0 {
+        crate::collections::iterator::resume_async_result(&spec.iterator, input)?
+    } else {
+        None
+    };
     loop {
+        if body_pc != 0 {
+            let (completion, next_pc) =
+                execute_async_loop_body(registers, body, &spec.label, body_pc)?;
+            match completion {
+                crate::completion::LoopTransition::Continue(_) => {
+                    body_pc = 0;
+                }
+                crate::completion::LoopTransition::Break(_) => {
+                    return crate::collections::iterator::close(
+                        spec.iterator.clone(),
+                        crate::completion::Completion::Normal,
+                    )
+                    .map(|completion| (completion, None));
+                }
+                crate::completion::LoopTransition::Propagate(completion) => {
+                    if completion.is_suspension() {
+                        let mut pending = spec.clone();
+                        pending.body_pc = next_pc;
+                        return Ok((completion, Some(pending)));
+                    }
+                    let completion = attach_loop_completion(registers, spec.dst, completion)?;
+                    return crate::collections::iterator::close(spec.iterator.clone(), completion)
+                        .map(|completion| (completion, None));
+                }
+            }
+            next_value = match crate::collections::iterator::step_value_await(&spec.iterator) {
+                Ok(value) => value,
+                Err(crate::execute::VmError::Suspended(promise)) => {
+                    let mut pending = spec.clone();
+                    pending.body_pc = 0;
+                    return Ok((
+                        crate::completion::Completion::Suspend(promise),
+                        Some(pending),
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+        }
         let Some(value) = next_value else {
             return Ok((crate::completion::Completion::Normal, None));
         };
@@ -647,7 +702,9 @@ pub(crate) fn resume_async_for_of(
             spec.per_iteration,
             &spec.iteration_slots,
         );
-        match execute_loop_body(registers, &spec.label, body)? {
+        let (body_completion, body_next_pc) =
+            execute_async_loop_body(registers, body, &spec.label, 0)?;
+        match body_completion {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
                 return crate::collections::iterator::close(
@@ -658,8 +715,9 @@ pub(crate) fn resume_async_for_of(
             }
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
-                    remember_for_of(spec.iterator.clone());
-                    return Ok((completion, None));
+                    let mut pending = spec.clone();
+                    pending.body_pc = body_next_pc;
+                    return Ok((completion, Some(pending)));
                 }
                 let completion = attach_loop_completion(registers, spec.dst, completion)?;
                 return crate::collections::iterator::close(spec.iterator.clone(), completion)
@@ -718,6 +776,43 @@ fn execute_loop_body(
         crate::vm::execute_code_completion_in_current_frame(body, registers)?,
         label,
     ))
+}
+
+/// Execute an async-for-of body while retaining the exact body offset when an
+/// await suspends. The ordinary loop helper intentionally discards that
+/// offset because synchronous loops resume through iterator frames; async
+/// loops own a compact state record instead.
+fn execute_async_loop_body(
+    registers: &mut crate::register_file::RegisterFile,
+    body: crate::machine::CodeView<'_>,
+    label: &Option<String>,
+    start: usize,
+) -> Result<(crate::completion::LoopTransition, usize), crate::execute::VmError> {
+    let mut pc = start;
+    loop {
+        let step = crate::vm::execute_code_completion_step_from_in_place(body, pc, registers)?;
+        pc = step.next;
+        match step.completion {
+            crate::completion::Completion::Call(continuation) => {
+                if let Err(crate::execute::VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok((
+                        crate::completion::LoopTransition::Propagate(
+                            crate::completion::Completion::Throw(value),
+                        ),
+                        pc,
+                    ));
+                }
+            }
+            completion => {
+                return Ok((
+                    crate::completion::Completion::into_loop_transition(completion, label),
+                    pc,
+                ));
+            }
+        }
+    }
 }
 
 fn execute_loop_body_with_context(
