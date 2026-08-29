@@ -276,6 +276,36 @@ pub(crate) fn calendar_day_of_year_for_code(
     calendar_date_for_code(year, code, day, calendar).map(|date| u32::from(date.day_of_year().0))
 }
 
+/// Find the ISO date in a reference year represented by a calendar month code.
+/// This keeps PlainMonthDay's reference year independent from its calendar year.
+pub(crate) fn calendar_iso_date_for_code(
+    iso_year: i32,
+    code: &str,
+    day: u32,
+    calendar: &str,
+) -> Option<(u32, u32)> {
+    for month in 1..=12 {
+        let max_day = days_in_month_for_record(iso_year, month);
+        for iso_day in 1..=max_day {
+            let fields = calendar_fields_from_iso(iso_year, month, iso_day, calendar)?;
+            if fields.month_code == code && fields.day == day {
+                return Some((month, iso_day));
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn calendar_reference_iso_year_for_code(
+    code: &str,
+    day: u32,
+    calendar: &str,
+) -> Option<i32> {
+    (1932..=1972)
+        .rev()
+        .find(|year| calendar_iso_date_for_code(*year, code, day, calendar).is_some())
+}
+
 pub(crate) struct CalendarDateFields {
     pub year: i32,
     pub month: u32,
@@ -1865,6 +1895,9 @@ fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
+    if calendar_name(object) != "iso8601" {
+        return Ok(Value::Undefined);
+    }
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
@@ -1879,6 +1912,9 @@ fn year_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
     };
     if !has_date_fields(object) {
         return Err(invalid_receiver());
+    }
+    if calendar_name(object) != "iso8601" {
+        return Ok(Value::Undefined);
     }
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
