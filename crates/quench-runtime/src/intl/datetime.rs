@@ -274,8 +274,7 @@ impl DateTimeOptions {
                     let locale_numbering = super::numbering_system(&self.locale);
                     self.numbering_system = value;
                     if locale_numbering != Some(self.numbering_system.as_str()) {
-                        self.locale =
-                            super::locale::remove_unicode_extension(&self.locale, "nu");
+                        self.locale = super::locale::remove_unicode_extension(&self.locale, "nu");
                     }
                 }
             }
@@ -308,16 +307,24 @@ impl DateTimeOptions {
         let has_core_component = self.components.iter().any(|(key, _)| {
             matches!(
                 key.as_str(),
-                "weekday" | "era" | "year" | "month" | "day" | "dayPeriod"
-                    | "hour" | "minute" | "second"
+                "weekday"
+                    | "era"
+                    | "year"
+                    | "month"
+                    | "day"
+                    | "dayPeriod"
+                    | "hour"
+                    | "minute"
+                    | "second"
             )
         });
         if (self.fractional_second_digits.is_some() || self.contains("dayPeriod"))
             && !has_core_component
         {
-            for key in keys.iter().filter(|key| {
-                matches!(**key, "hour" | "minute" | "second")
-            }) {
+            for key in keys
+                .iter()
+                .filter(|key| matches!(**key, "hour" | "minute" | "second"))
+            {
                 self.set_component(key, "numeric".to_string());
             }
             return;
@@ -327,9 +334,10 @@ impl DateTimeOptions {
             && !self.contains("minute")
             && !self.contains("second")
         {
-            for key in keys.iter().filter(|key| {
-                matches!(**key, "hour" | "minute" | "second")
-            }) {
+            for key in keys
+                .iter()
+                .filter(|key| matches!(**key, "hour" | "minute" | "second"))
+            {
                 self.set_component(key, "numeric".to_string());
             }
         }
@@ -337,7 +345,9 @@ impl DateTimeOptions {
             return;
         }
         for key in keys {
-            self.set_component(key, "numeric".to_string());
+            if !self.contains(key) {
+                self.set_component(key, "numeric".to_string());
+            }
         }
     }
 
@@ -364,19 +374,25 @@ impl DateTimeOptions {
             self.set_component(
                 "hourCycle",
                 if self.hour12 == Some(true) {
-                    if self.locale.starts_with("ja") { "h11" } else { "h12" }
+                    if self.locale.starts_with("ja") {
+                        "h11"
+                    } else {
+                        "h12"
+                    }
                 } else {
                     "h23"
                 }
                 .to_string(),
             );
         } else if !self.contains("hourCycle") {
-            let cycle = locale_hour_cycle(&self.locale).unwrap_or_else(|| if self.locale.starts_with("ja") {
-                "h11"
-            } else if self.locale.starts_with("en") {
-                "h12"
-            } else {
-                "h23"
+            let cycle = locale_hour_cycle(&self.locale).unwrap_or_else(|| {
+                if self.locale.starts_with("ja") {
+                    "h11"
+                } else if self.locale.starts_with("en") {
+                    "h12"
+                } else {
+                    "h23"
+                }
             });
             self.set_component("hourCycle", cycle.to_string());
         }
@@ -582,7 +598,9 @@ fn collapse_range(start: &str, end: &str) -> Option<String> {
     let (start_month, start_day) = start_prefix.rsplit_once(' ')?;
     let (end_month, end_day) = end_prefix.rsplit_once(' ')?;
     if start_month == end_month {
-        Some(format!("{start_month} {start_day} – {end_day}, {start_suffix}"))
+        Some(format!(
+            "{start_month} {start_day} – {end_day}, {start_suffix}"
+        ))
     } else {
         Some(format!(
             "{start_month} {start_day} – {end_month} {end_day}, {start_suffix}"
