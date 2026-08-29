@@ -268,6 +268,80 @@ pub(crate) fn timezone_local_epoch(
     }
 }
 
+/// Locate an offset transition using the timezone's monotonic UTC offset
+/// function. The one-day probe catches historical rule changes that occur
+/// close together; a binary refinement keeps the returned instant exact to a
+/// nanosecond without storing a second transition database in the VM.
+fn find_timezone_transition(timezone: &str, epoch: i128, direction: &str) -> Option<i128> {
+    if timezone.starts_with(['+', '-']) || timezone.eq_ignore_ascii_case("utc") {
+        return None;
+    }
+    let zone = timezone.parse::<chrono_tz::Tz>().ok()?;
+    let offset_at = |value: i128| -> Option<i128> {
+        let seconds = i64::try_from(value.div_euclid(1_000_000_000)).ok()?;
+        let nanos = u32::try_from(value.rem_euclid(1_000_000_000)).ok()?;
+        zone.timestamp_opt(seconds, nanos)
+            .single()
+            .map(|date| i128::from(date.offset().fix().local_minus_utc()) * 1_000_000_000)
+    };
+    let current_offset = offset_at(epoch)?;
+    let base_offset = if direction == "previous" {
+        let before_offset = offset_at(epoch.checked_sub(1)?)?;
+        if before_offset != current_offset {
+            before_offset
+        } else {
+            current_offset
+        }
+    } else {
+        current_offset
+    };
+    let step = 86_400_000_000_000i128;
+    let mut previous = epoch;
+    // Temporal's supported range is enormous, but tzdb has no useful rule
+    // data near its artificial endpoints. Keep the search bounded and cheap
+    // for the boundary probes while covering all practical tzdb history.
+    for _ in 0..200_000 {
+        let candidate = if direction == "next" {
+            previous.checked_add(step)?
+        } else {
+            previous.checked_sub(step)?
+        };
+        if candidate.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
+            return None;
+        }
+        let candidate_offset = offset_at(candidate)?;
+        if candidate_offset != base_offset {
+            let (mut low, mut high) = if direction == "next" {
+                (previous, candidate)
+            } else {
+                (candidate, previous)
+            };
+            if direction == "next" {
+                while high - low > 1 {
+                    let middle = low + (high - low) / 2;
+                    if offset_at(middle)? == base_offset {
+                        low = middle;
+                    } else {
+                        high = middle;
+                    }
+                }
+                return Some(high);
+            }
+            while high - low > 1 {
+                let middle = low + (high - low) / 2;
+                if offset_at(middle)? == base_offset {
+                    high = middle;
+                } else {
+                    low = middle;
+                }
+            }
+            return Some(high);
+        }
+        previous = candidate;
+    }
+    None
+}
+
 pub(crate) fn timezone_start_of_day_epoch(timezone: &str, epoch: i128) -> Option<i128> {
     let seconds = i64::try_from(epoch.div_euclid(1_000_000_000)).ok()?;
     let zone = timezone.parse::<chrono_tz::Tz>().ok()?;
@@ -4161,8 +4235,21 @@ mod stubs {
                     value
                 }
             };
-            let _ = direction;
-            return Ok(Value::Null);
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let transition = super::find_timezone_transition(&timezone, epoch, &direction);
+            let Some(transition) = transition else {
+                return Ok(Value::Null);
+            };
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            return Ok(super::zoned_record_with_calendar(transition, timezone, calendar));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
             return Ok(Value::Object(std::rc::Rc::new(
@@ -4237,7 +4324,9 @@ mod stubs {
         let mut microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
         let mut nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
         let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-        let offset = crate::conversion::to_string(&property("offset")?)?;
+        let offset_nanos = crate::conversion::to_number(&property("offsetNanoseconds")?)? as i128;
+        let offset_nanos = offset_nanos / 60_000_000_000 * 60_000_000_000;
+        let offset = super::format_offset(offset_nanos);
         let options = arguments.first();
         if let Some(value) = options {
             if !matches!(
