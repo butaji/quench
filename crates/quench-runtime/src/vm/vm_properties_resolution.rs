@@ -488,7 +488,7 @@ pub(crate) fn get_property_with_receiver(
         if crate::vm::realm::id_for_global(properties).is_some()
             || crate::vm::is_global_object(&value)
         {
-            if let Some(getter) = crate::property_define::accessor(&value, key, "get") {
+            if let Some(getter) = crate::properties::define::accessor(&value, key, "get") {
                 return match getter {
                     Value::Undefined => Ok(Value::Undefined),
                     getter => invoke_accessor(&getter, receiver),
@@ -518,8 +518,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if matches!(&value, Value::BoundFunction(_))
         && (intrinsic_bound
-            || (crate::property_define::accessor(&value, key, "get").is_none()
-                && crate::property_define::accessor(&value, key, "set").is_none()))
+            || (crate::properties::define::accessor(&value, key, "get").is_none()
+                && crate::properties::define::accessor(&value, key, "set").is_none()))
     {
         if let Value::BoundFunction(bound) = &value {
             if matches!(bound.target, Value::Builtin(builtin) if crate::builtin_meta::is_prototype(builtin))
@@ -773,7 +773,7 @@ fn object_inherited_property_result(
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
-    match crate::property_define::accessor(value, key, "get") {
+    match crate::properties::define::accessor(value, key, "get") {
         None => Ok(receiver_property(value, key, receiver)),
         Some(Value::Undefined) => Ok(Value::Undefined),
         Some(getter) => invoke_accessor(&getter, receiver),
@@ -947,7 +947,7 @@ fn descriptor_property_result(
             }
             return Some(Ok(Value::Undefined));
         }
-        if let Some(getter) = crate::property_define::accessor(value, key, "get") {
+        if let Some(getter) = crate::properties::define::accessor(value, key, "get") {
             return Some(match getter {
                 Value::Undefined => Ok(Value::Undefined),
                 getter => invoke_accessor(&getter, receiver),

@@ -177,7 +177,7 @@ fn instantiate_case_block(
     }
     for case in &statement.cases {
         crate::reduce_support::predeclare_lexicals(&case.consequent, locals, next_slot);
-        crate::using_scope::emit_tdz(&case.consequent, ops, locals);
+        crate::using::scope::emit_tdz(&case.consequent, ops, locals);
         prepare_case_functions(&case.consequent, locals, next_slot, ops);
     }
 }

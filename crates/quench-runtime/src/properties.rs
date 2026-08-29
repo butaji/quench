@@ -2,8 +2,8 @@ use crate::{facts::ProgramDb, literal::reduce_literal, ops::Op};
 use oxc::ast::ast::Expression;
 use std::collections::HashMap;
 const NON_EXTENSIBLE: &str = "\0quench:non_extensible";
-include!("properties_optional.rs");
-include!("properties_named_transition.rs");
+include!("properties/optional.rs");
+include!("properties/named_transition.rs");
 pub(crate) fn reduce(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -186,9 +186,9 @@ pub(crate) fn execute_set_property(
         return write_failure(strict);
     }
     let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
-    if crate::typed_array_ops::is_view(&target) {
-        if crate::typed_array_ops::canonical_numeric_index(&key)
-            && !crate::typed_array_ops::is_index_key(&key)
+    if crate::typed_array::ops::is_view(&target) {
+        if crate::typed_array::ops::canonical_numeric_index(&key)
+            && !crate::typed_array::ops::is_index_key(&key)
         {
             if !typed_array_buffer_detached(&target) {
                 if matches!(
@@ -202,8 +202,8 @@ pub(crate) fn execute_set_property(
             }
             return Ok(());
         }
-        if crate::typed_array_ops::is_index_key(&key) {
-            if let Some(result) = crate::typed_array_ops::set_property(&target, &key, &value) {
+        if crate::typed_array::ops::is_index_key(&key) {
+            if let Some(result) = crate::typed_array::ops::set_property(&target, &key, &value) {
                 let updated = result?;
                 crate::execute::write_value(registers, object, updated);
                 return Ok(());
@@ -418,8 +418,8 @@ fn finish_set_property(
     // installed on `%TypedArray%.prototype` cannot observe the write.
     let parent = crate::builtins::object::get_prototype_of(Some(target))?;
     if parent.typed_array_meta().is_some()
-        && (crate::typed_array_ops::is_index_key(key)
-            || crate::typed_array_ops::canonical_numeric_index(key))
+        && (crate::typed_array::ops::is_index_key(key)
+            || crate::typed_array::ops::canonical_numeric_index(key))
     {
         return ordinary_set(registers, object, target, key, value, strict);
     }
@@ -462,7 +462,7 @@ fn finish_set_property(
         if own_data_property(target, key) {
             None
         } else {
-            crate::property_define::accessor(target, key, "set")
+            crate::properties::define::accessor(target, key, "set")
         }
     };
     if let Some(setter) = setter {
@@ -707,7 +707,7 @@ fn reject_nullish_property_write(
     }
     Ok(())
 }
-include!("properties_function_name.rs");
+include!("properties/function_name.rs");
 
 fn set_builtin_property(
     registers: &mut crate::register_file::RegisterFile,
@@ -805,7 +805,7 @@ pub(crate) fn is_extensible_value(
     Ok(crate::value::Value::Boolean(object_is_extensible(target)))
 }
 
-include!("properties_integrity.rs");
+include!("properties/integrity.rs");
 
 pub(crate) fn prevent_extensions(
     target: Option<&crate::value::Value>,
@@ -912,7 +912,7 @@ pub(crate) fn inherited_write_blocked(target: &crate::value::Value, key: &str) -
         return true;
     }
     if matches!(
-        crate::property_define::accessor(target, key, "writable"),
+        crate::properties::define::accessor(target, key, "writable"),
         Some(crate::value::Value::Boolean(false))
     ) {
         return true;
@@ -960,10 +960,11 @@ fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
     Ok(())
 }
 
-include!("properties_assign.rs");
-include!("properties_copy_data.rs");
-include!("properties_reflect_set.rs");
+include!("properties/assign.rs");
+include!("properties/copy_data.rs");
+include!("properties/reflect_set.rs");
 
-include!("properties_delete.rs");
-include!("properties_methods.rs");
-include!("properties_prototype.rs");
+include!("properties/delete.rs");
+include!("properties/methods.rs");
+include!("properties/prototype.rs");
+pub(crate) mod define;

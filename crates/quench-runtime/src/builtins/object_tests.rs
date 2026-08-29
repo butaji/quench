@@ -37,7 +37,7 @@ fn has_own_observes_function_own_properties() {
             ("custom".to_string(), Value::Boolean(true)),
         ])),
         private_slots: Rc::new(RefCell::new(Vec::new())),
-        private_environment: crate::private_environment::PrivateEnvironment::default(),
+        private_environment: crate::private::environment::PrivateEnvironment::default(),
         instance_fields: Rc::new(RefCell::new(Vec::new())),
     }));
     assert_eq!(
@@ -74,7 +74,7 @@ fn array_accessor_define_keeps_creation_order() {
         with_captures: Vec::new(),
         properties: Rc::new(RefCell::new(Vec::new())),
         private_slots: Rc::new(RefCell::new(Vec::new())),
-        private_environment: crate::private_environment::PrivateEnvironment::default(),
+        private_environment: crate::private::environment::PrivateEnvironment::default(),
         instance_fields: Rc::new(RefCell::new(Vec::new())),
     }));
     let arr = crate::builtins::define_own_property(

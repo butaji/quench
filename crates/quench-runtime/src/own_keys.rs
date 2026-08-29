@@ -128,7 +128,7 @@ fn typed_array_length(value: &Value) -> Option<usize> {
         Value::BigUint64Array(view) => view.logical_len(),
         _ => return None,
     };
-    crate::typed_array_prototype::is_out_of_bounds(value)
+    crate::typed_array::prototype::is_out_of_bounds(value)
         .then_some(0)
         .or(Some(length))
 }

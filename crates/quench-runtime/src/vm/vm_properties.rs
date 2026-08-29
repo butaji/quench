@@ -104,7 +104,7 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
     // An own typed-array property containing `undefined` still shadows its
     // prototype. Keep presence separate from the value so the ordinary
     // prototype fallback cannot resurrect an inherited member.
-    if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
+    if let Some(found) = crate::typed_array::prototype::own_property(value, key) {
         return found;
     }
     let direct = get_property_value(value, key);
@@ -116,12 +116,12 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
         // including out-of-bounds indices.  An OOB read therefore produces
         // `undefined` without consulting the prototype chain (which keeps a
         // user-installed numeric prototype property from leaking through).
-        if crate::typed_array_ops::typed_array_index(key).is_some()
-            || crate::typed_array_ops::canonical_numeric_index(key)
+        if crate::typed_array::ops::typed_array_index(key).is_some()
+            || crate::typed_array::ops::canonical_numeric_index(key)
         {
             return Value::Undefined;
         }
-        if let Some(prototype) = crate::typed_array_prototype::get(value) {
+        if let Some(prototype) = crate::typed_array::prototype::get(value) {
             let inherited = get_property(&prototype, key);
             if !matches!(inherited, Value::Undefined) {
                 return inherited;
@@ -171,7 +171,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
 fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
     use Value::*;
     if key == "constructor" {
-        if let Some(result) = crate::typed_array_prototype::constructor_override(value) {
+        if let Some(result) = crate::typed_array::prototype::constructor_override(value) {
             return result;
         }
     }

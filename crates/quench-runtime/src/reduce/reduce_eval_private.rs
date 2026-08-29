@@ -1,5 +1,5 @@
 fn wrap_eval_for_private(source: &str) -> Option<String> {
-    let current = crate::private_environment::current();
+    let current = crate::private::environment::current();
     if !current.has_names() {
         return None;
     }
@@ -135,7 +135,7 @@ fn remap_expression_privates(expression: &oxc::ast::ast::Expression<'_>, facts: 
 }
 
 fn remap_span(facts: &mut ProgramDb, span: oxc::span::Span, label: &str) {
-    let Some(real) = crate::private_environment::current().id_for_label(label) else {
+    let Some(real) = crate::private::environment::current().id_for_label(label) else {
         return;
     };
     facts.insert_private_name(span, real);

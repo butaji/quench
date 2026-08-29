@@ -348,7 +348,7 @@ pub(crate) fn from_units(units: Vec<u16>) -> Value {
     }
 }
 
-include!("strings_static.rs");
+include!("strings/static.rs");
 
 /// Expand the canonical source into UTF-16 code units at an API boundary.
 ///
@@ -537,7 +537,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     }
 }
 
-include!("strings_execute.rs");
+include!("strings/execute.rs");
 
 pub(crate) fn repeat(
     receiver: Option<&Value>,
@@ -918,9 +918,9 @@ pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
         .unwrap_or_else(|| Value::String(String::new()))
 }
 
-include!("strings_tail.rs");
+include!("strings/tail.rs");
 
-include!("strings_search.rs");
+include!("strings/search.rs");
 
 #[cfg(test)]
 mod tests {

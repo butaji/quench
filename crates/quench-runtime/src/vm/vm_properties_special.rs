@@ -226,7 +226,7 @@ fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
         return inherit_prototype_property(builtin, key);
     }
     let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
-    if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
+    if let Some(getter) = crate::properties::define::accessor(&object_prototype, key, "get") {
         return match getter {
             Value::Undefined => Value::Undefined,
             getter => invoke_accessor(&getter, value).unwrap_or(Value::Undefined),
@@ -437,7 +437,7 @@ fn bound_function_fallback(
         if crate::conversion::is_callable(&bound.target) {
             let function_prototype =
                 crate::vm::realm_intrinsic_for(bound.realm, Builtin::FunctionPrototype);
-            if let Some(getter) = crate::property_define::accessor(&function_prototype, key, "get")
+            if let Some(getter) = crate::properties::define::accessor(&function_prototype, key, "get")
             {
                 return match getter {
                     Value::Undefined => Value::Undefined,
@@ -447,7 +447,7 @@ fn bound_function_fallback(
         }
         if bound.target != Value::Builtin(Builtin::ObjectPrototype) {
             let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
-            if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
+            if let Some(getter) = crate::properties::define::accessor(&object_prototype, key, "get") {
                 return match getter {
                     Value::Undefined => Value::Undefined,
                     getter => invoke_accessor(&getter, &receiver).unwrap_or(Value::Undefined),
@@ -593,10 +593,10 @@ fn promise_property(value: &Value, key: &str) -> Value {
 }
 include!("vm_typed_array_properties.rs");
 fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {
-    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
+    if let Some(index) = crate::typed_array::ops::typed_array_index(key) {
         return Some(get(index).map_or(Value::Undefined, Value::Number));
     }
-    crate::typed_array_ops::canonical_numeric_index(key).then_some(Value::Undefined)
+    crate::typed_array::ops::canonical_numeric_index(key).then_some(Value::Undefined)
 }
 fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value, VmError>> {
     let Value::DataView(view) = value else {

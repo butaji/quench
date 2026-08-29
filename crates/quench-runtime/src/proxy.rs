@@ -5,7 +5,7 @@ use crate::{
 };
 use std::rc::Rc;
 use std::slice;
-include!("proxy_set.rs");
+include!("proxy/set.rs");
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
     let target =
         crate::locals::resolved_replacement(arguments.first().ok_or(VmError::NotCallable)?.clone());
@@ -826,4 +826,4 @@ pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> 
     }
 }
 
-include!("proxy_reflect.rs");
+include!("proxy/reflect.rs");

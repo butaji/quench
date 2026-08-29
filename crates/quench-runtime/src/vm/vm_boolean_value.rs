@@ -172,7 +172,7 @@ fn simple_prelude(
             arguments.first(),
         ))));
     }
-    crate::functions_dynamic::construct_builtin(builtin, arguments)
+    crate::functions::dynamic::construct_builtin(builtin, arguments)
 }
 
 fn wrapped_string(value: &Value) -> Result<Value, crate::execute::VmError> {

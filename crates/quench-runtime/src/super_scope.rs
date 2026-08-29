@@ -385,7 +385,7 @@ fn put_with_receiver(
         crate::proxy::proxy_set(target, key, &value, Some(&receiver))?;
         return Ok(());
     }
-    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
+    if let Some(setter) = crate::properties::define::accessor(target, key, "set") {
         if matches!(setter, Value::Undefined) {
             return strict_write_failure();
         }

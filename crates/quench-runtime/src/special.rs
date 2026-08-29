@@ -74,7 +74,7 @@ fn reduce_chain(
     }
 }
 
-include!("special_private_chain.rs");
+include!("special/private_chain.rs");
 
 fn reduce_static_chain(
     member: &oxc::ast::ast::StaticMemberExpression<'_>,

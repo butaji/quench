@@ -45,7 +45,7 @@ pub(super) fn instantiate_functions(
 ) -> Result<(), Vec<String>> {
     let (ops, next_register, next_slot, locals) = state;
     if !facts.strict && is_global_behavior(behavior) {
-        let collisions = crate::semantic_early::annex_b_lexical_collisions_in(statements);
+        let collisions = crate::semantic::early::annex_b_lexical_collisions_in(statements);
         reserve_annex_b_bindings(statements, locals, next_slot, &collisions);
     }
     let (selected, variables, lexical) = instantiate_context(statements, behavior, !facts.strict);
@@ -97,7 +97,7 @@ fn instantiate_context<'a>(
     let winners = selected_function_names(&selected);
     let mut variables = global_variable_names(statements, &winners);
     if annex_b {
-        let skip = crate::semantic_early::annex_b_lexical_collisions_in(statements);
+        let skip = crate::semantic::early::annex_b_lexical_collisions_in(statements);
         variables.extend(
             crate::reduce_support::annex_b_function_names(statements)
                 .into_iter()
