@@ -599,7 +599,8 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
             let supplied_seconds = offset_seconds(offset);
             let clock = &base[..sign];
             if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(clock, "%Y-%m-%dT%H:%M:%S") {
-                if let Some(epoch) = date_time.and_utc().timestamp_opt().single() {
+                let epoch = date_time.and_utc().timestamp();
+                {
                     if let Ok(zone) = annotation.parse::<chrono_tz::Tz>() {
                         let actual_seconds = zone
                             .timestamp_opt(epoch, 0)
