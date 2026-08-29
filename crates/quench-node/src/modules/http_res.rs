@@ -188,9 +188,21 @@ pub fn res_end(
     let Some(id) = res_state(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    if let Some(data) = args.first() {
-        if !matches!(data, Value::Undefined) {
+    if let Some(data) = args.first().filter(|data| !matches!(data, Value::Undefined)) {
+        let headers_sent = state
+            .borrow()
+            .http
+            .res
+            .get(&id)
+            .map(|res| res.headers_sent)
+            .unwrap_or(false);
+        if headers_sent {
             res_write(state, receiver, std::slice::from_ref(data))?;
+        } else {
+            let bytes = chunk_bytes(Some(data));
+            if let Some(res) = state.borrow_mut().http.res.get_mut(&id) {
+                res.body.extend_from_slice(&bytes);
+            }
         }
     }
     let (status, text, headers, body, socket, keep_alive, headers_sent, chunked) = {
@@ -222,10 +234,9 @@ pub fn res_end(
             conn.response_done = true;
         }
     }
-    // The host transport currently has no pooled parser state; close after
-    // each response so a keep-alive header remains an observable hint without
-    // leaving an unbounded live socket in the event loop.
-    crate::modules::net::socket_end(state, Some(&socket), &[])?;
+    if !keep_alive {
+        crate::modules::net::socket_end(state, Some(&socket), &[])?;
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
