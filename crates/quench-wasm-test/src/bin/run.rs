@@ -9,6 +9,16 @@ fn main() -> ExitCode {
         "wasm tests: {} total, {} passed, {} failed",
         report.total, report.passed, report.failed
     );
+    const PRINT_LIMIT: usize = 100;
+    for failure in report.failures.iter().take(PRINT_LIMIT) {
+        println!("{}", failure.format_line());
+    }
+    if report.failures.len() > PRINT_LIMIT {
+        println!(
+            "... and {} more failures",
+            report.failures.len() - PRINT_LIMIT
+        );
+    }
     if report.failed == 0 {
         ExitCode::SUCCESS
     } else {
