@@ -93,7 +93,14 @@ fn run_code_completion_step_from(
             }
             _ => {}
         }
-        let result = match run_instruction(code, pc, instruction, registers, context) {
+        #[cfg(not(feature = "execution-trace"))]
+        let result = match run_instruction_hot(code, pc, instruction, registers) {
+            Some(result) => result,
+            None => run_instruction(code, pc, instruction, registers, context),
+        };
+        #[cfg(feature = "execution-trace")]
+        let result = run_instruction(code, pc, instruction, registers, context);
+        let result = match result {
             Ok(result) => result,
             Err(error) => return completion_step_after_error(registers, error, pc + 1),
         };
@@ -105,6 +112,88 @@ fn run_code_completion_step_from(
         }
     }
     completion_step_after_transition(registers, crate::completion::Completion::Normal, code.len())
+}
+
+/// Inline the representation-only compact operations that cannot suspend or
+/// invoke host code.  The traced build deliberately uses the canonical
+/// dispatcher so attribution remains complete and deterministic.
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_instruction_hot(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    instruction: crate::ir::Instruction,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    use crate::ir::Opcode;
+    let result = match instruction.opcode {
+        Opcode::LoadConst => {
+            let result = code
+                .constant_at(pc)
+                .ok_or(VmError::MissingReturn)
+                .map(|(_, value)| write_value(registers, instruction.a, value.into()));
+            result.map(|_| None)
+        }
+        Opcode::Move => {
+            let result = if instruction.flags == 1 {
+                crate::locals::move_proven_local(
+                    registers,
+                    instruction.a,
+                    instruction.b,
+                    instruction.c,
+                )
+            } else {
+                copy_register(registers, instruction.a, instruction.b)
+            };
+            result.map(|_| None)
+        }
+        Opcode::LoadLocal => crate::locals::load_proven(registers, instruction.a, instruction.b)
+            .map(|_| None),
+        Opcode::LoadLocalChecked => {
+            let name = code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                .unwrap_or("binding");
+            crate::locals::load_checked(registers, instruction.a, instruction.b, name)
+                .map(|_| None)
+        }
+        Opcode::StoreLocal => crate::locals::store_proven(registers, instruction.a, instruction.b)
+            .map(|_| None),
+        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div => {
+            let operator = match instruction.opcode {
+                Opcode::Add => crate::ops::BinaryOp::Add,
+                Opcode::Sub => crate::ops::BinaryOp::Subtract,
+                Opcode::Mul => crate::ops::BinaryOp::Multiply,
+                Opcode::Div => crate::ops::BinaryOp::Divide,
+                _ => unreachable!(),
+            };
+            vm_arithmetic::execute_binary(
+                registers,
+                instruction.a,
+                operator,
+                instruction.b,
+                instruction.c,
+            )
+            .map(|_| None)
+        }
+        Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)
+            .ok_or_else(|| VmError::EvalError("invalid compact binary operator".into()))
+            .and_then(|operator| {
+                vm_arithmetic::execute_binary(
+                    registers,
+                    instruction.a,
+                    operator,
+                    instruction.b,
+                    instruction.c,
+                )
+            })
+            .map(|_| None),
+        Opcode::Return => read_register(registers, instruction.a)
+            .map(crate::completion::Completion::Return)
+            .map(Some),
+        _ => return None,
+    };
+    Some(result)
 }
 
 #[inline(never)]
