@@ -2,6 +2,7 @@
 //! Node errors. Async variants wrap these and defer the callback.
 
 use std::cell::RefCell;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -99,14 +100,24 @@ fn apply_mode(path: &str, mode: Option<u32>) {
 }
 
 fn read_bytes(path: &str, options: &FsOptions) -> Result<Value, VmError> {
-    let meta = std::fs::metadata(Path::new(path))
-        .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
-    if meta.is_dir() {
-        let err = std::io::Error::from_raw_os_error(21);
-        return Err(super::fs_error::fs_error("read", Some(path), &err));
-    }
-    let bytes = std::fs::read(Path::new(path))
-        .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
+    let bytes = if let Some(flags) = options.flag.as_deref() {
+        let mut file = super::fs::open_options(flags)?
+            .open(path)
+            .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|e| super::fs_error::fs_error("read", Some(path), &e))?;
+        bytes
+    } else {
+        let meta = std::fs::metadata(Path::new(path))
+            .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
+        if meta.is_dir() {
+            let err = std::io::Error::from_raw_os_error(21);
+            return Err(super::fs_error::fs_error("read", Some(path), &err));
+        }
+        std::fs::read(Path::new(path))
+            .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?
+    };
     let target = if let Some(buffer) = options.buffer.clone() {
         if quench_runtime::is_callable(&buffer) {
             quench_runtime::execute::call(
