@@ -447,9 +447,33 @@ pub fn req_write(
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
     let bytes = chunk_bytes(args.first());
-    let mut guard = state.borrow_mut();
-    if let Some(req) = guard.http.clientreqs.get_mut(&id) {
+    if bytes.is_empty() {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    let open = {
+        let mut guard = state.borrow_mut();
+        let Some(req) = guard.http.clientreqs.get_mut(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
         req.body.extend_from_slice(&bytes);
+        req.socket.is_none() && req.agent.as_ref().and_then(custom_connection).is_none()
+    };
+    if open {
+        let target = state.borrow().http.clientreqs.get(&id).map(|req| req.target.clone());
+        if let Some(target) = target {
+            let socket = open_socket(state, &target)?;
+            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+                req.socket = Some(socket.clone());
+                set_request_property(Some(&req.req), "socket", socket.clone());
+                if let Some(agent) = req.agent.clone() {
+                    let name = agent_name(&target, &agent);
+                    add_agent_socket(&agent, &name, &socket);
+                }
+            }
+            if let Some(socket_id) = net::net_id(&socket) {
+                state.borrow_mut().http.clients.insert(socket_id, id);
+            }
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -551,8 +575,20 @@ pub fn req_end(
             true
         }
     });
-    let socket = match custom {
-        Some(connection) => {
+    let existing = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .and_then(|req| req.socket.clone());
+    let socket = match (existing, custom) {
+        (Some(socket), _) => {
+            let mut bytes = head.into_bytes();
+            bytes.extend_from_slice(&body);
+            net::socket_write(state, Some(&socket), &[host_api::bytes(&bytes)])?;
+            socket
+        }
+        (None, Some(connection)) => {
             let mut option_props = vec![
                 ("host".into(), Value::String(host.clone())),
                 ("hostname".into(), Value::String(host.clone())),
@@ -585,7 +621,7 @@ pub fn req_end(
             }
             socket
         }
-        None => send_request(state, &target, &method, &path, &headers, &body, omit_host)?,
+        (None, None) => send_request(state, &target, &method, &path, &headers, &body, omit_host)?,
     };
     let socket_id = net::net_id(&socket);
     let mut guard = state.borrow_mut();
@@ -614,14 +650,7 @@ fn send_request(
     body: &[u8],
     omit_host: bool,
 ) -> Result<Value, VmError> {
-    let host = target_host(target);
-    let socket = match target {
-        RequestTarget::Tcp { host, port } => net::connect(
-            state,
-            &[Value::Number(*port as f64), Value::String(host.clone())],
-        )?,
-        RequestTarget::Unix { path } => net::connect_path(state, path)?,
-    };
+    let socket = open_socket(state, target)?;
     let head = request_head(&request_host(target), method, path, headers, body.len(), omit_host);
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
@@ -631,6 +660,19 @@ fn send_request(
         net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
     }
     Ok(socket)
+}
+
+fn open_socket(
+    state: &Rc<RefCell<HostState>>,
+    target: &RequestTarget,
+) -> Result<Value, VmError> {
+    match target {
+        RequestTarget::Tcp { host, port } => net::connect(
+            state,
+            &[Value::Number(*port as f64), Value::String(host.clone())],
+        ),
+        RequestTarget::Unix { path } => net::connect_path(state, path),
+    }
 }
 
 fn target_host(target: &RequestTarget) -> String {
@@ -962,7 +1004,10 @@ pub fn data_handler(
                 .get(&client_id)
                 .and_then(|req| req.socket.clone())
             {
-                set_response_property(&res, "socket", socket);
+                set_response_property(&res, "socket", socket.clone());
+                // IncomingMessage exposes the same connection identity via
+                // both historical `connection` and modern `socket` names.
+                set_response_property(&res, "connection", socket);
             }
             if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                 req.res = Some(res.clone());

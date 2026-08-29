@@ -25,7 +25,8 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, connect_existing, connect_path, create_server, server_address, server_close, server_listen,
+    connect, connect_existing, connect_path, create_server, server_address, server_close,
+    server_close_idle, server_listen,
     server_ref, server_unref, socket_address, socket_construct, socket_destroy, socket_end,
     socket_pause, socket_ref, socket_resume, socket_set_encoding, socket_set_keep_alive,
     socket_set_no_delay, socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
@@ -225,6 +226,10 @@ fn server_props() -> Vec<(&'static str, Value)> {
     vec![
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
+        (
+            "closeIdleConnections",
+            cap(crate::registry::SPEC_NET_SERVER_CLOSE_IDLE),
+        ),
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
         ("unref", cap(crate::registry::SPEC_NET_SERVER_UNREF)),
         ("ref", cap(crate::registry::SPEC_NET_SERVER_REF)),
