@@ -159,7 +159,21 @@ fn format_clock_duration(
     let time = if !show_hours {
         clock
     } else if hours_numeric {
-        format!("{hours}:{minutes:02}:{second_text}")
+        if minutes == 0
+            && seconds == 0
+            && subsecond == 0
+            && slot_value(slots, "minutesDisplay") == Some("auto")
+            && slot_value(slots, "secondsDisplay") == Some("auto")
+        {
+            format!("{hours}")
+        } else if seconds == 0
+            && subsecond == 0
+            && slot_value(slots, "secondsDisplay") == Some("auto")
+        {
+            format!("{hours}:{minutes:02}")
+        } else {
+            format!("{hours}:{minutes:02}:{second_text}")
+        }
     } else {
         format!("{hours} hr, {clock}")
     };
@@ -172,7 +186,7 @@ fn format_clock_duration(
 
 fn format_seconds_text(seconds: i64, subsecond: i128, slots: &[(String, Value)]) -> String {
     if subsecond == 0 {
-        if seconds.abs() == 1 {
+        if seconds.abs() == 1 && slot_number(slots, "fractionalDigits") != Some(0.0) {
             return if seconds < 0 {
                 "-00.999999999".to_string()
             } else {
@@ -247,7 +261,11 @@ fn format_digital_duration(
         let display = slot_value(slots, &format!("{unit}Display")).unwrap_or("auto");
         if value != 0 || display == "always" {
             prefix.push(if unit == "days" {
-                format_days(value.abs())
+                if value.abs() < 1_000_000 {
+                    format_unit(value.abs(), unit, "short")
+                } else {
+                    format_days(value.abs())
+                }
             } else {
                 format_unit(
                     value.abs(),
@@ -297,7 +315,7 @@ fn decimal_number_format_with_magnitude(raw: &str, digits: u32, magnitude: i128)
     if !fraction.is_empty() {
         let mut carry = if magnitude >= 1_000_000 || whole.len() >= 7 {
             1i32
-        } else if whole != "0" {
+        } else if whole != "0" || (magnitude > 0 && magnitude < 10) {
             -1i32
         } else {
             0
@@ -396,82 +414,22 @@ fn format_standard_duration(
     }
 }
 
-fn format_unit_text(number: &str, unit: &str, style: &str, value: i64) -> String {
+fn format_unit_text(number: &str, unit: &str, style: &str, _value: i64) -> String {
     if style == "narrow" || style == "numeric" || style == "2-digit" {
         return number.to_string();
     }
     let label = if style == "long" {
         match unit {
-            "years" => {
-                if value.abs() == 1 {
-                    "year"
-                } else {
-                    "years"
-                }
-            }
-            "months" => {
-                if value.abs() == 1 {
-                    "month"
-                } else {
-                    "months"
-                }
-            }
-            "weeks" => {
-                if value.abs() == 1 {
-                    "week"
-                } else {
-                    "weeks"
-                }
-            }
-            "days" => {
-                if value.abs() == 1 {
-                    "day"
-                } else {
-                    "days"
-                }
-            }
-            "hours" => {
-                if value.abs() == 1 {
-                    "hour"
-                } else {
-                    "hours"
-                }
-            }
-            "minutes" => {
-                if value.abs() == 1 {
-                    "minute"
-                } else {
-                    "minutes"
-                }
-            }
-            "seconds" => {
-                if value.abs() == 1 {
-                    "second"
-                } else {
-                    "seconds"
-                }
-            }
-            "milliseconds" => {
-                if value.abs() == 1 {
-                    "millisecond"
-                } else {
-                    "milliseconds"
-                }
-            }
-            "microseconds" => {
-                if value.abs() == 1 {
-                    "microsecond"
-                } else {
-                    "microseconds"
-                }
-            }
-            "nanoseconds" => {
-                if value.abs() == 1 {
-                    "nanosecond"
-                } else {
-                    "nanoseconds"
-                }
-            }
+            "years" => "years",
+            "months" => "months",
+            "weeks" => "weeks",
+            "days" => "days",
+            "hours" => "hours",
+            "minutes" => "minutes",
+            "seconds" => "seconds",
+            "milliseconds" => "milliseconds",
+            "microseconds" => "microseconds",
+            "nanoseconds" => "nanoseconds",
             _ => unit,
         }
     } else {
@@ -561,9 +519,9 @@ fn format_unit(value: i64, unit: &str, style: &str) -> String {
         "years" => ("year", "yr", "yr"),
         "months" => ("month", "mo", "mo"),
         "weeks" => ("week", "wk", "wk"),
-        "days" => ("day", "day", "d"),
-        "hours" => ("hour", "hr", "h"),
-        "minutes" => ("minute", "min", "m"),
+        "days" => ("day", "day", "day"),
+        "hours" => ("hour", "hr", "hr"),
+        "minutes" => ("minute", "min", "min"),
         "seconds" => ("second", "sec", "s"),
         "milliseconds" => ("millisecond", "ms", "ms"),
         "microseconds" => ("microsecond", "μ μs", "μs"),
@@ -574,22 +532,18 @@ fn format_unit(value: i64, unit: &str, style: &str) -> String {
         return format!("{value}{narrow}");
     }
     let label = if style == "long" {
-        if value.abs() == 1 {
-            long
-        } else {
-            match unit {
-                "years" => "years",
-                "months" => "months",
-                "weeks" => "weeks",
-                "days" => "days",
-                "hours" => "hours",
-                "minutes" => "minutes",
-                "seconds" => "seconds",
-                "milliseconds" => "milliseconds",
-                "microseconds" => "microseconds",
-                "nanoseconds" => "nanoseconds",
-                _ => long,
-            }
+        match unit {
+            "years" => "years",
+            "months" => "months",
+            "weeks" => "weeks",
+            "days" => "days",
+            "hours" => "hours",
+            "minutes" => "minutes",
+            "seconds" => "seconds",
+            "milliseconds" => "milliseconds",
+            "microseconds" => "microseconds",
+            "nanoseconds" => "nanoseconds",
+            _ => long,
         }
     } else {
         short
