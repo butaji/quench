@@ -60,6 +60,14 @@ async function withFstatSizeZero(callback) {
     readFile(path, { buffer: Buffer.alloc(content.length - 1) }),
     { code: "ERR_INVALID_ARG_VALUE" }
   );
+  await assert.rejects(
+    readFile(path, {
+      buffer() {
+        return Buffer.alloc(content.length - 1);
+      }
+    }),
+    { code: "ERR_INVALID_ARG_VALUE" }
+  );
 
   step = "handle";
   const handle = await open(path, "r");
