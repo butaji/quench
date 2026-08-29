@@ -278,6 +278,7 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
+    if key == "length" || key == "name" { eprintln!("DEBUG bound prop {} {:?}", key, bound.properties.borrow().iter().collect::<Vec<_>>()); }
     let shadow_wrapper = is_shadow_wrapper(bound);
     let deleted = crate::builtins::deleted_key(key);
     if bound
