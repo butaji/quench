@@ -1066,7 +1066,7 @@ mod stubs {
             let year = i32::try_from(year_number).map_err(|_| {
                 crate::value::error::throw_range_error("Invalid ZonedDateTime field")
             })?;
-            if month_code.is_some_and(|(month, leap)| leap || !(1..=12).contains(&month)) {
+            if month_code.is_some_and(|(month, _)| !(1..=12).contains(&month)) {
                 return Err(crate::value::error::throw_range_error("Invalid monthCode"));
             }
             let month = if let Some((month_code, _)) = month_code {
@@ -1127,6 +1127,11 @@ mod stubs {
             } else {
                 super::parse_calendar_identifier(&calendar_value)?
             };
+            if month_code.is_some_and(|(_, leap)| leap)
+                && matches!(calendar.as_str(), "iso8601" | "gregory")
+            {
+                return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+            }
             let timezone = super::parse_timezone_identifier(&timezone_value)?;
             let offset = validated_offset;
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
@@ -1163,11 +1168,20 @@ mod stubs {
                     ));
                 }
             }
-            return Ok(super::zoned_record_with_calendar(
+            let mut result = super::zoned_record_with_calendar(
                 epoch,
                 timezone,
                 calendar,
-            ));
+            );
+            if let Some((month, true)) = month_code {
+                if let Value::Object(object) = &mut result {
+                    std::rc::Rc::make_mut(object).set_property_in_place(
+                        "monthCode",
+                        Value::String(format!("M{month:02}L")),
+                    );
+                }
+            }
+            return Ok(result);
         }
         let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
@@ -1488,7 +1502,8 @@ mod stubs {
             }
             if month_code_provided {
                 let code = crate::conversion::to_string(&month_code)?;
-                if code.ends_with('L') {
+                let calendar_id = crate::conversion::to_string(&property("calendarId")?)?;
+                if code.ends_with('L') && matches!(calendar_id.as_str(), "iso8601" | "gregory") {
                     return Err(crate::value::error::throw_range_error("Invalid monthCode"));
                 }
                 let code_number = code.strip_prefix('M')
