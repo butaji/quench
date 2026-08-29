@@ -1052,6 +1052,8 @@ impl ArrayData {
             };
             std::cell::Cell::new(*number)
         }));
+        self.length
+            .set(self.length.get().saturating_add(values.len()));
         self.kind.set(monotonic_kind(
             self.kind.get(),
             values.iter().fold(self.kind.get(), |kind, value| {
@@ -1073,6 +1075,8 @@ impl ArrayData {
             return false;
         };
         current.borrow_mut().extend_from_slice(values);
+        self.length
+            .set(self.length.get().saturating_add(values.len()));
         true
     }
 
