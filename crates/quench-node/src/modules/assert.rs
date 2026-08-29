@@ -530,9 +530,6 @@ pub fn ok(
         {
             return "The expression evaluated to a falsy value:\n\n  assert['ok'][\"apply\"](null, [0])\n".into();
         }
-        if matches!(args.first(), Some(Value::Boolean(false))) {
-            return "The expression evaluated to a falsy value:\n\n  assert(typeof 123n === 'string')\n".into();
-        }
         if matches!(args.first(), Some(Value::Null))
             && matches!(args.get(1), Some(Value::Undefined))
         {
