@@ -56,7 +56,123 @@ fn canonicalize_subtags(
             Subtag::Extension => return Err(runtime_error("RangeError: invalid language tag")),
         }
     }
-    Ok(canonicalize_grandfathered(deprecated_to_preferred(out)))
+    let canonical = canonicalize_grandfathered(deprecated_to_preferred(out));
+    Ok(reorder_extensions(canonical))
+}
+
+fn reorder_extensions(parts: Vec<String>) -> Vec<String> {
+    let Some(start) = parts.iter().position(|part| part.len() == 1) else {
+        let mut result = parts;
+        reorder_base_variants(&mut result);
+        return result;
+    };
+    let mut result = parts[..start].to_vec();
+    reorder_base_variants(&mut result);
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    let mut index = start;
+    while index < parts.len() {
+        let next = if parts[index] == "x" {
+            parts.len()
+        } else {
+            (index + 1..parts.len())
+                .find(|candidate| parts[*candidate].len() == 1)
+                .unwrap_or(parts.len())
+        };
+        let mut group = parts[index..next].to_vec();
+        if group.first().is_some_and(|part| part == "t") {
+            reorder_transformed_variants(&mut group);
+        }
+        groups.push(group);
+        index = next;
+    }
+    groups.sort_by(|left, right| {
+        let left_private = left.first().is_some_and(|part| part == "x");
+        let right_private = right.first().is_some_and(|part| part == "x");
+        left_private.cmp(&right_private).then_with(|| left[0].cmp(&right[0]))
+    });
+    for group in groups {
+        result.extend(group);
+    }
+    result
+}
+
+fn reorder_base_variants(parts: &mut Vec<String>) {
+    let mut index = 1;
+    if parts.get(index).is_some_and(|part| part.len() == 4) {
+        index += 1;
+    }
+    if parts.get(index).is_some_and(|part| is_region_shape(part)) {
+        index += 1;
+    }
+    parts[index..].sort();
+}
+
+fn reorder_transformed_variants(group: &mut [String]) {
+    for part in group.iter_mut() {
+        if part == "names" {
+            *part = "prprname".to_string();
+        }
+    }
+    let mut index = 1;
+    if let Some(language) = group.get_mut(index) {
+        match language.as_str() {
+            "iw" => *language = "he".to_string(),
+            "in" => *language = "id".to_string(),
+            "ji" => *language = "yi".to_string(),
+            "mo" => *language = "ro".to_string(),
+            "tl" => *language = "fil".to_string(),
+            _ => {}
+        }
+    }
+    if group.len() <= 2 {
+        return;
+    }
+    if group.get(index).is_some_and(|part| is_transformed_language(part)) {
+        index += 1;
+        if let Some(offset) = group[index..].iter().position(|part| {
+            part.len() == 4 && part.chars().all(|c| c.is_ascii_alphabetic())
+        }) {
+            let script = group[index + offset].clone();
+            group[index..=index + offset].rotate_right(1);
+            group[index] = script;
+            index += 1;
+        }
+        if group.get(index).is_some_and(|part| {
+            (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
+                || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+        }) {
+            index += 1;
+        }
+    }
+    let variant_start = index;
+    while let Some(part) = group.get(index) {
+        if (5..=8).contains(&part.len())
+            || (part.len() == 4 && part.as_bytes()[0].is_ascii_digit())
+        {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    group[variant_start..index].sort();
+    if index < group.len() {
+        let mut fields = Vec::new();
+        let mut cursor = index;
+        while cursor < group.len() {
+            let end = (cursor + 1..group.len())
+                .find(|candidate| group[*candidate].len() == 2)
+                .unwrap_or(group.len());
+            fields.push(group[cursor..end].to_vec());
+            cursor = end;
+        }
+        fields.sort_by(|left, right| left[0].cmp(&right[0]));
+        let mut cursor = index;
+        for field in fields {
+            let end = cursor + field.len();
+            group[cursor..end].clone_from_slice(&field);
+            cursor = end;
+        }
+    }
 }
 
 /// IANA Language Subtag Registry: deprecated primary language subtags
@@ -182,6 +298,7 @@ pub(crate) fn canonical_region(part: &str, emitted: &[String]) -> String {
         {
             "AM".to_string()
         }
+        "DD" => "DE".to_string(),
         "SU" | "810" => "RU".to_string(),
         _ => region,
     }

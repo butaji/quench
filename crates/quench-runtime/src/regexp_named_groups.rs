@@ -1,7 +1,4 @@
 fn validate_named_groups(body: &str) -> Result<(), String> {
-    if has_unqualified_k(body) {
-        return Err(syntax_error());
-    }
     validate_duplicate_group_names(body)?;
     let Some(seen) = collect_group_names(body)? else {
         return Ok(());
@@ -258,23 +255,4 @@ fn is_id_continue(ch: char) -> bool {
 fn is_surrogate(ch: char) -> bool {
     let code = ch as u32;
     (0xD800..=0xDFFF).contains(&code)
-}
-
-fn has_unqualified_k(body: &str) -> bool {
-    let bytes = body.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'\\' {
-            if index + 1 < bytes.len()
-                && bytes[index + 1] == b'k'
-                && (index + 2 >= bytes.len() || bytes[index + 2] != b'<')
-            {
-                return true;
-            }
-            index += 2;
-        } else {
-            index += 1;
-        }
-    }
-    false
 }

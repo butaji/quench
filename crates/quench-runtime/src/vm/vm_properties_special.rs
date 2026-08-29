@@ -114,6 +114,9 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         )
         .unwrap_or(Value::Undefined);
     }
+    if builtin == Builtin::Intl && key == "toString" {
+        return Value::Builtin(Builtin::ObjectPrototypeToString);
+    }
     if key == "toString" && callable_builtin_value(value) {
         if let Some(override_value) =
             crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
@@ -275,6 +278,7 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
+    if key == "length" || key == "name" { eprintln!("DEBUG bound prop {} {:?}", key, bound.properties.borrow().iter().collect::<Vec<_>>()); }
     let shadow_wrapper = is_shadow_wrapper(bound);
     let deleted = crate::builtins::deleted_key(key);
     if bound
@@ -490,6 +494,9 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
 fn append_bound_function_metadata(properties: &RefCell<Vec<(String, Value)>>, builtin: Builtin) {
     let entries = &mut *properties.borrow_mut();
     for key in ["length", "name"] {
+        if entries.iter().any(|(name, _)| name == key) {
+            continue;
+        }
         let Some(value) = crate::builtins::callable_property(builtin, key) else {
             continue;
         };
