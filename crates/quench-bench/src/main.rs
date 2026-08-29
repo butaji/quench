@@ -66,7 +66,7 @@ fn main() {
         }
     }
     let fsx = if first == "--all" {
-        let mut v: Vec<_> = fs::read_dir("quench-bench/js-engine-benchmark/v8-v7")
+        let mut v: Vec<_> = fs::read_dir("crates/quench-bench/js-engine-benchmark/v8-v7")
             .unwrap()
             .filter_map(Result::ok)
             .map(|e| e.path())
@@ -135,7 +135,7 @@ fn materialize(f: &PathBuf) -> PathBuf {
         "quench-bench-{}",
         f.file_name().unwrap().to_string_lossy()
     ));
-    let base = fs::read("quench-bench/js-engine-benchmark/v8-v7/base.js").unwrap();
+    let base = fs::read("crates/quench-bench/js-engine-benchmark/v8-v7/base.js").unwrap();
     let fixture = fs::read(f).unwrap();
     let mut source = Vec::with_capacity(base.len() + fixture.len() + RUNNER.len() + 2);
     source.extend_from_slice(&base);
