@@ -261,6 +261,15 @@ pub(crate) fn calendar_days_in_month_for_code(
     calendar_date_for_code(year, code, 1, calendar).map(|date| u32::from(date.days_in_month()))
 }
 
+pub(crate) fn calendar_day_of_year_for_code(
+    year: i32,
+    code: &str,
+    day: u32,
+    calendar: &str,
+) -> Option<u32> {
+    calendar_date_for_code(year, code, day, calendar).map(|date| u32::from(date.day_of_year().0))
+}
+
 pub(crate) struct CalendarDateFields {
     pub year: i32,
     pub month: u32,
