@@ -1252,11 +1252,11 @@ mod stubs {
                 _ => "UTC".into(),
             },
         };
-        Ok(super::zoned_record(
-            epoch,
-            timezone,
-            crate::ops::Builtin::TemporalZonedDateTimePrototype,
-        ))
+        let calendar = crate::conversion::to_string(
+            &crate::execute::get_property_result(value, "calendarId")?,
+        )
+        .unwrap_or_else(|_| "iso8601".into());
+        Ok(super::zoned_record_with_calendar(epoch, timezone, calendar))
     }
 
     fn validate_zoned_string_shape(text: &str) -> Result<(), VmError> {
@@ -1710,11 +1710,8 @@ mod stubs {
                     ))
                 }
             };
-            return Ok(super::zoned_record(
-                epoch,
-                timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
-            ));
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithCalendar {
             let calendar = arguments
@@ -2987,11 +2984,8 @@ mod stubs {
                 ));
             }
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-            return Ok(super::zoned_record(
-                rounded,
-                timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
-            ));
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            return Ok(super::zoned_record_with_calendar(rounded, timezone, calendar));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition {
             let options = arguments
