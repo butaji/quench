@@ -1172,6 +1172,9 @@ mod stubs {
                 "Invalid ZonedDateTime value",
             ));
         }
+        if super::is_zoned_receiver(value, 0) {
+            return Ok(value.clone());
+        }
         let option_string =
             |name: &str, allowed: &[&str], default: &str| -> Result<String, VmError> {
                 let Some(options) = options.filter(|value| !matches!(value, Value::Undefined))
@@ -3578,6 +3581,17 @@ mod stubs {
             let other_calendar = crate::conversion::to_string(
                 &crate::execute::get_property_result(&other, "calendarId")?,
             )?;
+            // Calendar-aware defaults balance by calendar days.  Keeping the
+            // default as hours for non-ISO calendars makes an otherwise
+            // date-only difference observe the epoch length instead of the
+            // calendar date fields.
+            if largest_was_default
+                && largest == "hour"
+                && receiver_calendar != "iso8601"
+                && receiver_calendar != "gregory"
+            {
+                largest = "day".into();
+            }
             if super::plain_date::canonical_calendar_id(&receiver_calendar)
                 != super::plain_date::canonical_calendar_id(&other_calendar)
             {
@@ -3904,8 +3918,8 @@ mod stubs {
                 }
             }
             if (receiver_calendar == "gregory"
-                || receiver_calendar == "iso8601"
-                || (receiver_calendar != "iso8601" && receiver_calendar != "gregory"))
+                && super::timezone_primary_name(&receiver_timezone) == "UTC"
+                || receiver_calendar != "iso8601" && receiver_calendar != "gregory")
                 && matches!(largest.as_str(), "year" | "month" | "week" | "day")
                 && smallest == "nanosecond"
                 && rounding_mode == "trunc"
