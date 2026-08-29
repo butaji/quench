@@ -3577,8 +3577,9 @@ mod stubs {
                     return crate::temporal::duration::construct(&result);
                 }
             }
-            if receiver_calendar != "iso8601"
-                && receiver_calendar != "gregory"
+            if (receiver_calendar == "gregory"
+                && super::timezone_primary_name(&receiver_timezone) == "UTC"
+                || receiver_calendar != "iso8601" && receiver_calendar != "gregory")
                 && matches!(largest.as_str(), "year" | "month" | "week" | "day")
                 && smallest == "nanosecond"
                 && rounding_mode == "trunc"
