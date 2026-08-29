@@ -2323,7 +2323,24 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
         }) {
             from_overflow_option(options)?;
-            return Ok(value.clone());
+            let slots = NAMES
+                .iter()
+                .map(|name| {
+                    object
+                        .iter()
+                        .find(|(key, _)| key == &format!("\0temporal-slot:\0{name}"))
+                        .map(|(_, value)| value.clone())
+                        .unwrap_or(Value::Undefined)
+                })
+                .collect::<Vec<_>>();
+            let calendar = object
+                .iter()
+                .find(|(key, _)| key == "calendarId")
+                .map(|(_, value)| value.clone())
+                .unwrap_or_else(|| Value::String("iso8601".into()));
+            let mut args = slots;
+            args.push(calendar);
+            return construct(&args);
         }
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
@@ -2425,13 +2442,19 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             Value::Undefined
         };
     }
-    let era_value = crate::execute::get_property_result(value, "era")?;
-    let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
     let calendar_name = match &calendar {
         Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value)
             .unwrap_or_else(|| value.clone()),
         Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
         _ => "iso8601".into(),
+    };
+    let (era_value, era_year_value) = if calendar_name == "iso8601" {
+        (Value::Undefined, Value::Undefined)
+    } else {
+        (
+            crate::execute::get_property_result(value, "era")?,
+            crate::execute::get_property_result(value, "eraYear")?,
+        )
     };
     if !matches!(era_value, Value::Undefined) && !present[0] {
         if matches!(era_year_value, Value::Undefined) {
@@ -2488,9 +2511,17 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
         _ => "iso8601".into(),
     };
+    if present[1] && numeric[1] < 0.0 || present[2] && numeric[2] < 0.0 {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
         if !(1.0..=13.0).contains(&month_code) {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+        if matches!(calendar_id.as_str(), "iso8601" | "gregory")
+            && month_code_text_value.as_deref().is_some_and(|code| code.ends_with('L'))
+        {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
         let month_number = month_code_text_value
