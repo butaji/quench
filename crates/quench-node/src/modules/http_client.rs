@@ -669,6 +669,12 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                     format!("{pathname}{}", opt(&options, "search")?.unwrap_or_default())
                 }
             };
+            if path
+                .chars()
+                .any(|character| !(('\u{21}'..='\u{FF}').contains(&character)))
+            {
+                return Err(unescaped_path_error());
+            }
             let mut headers: Vec<(String, String)> = Vec::new();
             if let Ok(hv) = execute::get_property_result(&options, "headers") {
                 if matches!(hv, Value::Array(_)) {
@@ -714,6 +720,19 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
         }
         _ => Err(execute::type_error("options must be a string or object")),
     }
+}
+
+fn unescaped_path_error() -> VmError {
+    let error = execute::type_error("Request path contains unescaped characters");
+    let error = match error {
+        VmError::Thrown(value) => execute::set_property(
+            execute::set_property(value, "code", Value::String("ERR_UNESCAPED_CHARACTERS".into())),
+            "name",
+            Value::String("TypeError".into()),
+        ),
+        other => return other,
+    };
+    VmError::Thrown(error)
 }
 
 fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {
