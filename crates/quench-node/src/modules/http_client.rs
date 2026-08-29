@@ -129,8 +129,8 @@ pub fn req_abort(
         req.aborted = true;
         (req.req.clone(), req.socket.clone())
     };
-    execute::set_property_in_place(&request, "aborted", Value::Boolean(true));
-    execute::set_property_in_place(&request, "destroyed", Value::Boolean(true));
+    set_request_property(receiver, "aborted", Value::Boolean(true));
+    set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
     if let Some(socket) = socket {
         net::socket_destroy(state, Some(&socket), &[])?;
@@ -169,7 +169,7 @@ pub fn req_destroy(
     if already_destroyed {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    execute::set_property_in_place(&request, "destroyed", Value::Boolean(true));
+    set_request_property(receiver, "destroyed", Value::Boolean(true));
     if let Some(error) = args.first().cloned() {
         net::emit(state, &request, "error", vec![error])?;
     } else if response.is_none() {
@@ -178,6 +178,11 @@ pub fn req_destroy(
             &[Value::String("socket hang up".into())],
         );
         let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+        let error_ctor = execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "Error",
+        );
+        let error = execute::set_property(error, "constructor", error_ctor);
         net::emit(state, &request, "error", vec![error])?;
     }
     if let Some(response) = response {
@@ -282,7 +287,7 @@ pub fn req_end(
         )
     };
     if let Some(req_value) = receiver {
-        execute::set_property_in_place(req_value, "finished", Value::Boolean(true));
+        set_request_property(Some(req_value), "finished", Value::Boolean(true));
     }
     let head = request_head(&host, &method, &path, &headers, body.len());
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
@@ -581,6 +586,13 @@ fn client_id(receiver: Option<&Value>) -> Option<u64> {
     match quench_runtime::vm::get_property(receiver, CLIENT_ID_PROP) {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
+    }
+}
+
+fn set_request_property(receiver: Option<&Value>, key: &str, value: Value) {
+    if let Some(receiver) = receiver {
+        let updated = execute::set_property(receiver.clone(), key, value);
+        execute::replace_value(receiver, &updated);
     }
 }
 
