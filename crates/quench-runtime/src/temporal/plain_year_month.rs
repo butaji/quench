@@ -410,7 +410,40 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if matches!(month_value, Value::Undefined) && matches!(month_code_value, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing month"));
     }
-    let code_ordinal = month_code_text.as_deref().and_then(|code| {
+    if let Some(code) = month_code_text.as_deref().filter(|code| code.ends_with('L')) {
+        let exists = crate::temporal::plain_date::calendar_date_from_code(
+            year as i32,
+            code,
+            1,
+            &calendar_name,
+        )
+        .is_some();
+        if !exists && !constrain {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+    }
+    let effective_code = month_code_text.as_deref().and_then(|code| {
+        if !code.ends_with('L')
+            || crate::temporal::plain_date::calendar_date_from_code(
+                year as i32,
+                code,
+                1,
+                &calendar_name,
+            )
+            .is_some()
+        {
+            return Some(code.to_string());
+        }
+        if !constrain {
+            return None;
+        }
+        Some(if calendar_name == "hebrew" && code == "M05L" {
+            "M06".to_string()
+        } else {
+            code.trim_end_matches('L').to_string()
+        })
+    });
+    let code_ordinal = effective_code.as_deref().and_then(|code| {
         (!matches!(calendar_name.as_str(), "iso8601" | "gregory"))
             .then(|| {
                 crate::temporal::plain_date::calendar_date_from_code(
@@ -439,10 +472,22 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
         ));
-    } else if constrain {
-        month.min(12.0)
     } else {
         month
+    };
+    let month = if matches!(calendar_name.as_str(), "iso8601" | "gregory") {
+        if constrain { month.min(12.0) } else { month }
+    } else {
+        let max_month = crate::temporal::plain_date::calendar_months_in_year(
+            year as i32,
+            1,
+            &calendar_name,
+        )
+        .unwrap_or(12) as f64;
+        if month > max_month && !constrain {
+            return Err(crate::value::error::throw_range_error("Invalid PlainYearMonth"));
+        }
+        if constrain { month.min(max_month) } else { month }
     };
     construct_with_calendar(year, month, &calendar_name)
 }
@@ -625,25 +670,33 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let (year, month) = values(receiver)?;
     let name = calendar_name(options)?;
-    let year_text = if year < 0.0 {
-        format!("-{0:06}", (-(year as i32)).unsigned_abs())
-    } else if year > 9999.0 {
-        format!("+{year:06}")
+    let calendar = crate::conversion::to_string(&field(Some(receiver), "calendarId")?)?;
+    let (display_year, display_month, display_day) = if calendar == "iso8601" {
+        (year as i32, month as u32, reference_day(receiver) as u32)
     } else {
-        format!("{year:04}")
+        let serial = crate::temporal::plain_date::calendar_date_serial(year, month, 1.0, &calendar)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainYearMonth"))?;
+        let (year, month, day) = crate::temporal::plain_date::civil_from_serial(serial);
+        (year, month, day)
     };
-    if matches!(name.as_str(), "always" | "critical") {
-        let marker = if name == "critical" {
-            "[!u-ca=iso8601]"
-        } else {
-            "[u-ca=iso8601]"
-        };
-        let day = reference_day(receiver);
-        return Ok(Value::String(format!(
-            "{year_text}-{month:02}-{day:02}{marker}"
-        )));
+    let year_text = if display_year < 0 {
+        format!("-{0:06}", display_year.unsigned_abs())
+    } else if display_year > 9999 {
+        format!("+{display_year:06}")
+    } else {
+        format!("{display_year:04}")
+    };
+    let iso = format!("{year_text}-{display_month:02}");
+    if calendar == "iso8601" && matches!(name.as_str(), "auto" | "never") {
+        return Ok(Value::String(iso));
     }
-    Ok(Value::String(format!("{year_text}-{month:02}")))
+    let date = format!("{iso}-{display_day:02}");
+    let suffix = match name.as_str() {
+        "never" => "".to_string(),
+        "critical" => format!("[!u-ca={calendar}]"),
+        _ => format!("[u-ca={calendar}]"),
+    };
+    Ok(Value::String(format!("{date}{suffix}")))
 }
 
 fn calendar_name(options: Option<&Value>) -> Result<String, VmError> {
@@ -978,6 +1031,34 @@ fn difference(
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
         ));
+    }
+    if left_calendar != "iso8601"
+        && increment == 1.0
+        && rounding_mode == "trunc"
+        && matches!(largest, "year" | "month")
+    {
+        let left_code = crate::execute::get_property_result(receiver, "monthCode")
+            .ok()
+            .and_then(|value| crate::conversion::to_string(&value).ok());
+        let right_code = crate::execute::get_property_result(&right_value, "monthCode")
+            .ok()
+            .and_then(|value| crate::conversion::to_string(&value).ok());
+        if let Some((years, months, _, _)) =
+            crate::temporal::plain_date::calendar_difference_fields(
+                (left.0, left.1, 1.0),
+                (right.0, right.1, 1.0),
+                direction,
+                &left_calendar,
+                largest,
+                left_code,
+                right_code,
+            )
+        {
+            return crate::temporal::duration::construct(&[
+                Value::Number(years as f64),
+                Value::Number(months as f64),
+            ]);
+        }
     }
     let (years, months) = if smallest == "year" {
         (round_increment(total / 12.0, increment, rounding_mode), 0.0)
