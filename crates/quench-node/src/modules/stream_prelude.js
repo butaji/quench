@@ -452,10 +452,7 @@
           stream.readable = false;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
-            // The end transition already runs at the terminal event-loop
-            // edge. Destroy here so close is observable before the next
-            // immediate, matching Node's autoDestroy ordering.
-            stream.destroy();
+            nextTick(() => stream.destroy());
           }
         }
       }));
