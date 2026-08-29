@@ -268,6 +268,7 @@ const CAP_VM_IS_CONTEXT: u16 = crate::registry::SPEC_VM_IS_CONTEXT.cap;
 const CAP_HTTPS_REQUEST: u16 = crate::registry::SPEC_HTTPS_REQUEST.cap;
 const CAP_HTTPS_GET: u16 = crate::registry::SPEC_HTTPS_GET.cap;
 const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
+const CAP_FS_DIR: u16 = 0x116D;
 const CAP_URL_PATTERN: u16 = 2281;
 const CAP_URL_PATTERN_GET: u16 = 2283;
 const CAP_URL_PATTERN_TEST: u16 = 2284;
@@ -971,6 +972,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
         CAP_ASSERTION_ERROR_CONSTRUCTOR => crate::modules::assert::assertion_error_constructor,
+        CAP_FS_DIR => crate::modules::fs::dir_construct,
         CAP_TEST_MOCK_CALL => test_mock_construct,
         CAP_CP_CONSTRUCTOR => cp_constructor,
         0x0E03 => crate::modules::dns::dns_exception,
