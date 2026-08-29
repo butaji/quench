@@ -4,7 +4,7 @@ use crate::{execute::VmError, value::Value};
 
 #[path = "plain_date_tail.rs"]
 mod plain_date_tail;
-use plain_date_tail::{date_object, number};
+use plain_date_tail::{date_object, date_object_with_calendar, number};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
@@ -37,7 +37,14 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
-    Ok(date_object(year, month, day))
+    let calendar = arguments
+        .get(3)
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .unwrap_or("iso8601");
+    Ok(date_object_with_calendar(year, month, day, calendar))
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
@@ -1480,6 +1487,12 @@ fn has_date_fields(object: &crate::value::ObjectData) -> bool {
 
 pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
     let text = crate::conversion::to_string(value)?;
+    if crate::intl::supported_calendars()
+        .iter()
+        .any(|value| matches!(value, Value::String(calendar) if calendar == &text.to_ascii_lowercase()))
+    {
+        return Ok(true);
+    }
     if text.eq_ignore_ascii_case("gregory") {
         return Ok(true);
     }
