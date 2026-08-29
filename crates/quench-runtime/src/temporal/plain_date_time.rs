@@ -914,6 +914,18 @@ fn calendar_getter(
     let year = values[0] as i32;
     let month = values[1] as u32;
     let day = values[2] as u32;
+    let calendar = match receiver {
+        Some(Value::Object(object)) => object
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "calendarId").then(|| match value {
+                    Value::String(value) => value.to_ascii_lowercase(),
+                    _ => "iso8601".into(),
+                })
+            })
+            .unwrap_or_else(|| "iso8601".into()),
+        _ => "iso8601".into(),
+    };
     Ok(match builtin {
         crate::ops::Builtin::TemporalPlainDateTimeDayOfWeekGetter => {
             Value::Number(proleptic_weekday(year, month, day) as f64)
@@ -936,8 +948,16 @@ fn calendar_getter(
         crate::ops::Builtin::TemporalPlainDateTimeInLeapYearGetter => {
             Value::Boolean(chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some())
         }
-        crate::ops::Builtin::TemporalPlainDateTimeEraGetter => Value::Undefined,
-        crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => Value::Undefined,
+        crate::ops::Builtin::TemporalPlainDateTimeEraGetter => crate::temporal::plain_date::era_for_calendar(
+            &calendar,
+            f64::from(year),
+        )
+        .map_or(Value::Undefined, |value| Value::String(value.into())),
+        crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => crate::temporal::plain_date::era_year_for_calendar(
+            &calendar,
+            f64::from(year),
+        )
+        .map_or(Value::Undefined, Value::Number),
         crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => Value::Number(
             chrono::NaiveDate::from_ymd_opt(year, month, day)
                 .map(|date| date.iso_week().week() as f64)
