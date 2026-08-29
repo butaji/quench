@@ -1730,9 +1730,16 @@
   function Duplex(options) {
     if (!(this instanceof Duplex)) return new Duplex(options || {});
     options = options || {};
-    initReadable(this, Object.assign({}, options, { __quenchCompatConstruct: true }));
+    const readableOptions = Object.assign({}, options, {
+      objectMode: options.readableObjectMode ?? options.objectMode,
+      __quenchCompatConstruct: true
+    });
+    const writableOptions = Object.assign({}, options, {
+      objectMode: options.writableObjectMode ?? options.objectMode
+    });
+    initReadable(this, readableOptions);
     this._isDuplex = true;
-    initWritable(this, options);
+    initWritable(this, writableOptions);
     initConstruct(this, options);
     this.allowHalfOpen = options.allowHalfOpen !== false;
     if (options.readable === false) {
