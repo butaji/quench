@@ -48,6 +48,7 @@ test-stream-readable-data.js
 test-stream-readable-ended.js
 test-stream-readable-emit-readable-short-stream.js
 test-stream-once-readable-pipe.js
+test-stream-duplex-writable-finished.js
 test-stream-readable-setEncoding-existing-buffers.js
 test-stream2-readable-empty-buffer-no-eof.js
 test-readable-single-end.js

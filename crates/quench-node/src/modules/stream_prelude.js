@@ -1208,7 +1208,7 @@
     // A duplex with autoDestroy cannot finish its writable side before its
     // readable side has emitted end.  In particular, Transform.end() may
     // queue readable completion and resume() in the same turn.
-    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted &&
+    if (st.autoDestroy && stream._isTransform && !stream._readableState.endEmitted &&
         !stream._finishedWantsWritableOnly) {
       if (!st.finishScheduled) {
         st.finishScheduled = true;
@@ -1626,6 +1626,7 @@
   class Transform extends Duplex {
     constructor(options) {
       super(options || {});
+      this._isTransform = true;
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
       // When the writable side finishes, flush then end the readable side.
