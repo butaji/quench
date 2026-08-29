@@ -857,11 +857,36 @@ fn with(
         month_code_text = Some(text.clone());
         Some(parse_month_code(&text)?)
     };
+    let era_value = crate::execute::get_property_result(changes, "era")?;
+    let era_year_value = crate::execute::get_property_result(changes, "eraYear")?;
     let year_value = crate::execute::get_property_result(changes, "year")?;
-    let year = match &year_value {
+    let year_provided = !matches!(year_value, Value::Undefined);
+    let era_provided = !matches!(era_value, Value::Undefined);
+    let era_year_provided = !matches!(era_year_value, Value::Undefined);
+    if !year_provided && era_provided != era_year_provided {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
+    let mut year = match &year_value {
         Value::Undefined => year,
         value => crate::conversion::to_number(value)?.trunc(),
     };
+    if !year_provided && era_provided {
+        let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        let era = crate::temporal::plain_date::canonical_era_name(&receiver_calendar, &era)
+            .ok_or_else(|| crate::value::error::throw_type_error("Calendar does not use eras"))?;
+        let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+        year = crate::temporal::plain_date::derive_year_from_era(
+            &receiver_calendar,
+            era,
+            era_year,
+        )
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
+    }
     let constrain = overflow_option(options)?;
     // A leap-month PlainYearMonth retains its month code when only the year
     // changes. If that leap month does not exist in the target year, reject or
@@ -905,7 +930,8 @@ fn with(
             }
         }
     }
-    if matches!(year_value, Value::Undefined)
+    if !year_provided
+        && !era_provided
         && matches!(month_value, Value::Undefined)
         && month_code.is_none()
     {
@@ -960,11 +986,15 @@ fn with(
             None => result,
         });
     }
-    construct_with_calendar(
-        year,
-        if constrain { month.min(13.0) } else { month },
-        &receiver_calendar,
-    )
+    let max_month = if crate::temporal::plain_date::calendar_supports_month13(&receiver_calendar) {
+        13.0
+    } else {
+        12.0
+    };
+    if !constrain && month > max_month {
+        return Err(crate::value::error::throw_range_error("Invalid PlainYearMonth"));
+    }
+    construct_with_calendar(year, if constrain { month.min(max_month) } else { month }, &receiver_calendar)
 }
 
 fn preserve_month_code(mut result: Value, year: f64, code: &str, calendar: &str) -> Value {
