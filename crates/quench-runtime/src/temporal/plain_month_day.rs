@@ -930,6 +930,17 @@ fn with(
     } else {
         Some(crate::conversion::to_string(&month_code)?)
     };
+    let receiver_calendar = crate::execute::get_property_result(receiver, "calendarId")
+        .ok()
+        .and_then(|value| crate::conversion::to_string(&value).ok())
+        .unwrap_or_else(|| "iso8601".into());
+    if receiver_calendar != "iso8601" && month_number.is_some()
+        && month_code.is_none()
+    {
+        return Err(crate::value::error::throw_type_error(
+            "monthCode is required for non-ISO PlainMonthDay",
+        ));
+    }
     let year_value = crate::execute::get_property_result(changes, "year")?;
     let year = if matches!(year_value, Value::Undefined) {
         reference_year(receiver)
