@@ -402,7 +402,9 @@ fn replace_plain_array_index(
     value: &crate::value::Value,
 ) {
     let mut data = values.as_ref().clone();
-    data.set_index(index, value.clone());
+    data.set_length(values.logical_len());
+    let value = value.clone();
+    data.set_index(index, value);
     let updated = crate::value::Value::Array(std::rc::Rc::new(data));
     crate::locals::replace_value(receiver, &updated);
 }
