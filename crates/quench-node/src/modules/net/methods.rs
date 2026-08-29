@@ -53,6 +53,25 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         object
     };
     let object = install_socket_counters(object)?;
+    state.borrow_mut().net.sockets.insert(
+        _id,
+        Rc::new(RefCell::new(NetSocket {
+            id: _id,
+            stream: None,
+            js: object.clone(),
+            state: SocketState::Open,
+            server_id: None,
+            write_buf: Vec::new(),
+            bytes_read: 0,
+            bytes_written: 0,
+            read_eof: false,
+            close_emitted: false,
+            connect_announced: false,
+            peer: None,
+            local: None,
+            encoding: None,
+        })),
+    );
     install_methods(
         object,
         vec![(
@@ -684,7 +703,7 @@ pub fn server_ref(
 pub fn server_address(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(id) = receiver.and_then(net_id) else {
         return Ok(Value::Null);
@@ -784,7 +803,7 @@ pub fn socket_end(
 pub fn socket_destroy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
     let Some(id) = net_id(&receiver) else {
@@ -793,12 +812,21 @@ pub fn socket_destroy(
     let mut emit_close = false;
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
+        let error = args.first().cloned();
+        let was_closed = guard.state == SocketState::Closed;
         if guard.state != SocketState::Closed {
             if let Some(stream) = guard.stream.take() {
                 let _ = stream.shutdown(Shutdown::Both);
             }
             guard.state = SocketState::Closed;
             emit_close = true;
+        }
+        drop(guard);
+        if let Some(error) = error {
+            emit(state, &receiver, "error", vec![error])?;
+        }
+        if was_closed {
+            return Ok(receiver);
         }
     }
     if emit_close {
