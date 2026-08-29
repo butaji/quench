@@ -114,6 +114,9 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         )
         .unwrap_or(Value::Undefined);
     }
+    if builtin == Builtin::Intl && key == "toString" {
+        return Value::Builtin(Builtin::ObjectPrototypeToString);
+    }
     if key == "toString" && callable_builtin_value(value) {
         if let Some(override_value) =
             crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
