@@ -440,6 +440,9 @@ pub fn req_end(
         if req.aborted {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
+        if matches!(execute::get_property(&req.req, "finished"), Value::Boolean(true)) {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        }
         (
             req.target.clone(),
             req.method.clone(),
@@ -893,6 +896,8 @@ pub fn res_end_handler(
             }
         };
         if should_close {
+            let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+            set_request_property(Some(&request), "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
         }
     }
