@@ -524,6 +524,7 @@ pub const SPEC_HTTP_RES_FLUSH_HEADERS: NodeSpec = NodeSpec::new("http:res:flushH
 pub const SPEC_HTTP_INCOMING: NodeSpec = NodeSpec::new("http:IncomingMessage", 0x0F1B);
 pub const SPEC_HTTP_INCOMING_DESTROY: NodeSpec = NodeSpec::new("http:IncomingMessage:destroy", 0x0F1C);
 pub const SPEC_HTTP_REQ_SIGNAL_ABORT: NodeSpec = NodeSpec::new("http:req:signalAbort", 0x0F1D);
+pub const SPEC_HTTP_REQ_ERROR: NodeSpec = NodeSpec::new("http:req:error", 0x0F1E);
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
 pub const SPEC_NET_SOCKET: NodeSpec = NodeSpec::new("net:Socket", 0x1013);
@@ -1054,6 +1055,7 @@ pub const CAP_HTTP_CONN: CapId = SPEC_HTTP_CONN.cap;
 pub const CAP_HTTP_DATA: CapId = SPEC_HTTP_DATA.cap;
 pub const CAP_HTTP_GET: CapId = SPEC_HTTP_GET.cap;
 pub const CAP_HTTP_REQCLOSE: CapId = SPEC_HTTP_REQCLOSE.cap;
+pub const CAP_HTTP_REQ_ERROR: CapId = SPEC_HTTP_REQ_ERROR.cap;
 pub const CAP_HTTP_REQUEST: CapId = SPEC_HTTP_REQUEST.cap;
 pub const CAP_HTTP_REQ_END: CapId = SPEC_HTTP_REQ_END.cap;
 pub const CAP_HTTP_REQ_RESUME: CapId = SPEC_HTTP_REQ_RESUME.cap;
