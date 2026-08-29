@@ -19,9 +19,10 @@ server.listen(0, '127.0.0.1', () => {
 
   function consume() {
     const m = buf.match(
-      /^HTTP\/1\.1 200 OK\r\nContent-Length: (\d+)\r\nConnection: keep-alive\r\n\r\n/
+      /^HTTP\/1\.1 200 OK\r\n(?:[^\r\n]+\r\n)*Content-Length: (\d+)\r\n(?:[^\r\n]+\r\n)*\r\n/
     );
     if (!m) return;
+    assert.match(m[0], /Connection: keep-alive\r\n/);
     const len = +m[1];
     const headLen = m[0].length;
     if (buf.length < headLen + len) return;
