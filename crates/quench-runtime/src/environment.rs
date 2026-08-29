@@ -385,6 +385,12 @@ impl SlotRefs {
         if index >= self.len() {
             return None;
         }
+        if self.suffix_overrides.is_empty() {
+            return Some(use_binding(
+                self.suffix_store.as_deref()?,
+                index - self.prefix_len,
+            ));
+        }
         if let Ok(found) = self
             .suffix_overrides
             .binary_search_by_key(&index, |entry| entry.slot)
