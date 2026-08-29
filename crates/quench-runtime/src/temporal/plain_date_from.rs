@@ -212,6 +212,13 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     let mut year = crate::execute::get_property_result(value, "year")?;
     let era = crate::execute::get_property_result(value, "era")?;
     let era_year = crate::execute::get_property_result(value, "eraYear")?;
+    let era_provided = !matches!(era, Value::Undefined);
+    let era_year_provided = !matches!(era_year, Value::Undefined);
+    if era_provided != era_year_provided {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
     }
@@ -234,9 +241,13 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         None
     } else {
         let text = crate::conversion::to_string(&era)?.to_ascii_lowercase();
-        let canonical = canonical_era_name(calendar_name, &text)
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
-        Some(canonical)
+        match canonical_era_name(calendar_name, &text) {
+            Some(canonical) => Some(canonical),
+            None if era_for_calendar(calendar_name, 0.0).is_some() => {
+                return Err(crate::value::error::throw_range_error("Invalid era"));
+            }
+            None => None,
+        }
     };
     if matches!(year, Value::Undefined) {
         let era_year = if matches!(era_year, Value::Undefined) {
@@ -252,6 +263,9 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             (Some(era), Some(value)) => derive_year_from_era(calendar_name, era, value)
                 .map(Value::Number)
                 .ok_or_else(|| crate::value::error::throw_type_error("Missing year"))?,
+            (None, Some(_)) => {
+                return Err(crate::value::error::throw_type_error("Calendar does not use eras"));
+            }
             _ => return Err(crate::value::error::throw_type_error("Missing year")),
         };
     }
