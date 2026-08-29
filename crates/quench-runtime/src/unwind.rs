@@ -28,6 +28,8 @@ pub enum Trap {
     NullStruct,
     NullExn,
     NullFunc,
+    UnalignedAtomic,
+    ExpectedShared,
     Unimplemented,
 }
 
@@ -52,6 +54,8 @@ impl Trap {
             Self::NullStruct => "null structure reference",
             Self::NullExn => "null exception reference",
             Self::NullFunc => "null function reference",
+            Self::UnalignedAtomic => "unaligned atomic",
+            Self::ExpectedShared => "expected shared memory",
             Self::Unimplemented => "unimplemented",
         }
     }

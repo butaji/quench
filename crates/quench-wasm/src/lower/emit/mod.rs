@@ -1,5 +1,6 @@
 //! Stack-to-register lowering, including structured control.
 
+mod atomic;
 mod ops;
 
 use quench_runtime::hir::{
@@ -29,6 +30,7 @@ struct Ctrl {
     end_jumps: Vec<usize>,
     else_jump: Option<usize>,
     catch_fixups: Vec<(usize, usize)>,
+    catching: bool,
 }
 
 pub struct Context<'a> {
@@ -112,6 +114,9 @@ fn emit(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError> {
     if ops::emit_numeric(ctx, &op)? {
         return Ok(());
     }
+    if atomic::emit(ctx, &op)? {
+        return Ok(());
+    }
     match op {
         Operator::Nop => ctx.emit(Inst::Nop),
         Operator::Unreachable => {
@@ -163,6 +168,14 @@ fn emit(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError> {
         } => emit_br_on_cast(ctx, relative_depth, to_ref_type, true)?,
         Operator::I8x16Shuffle { lanes } => emit_shuffle(ctx, lanes)?,
         Operator::Throw { tag_index } => emit_throw(ctx, tag_index)?,
+        Operator::Try { blockty } => emit_legacy_try(ctx, blockty)?,
+        Operator::Catch { tag_index } => emit_legacy_catch(ctx, Some(tag_index))?,
+        Operator::CatchAll => emit_legacy_catch(ctx, None)?,
+        Operator::Delegate { relative_depth } => emit_legacy_delegate(ctx, relative_depth)?,
+        Operator::Rethrow { relative_depth: _ } => {
+            ctx.emit(Inst::Rethrow);
+            ctx.unreachable = true;
+        }
         Operator::TryTable { try_table } => emit_try_table(ctx, try_table)?,
         Operator::I64Add128 => emit_wide(ctx, quench_runtime::hir::WideOp::Add128, 4)?,
         Operator::I64Sub128 => emit_wide(ctx, quench_runtime::hir::WideOp::Sub128, 4)?,
@@ -404,6 +417,10 @@ fn emit_unreachable(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), Lower
         }
         Operator::Else => emit_else(ctx),
         Operator::End => emit_end(ctx),
+        Operator::Try { blockty } => emit_legacy_try(ctx, blockty),
+        Operator::Catch { tag_index } => emit_legacy_catch(ctx, Some(tag_index)),
+        Operator::CatchAll => emit_legacy_catch(ctx, None),
+        Operator::Delegate { relative_depth } => emit_legacy_delegate(ctx, relative_depth),
         _ => Ok(()),
     }
 }
@@ -473,6 +490,7 @@ fn push_ctrl(
         end_jumps: Vec::new(),
         else_jump: None,
         catch_fixups: Vec::new(),
+        catching: false,
     });
     Ok(())
 }
@@ -530,7 +548,7 @@ fn emit_end(ctx: &mut Context<'_>) -> Result<(), LowerError> {
     if !ctx.unreachable {
         move_into(ctx, &ctrl.result_regs)?;
     }
-    if matches!(ctrl.kind, CtrlKind::Try) {
+    if matches!(ctrl.kind, CtrlKind::Try) && !ctrl.catching {
         ctx.emit(Inst::TryEnd);
     }
     ctx.stack.truncate(ctrl.height);
@@ -1129,6 +1147,83 @@ fn emit_try_table(ctx: &mut Context<'_>, table: wasmparser::TryTable) -> Result<
         *catches = clauses.into_boxed_slice();
     }
     push_ctrl(ctx, CtrlKind::Try, params, results)
+}
+
+fn emit_legacy_try(ctx: &mut Context<'_>, ty: BlockType) -> Result<(), LowerError> {
+    let (params, results) = sig(ctx, ty)?;
+    let try_at = ctx.code.len() as u32;
+    ctx.emit(Inst::TryBegin {
+        catches: Box::new([]),
+    });
+    push_ctrl(ctx, CtrlKind::Try, params, results)?;
+    ctx.ctrl.last_mut().ok_or(LowerError::Unsupported)?.start = try_at;
+    Ok(())
+}
+
+fn emit_legacy_catch(ctx: &mut Context<'_>, tag: Option<u32>) -> Result<(), LowerError> {
+    let n = ctx.ctrl.len();
+    let index = n.checked_sub(1).ok_or(LowerError::Unsupported)?;
+    if !matches!(ctx.ctrl[index].kind, CtrlKind::Try) {
+        return Err(LowerError::Unsupported);
+    }
+    let height = ctx.ctrl[index].height;
+    let result_regs = ctx.ctrl[index].result_regs.clone();
+    let try_at = ctx.ctrl[index].start as usize;
+    if !ctx.ctrl[index].catching {
+        if !ctx.unreachable {
+            move_into(ctx, &result_regs)?;
+        }
+        ctx.emit(Inst::TryEnd);
+        let jmp = ctx.code.len();
+        ctx.emit(Inst::Jump { target: 0 });
+        ctx.ctrl[index].end_jumps.push(jmp);
+        ctx.ctrl[index].catching = true;
+    } else if !ctx.unreachable {
+        move_into(ctx, &result_regs)?;
+        let jmp = ctx.code.len();
+        ctx.emit(Inst::Jump { target: 0 });
+        ctx.ctrl[index].end_jumps.push(jmp);
+    }
+    ctx.stack.truncate(height);
+    ctx.unreachable = false;
+    let arity = tag
+        .and_then(|t| ctx.tag_arities.get(t as usize).copied())
+        .unwrap_or(0);
+    let mut dsts = Vec::with_capacity(arity);
+    for _ in 0..arity {
+        let r = ctx.alloc()?;
+        ctx.push(r);
+        dsts.push(r);
+    }
+    let here = ctx.code.len() as u32;
+    if let Inst::TryBegin { catches } = &mut ctx.code[try_at] {
+        let mut list = catches.to_vec();
+        list.push(CatchClause {
+            tag,
+            with_ref: false,
+            target: here,
+            dsts: dsts.into_boxed_slice(),
+        });
+        *catches = list.into_boxed_slice();
+    }
+    Ok(())
+}
+
+fn emit_legacy_delegate(ctx: &mut Context<'_>, depth: u32) -> Result<(), LowerError> {
+    let try_at = ctx
+        .ctrl
+        .last()
+        .map(|c| c.start as usize)
+        .ok_or(LowerError::Unsupported)?;
+    if let Inst::TryBegin { catches } = &mut ctx.code[try_at] {
+        *catches = Box::new([CatchClause {
+            tag: None,
+            with_ref: false,
+            target: 0x8000_0000 | depth,
+            dsts: Box::new([]),
+        }]);
+    }
+    emit_end(ctx)
 }
 
 fn emit_gc(ctx: &mut Context<'_>, op: GcOp, nargs: usize, has_dst: bool) -> Result<(), LowerError> {
