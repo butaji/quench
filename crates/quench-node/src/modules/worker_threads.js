@@ -187,10 +187,9 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
       if (onmessageListener) port.on('message', onmessageListener);
     }
   });
-  port.postMessage = function (value) {
+  port.postMessage = function (value, transfer) {
     var cloned = cloneMessage(value);
     var transferredPorts = [];
-    var transfer = arguments[1];
     var options = transfer && typeof transfer === 'object' && !Array.isArray(transfer) &&
       Object.prototype.hasOwnProperty.call(transfer, 'transfer');
     if (options) {
@@ -238,21 +237,17 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
       transfer = iterable;
     }
     if (transfer && typeof transfer.length === 'number') {
-      for (var t = 0; t < transfer.length; t++) {
-        var item = transfer[t];
+      Array.prototype.forEach.call(transfer, function (item) {
         if (item && typeof item.postMessage === 'function' && typeof item.close === 'function') {
           transferredPorts.push(item);
-          continue;
+          return;
         }
-        var buffer = item instanceof ArrayBuffer ? item : item && item.buffer;
-        if (buffer instanceof ArrayBuffer) {
-          try { buffer.transfer(); } catch (_) {
-            throw Object.assign(new Error('ArrayBuffer is not transferable'), {
-              name: 'DataCloneError', code: 25
-            });
-          }
+        try { ArrayBuffer.prototype.transfer.call(item); } catch (_) {
+          throw Object.assign(new Error('ArrayBuffer is not transferable'), {
+            name: 'DataCloneError', code: 25
+          });
         }
-      }
+      });
     }
     if (!this._closed && this._peer && !this._peer._closed) {
       var peer = this._peer;

@@ -76,6 +76,20 @@ pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
     string_byte_len_fits_limit(value.len())
 }
 
+pub(crate) fn replace_discard_string(
+    input: &str,
+    regexp: &Value,
+    replacement: &Value,
+) -> Result<(), crate::execute::VmError> {
+    crate::regexp::execute_builtin(
+        crate::ops::Builtin::RegExpSymbolReplace,
+        Some(regexp),
+        &[Value::String(input.into()), replacement.clone()],
+    )
+    .ok_or(crate::execute::VmError::NotCallable)?
+    .map(|_| ())
+}
+
 #[cfg(test)]
 mod hash_tests {
     use super::{
@@ -621,6 +635,7 @@ pub(crate) fn char_code_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    let units = receiver_units(receiver)?;
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -628,12 +643,7 @@ pub(crate) fn char_code_at(
     if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
-    let index = index as usize;
-    let unit = match receiver {
-        Some(Value::String(value)) => value.encode_utf16().nth(index),
-        Some(Value::StringUnits(units)) => units.get(index).copied(),
-        _ => string_receiver(receiver)?.encode_utf16().nth(index),
-    };
+    let unit = units.get(index as usize).copied();
     Ok(unit.map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64)))
 }
 

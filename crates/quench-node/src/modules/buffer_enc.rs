@@ -160,31 +160,7 @@ fn encode_units(units: &[u16], encoding: &str) -> Vec<u8> {
 }
 
 fn utf8_units(units: &[u16]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(units.len());
-    let mut index = 0;
-    while index < units.len() {
-        let unit = units[index];
-        let code_point = if (0xD800..=0xDBFF).contains(&unit) {
-            let next = units.get(index + 1).copied();
-            if let Some(next) = next.filter(|next| (0xDC00..=0xDFFF).contains(next)) {
-                index += 1;
-                0x1_0000 + (((unit - 0xD800) as u32) << 10) + (next - 0xDC00) as u32
-            } else {
-                0xFFFD
-            }
-        } else if (0xDC00..=0xDFFF).contains(&unit) {
-            0xFFFD
-        } else {
-            unit as u32
-        };
-        let mut encoded = [0; 4];
-        let text = char::from_u32(code_point)
-            .unwrap_or('\u{FFFD}')
-            .encode_utf8(&mut encoded);
-        bytes.extend_from_slice(text.as_bytes());
-        index += 1;
-    }
-    bytes
+    String::from_utf16_lossy(units).into_bytes()
 }
 
 /// Decode bytes to a string under a canonical encoding.
