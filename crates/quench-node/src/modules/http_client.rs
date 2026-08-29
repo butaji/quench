@@ -37,6 +37,7 @@ pub struct ClientReq {
     pub head_parsed: bool,
     pub aborted: bool,
     pub response_ended: bool,
+    pub response_closed: bool,
 }
 
 pub fn agent_call(
@@ -123,6 +124,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             head_parsed: false,
             aborted: false,
             response_ended: false,
+            response_closed: false,
         },
     );
     drop(guard);
@@ -131,13 +133,15 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             state.borrow_mut().http.client_signals.insert(target, id);
             let listener = crate::host::capability(crate::registry::SPEC_HTTP_REQ_SIGNAL_ABORT);
             let options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
-            crate::modules::event_target::add_event_listener(
-                state,
-                Some(&signal),
-                &[Value::String("abort".into()), listener, options],
-            )?;
             if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+                state.borrow_mut().http.client_signals.remove(&target);
                 preabort_request(state, &req);
+            } else {
+                crate::modules::event_target::add_event_listener(
+                    state,
+                    Some(&signal),
+                    &[Value::String("abort".into()), listener, options],
+                )?;
             }
         }
     }
@@ -286,6 +290,9 @@ pub fn req_destroy(
         let signal = execute::get_property(&response, "signal");
         if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
             crate::modules::http::abort_http_signal(state, &signal)?;
+        }
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.response_closed = true;
         }
         net::emit(state, &response, "close", Vec::new())?;
     }
@@ -743,6 +750,21 @@ pub fn res_end_handler(
         set_response_property(&res, "complete", Value::Boolean(true));
         set_response_property(&res, "readable", Value::Boolean(false));
         net::emit(state, &res, "end", Vec::new())?;
+        let should_close = {
+            let mut guard = state.borrow_mut();
+            let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
+                return Ok(Value::Undefined);
+            };
+            if req.response_closed {
+                false
+            } else {
+                req.response_closed = true;
+                true
+            }
+        };
+        if should_close {
+            net::emit(state, &res, "close", Vec::new())?;
+        }
     }
     Ok(Value::Undefined)
 }
@@ -839,6 +861,7 @@ fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Optio
 
 fn set_request_property(receiver: Option<&Value>, key: &str, value: Value) {
     if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, key, value.clone());
         let updated = execute::set_property(receiver.clone(), key, value);
         execute::replace_value(receiver, &updated);
     }
