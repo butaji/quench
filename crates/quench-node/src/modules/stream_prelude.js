@@ -30,7 +30,8 @@
         // A readable listener keeps a zero-HWM stream in manual-read mode.
         const manualRead = this._readableState.highWaterMark === 0 &&
           this.listenerCount("readable") > 0 ||
-          (this._readableState.readableListening &&
+          (!this._readableState.pipeRequested &&
+            this._readableState.readableListening &&
             this._readableState.readableListenerTurnPending);
         if (!manualRead) this.resume();
         // The first data listener starts pulling before the next promise
@@ -88,7 +89,8 @@
       if (name === "data" && this._readableState) {
         const manualRead = this._readableState.highWaterMark === 0 &&
           this.listenerCount("readable") > 0 ||
-          (this._readableState.readableListening &&
+          (!this._readableState.pipeRequested &&
+            this._readableState.readableListening &&
             this._readableState.readableListenerTurnPending);
         if (!manualRead) this.resume();
         if (!manualRead && !this._readableState.reading && !this._readableState.ended) {
@@ -319,6 +321,7 @@
       readableEofReadScheduled: false,
       unshiftedSinceRead: false,
       readableListenerTurnPending: false,
+      pipeRequested: false,
       errored: null,
       errorEmitted: false,
       closeEmitted: false,
@@ -828,7 +831,9 @@
       };
       record.cleanup = cleanup;
       state.pipeRecords.push(record);
+      state.pipeRequested = true;
       source.on("data", ondata);
+      state.pipeRequested = false;
       source.on("end", onend);
       source.on("end", cleanup);
       source.on("close", onclose);
