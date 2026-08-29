@@ -513,6 +513,24 @@ fn invalid_callback(name: &str) -> VmError {
     ]))
 }
 
+fn hook_callback(options: &Value, name: &str) -> Result<Option<Value>, VmError> {
+    let value = execute::get_property_result(options, name)?;
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
+    if quench_runtime::is_callable(&value) {
+        return Ok(Some(value));
+    }
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_ASYNC_CALLBACK".into())),
+        (
+            "message".into(),
+            Value::String(format!("hook.{name} must be a function")),
+        ),
+    ])))
+}
+
 fn local_capability(spec: crate::registry::NodeSpec) -> HostCapabilityRef {
     HostCapabilityRef {
         realm: quench_runtime::vm::current_context().realm(),
@@ -1000,17 +1018,21 @@ pub fn create_hook(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args.first().cloned().unwrap_or(Value::Undefined);
-    let callback = |name: &str| id_property(&options, name).filter(quench_runtime::is_callable);
+    let init = hook_callback(&options, "init")?;
+    let before = hook_callback(&options, "before")?;
+    let after = hook_callback(&options, "after")?;
+    let destroy = hook_callback(&options, "destroy")?;
+    let resolve = hook_callback(&options, "promiseResolve")?;
     let mut host = state.borrow_mut();
     let id = host.async_hooks.next_hook_id;
     host.async_hooks.next_hook_id += 1;
     host.async_hooks.hooks.push(Hook {
         id,
-        init: callback("init"),
-        before: callback("before"),
-        after: callback("after"),
-        destroy: callback("destroy"),
-        resolve: callback("promiseResolve"),
+        init,
+        before,
+        after,
+        destroy,
+        resolve,
         ..Hook::default()
     });
     drop(host);
