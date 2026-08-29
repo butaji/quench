@@ -522,17 +522,21 @@ fn calendar_difference(
         weeks = 0;
         days = rounded as i64;
     }
-    if matches!(smallest, "year" | "month" | "week")
-        && (days != 0 || time_fraction_days != 0.0)
-    {
+    if matches!(smallest, "year" | "month" | "week") && (days != 0 || time_fraction_days != 0.0) {
         let unit_value = match smallest {
             "year" => {
                 let (year_anchor, residual_days) = if receiver_is_end {
                     let receiver_anchor = add_months_serial(end, -(years * 12));
-                    (receiver_anchor, (receiver_anchor - start_serial) as f64 + time_fraction_days)
+                    (
+                        receiver_anchor,
+                        (receiver_anchor - start_serial) as f64 + time_fraction_days,
+                    )
                 } else {
                     let year_anchor = add_months_serial(start, years * 12);
-                    (year_anchor, (end_serial - year_anchor) as f64 + time_fraction_days)
+                    (
+                        year_anchor,
+                        (end_serial - year_anchor) as f64 + time_fraction_days,
+                    )
                 };
                 let anchor_year = start[0] as i32 + years as i32;
                 let year_days = if days_in_month(anchor_year, 2) == 29 {
@@ -612,8 +616,7 @@ fn calendar_difference(
         } else {
             end_serial - year_anchor
         };
-        let residual = i128::from(residual_days) * 86_400_000_000_000
-            + time_of_day_nanos(end)
+        let residual = i128::from(residual_days) * 86_400_000_000_000 + time_of_day_nanos(end)
             - time_of_day_nanos(start);
         let rounded_residual = round_integer(residual, smallest_scale * increment as i128, mode);
         if rounded_residual >= year_length * 86_400_000_000_000 {
@@ -623,13 +626,12 @@ fn calendar_difference(
             carried_year = true;
         }
     }
-    let mut time_remainder = if carried_year
-        || matches!(smallest, "year" | "month" | "week" | "day")
-    {
-        0
-    } else {
-        time_of_day_nanos(end) - time_of_day_nanos(start)
-    };
+    let mut time_remainder =
+        if carried_year || matches!(smallest, "year" | "month" | "week" | "day") {
+            0
+        } else {
+            time_of_day_nanos(end) - time_of_day_nanos(start)
+        };
     if time_remainder < 0 {
         days -= 1;
         time_remainder += 86_400_000_000_000;
@@ -778,10 +780,7 @@ fn to_zoned_date_time(
     if !(-INSTANT_LIMIT..=INSTANT_LIMIT).contains(&epoch) {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
-    crate::temporal::zoned_construct(&[
-        Value::BigInt(epoch.to_string()),
-        Value::String(time_zone),
-    ])
+    crate::temporal::zoned_construct(&[Value::BigInt(epoch.to_string()), Value::String(time_zone)])
 }
 
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
@@ -1219,7 +1218,9 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     }
     let unit = crate::execute::get_property_result(options, "smallestUnit")?;
     if crate::conversion::is_symbol(&unit) {
-        return Err(crate::value::error::throw_type_error("Invalid smallestUnit"));
+        return Err(crate::value::error::throw_type_error(
+            "Invalid smallestUnit",
+        ));
     }
     let unit = crate::conversion::to_string(&unit)?;
     let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
@@ -1231,7 +1232,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         "millisecond" => 1_000_000.0,
         "microsecond" => 1_000.0,
         "nanosecond" => 1.0,
-        _ => return Err(crate::value::error::throw_range_error("Invalid smallestUnit")),
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ))
+        }
     };
     let maximum: f64 = match unit.as_str() {
         "day" => 1.0,
@@ -1241,10 +1246,16 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     };
     if !increment.is_finite()
         || increment < 1.0
-        || if unit == "day" { increment > maximum } else { increment >= maximum }
+        || if unit == "day" {
+            increment > maximum
+        } else {
+            increment >= maximum
+        }
         || (maximum as u64) % (increment as u64) != 0
     {
-        return Err(crate::value::error::throw_range_error("Invalid roundingIncrement"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
     }
     round_values(fields(receiver)?, quantum, increment, &mode)
 }
