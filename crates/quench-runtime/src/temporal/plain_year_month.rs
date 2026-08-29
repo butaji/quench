@@ -287,9 +287,10 @@ fn construct_inner(
                 "Invalid PlainYearMonth",
             ));
         }
-        if day > iso_days_in_month(year, month)
-            || (year == -271_821.0 && month == 4.0 && day < 18.0)
-            || (year == 275_760.0 && month == 9.0 && day > 14.0)
+        if iso_calendar
+            && (day > iso_days_in_month(year, month)
+                || (year == -271_821.0 && month == 4.0 && day < 18.0)
+                || (year == 275_760.0 && month == 9.0 && day > 14.0))
         {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
