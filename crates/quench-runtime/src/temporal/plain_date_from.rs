@@ -211,13 +211,24 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         Some(month_from_code(month_code.clone())?)
     };
     if let Some(month_number) = &month_code_number {
-        if !(1.0..=12.0).contains(&crate::conversion::to_number(month_number)?) {
+        let month_number = crate::conversion::to_number(month_number)?;
+        let supports_month13 = calendar_text
+            .as_deref()
+            .is_some_and(crate::temporal::plain_date::calendar_supports_month13);
+        if !(1.0..=12.0).contains(&month_number)
+            && !(supports_month13 && month_number == 13.0)
+        {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
         if matches!(&month_code, Value::String(value) if value.ends_with('L'))
             && !calendar_text.as_deref().is_some_and(|value| {
                 matches!(value, "chinese" | "dangi" | "hebrew")
             })
+        {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+        if matches!((&month_code, calendar_text.as_deref()),
+            (Value::String(value), Some("hebrew")) if value.ends_with('L') && month_number != 5.0)
         {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
@@ -259,7 +270,17 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
     if overflow == "constrain" {
-        let month_number = month_number.clamp(1.0, 12.0);
+        let calendar_name = match &calendar {
+            Value::String(name) => crate::temporal::plain_date::canonical_calendar_id(name)
+                .unwrap_or_else(|| name.clone()),
+            _ => "iso8601".to_string(),
+        };
+        let max_month = if crate::temporal::plain_date::calendar_supports_month13(&calendar_name) {
+            13.0
+        } else {
+            12.0
+        };
+        let month_number = month_number.clamp(1.0, max_month);
         day = day.clamp(1.0, days_in_month(year_number, month_number));
         return construct(&[
             year,
