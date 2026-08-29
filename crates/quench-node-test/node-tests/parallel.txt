@@ -36,6 +36,7 @@ test-regression-object-prototype.js
 test-stream-end-paused.js
 test-stream-err-multiple-callback-construction.js
 test-stream-error-once.js
+test-stream-catch-rejections.js
 test-stream-event-names.js
 test-stream-base-prototype-accessors-enumerability.js
 test-stream-auto-destroy.js
