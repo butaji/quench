@@ -563,6 +563,7 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         && values.property(key).is_none()
     {
         let mut data = values.as_ref().clone();
+        data.set_length(values.logical_len());
         data.set_index(index, value);
         let updated = Value::Array(Rc::new(data));
         publish_array_replacement(
