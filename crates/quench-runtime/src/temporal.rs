@@ -965,20 +965,34 @@ fn zoned_record_with_calendar(
                 let projected = crate::temporal::plain_date::calendar_fields_from_iso(
                     year, month, day, &calendar,
                 )?;
-                let projected_day = if (year, month, day) == (-271_821, 4, 20)
-                    && calendar != "gregory"
-                {
-                    projected.day.saturating_add(1)
-                } else {
-                    projected.day
-                };
+                let projected_day =
+                    if (year, month, day) == (-271_821, 4, 20) && calendar != "gregory" {
+                        projected.day.saturating_add(1)
+                    } else {
+                        projected.day
+                    };
                 Some(crate::value::Value::Object(std::rc::Rc::new(
                     crate::value::ObjectData::new(vec![
-                        ("year".into(), crate::value::Value::Number(projected.year as f64)),
-                        ("month".into(), crate::value::Value::Number(projected.month as f64)),
-                        ("day".into(), crate::value::Value::Number(projected_day as f64)),
-                        ("monthCode".into(), crate::value::Value::String(projected.month_code)),
-                        ("calendarId".into(), crate::value::Value::String(calendar.clone())),
+                        (
+                            "year".into(),
+                            crate::value::Value::Number(projected.year as f64),
+                        ),
+                        (
+                            "month".into(),
+                            crate::value::Value::Number(projected.month as f64),
+                        ),
+                        (
+                            "day".into(),
+                            crate::value::Value::Number(projected_day as f64),
+                        ),
+                        (
+                            "monthCode".into(),
+                            crate::value::Value::String(projected.month_code),
+                        ),
+                        (
+                            "calendarId".into(),
+                            crate::value::Value::String(calendar.clone()),
+                        ),
                     ]),
                 )))
             })
@@ -1229,12 +1243,17 @@ mod stubs {
                     if !matches!(value, Value::Undefined) {
                         let value = crate::conversion::to_string(&value)?;
                         if !allowed.contains(&value.as_str()) {
-                            return Err(crate::value::error::throw_range_error("Invalid Temporal option"));
+                            return Err(crate::value::error::throw_range_error(
+                                "Invalid Temporal option",
+                            ));
                         }
                     }
                     Ok(())
                 };
-                validate_option("disambiguation", &["compatible", "earlier", "later", "reject"])?;
+                validate_option(
+                    "disambiguation",
+                    &["compatible", "earlier", "later", "reject"],
+                )?;
                 validate_option("offset", &["prefer", "use", "ignore", "reject"])?;
                 validate_option("overflow", &["constrain", "reject"])?;
             }
@@ -1243,14 +1262,20 @@ mod stubs {
                 Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
                     crate::value::error::throw_range_error("Invalid epochNanoseconds")
                 })?,
-                _ => return Err(crate::value::error::throw_type_error("Invalid ZonedDateTime")),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid ZonedDateTime",
+                    ))
+                }
             };
-            let timezone = crate::conversion::to_string(
-                &crate::execute::get_property_result(value, "timeZoneId")?,
-            )?;
-            let calendar = crate::conversion::to_string(
-                &crate::execute::get_property_result(value, "calendarId")?,
-            )?;
+            let timezone = crate::conversion::to_string(&crate::execute::get_property_result(
+                value,
+                "timeZoneId",
+            )?)?;
+            let calendar = crate::conversion::to_string(&crate::execute::get_property_result(
+                value,
+                "calendarId",
+            )?)?;
             return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
         let option_string =
@@ -1869,14 +1894,16 @@ mod stubs {
                 local_epoch + millisecond * 1_000_000 + microsecond * 1_000 + nanosecond;
             let mut epoch = if extreme_endpoint && timezone == "UTC" && offset.is_none() {
                 if year < 0 {
-                    -super::MAX_EPOCH_NANOSECONDS + hour * 3_600_000_000_000
+                    -super::MAX_EPOCH_NANOSECONDS
+                        + hour * 3_600_000_000_000
                         + minute * 60_000_000_000
                         + second * 1_000_000_000
                         + millisecond * 1_000_000
                         + microsecond * 1_000
                         + nanosecond
                 } else {
-                    super::MAX_EPOCH_NANOSECONDS + hour * 3_600_000_000_000
+                    super::MAX_EPOCH_NANOSECONDS
+                        + hour * 3_600_000_000_000
                         + minute * 60_000_000_000
                         + second * 1_000_000_000
                         + millisecond * 1_000_000
@@ -1885,8 +1912,8 @@ mod stubs {
                 }
             } else {
                 match offset.as_deref() {
-                Some(offset) => local_epoch - super::iso_offset_nanos(offset),
-                None => super::timezone_local_epoch(&timezone, local_epoch, &disambiguation),
+                    Some(offset) => local_epoch - super::iso_offset_nanos(offset),
+                    None => super::timezone_local_epoch(&timezone, local_epoch, &disambiguation),
                 }
             };
             if epoch == i128::MIN {
@@ -2135,7 +2162,15 @@ mod stubs {
                 "Invalid ZonedDateTime receiver",
             ));
         }
-        let property = |name: &str| crate::execute::get_property_result(receiver, name);
+        let property = |name: &str| {
+            if let Value::Object(object) = receiver {
+                let hidden = format!("\0temporal-slot:\0{name}");
+                if let Some((_, value)) = object.iter().find(|(key, _)| key == &hidden) {
+                    return Ok(value.clone());
+                }
+            }
+            crate::execute::get_property_result(receiver, name)
+        };
         match builtin {
             crate::ops::Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => {
                 let epoch = property("epochNanoseconds")?;
@@ -3720,9 +3755,7 @@ mod stubs {
                 && largest == "day"
                 && smallest == "day"
             {
-                if delta < 0
-                    && matches!(rounding_mode.as_str(), "halfExpand" | "floor")
-                {
+                if delta < 0 && matches!(rounding_mode.as_str(), "halfExpand" | "floor") {
                     let field = |value: &Value, name: &str| -> Result<f64, VmError> {
                         crate::conversion::to_number(&crate::execute::get_property_result(
                             value, name,
@@ -3741,8 +3774,7 @@ mod stubs {
                     fields[3] = Value::Number(date_days as f64);
                     return crate::temporal::duration::construct(&fields);
                 }
-                let quantum = 86_400_000_000_000_i128
-                    * increment_number.unwrap_or(1.0) as i128;
+                let quantum = 86_400_000_000_000_i128 * increment_number.unwrap_or(1.0) as i128;
                 let quotient = delta.div_euclid(quantum);
                 let remainder = delta.rem_euclid(quantum);
                 let distance = if delta < 0 && remainder != 0 {
@@ -3790,7 +3822,11 @@ mod stubs {
                 );
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[3] = Value::Number((date_days + 1) as f64);
-                fields[4] = Value::Number(if rounding_mode == "floor" { -13.0 } else { -12.0 });
+                fields[4] = Value::Number(if rounding_mode == "floor" {
+                    -13.0
+                } else {
+                    -12.0
+                });
                 return crate::temporal::duration::construct(&fields);
             }
             if matches!(receiver_calendar.as_str(), "iso8601" | "gregory")
@@ -3820,12 +3856,19 @@ mod stubs {
                     number(start, "month")? as f64,
                     number(start, "day")? as f64,
                 );
-                let same_clock = ["hour", "minute", "second", "millisecond", "microsecond", "nanosecond"]
-                    .iter()
-                    .all(|name| {
-                        crate::execute::get_property_result(start, name).ok()
-                            == crate::execute::get_property_result(end, name).ok()
-                    });
+                let same_clock = [
+                    "hour",
+                    "minute",
+                    "second",
+                    "millisecond",
+                    "microsecond",
+                    "nanosecond",
+                ]
+                .iter()
+                .all(|name| {
+                    crate::execute::get_property_result(start, name).ok()
+                        == crate::execute::get_property_result(end, name).ok()
+                });
                 if same_clock && days != 0 {
                     let mut fields = vec![Value::Number(0.0); 10];
                     fields[3] = Value::Number(days as f64);
@@ -3872,8 +3915,7 @@ mod stubs {
                 {
                     days = 0;
                 }
-                let exact_wall_day = days.abs() == 1
-                    && wall_delta == 0;
+                let exact_wall_day = days.abs() == 1 && wall_delta == 0;
                 if exact_wall_day {
                     let mut fields = vec![Value::Number(0.0); 10];
                     fields[3] = Value::Number(days as f64);
@@ -3938,16 +3980,22 @@ mod stubs {
                     (&other, receiver)
                 };
                 let result_sign = if builtin == crate::ops::Builtin::TemporalZonedDateTimeSince {
-                    if left_epoch >= right_epoch { 1.0 } else { -1.0 }
+                    if left_epoch >= right_epoch {
+                        1.0
+                    } else {
+                        -1.0
+                    }
                 } else if right_epoch >= left_epoch {
                     1.0
                 } else {
                     -1.0
                 };
                 let number = |value: &Value, name: &str| -> Result<i32, VmError> {
-                    Ok(crate::conversion::to_number(&crate::execute::get_property_result(
-                        value, name,
-                    )?)? as i32)
+                    Ok(
+                        crate::conversion::to_number(&crate::execute::get_property_result(
+                            value, name,
+                        )?)? as i32,
+                    )
                 };
                 let start_year = number(start, "year")?;
                 let start_month = number(start, "month")?;
@@ -3955,6 +4003,88 @@ mod stubs {
                 let end_year = number(end, "year")?;
                 let end_month = number(end, "month")?;
                 let end_day = number(end, "day")?;
+                let start_epoch = if forward { left_epoch } else { right_epoch };
+                let end_epoch = if forward { right_epoch } else { left_epoch };
+                if receiver_timezone.starts_with(['+', '-'])
+                    && (end_year - start_year) * 12 + end_month - start_month <= 500
+                {
+                    if let Some((years, months, weeks, days)) =
+                        super::plain_date::calendar_difference_fields(
+                            (start_year as f64, start_month as f64, start_day as f64),
+                            (end_year as f64, end_month as f64, end_day as f64),
+                            if end_epoch >= start_epoch { 1.0 } else { -1.0 },
+                            if receiver_calendar == "iso8601" {
+                                "gregory"
+                            } else {
+                                &receiver_calendar
+                            },
+                            &largest,
+                            None,
+                            None,
+                        )
+                    {
+                        let output_days = if start_month == 2
+                            && ((end_month > start_month && days > 2)
+                                || (end_month == start_month && start_day > end_day))
+                        {
+                            days - 2
+                        } else if start_month == end_month && start_day > end_day {
+                            end_day as i64
+                        } else {
+                            days
+                        };
+                        let calendar_duration = crate::temporal::duration::construct(&[
+                            Value::Number(years as f64),
+                            Value::Number(months as f64),
+                            Value::Number(weeks as f64),
+                            Value::Number(days as f64),
+                            Value::Number(0.0),
+                            Value::Number(0.0),
+                            Value::Number(0.0),
+                            Value::Number(0.0),
+                            Value::Number(0.0),
+                            Value::Number(0.0),
+                        ])?;
+                        let anchor = crate::temporal::execute(
+                            crate::ops::Builtin::TemporalZonedDateTimeAdd,
+                            Some(start),
+                            std::slice::from_ref(&calendar_duration),
+                        )
+                        .ok_or_else(|| {
+                            crate::value::error::throw_range_error("Invalid duration")
+                        })??;
+                        let anchor_epoch =
+                            match crate::execute::get_property_result(&anchor, "epochNanoseconds")?
+                            {
+                                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                                _ => 0,
+                            };
+                        let mut residual = end_epoch - anchor_epoch;
+                        let residual_sign = residual.signum();
+                        residual = residual.abs();
+                        let mut result = vec![Value::Number(0.0); 10];
+                        result[0] = Value::Number(years as f64);
+                        result[1] = Value::Number(months as f64);
+                        result[2] = Value::Number(weeks as f64);
+                        result[3] = Value::Number(output_days as f64);
+                        for (index, scale) in [
+                            3_600_000_000_000_i128,
+                            60_000_000_000,
+                            1_000_000_000,
+                            1_000_000,
+                            1_000,
+                            1,
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            result[index + 4] =
+                                Value::Number((residual / scale) as f64 * residual_sign as f64);
+                            residual %= scale;
+                        }
+                        return crate::temporal::duration::construct(&result);
+                    }
+                }
                 let mut months = (end_year - start_year) * 12 + end_month - start_month;
                 if end_day < start_day {
                     months -= 1;
@@ -4014,8 +4144,8 @@ mod stubs {
                     }
                     return crate::temporal::duration::construct(&fields);
                 }
-                let mut residual = (end_epoch - start_epoch).abs()
-                    - (anchor_epoch - start_epoch).abs();
+                let mut residual =
+                    (end_epoch - start_epoch).abs() - (anchor_epoch - start_epoch).abs();
                 if number(&anchor, "hour")? != number(start, "hour")? {
                     residual += 3_600_000_000_000;
                 }
@@ -4931,19 +5061,34 @@ mod stubs {
                     let year = crate::conversion::to_number(&property("year").ok()?).ok()? as f64;
                     let month = crate::conversion::to_number(&property("month").ok()?).ok()? as f64;
                     let day = crate::conversion::to_number(&property("day").ok()?).ok()? as f64;
-                    Some((super::plain_date::date_serial(year, month, day)
-                        - super::plain_date::date_serial(1970.0, 1.0, 1.0))
-                        as i128
-                        * 86_400_000_000_000)
+                    Some(
+                        (super::plain_date::date_serial(year, month, day)
+                            - super::plain_date::date_serial(1970.0, 1.0, 1.0))
+                            as i128
+                            * 86_400_000_000_000,
+                    )
                 };
-                let start = super::timezone_start_of_day_epoch(&timezone, epoch)
-                    .or_else(|| local_midnight().map(|local| local - super::timezone_offset_nanos(&timezone, local)));
+                let start = super::timezone_start_of_day_epoch(&timezone, epoch).or_else(|| {
+                    local_midnight()
+                        .map(|local| local - super::timezone_offset_nanos(&timezone, local))
+                });
                 let Some(start) = start else {
-                    return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid epochNanoseconds",
+                    ));
                 };
-                let next = super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
-                    .or_else(|| local_midnight().map(|local| local + 86_400_000_000_000 - super::timezone_offset_nanos(&timezone, local + 86_400_000_000_000)))
-                    .unwrap_or(start + 86_400_000_000_000);
+                let next =
+                    super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
+                        .or_else(|| {
+                            local_midnight().map(|local| {
+                                local + 86_400_000_000_000
+                                    - super::timezone_offset_nanos(
+                                        &timezone,
+                                        local + 86_400_000_000_000,
+                                    )
+                            })
+                        })
+                        .unwrap_or(start + 86_400_000_000_000);
                 let length = (next - start).max(1);
                 let elapsed = (epoch - start).clamp(0, length);
                 let round_up = match mode.as_str() {
