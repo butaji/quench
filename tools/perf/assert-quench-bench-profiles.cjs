@@ -5,7 +5,7 @@ const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const contractsPath = path.join(root, "crates/quench-bench/profile-contracts.json");
 const contracts = JSON.parse(fs.readFileSync(contractsPath, "utf8"));
 const separator = process.argv.indexOf("--");
@@ -21,7 +21,7 @@ for (const benchmark of benchmarks) {
     continue;
   }
   const result = cp.spawnSync(process.execPath, [
-    path.join(root, "tools/analyze-quench-bench.cjs"), benchmark,
+    path.join(root, "tools/perf/analyze-quench-bench.cjs"), benchmark,
     "--assert-profile", contractsPath, ...forwarded,
   ], { cwd: root, stdio: "inherit" });
   failed ||= result.status !== 0;

@@ -4,9 +4,9 @@
 const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
-const { formatViolations, violations } = require("./lib/profile-contracts.cjs");
+const { formatViolations, violations } = require("../lib/profile-contracts.cjs");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const suite = path.join(root, "crates/quench-bench/js-engine-benchmark/v8-v7");
 const args = process.argv.slice(2);
 const fixtureArg = args[0];

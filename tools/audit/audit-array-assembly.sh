@@ -1,8 +1,8 @@
 #!/bin/sh
 # Compile ArrayData and audit the dense access path for duplicate bounds checks.
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-target_dir=${CARGO_TARGET_DIR:-"$root/target-array-assembly"}
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+target_dir=${CARGO_TARGET_DIR:-"$root/target/audit-array-asm"}
 cargo rustc --manifest-path "$root/Cargo.toml" -p quench-runtime --release --lib \
   --target-dir "$target_dir" -- --emit=asm >/dev/null
 asm=$(find "$target_dir/release/deps" -maxdepth 1 -name 'quench_runtime-*.s' -type f -print | sort | tail -n 1)

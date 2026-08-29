@@ -6,7 +6,7 @@ const path = require("node:path");
 const cp = require("node:child_process");
 const os = require("node:os");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const benchmarkScript = path.join(root, "crates/quench-bench", "run-quench-runtime.mjs");
 const args = process.argv.slice(2);
 

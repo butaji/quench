@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cargo_config="$root/.cargo/config.toml"
 probe=$(mktemp -d "${TMPDIR:-/tmp}/quench-profile-contract.XXXXXX")
 trap 'rm -rf "$probe"' EXIT

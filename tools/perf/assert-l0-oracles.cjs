@@ -5,11 +5,11 @@ const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const lanes = path.join(root, "tests/lanes");
 const quench = path.resolve(root, process.env.QUENCH_SCORE_BINARY ||
   "target/bench-throughput/quench-node");
-const oracleSource = path.join(root, "tools/l0-oracles.rs");
+const oracleSource = path.join(root, "tools/perf/l0-oracles.rs");
 const oracle = path.join(root, "target/l0-oracles");
 
 function buildOracle() {

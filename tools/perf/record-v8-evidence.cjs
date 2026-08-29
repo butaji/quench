@@ -7,7 +7,7 @@ const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "..", "..");
 const args = process.argv.slice(2);
 const option = (name, fallback = null) => {
   const index = args.indexOf(name);
