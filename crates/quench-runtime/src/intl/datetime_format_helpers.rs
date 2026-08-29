@@ -310,7 +310,15 @@ fn effective_format_slots(slots: &[(String, Value)]) -> Vec<(String, Value)> {
             "weekday" | "era" | "year" | "month" | "day" | "hour" | "minute" | "second"
         )
     }) {
-        return slots.to_vec();
+        let mut result = slots.to_vec();
+        if slot_string(slots, "dayPeriod").is_some() && slot_string(slots, "hour").is_some() {
+            for name in ["minute", "second"] {
+                if !result.iter().any(|(existing, _)| existing == name) {
+                    result.push((name.into(), Value::String("numeric".into())));
+                }
+            }
+        }
+        return result;
     }
     let mut result = slots.to_vec();
     let date_style = slot_string(slots, "dateStyle");
@@ -1232,11 +1240,18 @@ fn hour_day_period_format(slots: &[(String, Value)], number: f64) -> Option<Stri
     slot_string(slots, "hour")?;
     let period = day_period_format(slots, number)?;
     let hour = format_components(slots, number)?.3;
+    let minute = format_components(slots, number)?.4;
+    let second = format_components(slots, number)?.5;
     let display_hour = match hour % 12 {
         0 => 12,
         value => value,
     };
-    Some(format!("{display_hour} {period}"))
+    let text = if slot_string(slots, "minute").is_some() || slot_string(slots, "dayPeriod").is_some() {
+        format!("{display_hour}:{minute:02}:{second:02}")
+    } else {
+        format!("{display_hour}")
+    };
+    Some(format!("{text} {period}"))
 }
 
 fn format_components(
