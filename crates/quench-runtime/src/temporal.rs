@@ -4490,7 +4490,7 @@ mod stubs {
         let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
         let offset_nanos = crate::conversion::to_number(&property("offsetNanoseconds")?)? as i128;
         let offset_nanos = offset_nanos / 60_000_000_000 * 60_000_000_000;
-        let offset = super::format_offset(offset_nanos);
+        let mut offset = super::format_offset(offset_nanos);
         let options = arguments.first();
         if let Some(value) = options {
             if !matches!(
@@ -4737,6 +4737,34 @@ mod stubs {
             millisecond = (fraction / 1_000_000) as u32;
             microsecond = (fraction / 1_000 % 1_000) as u32;
             nanosecond = (fraction % 1_000) as u32;
+        }
+        if !timezone.starts_with(['+', '-']) && matches!(calendar_text.as_str(), "iso8601" | "gregory") {
+            let local_days = super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                - super::plain_date::date_serial(1970.0, 1.0, 1.0);
+            let local_epoch = local_days as i128 * 86_400_000_000_000
+                + i128::from(hour) * 3_600_000_000_000
+                + i128::from(minute) * 60_000_000_000
+                + i128::from(second) * 1_000_000_000
+                + fraction;
+            let corrected = super::timezone_local_epoch(&timezone, local_epoch, "compatible");
+            if corrected != i128::MIN {
+                let corrected_offset = super::timezone_offset_nanos(&timezone, corrected);
+                let local = corrected + corrected_offset;
+                if let Some(date) = chrono::NaiveDateTime::from_timestamp_opt(
+                    local.div_euclid(1_000_000_000) as i64,
+                    local.rem_euclid(1_000_000_000) as u32,
+                ) {
+                    year = date.year();
+                    month = date.month();
+                    day = date.day();
+                    hour = chrono::Timelike::hour(&date);
+                    minute = chrono::Timelike::minute(&date);
+                    second = chrono::Timelike::second(&date);
+                    offset = super::format_offset(
+                        corrected_offset / 60_000_000_000 * 60_000_000_000,
+                    );
+                }
+            }
         }
         let suffix = if precision == 0 || (fraction == 0 && precision == usize::MAX) {
             String::new()
