@@ -619,9 +619,9 @@
       return this;
     }
 
-    pipe(dest, options) {
-      const source = this;
-      const sourceState = source._readableState;
+      pipe(dest, options) {
+        const source = this;
+        const sourceState = source._readableState;
       sourceState.pipeCount += 1;
       if (sourceState.pipeCount > 1 && !sourceState.awaitDrainWriters) {
         sourceState.awaitDrainWriters = new Set();
@@ -648,10 +648,28 @@
           });
         }
       });
-      if (!options || options.end !== false) {
-        source.on("end", () => dest.end());
-      }
-      dest.once("end", () => source.pause());
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        source.removeListener("end", onend);
+        source.removeListener("end", cleanup);
+        source.removeListener("close", onclose);
+        source.removeListener("close", cleanup);
+        dest.removeListener("close", cleanup);
+      };
+      const onend = () => {
+        if (!options || options.end !== false) dest.end();
+      };
+      const onclose = () => {
+        if (typeof dest.destroy === "function") dest.destroy();
+      };
+      source.on("end", onend);
+      source.on("end", cleanup);
+      source.on("close", onclose);
+      source.on("close", cleanup);
+      dest.once("close", cleanup);
+      if (dest._isDuplex) dest.once("end", () => source.pause());
       dest.emit("pipe", source);
       return dest;
     }
