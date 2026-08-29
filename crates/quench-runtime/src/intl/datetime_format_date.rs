@@ -418,8 +418,8 @@ fn compose_time_string(
         })
         .unwrap_or(false);
     let has_hour = hour_style.is_some();
-    let has_minute = minute_style.is_some() || (day_period_style.is_some() && has_hour);
-    let has_second = second_style.is_some() || (day_period_style.is_some() && has_hour);
+    let has_minute = minute_style.is_some();
+    let has_second = second_style.is_some();
     let display_hour = if lookup_slot_string(slots, "hourCycle").as_deref() == Some("h24")
         && hour == 0
     {
