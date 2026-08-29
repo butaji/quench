@@ -6267,7 +6267,7 @@ pub fn test_mock_timers_tick(
         .unwrap_or(now.max(0.0) as u64)
         .saturating_add(delta.max(0.0) as u64);
     crate::modules::timers::set_mock_timer_now(Some(timer_now));
-    while crate::modules::pump::drain_one_tick(_state)? {}
+    crate::modules::pump::drain_mock_timers(_state)?;
     Ok(Value::Undefined)
 }
 
