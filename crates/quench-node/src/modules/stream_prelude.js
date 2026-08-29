@@ -21,8 +21,7 @@
         this._emitter.removeListener(name, wrapper);
         fn.call(this);
       }
-      if (name === "data" && this._readableState &&
-                 this.listenerCount("readable") === 0) {
+      if (name === "data" && this._readableState) {
         this.resume();
         // The first data listener starts pulling before the next promise
         // checkpoint, matching Node's lazy activation contract.
