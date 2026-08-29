@@ -516,6 +516,22 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     // PlainMonthDay.
     if calendar_id != "iso8601" && calendar_id != "gregory" {
         if let Some(code) = month_code_text.as_deref() {
+            if let (Some(month_number), true) = (month_number, year_number.is_finite()) {
+                let parsed = parse_month_code(code)?;
+                let expected = crate::temporal::plain_date::calendar_date_from_code(
+                    year as i32,
+                    code,
+                    day as u32,
+                    &calendar_id,
+                )
+                .map(|(ordinal, _)| ordinal as f64)
+                .unwrap_or(parsed);
+                if month_number.trunc() != expected {
+                    return Err(crate::value::error::throw_range_error(
+                        "Conflicting month fields",
+                    ));
+                }
+            }
             let mut resolved_code = code.to_string();
             let mut adjusted_day = day;
             if year_number.is_finite() {
