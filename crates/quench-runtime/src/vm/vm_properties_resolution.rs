@@ -739,6 +739,24 @@ fn object_inherited_property_result(
         let getter = Value::Builtin(Builtin::IntlDateTimeFormatFormatGetter);
         return Some(invoke_accessor(&getter, receiver));
     }
+    if matches!(
+        prototype,
+        Value::Builtin(Builtin::IntlDateTimeFormatPrototype)
+    ) {
+        let method = match key {
+            "formatToParts" => Some(Builtin::IntlDateTimeFormatFormatToParts),
+            "formatRange" => Some(Builtin::IntlDateTimeFormatFormatRange),
+            "formatRangeToParts" => Some(Builtin::IntlDateTimeFormatFormatRangeToParts),
+            "resolvedOptions" => Some(Builtin::IntlDateTimeFormatResolvedOptions),
+            _ => None,
+        };
+        if let Some(method) = method {
+            return Some(Ok(crate::vm::bind_method(
+                receiver,
+                Value::Builtin(method),
+            )));
+        }
+    }
     Some(get_property_with_receiver(&prototype, key, receiver))
 }
 
