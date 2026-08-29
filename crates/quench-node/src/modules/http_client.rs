@@ -1360,7 +1360,15 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             let socket_path = opt(&options, "socketPath")?;
             let explicit_port = opt(&options, "port")?.and_then(|p| p.parse().ok());
             let (host, port) = split_host_port(&raw_host, explicit_port);
-            let method = opt(&options, "method")?.unwrap_or_else(|| "GET".to_string());
+            let raw_method = execute::get_property(&options, "method");
+            if execute::is_symbol(&raw_method) {
+                return Err(invalid_method_type_error(&raw_method));
+            }
+            let method = match raw_method {
+                Value::Undefined | Value::Null => "GET".to_string(),
+                Value::String(value) => value,
+                other => return Err(invalid_method_type_error(&other)),
+            };
             if !is_http_token(&method) {
                 return Err(invalid_method_error(&method));
             }
@@ -1453,6 +1461,37 @@ fn invalid_method_error(method: &str) -> VmError {
         other => return other,
     };
     VmError::Thrown(error)
+}
+
+fn invalid_method_type_error(value: &Value) -> VmError {
+    let received = if execute::is_symbol(value) {
+        "type symbol (Symbol())".to_string()
+    } else {
+        match value {
+        Value::Null => "null".to_string(),
+        Value::Boolean(value) => format!("type boolean ({value})"),
+        Value::Number(value) => format!("type number ({value})"),
+        Value::String(value) => format!("type string ({value})"),
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_) | Value::Uint8Array(_) => {
+            let constructor = execute::get_property(value, "constructor");
+            let name = execute::to_js_string(&execute::get_property(&constructor, "name"))
+                .unwrap_or_else(|_| "Object".into());
+            format!("an instance of {name}")
+        }
+        _ => "type unknown".to_string(),
+        }
+    };
+    let error = execute::type_error(&format!(
+        "The \"options.method\" property must be of type string. Received {received}"
+    ));
+    match error {
+        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
+            execute::set_property(value, "code", Value::String("ERR_INVALID_ARG_TYPE".into())),
+            "name",
+            Value::String("TypeError".into()),
+        )),
+        other => other,
+    }
 }
 
 fn is_http_token(method: &str) -> bool {
