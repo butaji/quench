@@ -310,10 +310,18 @@ fn difference(
     direction: f64,
     options: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let left = fields(
-        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
-    )?;
-    let right = fields(&from(other, None)?)?;
+    let receiver = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let left = fields(receiver)?;
+    let right_value = from(other, None)?;
+    let right = fields(&right_value)?;
+    let calendar = object_property_string(Some(receiver), "calendarId")
+        .unwrap_or_else(|| "iso8601".into());
+    let other_calendar = object_property_string(Some(&right_value), "calendarId")
+        .unwrap_or_else(|| "iso8601".into());
+    if calendar != other_calendar {
+        return Err(crate::value::error::throw_range_error("Calendar mismatch"));
+    }
     let mut smallest_unit = "nanosecond".to_string();
     let mut rounding_increment = 1.0;
     let mut rounding_mode = "trunc".to_string();
@@ -430,6 +438,32 @@ fn difference(
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
         ));
+    }
+    if calendar != "iso8601"
+        && matches!(largest.as_str(), "year" | "month" | "week" | "day")
+        && matches!(smallest_unit.as_str(), "nanosecond" | "day")
+        && rounding_increment == 1.0
+        && rounding_mode == "trunc"
+        && time_of_day_nanos(&left) == time_of_day_nanos(&right)
+    {
+        if let Some((years, months, weeks, days)) =
+            crate::temporal::plain_date::calendar_difference_fields(
+                (left[0], left[1], left[2]),
+                (right[0], right[1], right[2]),
+                direction,
+                &calendar,
+                &largest,
+                object_property_string(Some(receiver), "monthCode"),
+                object_property_string(Some(&right_value), "monthCode"),
+            )
+        {
+            return crate::temporal::duration::construct(&[
+                Value::Number(years as f64),
+                Value::Number(months as f64),
+                Value::Number(weeks as f64),
+                Value::Number(days as f64),
+            ]);
+        }
     }
     if matches!(largest.as_str(), "year" | "month" | "week") {
         if matches!(smallest_unit.as_str(), "year" | "month")
@@ -1210,6 +1244,18 @@ fn object_property_number(receiver: Option<&Value>, name: &str) -> Option<i32> {
     object.iter().find_map(|(key, value)| {
         (key == name).then(|| match value {
             Value::Number(value) if value.is_finite() => Some(value as i32),
+            _ => None,
+        })
+    })?
+}
+
+fn object_property_string(receiver: Option<&Value>, name: &str) -> Option<String> {
+    let Value::Object(object) = receiver? else {
+        return None;
+    };
+    object.iter().find_map(|(key, value)| {
+        (key == name).then(|| match value {
+            Value::String(value) => Some(value.clone()),
             _ => None,
         })
     })?
