@@ -309,18 +309,14 @@ fn set_receiver_data(
     {
         return Ok(false);
     }
-    let own = crate::builtins::object::has_own_property(
+    // OrdinarySetWithOwnDescriptor performs one [[GetOwnProperty]] on the
+    // receiver.  Keep that lookup unified so a Proxy observes a single
+    // getOwnPropertyDescriptor trap rather than a hasOwnProperty probe plus a
+    // second descriptor lookup.
+    let current = crate::builtins::object::descriptor(
         Some(&receiver_resolved),
         Some(&crate::value::Value::String(key.to_string())),
-    ) == crate::value::Value::Boolean(true);
-    let current = if own {
-        crate::builtins::object::descriptor(
-            Some(&receiver_resolved),
-            Some(&crate::value::Value::String(key.to_string())),
-        )?
-    } else {
-        crate::value::Value::Undefined
-    };
+    )?;
     if !matches!(current, crate::value::Value::Undefined) {
         if descriptor_field_exists(&current, "set") || !descriptor_writable(&current)? {
             return Ok(false);
