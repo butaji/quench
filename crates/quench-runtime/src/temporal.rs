@@ -183,6 +183,9 @@ pub(crate) fn zoned_record(
 }
 
 fn fixed_offset_nanos(timezone: &str) -> i128 {
+    if timezone.len() == 9 {
+        return iso_offset_nanos(timezone);
+    }
     let bytes = timezone.as_bytes();
     if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
         return 0;
@@ -456,8 +459,15 @@ fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
 
 fn format_offset(offset: i128) -> String {
     let sign = if offset < 0 { '-' } else { '+' };
-    let minutes = offset.unsigned_abs() / 60_000_000_000;
-    format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
+    let seconds = offset.unsigned_abs() / 1_000_000_000;
+    let hours = seconds / 3_600;
+    let minutes = seconds / 60 % 60;
+    let seconds = seconds % 60;
+    if seconds == 0 {
+        format!("{sign}{hours:02}:{minutes:02}")
+    } else {
+        format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+    }
 }
 
 fn format_year(year: i32) -> String {
@@ -561,22 +571,33 @@ fn normalize_offset_identifier(text: &str) -> Option<String> {
     if !matches!(bytes.first(), Some(b'+' | b'-')) {
         return None;
     }
-    let (hour, minute) = match bytes.len() {
-        3 => (text[1..3].parse::<u8>().ok()?, 0),
+    let (hour, minute, second) = match bytes.len() {
+        3 => (text[1..3].parse::<u8>().ok()?, 0, 0),
         5 => (
             text[1..3].parse::<u8>().ok()?,
             text[3..5].parse::<u8>().ok()?,
+            0,
         ),
         6 if bytes[3] == b':' => (
             text[1..3].parse::<u8>().ok()?,
             text[4..6].parse::<u8>().ok()?,
+            0,
+        ),
+        9 if bytes[3] == b':' && bytes[6] == b':' => (
+            text[1..3].parse::<u8>().ok()?,
+            text[4..6].parse::<u8>().ok()?,
+            text[7..9].parse::<u8>().ok()?,
         ),
         _ => return None,
     };
-    if hour > 23 || minute > 59 {
+    if hour > 23 || minute > 59 || second > 59 {
         return None;
     }
-    Some(format!("{}{:02}:{:02}", bytes[0] as char, hour, minute))
+    Some(if second == 0 {
+        format!("{}{:02}:{:02}", bytes[0] as char, hour, minute)
+    } else {
+        format!("{}{:02}:{:02}:{:02}", bytes[0] as char, hour, minute, second)
+    })
 }
 
 fn valid_iso_offset(text: &str) -> bool {
@@ -623,7 +644,7 @@ fn valid_iso_offset(text: &str) -> bool {
     } else {
         0
     };
-    hour <= 23 && minute <= 59 && second == 0
+    hour <= 23 && minute <= 59 && second <= 59
 }
 
 fn iso_offset_nanos(text: &str) -> i128 {
@@ -1105,7 +1126,7 @@ mod stubs {
                     return Err(crate::value::error::throw_type_error("Invalid options"));
                 }
             }
-            let _disambiguation = option_string(
+            let disambiguation = option_string(
                 "disambiguation",
                 &["compatible", "earlier", "later", "reject"],
                 "compatible",
@@ -1246,7 +1267,10 @@ mod stubs {
             if offset_start.is_some() && offset_mode == "reject" {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
-                if supplied_offset != actual_offset {
+                if supplied_offset != actual_offset
+                    && (supplied_offset % 60_000_000_000 == 0
+                        || timezone.starts_with(['+', '-']))
+                {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
                     ));
@@ -1264,11 +1288,21 @@ mod stubs {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if offset_mode == "ignore" || supplied_offset != actual_offset {
-                    epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+                    epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                    if epoch == i128::MIN {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid ZonedDateTime",
+                        ));
+                    }
                 }
             }
-            if !has_z && offset_start.is_none() {
-                epoch -= super::fixed_offset_nanos(&timezone);
+            if offset_start.is_none() && !has_z {
+                epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                if epoch == i128::MIN {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid ZonedDateTime",
+                    ));
+                }
             }
             if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
                 return Err(crate::value::error::throw_range_error(
@@ -1433,12 +1467,12 @@ mod stubs {
                     return Err(crate::value::error::throw_type_error("Invalid options"));
                 }
             }
-            let _disambiguation = option_string(
+            let disambiguation = option_string(
                 "disambiguation",
                 &["compatible", "earlier", "later", "reject"],
                 "compatible",
             )?;
-            let _offset_mode =
+            let offset_mode =
                 option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
             let overflow_mode = option_string("overflow", &["constrain", "reject"], "constrain")?;
             let year = i32::try_from(year_number).map_err(|_| {
@@ -1610,19 +1644,35 @@ mod stubs {
                 + second * 1_000_000_000;
             let local_epoch =
                 local_epoch + millisecond * 1_000_000 + microsecond * 1_000 + nanosecond;
-            let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            let mut epoch = match offset.as_deref() {
+                Some(offset) => local_epoch - super::iso_offset_nanos(offset),
+                None => super::timezone_local_epoch(&timezone, local_epoch, &disambiguation),
+            };
+            if epoch == i128::MIN {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid ZonedDateTime",
+                ));
+            }
             if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid epochNanoseconds",
                 ));
             }
             if let Some(offset) = offset {
-                if super::fixed_offset_nanos(&offset)
-                    != super::timezone_offset_nanos(&timezone, local_epoch)
-                {
+                let supplied = super::iso_offset_nanos(&offset);
+                let actual = super::timezone_offset_nanos(&timezone, epoch);
+                if offset_mode == "reject" && supplied != actual {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
                     ));
+                }
+                if offset_mode == "ignore" || (offset_mode == "prefer" && supplied != actual) {
+                    epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                    if epoch == i128::MIN {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid ZonedDateTime",
+                        ));
+                    }
                 }
             }
             let mut result = super::zoned_record_with_calendar(epoch, timezone, calendar.clone());
