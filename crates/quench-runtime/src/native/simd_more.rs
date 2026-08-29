@@ -68,6 +68,8 @@ pub fn apply(op: SimdOp, a: u128, b: u128, c: u128) -> u128 {
         SimdOp::RelaxedNmaddF32 => maddf32(a, b, c, true),
         SimdOp::RelaxedMaddF64 => maddf64(a, b, c, false),
         SimdOp::RelaxedNmaddF64 => maddf64(a, b, c, true),
+        SimdOp::I16x8RelaxedDot => relaxed_dot_i16(a, b),
+        SimdOp::I32x4RelaxedDotAdd => relaxed_dot_i32_add(a, b, c),
         _ => 0,
     }
 }
@@ -446,6 +448,34 @@ fn laneselect(a: u128, b: u128, c: u128, width: usize) -> u128 {
     u128::from_le_bytes(o)
 }
 
+fn relaxed_dot_i16(a: u128, b: u128) -> u128 {
+    let aa = a.to_le_bytes();
+    let bb = b.to_le_bytes();
+    let mut o = [0u8; 16];
+    for i in 0..8 {
+        let p0 = i32::from(aa[i * 2] as i8) * i32::from(bb[i * 2] as i8);
+        let p1 = i32::from(aa[i * 2 + 1] as i8) * i32::from(bb[i * 2 + 1] as i8);
+        o[i * 2..i * 2 + 2].copy_from_slice(&(p0.wrapping_add(p1) as i16).to_le_bytes());
+    }
+    u128::from_le_bytes(o)
+}
+
+fn relaxed_dot_i32_add(a: u128, b: u128, c: u128) -> u128 {
+    let aa = a.to_le_bytes();
+    let bb = b.to_le_bytes();
+    let cc = c.to_le_bytes();
+    let mut o = [0u8; 16];
+    for i in 0..4 {
+        let mut s = i32::from_le_bytes(cc[i * 4..i * 4 + 4].try_into().unwrap());
+        for k in 0..4 {
+            let p = i32::from(aa[i * 4 + k] as i8) * i32::from(bb[i * 4 + k] as i8);
+            s = s.wrapping_add(p);
+        }
+        o[i * 4..i * 4 + 4].copy_from_slice(&s.to_le_bytes());
+    }
+    u128::from_le_bytes(o)
+}
+
 fn maddf32(a: u128, b: u128, c: u128, neg: bool) -> u128 {
     let aa = a.to_le_bytes();
     let bb = b.to_le_bytes();
@@ -453,8 +483,8 @@ fn maddf32(a: u128, b: u128, c: u128, neg: bool) -> u128 {
     let mut o = [0u8; 16];
     for i in 0..4 {
         let x = f32::from_bits(u32::from_le_bytes(aa[i * 4..i * 4 + 4].try_into().unwrap()));
-        let y = f32::from_bits(u32::from_le_bytes(cc[i * 4..i * 4 + 4].try_into().unwrap()));
-        let z = f32::from_bits(u32::from_le_bytes(bb[i * 4..i * 4 + 4].try_into().unwrap()));
+        let y = f32::from_bits(u32::from_le_bytes(bb[i * 4..i * 4 + 4].try_into().unwrap()));
+        let z = f32::from_bits(u32::from_le_bytes(cc[i * 4..i * 4 + 4].try_into().unwrap()));
         let v = if neg { -(x * y) + z } else { x * y + z };
         o[i * 4..i * 4 + 4].copy_from_slice(&v.to_bits().to_le_bytes());
     }
@@ -468,8 +498,8 @@ fn maddf64(a: u128, b: u128, c: u128, neg: bool) -> u128 {
     let mut o = [0u8; 16];
     for i in 0..2 {
         let x = f64::from_bits(u64::from_le_bytes(aa[i * 8..i * 8 + 8].try_into().unwrap()));
-        let y = f64::from_bits(u64::from_le_bytes(cc[i * 8..i * 8 + 8].try_into().unwrap()));
-        let z = f64::from_bits(u64::from_le_bytes(bb[i * 8..i * 8 + 8].try_into().unwrap()));
+        let y = f64::from_bits(u64::from_le_bytes(bb[i * 8..i * 8 + 8].try_into().unwrap()));
+        let z = f64::from_bits(u64::from_le_bytes(cc[i * 8..i * 8 + 8].try_into().unwrap()));
         let v = if neg { -(x * y) + z } else { x * y + z };
         o[i * 8..i * 8 + 8].copy_from_slice(&v.to_bits().to_le_bytes());
     }

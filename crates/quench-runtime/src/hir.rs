@@ -11,7 +11,7 @@ use crate::native::{BinF32, BinF64, BinI32, BinI64, ConvOp, SimdOp, UnF32, UnF64
 
 pub type Reg = u16;
 
-/// Value kind independent of layer. Layer lives beside it, not inside it.
+/// Value kind independent of layer. Storage is derived from kind, not layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Kind {
     I32,
@@ -23,7 +23,17 @@ pub enum Kind {
     Dynamic,
 }
 
-/// Register type: one layer, one kind.
+impl Kind {
+    /// Arena for unboxed scalars; GC for refs and Dynamic payloads.
+    pub fn storage(self) -> crate::layer::Storage {
+        match self {
+            Self::Ref | Self::Dynamic => crate::layer::Storage::Gc,
+            _ => crate::layer::Storage::Arena,
+        }
+    }
+}
+
+/// Register type: Native | Fast | Dynamic beside a kind. Storage is `kind.storage()`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct Ty {
     pub layer: Layer,
@@ -51,6 +61,10 @@ impl Ty {
             layer: Layer::Native,
             kind,
         }
+    }
+
+    pub fn storage(self) -> crate::layer::Storage {
+        self.kind.storage()
     }
 }
 
@@ -351,7 +365,9 @@ pub enum Inst {
     ThrowRef {
         src: Reg,
     },
-    Rethrow,
+    Rethrow {
+        depth: u32,
+    },
     ReturnCallRef {
         type_idx: u32,
         func: Reg,
@@ -463,6 +479,20 @@ pub type Nir = NativeIR;
 pub type Fir = FastIR;
 pub type Dir = DynamicIR;
 
+#[cfg(test)]
+mod ty_tests {
+    use super::Kind;
+    use crate::layer::Storage;
+
+    #[test]
+    fn kind_storage_is_arena_plus_gc() {
+        assert_eq!(Kind::I32.storage(), Storage::Arena);
+        assert_eq!(Kind::V128.storage(), Storage::Arena);
+        assert_eq!(Kind::Ref.storage(), Storage::Gc);
+        assert_eq!(Kind::Dynamic.storage(), Storage::Gc);
+    }
+}
+
 impl Inst {
     /// Which subset this op belongs to. Guard/box are the only crossings.
     pub fn ir(&self) -> Layer {
@@ -498,6 +528,30 @@ pub struct FuncSig {
     pub results: Box<[Kind]>,
     pub rec_len: u32,
     pub rec_index: u32,
+    /// Whether this type has a declared supertype (`sub $super`).
+    pub has_super: bool,
+    pub is_final: bool,
+    pub sub_depth: u32,
+    /// Rec-group fingerprints from this type up the super chain: (fp, rec_index).
+    pub chain: Box<[(u64, u32)]>,
+}
+
+impl FuncSig {
+    pub fn assignable_to(&self, want: &Self) -> bool {
+        if self.params != want.params || self.results != want.results {
+            return false;
+        }
+        if self.chain.is_empty() || want.chain.is_empty() {
+            return true;
+        }
+        let Some(want_id) = want.chain.first() else {
+            return true;
+        };
+        if self.chain.first() == Some(want_id) {
+            return true;
+        }
+        !want.is_final && self.chain.iter().any(|id| id == want_id)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -559,6 +613,8 @@ pub enum ConstOp {
     ArrayNew(u32),
     StructNewDefault(u32),
     StructNew(u32),
+    StructNewDesc(u32),
+    StructNewDefaultDesc(u32),
     ArrayNewFixed { type_idx: u32, n: u32 },
     RefI31,
     AnyConvertExtern,
@@ -614,6 +670,7 @@ pub struct HirImport {
 pub enum ImportKind {
     Func {
         type_idx: u32,
+        exact: bool,
     },
     Table(HirTable),
     Memory(HirMemory),

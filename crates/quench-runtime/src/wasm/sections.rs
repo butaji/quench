@@ -1,6 +1,6 @@
 //! Collect module sections into one data record.
 
-use quench_runtime::hir::{
+use crate::hir::{
     ConstExpr, ConstOp, Export, GcStorage, GcType, HeapKind, HirData, HirElem, HirGlobal, HirImport, HirMemory,
     HirTable, ImportKind, RefType as HirRef,
 };
@@ -63,32 +63,48 @@ fn take<'a>(raw: &mut RawModule<'a>, payload: Payload<'a>) -> Result<(), LowerEr
                 let rec_start = raw.gc_types.len() as u32;
                 for (rec_index, sub) in rec_types.into_iter().enumerate() {
                     raw.rec_meta.push((rec_len, rec_index as u32));
-                    let super_idx = sub.supertype_idx.and_then(|idx| {
-                        idx.as_module_index()
-                            .or_else(|| idx.as_rec_group_index().map(|i| rec_start + i))
-                    });
+                    let super_idx = packed_idx(sub.supertype_idx, rec_start);
+                    let descriptor_idx = packed_idx(sub.composite_type.descriptor_idx, rec_start);
+                    let describes_idx = packed_idx(sub.composite_type.describes_idx, rec_start);
+                    let is_final = sub.is_final;
                     match &sub.composite_type.inner {
                         CompositeInnerType::Func(func) => {
                             raw.types.push(func.clone());
-                            raw.gc_types.push(GcType::Func);
+                            raw.gc_types.push(GcType::Func {
+                                super_idx,
+                                descriptor_idx,
+                                describes_idx,
+                                is_final,
+                            });
                         }
                         CompositeInnerType::Struct(st) => {
                             raw.types.push(wasmparser::FuncType::new([], []));
                             raw.gc_types.push(GcType::Struct {
-                                fields: st.fields.iter().map(gc_storage).collect(),
+                                fields: st.fields.iter().map(|f| gc_storage(f, rec_start)).collect(),
                                 super_idx,
+                                descriptor_idx,
+                                describes_idx,
+                                is_final,
                             });
                         }
                         CompositeInnerType::Array(arr) => {
                             raw.types.push(wasmparser::FuncType::new([], []));
                             raw.gc_types.push(GcType::Array {
-                                elem: gc_storage(&arr.0),
+                                elem: gc_storage(&arr.0, rec_start),
                                 super_idx,
+                                descriptor_idx,
+                                describes_idx,
+                                is_final,
                             });
                         }
                         _ => {
                             raw.types.push(wasmparser::FuncType::new([], []));
-                            raw.gc_types.push(GcType::Func);
+                            raw.gc_types.push(GcType::Func {
+                                super_idx,
+                                descriptor_idx,
+                                describes_idx,
+                                is_final,
+                            });
                         }
                     }
                 }
@@ -205,7 +221,14 @@ fn export_kind(kind: ExternalKind, index: u32) -> Option<Export> {
 
 fn hir_import(import: wasmparser::Import<'_>) -> Result<HirImport, LowerError> {
     let kind = match import.ty {
-        TypeRef::Func(type_idx) | TypeRef::FuncExact(type_idx) => ImportKind::Func { type_idx },
+        TypeRef::Func(type_idx) => ImportKind::Func {
+            type_idx,
+            exact: false,
+        },
+        TypeRef::FuncExact(type_idx) => ImportKind::Func {
+            type_idx,
+            exact: true,
+        },
         TypeRef::Table(ty) => ImportKind::Table(hir_table(ty)),
         TypeRef::Memory(ty) => ImportKind::Memory(hir_memory(ty)),
         TypeRef::Global(ty) => ImportKind::Global {
@@ -234,11 +257,30 @@ fn hir_memory(ty: wasmparser::MemoryType) -> HirMemory {
     }
 }
 
-fn gc_storage(field: &wasmparser::FieldType) -> GcStorage {
+fn packed_idx(idx: Option<wasmparser::PackedIndex>, rec_start: u32) -> Option<u32> {
+    idx.and_then(|i| {
+        i.as_module_index()
+            .or_else(|| i.as_rec_group_index().map(|j| rec_start + j))
+    })
+}
+
+fn gc_storage(field: &wasmparser::FieldType, rec_start: u32) -> GcStorage {
     match field.element_type {
         wasmparser::StorageType::I8 => GcStorage::I8,
         wasmparser::StorageType::I16 => GcStorage::I16,
-        wasmparser::StorageType::Val(ty) => GcStorage::Val(super::kind(ty).unwrap_or(quench_runtime::hir::Kind::Ref)),
+        wasmparser::StorageType::Val(wasmparser::ValType::Ref(rt)) => {
+            let type_idx = match rt.heap_type() {
+                wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => {
+                    idx.as_module_index()
+                        .or_else(|| idx.as_rec_group_index().map(|j| rec_start + j))
+                }
+                _ => None,
+            };
+            GcStorage::Ref { type_idx }
+        }
+        wasmparser::StorageType::Val(ty) => {
+            GcStorage::Val(super::kind(ty).unwrap_or(crate::hir::Kind::Ref))
+        }
     }
 }
 
@@ -428,6 +470,10 @@ fn const_op(op: Operator<'_>) -> Result<ConstOp, LowerError> {
             ConstOp::StructNewDefault(struct_type_index)
         }
         Operator::StructNew { struct_type_index } => ConstOp::StructNew(struct_type_index),
+        Operator::StructNewDesc { struct_type_index } => ConstOp::StructNewDesc(struct_type_index),
+        Operator::StructNewDefaultDesc { struct_type_index } => {
+            ConstOp::StructNewDefaultDesc(struct_type_index)
+        }
         Operator::ArrayNewFixed {
             array_type_index,
             array_size,

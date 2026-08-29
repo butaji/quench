@@ -48,9 +48,9 @@ pub fn from_hir_imports(
         tables.push(Rc::new(RefCell::new(init_table(ty))));
     }
     let id = registry::alloc_id();
-    let gc = RefCell::new(crate::gc::GcHeap::default());
+    let gc = registry::heap();
     for global in module.globals.iter() {
-        let value = const_eval::eval(&global.init, &globals, id, Some(&gc), &module.gc_types)?;
+        let value = const_eval::eval(&global.init, &globals, id, Some(gc.as_ref()), &module.gc_types)?;
         globals.push(Rc::new(RefCell::new(Global {
             value,
             mutable: global.mutable,
@@ -181,14 +181,7 @@ fn apply_active_segments(
     datas: &[crate::hir::HirData],
     elems: &[HirElem],
 ) -> Result<(), InvokeError> {
-    for (index, data) in datas.iter().enumerate() {
-        let Some(offset) = data.offset.as_ref() else {
-            continue;
-        };
-        let offset = const_eval::eval_u64(offset, &instance.inner.globals, instance.id())?;
-        write_mem(instance, data.mem, offset, &data.bytes)?;
-        instance.inner.datas.borrow_mut()[index] = None;
-    }
+    // Spec instantiate: active elems, then active data.
     for (index, elem) in elems.iter().enumerate() {
         eval_elem_items(instance, index, elem)?;
         if elem.declared {
@@ -201,6 +194,14 @@ fn apply_active_segments(
         let offset = const_eval::eval_u64(offset, &instance.inner.globals, instance.id())?;
         write_table(instance, elem.table, offset, index)?;
         instance.inner.elems.borrow_mut()[index] = None;
+    }
+    for (index, data) in datas.iter().enumerate() {
+        let Some(offset) = data.offset.as_ref() else {
+            continue;
+        };
+        let offset = const_eval::eval_u64(offset, &instance.inner.globals, instance.id())?;
+        write_mem(instance, data.mem, offset, &data.bytes)?;
+        instance.inner.datas.borrow_mut()[index] = None;
     }
     Ok(())
 }
@@ -216,7 +217,7 @@ fn eval_elem_items(instance: &Instance, index: usize, elem: &HirElem) -> Result<
                     item,
                     &instance.inner.globals,
                     inst,
-                    Some(&instance.inner.gc),
+                    Some(instance.inner.gc.as_ref()),
                     &instance.inner.gc_types,
                 )?,
                 inst,

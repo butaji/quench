@@ -1,15 +1,8 @@
-//! One runtime, three IR subsets of common HIR: NativeIR | FastIR | DynamicIR.
+//! VM DSL: Native | Fast | Dynamic, Arena + GC.
 //!
-//! Frontends emit typed-register HIR. NIR, FIR, and DIR are filters on that
-//! one instruction set, not three IRs. Native is proven, Fast is guarded,
-//! Dynamic is resolved at run time. Box and guard are the only crossings.
-//! Specialise derives a (possibly mixed) HIR program; wasm enters as NIR.
-//!
-//! Dynamic follows QuickJS: tagged JSValue (INT fast path), atoms, shared
-//! shapes, Runtime/Context, RC plus a cycle pass, stack bytecode with a
-//! compile-time max stack. Native is Arena (unboxed INT/float, linear memory).
-//! Fast/Dynamic are GC. There is no guest interpreter and no per-language
-//! object type.
+//! Layer and storage are independent. NIR | FIR | DIR filter one HIR enum.
+//! Wasm enters as Native. Arena holds linear memory and unboxed locals; GC
+//! holds structs/arrays/exns. QuickJS is the JS layer on top, not store GC.
 
 pub mod build_profile;
 mod bulk;
@@ -22,6 +15,7 @@ pub mod gc;
 mod host_jobs;
 pub mod instance;
 pub mod interp;
+pub mod wasm;
 pub mod layer;
 pub mod mir;
 pub mod native;

@@ -226,6 +226,8 @@ pub enum SimdOp {
     RelaxedNmaddF32,
     RelaxedMaddF64,
     RelaxedNmaddF64,
+    I16x8RelaxedDot,
+    I32x4RelaxedDotAdd,
 }
 
 impl SimdOp {
@@ -498,7 +500,8 @@ impl SimdOp {
             | Self::RelaxedMaddF32
             | Self::RelaxedNmaddF32
             | Self::RelaxedMaddF64
-            | Self::RelaxedNmaddF64 => 3,
+            | Self::RelaxedNmaddF64
+            | Self::I32x4RelaxedDotAdd => 3,
             _ => 2,
         }
     }

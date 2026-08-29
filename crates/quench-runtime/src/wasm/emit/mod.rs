@@ -3,10 +3,10 @@
 mod atomic;
 mod ops;
 
-use quench_runtime::hir::{
+use crate::hir::{
     CatchClause, FuncSig, GcOp, GcType, Inst, Kind, LoadOp, Reg, StoreOp, Ty,
 };
-use quench_runtime::native::SimdOp;
+use crate::native::SimdOp;
 use wasmparser::{BlockType, FunctionBody, MemArg, Operator};
 
 use super::{kind, LowerError};
@@ -160,27 +160,39 @@ fn emit(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError> {
             relative_depth,
             to_ref_type,
             ..
-        } => emit_br_on_cast(ctx, relative_depth, to_ref_type, false)?,
+        } => emit_br_on_cast(ctx, relative_depth, to_ref_type, false, false)?,
         Operator::BrOnCastFail {
             relative_depth,
             to_ref_type,
             ..
-        } => emit_br_on_cast(ctx, relative_depth, to_ref_type, true)?,
+        } => emit_br_on_cast(ctx, relative_depth, to_ref_type, true, false)?,
+        Operator::BrOnCastDescEq {
+            relative_depth,
+            to_ref_type,
+            ..
+        } => emit_br_on_cast(ctx, relative_depth, to_ref_type, false, true)?,
+        Operator::BrOnCastDescEqFail {
+            relative_depth,
+            to_ref_type,
+            ..
+        } => emit_br_on_cast(ctx, relative_depth, to_ref_type, true, true)?,
         Operator::I8x16Shuffle { lanes } => emit_shuffle(ctx, lanes)?,
         Operator::Throw { tag_index } => emit_throw(ctx, tag_index)?,
         Operator::Try { blockty } => emit_legacy_try(ctx, blockty)?,
         Operator::Catch { tag_index } => emit_legacy_catch(ctx, Some(tag_index))?,
         Operator::CatchAll => emit_legacy_catch(ctx, None)?,
         Operator::Delegate { relative_depth } => emit_legacy_delegate(ctx, relative_depth)?,
-        Operator::Rethrow { relative_depth: _ } => {
-            ctx.emit(Inst::Rethrow);
+        Operator::Rethrow { relative_depth } => {
+            ctx.emit(Inst::Rethrow {
+                depth: relative_depth,
+            });
             ctx.unreachable = true;
         }
         Operator::TryTable { try_table } => emit_try_table(ctx, try_table)?,
-        Operator::I64Add128 => emit_wide(ctx, quench_runtime::hir::WideOp::Add128, 4)?,
-        Operator::I64Sub128 => emit_wide(ctx, quench_runtime::hir::WideOp::Sub128, 4)?,
-        Operator::I64MulWideS => emit_wide(ctx, quench_runtime::hir::WideOp::MulWideS, 2)?,
-        Operator::I64MulWideU => emit_wide(ctx, quench_runtime::hir::WideOp::MulWideU, 2)?,
+        Operator::I64Add128 => emit_wide(ctx, crate::hir::WideOp::Add128, 4)?,
+        Operator::I64Sub128 => emit_wide(ctx, crate::hir::WideOp::Sub128, 4)?,
+        Operator::I64MulWideS => emit_wide(ctx, crate::hir::WideOp::MulWideS, 2)?,
+        Operator::I64MulWideU => emit_wide(ctx, crate::hir::WideOp::MulWideU, 2)?,
         Operator::I32Load { memarg } => emit_load(ctx, memarg, LoadOp::I32)?,
         Operator::I64Load { memarg } => emit_load(ctx, memarg, LoadOp::I64)?,
         Operator::F32Load { memarg } => emit_load(ctx, memarg, LoadOp::F32)?,
@@ -663,18 +675,34 @@ fn emit_br_on_cast(
     depth: u32,
     to: wasmparser::RefType,
     fail: bool,
+    with_desc: bool,
 ) -> Result<(), LowerError> {
+    let desc = if with_desc { Some(ctx.pop()?) } else { None };
     let src = ctx.pop()?;
-    let (heap, type_idx) = heap_cast(to.heap_type());
+    let (heap, type_idx, exact) = heap_cast(to.heap_type());
     let cond = ctx.alloc()?;
-    ctx.emit(Inst::Gc {
-        op: GcOp::RefTest {
+    let op = if with_desc {
+        GcOp::RefTestDesc {
             nullable: to.is_nullable(),
+            exact,
+            type_idx,
+        }
+    } else {
+        GcOp::RefTest {
+            nullable: to.is_nullable(),
+            exact,
             heap,
             type_idx,
-        },
+        }
+    };
+    let args = match desc {
+        Some(desc) => Box::new([src, desc]) as Box<[Reg]>,
+        None => Box::new([src]),
+    };
+    ctx.emit(Inst::Gc {
+        op,
         dst: cond,
-        args: Box::new([src]),
+        args,
     });
     let skip = ctx.code.len();
     ctx.emit(Inst::JumpIf {
@@ -763,6 +791,11 @@ fn branch(ctx: &mut Context<'_>, depth: u32) -> Result<(), LowerError> {
             ctx.emit(Inst::Move { dst: *dst, src });
         }
     }
+    for i in (index + 1..ctx.ctrl.len()).rev() {
+        if matches!(ctx.ctrl[i].kind, CtrlKind::Try) && !ctx.ctrl[i].catching {
+            ctx.emit(Inst::TryEnd);
+        }
+    }
     if is_loop {
         ctx.emit(Inst::Jump {
             target: ctx.ctrl[index].start,
@@ -838,7 +871,7 @@ fn emit_call_ref(ctx: &mut Context<'_>, type_idx: u32) -> Result<(), LowerError>
 
 fn emit_wide(
     ctx: &mut Context<'_>,
-    op: quench_runtime::hir::WideOp,
+    op: crate::hir::WideOp,
     nargs: usize,
 ) -> Result<(), LowerError> {
     let mut args = [0u16; 4];
@@ -1256,6 +1289,26 @@ fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError>
             };
             emit_gc(ctx, GcOp::StructNew { type_idx: struct_type_index }, n, true)
         }
+        Operator::StructNewDesc { struct_type_index } => {
+            let n = match ctx.gc_types.get(struct_type_index as usize) {
+                Some(GcType::Struct { fields, .. }) => fields.len(),
+                _ => 0,
+            };
+            emit_gc(ctx, GcOp::StructNewDesc { type_idx: struct_type_index }, n + 1, true)
+        }
+        Operator::StructNewDefaultDesc { struct_type_index } => {
+            emit_gc(
+                ctx,
+                GcOp::StructNewDefaultDesc {
+                    type_idx: struct_type_index,
+                },
+                1,
+                true,
+            )
+        }
+        Operator::RefGetDesc { type_index: _ } => emit_gc(ctx, GcOp::RefGetDesc, 1, true),
+        Operator::RefCastDescEqNonNull { hty } => emit_cast_desc(ctx, false, hty),
+        Operator::RefCastDescEqNullable { hty } => emit_cast_desc(ctx, true, hty),
         Operator::StructGet {
             struct_type_index,
             field_index,
@@ -1373,20 +1426,38 @@ fn emit_gc_op(ctx: &mut Context<'_>, op: Operator<'_>) -> Result<(), LowerError>
 }
 
 fn emit_cast(ctx: &mut Context<'_>, nullable: bool, hty: wasmparser::HeapType) -> Result<(), LowerError> {
-    let (heap, type_idx) = heap_cast(hty);
-    emit_gc(ctx, GcOp::RefCast { nullable, heap, type_idx }, 1, true)
+    let (heap, type_idx, exact) = heap_cast(hty);
+    emit_gc(ctx, GcOp::RefCast { nullable, exact, heap, type_idx }, 1, true)
 }
 
 fn emit_test(ctx: &mut Context<'_>, nullable: bool, hty: wasmparser::HeapType) -> Result<(), LowerError> {
-    let (heap, type_idx) = heap_cast(hty);
-    emit_gc(ctx, GcOp::RefTest { nullable, heap, type_idx }, 1, true)
+    let (heap, type_idx, exact) = heap_cast(hty);
+    emit_gc(ctx, GcOp::RefTest { nullable, exact, heap, type_idx }, 1, true)
+}
+
+fn emit_cast_desc(
+    ctx: &mut Context<'_>,
+    nullable: bool,
+    hty: wasmparser::HeapType,
+) -> Result<(), LowerError> {
+    let (_heap, type_idx, exact) = heap_cast(hty);
+    emit_gc(
+        ctx,
+        GcOp::RefCastDesc {
+            nullable,
+            exact,
+            type_idx,
+        },
+        2,
+        true,
+    )
 }
 
 fn pack_of(ctx: &Context<'_>, type_idx: u32, field: u32) -> u8 {
     match ctx.gc_types.get(type_idx as usize) {
         Some(GcType::Struct { fields, .. }) => match fields.get(field as usize) {
-            Some(quench_runtime::hir::GcStorage::I8) => 8,
-            Some(quench_runtime::hir::GcStorage::I16) => 16,
+            Some(crate::hir::GcStorage::I8) => 8,
+            Some(crate::hir::GcStorage::I16) => 16,
             _ => 0,
         },
         _ => 0,
@@ -1395,36 +1466,42 @@ fn pack_of(ctx: &Context<'_>, type_idx: u32, field: u32) -> u8 {
 
 fn array_pack(ctx: &Context<'_>, type_idx: u32) -> u8 {
     match ctx.gc_types.get(type_idx as usize) {
-        Some(GcType::Array { elem: quench_runtime::hir::GcStorage::I8, .. }) => 8,
-        Some(GcType::Array { elem: quench_runtime::hir::GcStorage::I16, .. }) => 16,
+        Some(GcType::Array { elem: crate::hir::GcStorage::I8, .. }) => 8,
+        Some(GcType::Array { elem: crate::hir::GcStorage::I16, .. }) => 16,
         _ => 0,
     }
 }
 
-fn heap_cast(hty: wasmparser::HeapType) -> (quench_runtime::hir::HeapKind, Option<u32>) {
+fn heap_cast(hty: wasmparser::HeapType) -> (crate::hir::HeapKind, Option<u32>, bool) {
     match hty {
         wasmparser::HeapType::Abstract { ty, .. } => {
             use wasmparser::AbstractHeapType::*;
             let heap = match ty {
-                Func => quench_runtime::hir::HeapKind::Func,
-                Extern => quench_runtime::hir::HeapKind::Extern,
-                Any => quench_runtime::hir::HeapKind::Any,
-                Eq => quench_runtime::hir::HeapKind::Eq,
-                I31 => quench_runtime::hir::HeapKind::I31,
-                Struct => quench_runtime::hir::HeapKind::Struct,
-                Array => quench_runtime::hir::HeapKind::Array,
-                None => quench_runtime::hir::HeapKind::None,
-                NoFunc => quench_runtime::hir::HeapKind::NoFunc,
-                NoExtern => quench_runtime::hir::HeapKind::NoExtern,
-                Exn => quench_runtime::hir::HeapKind::Exn,
-                NoExn => quench_runtime::hir::HeapKind::NoExn,
-                _ => quench_runtime::hir::HeapKind::Other,
+                Func => crate::hir::HeapKind::Func,
+                Extern => crate::hir::HeapKind::Extern,
+                Any => crate::hir::HeapKind::Any,
+                Eq => crate::hir::HeapKind::Eq,
+                I31 => crate::hir::HeapKind::I31,
+                Struct => crate::hir::HeapKind::Struct,
+                Array => crate::hir::HeapKind::Array,
+                None => crate::hir::HeapKind::None,
+                NoFunc => crate::hir::HeapKind::NoFunc,
+                NoExtern => crate::hir::HeapKind::NoExtern,
+                Exn => crate::hir::HeapKind::Exn,
+                NoExn => crate::hir::HeapKind::NoExn,
+                _ => crate::hir::HeapKind::Other,
             };
-            (heap, Option::None)
+            (heap, Option::None, false)
         }
-        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => (
-            quench_runtime::hir::HeapKind::Concrete,
+        wasmparser::HeapType::Concrete(idx) => (
+            crate::hir::HeapKind::Concrete,
             idx.as_module_index().or(idx.as_rec_group_index()),
+            false,
+        ),
+        wasmparser::HeapType::Exact(idx) => (
+            crate::hir::HeapKind::Concrete,
+            idx.as_module_index().or(idx.as_rec_group_index()),
+            true,
         ),
     }
 }

@@ -9,11 +9,17 @@ pub fn match_import(
     export: ResolvedImport,
 ) -> Result<ResolvedImport, InvokeError> {
     match (kind, export) {
-        (ImportKind::Func { type_idx }, ResolvedImport::Func { func, sig }) => {
+        (ImportKind::Func { type_idx, exact }, ResolvedImport::Func { func, sig }) => {
             let want = types
                 .get(*type_idx as usize)
                 .ok_or(InvokeError::Unlinkable("incompatible import type"))?;
-            if sig_of(&func, &sig) != *want {
+            let got = sig_of(&func, &sig);
+            let ok = if *exact {
+                got == *want
+            } else {
+                got.assignable_to(want)
+            };
+            if !ok {
                 return Err(InvokeError::Unlinkable("incompatible import type"));
             }
             Ok(ResolvedImport::Func { func, sig })
@@ -53,21 +59,14 @@ pub fn match_import(
     }
 }
 
-fn sig_of(func: &Func, exported: &FuncSig) -> FuncSig {
-    match func {
-        Func::Code(code) => FuncSig {
-            params: code.params.iter().map(|ty| ty.kind).collect(),
-            results: code.results.iter().map(|ty| ty.kind).collect(),
-            rec_len: 1,
-            rec_index: 0,
-        },
-        _ => exported.clone(),
-    }
+fn sig_of(_func: &Func, exported: &FuncSig) -> FuncSig {
+    exported.clone()
 }
 
 fn memory_ok(want: &HirMemory, got: &Memory) -> bool {
     want.memory64 == got.memory64
         && want.shared == got.shared
+        && got.page == (1u32 << want.page_size_log2)
         && limits_ok(got.pages(), got.max, want.initial, want.maximum)
 }
 

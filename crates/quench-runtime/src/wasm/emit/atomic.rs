@@ -1,6 +1,6 @@
 //! Threads atomics → one HIR Atomic op.
 
-use quench_runtime::hir::{AtomicOp, Inst};
+use crate::hir::{AtomicOp, Inst};
 use wasmparser::{MemArg, Operator};
 
 use super::{Context, LowerError};
