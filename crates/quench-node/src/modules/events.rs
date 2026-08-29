@@ -511,6 +511,10 @@ fn attach_rejection_handler(
 ) -> Result<(), VmError> {
     let handler = eval_function(
         r#"(emitter, event, arguments, error) => {
+          // Stream capture rejections share one emitter with lifecycle
+          // listeners. Once the first rejection destroys its owner, later
+          // drain/data rejections are no longer observable in Node.
+          if (emitter.__quenchOwner?.destroyed === true) return;
           const rejection = emitter[Symbol.for('nodejs.rejection')];
           if (typeof rejection === 'function') {
             try {
