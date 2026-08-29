@@ -1739,6 +1739,11 @@ fn with(
     let mut month_code = Value::Undefined;
     let mut month_number_value = None;
     let mut month_code_number_value = None;
+    let mut era = Value::Undefined;
+    let mut era_year = Value::Undefined;
+    let mut year_provided = false;
+    let mut era_provided = false;
+    let mut era_year_provided = false;
     let mut recognized = false;
     for name in [
         "day",
@@ -1751,6 +1756,8 @@ fn with(
         "nanosecond",
         "second",
         "year",
+        "era",
+        "eraYear",
     ] {
         let value = crate::execute::get_property_result(changes, name)?;
         if matches!(value, Value::Undefined) {
@@ -1768,15 +1775,11 @@ fn with(
                 month_code = value.clone();
                 let number = crate::conversion::to_number(&month_code_number(&value)?)?;
                 month_code_number_value = Some(number);
-                let text = month_code_text(&value)?;
-                values[1] = crate::temporal::plain_date::calendar_date_from_code(
-                    values[0] as i32,
-                    &text,
-                    values[2] as u32,
-                    &receiver_calendar,
-                )
-                .map(|(ordinal, _)| ordinal as f64)
-                .unwrap_or(number);
+                let _ = month_code_text(&value)?;
+                // The month code is authoritative when both month forms are
+                // present. Keep its numeric ordinal; the constructor
+                // preserves the code, including leap markers.
+                values[1] = number;
             }
             "day" => values[2] = crate::conversion::to_number(&value)?.trunc(),
             "hour" => values[3] = crate::conversion::to_number(&value)?.trunc(),
@@ -1786,8 +1789,39 @@ fn with(
             "microsecond" => values[7] = crate::conversion::to_number(&value)?.trunc(),
             "nanosecond" => values[8] = crate::conversion::to_number(&value)?.trunc(),
             "year" => values[0] = crate::conversion::to_number(&value)?.trunc(),
+            "era" => {
+                era = value;
+                era_provided = true;
+            }
+            "eraYear" => {
+                era_year = value;
+                era_year_provided = true;
+            }
             _ => unreachable!(),
         }
+        if name == "year" {
+            year_provided = true;
+        }
+    }
+    if !year_provided && (era_provided != era_year_provided) {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
+    if !year_provided && era_provided {
+        let era = crate::conversion::to_string(&era)?.to_ascii_lowercase();
+        let era = crate::temporal::plain_date::canonical_era_name(&receiver_calendar, &era)
+            .ok_or_else(|| crate::value::error::throw_type_error("Calendar does not use eras"))?;
+        let era_year = crate::conversion::to_number(&era_year)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+        values[0] = crate::temporal::plain_date::derive_year_from_era(
+            &receiver_calendar,
+            era,
+            era_year,
+        )
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
     }
     let overflow = if options_primitive {
         "constrain".to_string()
@@ -1825,7 +1859,7 @@ fn with(
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    let code = if matches!(month_code, Value::Undefined) {
+    let code = if matches!(month_code, Value::Undefined) && month_number_value.is_none() {
         crate::execute::get_property_result(receiver, "monthCode")?
     } else {
         month_code.clone()
