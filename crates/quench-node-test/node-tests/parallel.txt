@@ -54,6 +54,7 @@ test-stream-readable-ended.js
 test-stream-readable-emit-readable-short-stream.js
 test-stream-once-readable-pipe.js
 test-stream-duplex.js
+test-stream-duplex-props.js
 test-stream-duplexpair.js
 test-stream-duplex-writable-finished.js
 test-stream-pipe-cleanup.js

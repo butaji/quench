@@ -1803,10 +1803,12 @@
     options = options || {};
     const readableOptions = Object.assign({}, options, {
       objectMode: options.readableObjectMode ?? options.objectMode,
+      highWaterMark: options.readableHighWaterMark ?? options.highWaterMark,
       __quenchCompatConstruct: true
     });
     const writableOptions = Object.assign({}, options, {
-      objectMode: options.writableObjectMode ?? options.objectMode
+      objectMode: options.writableObjectMode ?? options.objectMode,
+      highWaterMark: options.writableHighWaterMark ?? options.highWaterMark
     });
     initReadable(this, readableOptions);
     this._isDuplex = true;
