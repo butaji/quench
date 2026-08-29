@@ -187,11 +187,23 @@ fn fixed_offset_nanos(timezone: &str) -> i128 {
         return iso_offset_nanos(timezone);
     }
     let bytes = timezone.as_bytes();
-    if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
+    if !matches!(bytes.first(), Some(b'+' | b'-')) {
         return 0;
     }
-    let hour = timezone[1..3].parse::<i128>().unwrap_or(0);
-    let minute = timezone[4..6].parse::<i128>().unwrap_or(0);
+    let (hour, minute) = match bytes.len() {
+        3 if bytes[1..].iter().all(u8::is_ascii_digit) => {
+            (timezone[1..3].parse::<i128>().unwrap_or(0), 0)
+        }
+        5 if bytes[1..].iter().all(u8::is_ascii_digit) => (
+            timezone[1..3].parse::<i128>().unwrap_or(0),
+            timezone[3..5].parse::<i128>().unwrap_or(0),
+        ),
+        6 if bytes[3] == b':' => (
+            timezone[1..3].parse::<i128>().unwrap_or(0),
+            timezone[4..6].parse::<i128>().unwrap_or(0),
+        ),
+        _ => return 0,
+    };
     let sign = if bytes[0] == b'-' { -1 } else { 1 };
     sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
 }
@@ -1405,10 +1417,7 @@ mod stubs {
             if offset_start.is_some() && offset_mode == "reject" {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
-                if supplied_offset != actual_offset
-                    && (super::iso_offset_has_seconds(offset_text)
-                        || timezone.starts_with(['+', '-']))
-                {
+                if supplied_offset != actual_offset {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
                     ));
