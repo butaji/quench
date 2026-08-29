@@ -17,6 +17,7 @@ use crate::modules::net;
 /// Hidden property mapping a `res` object to its host-side state.
 pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
+pub(crate) const REQ_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
 pub(crate) const INCOMING_CLOSE_PENDING_PROP: &str = "\0quench:http:incoming:close-pending";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
@@ -41,6 +42,9 @@ pub struct Conn {
     pub buffer: Vec<u8>,
     /// The parsed `req` value, while this connection streams a request body.
     pub req: Option<Value>,
+    /// Every request identity observed on this connection. Keep-alive replaces
+    /// `req` for parsing, but close/destroy must still reach each message.
+    pub requests: Vec<Value>,
     /// Bytes of the request body still expected (from Content-Length).
     pub body_remaining: usize,
     /// Whether the request body fully arrived (`'end'` was emitted).
@@ -157,6 +161,7 @@ pub fn connection_handler(
             socket: socket.clone(),
             buffer: Vec::new(),
             req: None,
+            requests: Vec::new(),
             body_remaining: 0,
             body_done: true,
             head_parsed: false,
@@ -495,6 +500,7 @@ fn build_req_res(
         let mut guard = state.borrow_mut();
         if let Some(conn) = guard.http.conns.get_mut(&socket_id) {
             conn.req = Some(req.clone());
+            conn.requests.push(req.clone());
             conn.body_remaining = content_length;
             conn.body_done = content_length == 0;
             conn.response_done = false;
@@ -507,6 +513,10 @@ fn build_req_res(
 /// Build the `req` emitter from the parsed head.
 fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usize, bool), VmError> {
     let (method, url, version, headers, content_length, keep_alive) = parse_request_head(head);
+    let async_resource = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::String("HTTPINCOMINGMESSAGE".into())],
+    )?;
     let req = crate::modules::events::new_emitter_object(state)?;
     let req = install_req_props(
         req,
@@ -534,6 +544,7 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
             ("aborted".to_string(), Value::Boolean(false)),
             ("complete".to_string(), Value::Boolean(false)),
             (REQ_CLOSE_PROP.to_string(), Value::Boolean(false)),
+            (REQ_ASYNC_RESOURCE_PROP.to_string(), async_resource),
         ],
     )?;
     Ok((req, content_length, keep_alive))
