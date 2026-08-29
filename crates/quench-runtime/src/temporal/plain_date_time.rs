@@ -799,7 +799,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
-    let _calendar = crate::conversion::to_string(calendar)?;
+    let calendar = crate::conversion::to_string(calendar)?;
     let values = fields(receiver)?;
     let month_code = format!("M{:02}", values[1] as u32);
     let properties = NAMES
@@ -809,7 +809,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         .map(|(name, value)| (name.into(), Value::Number(value)))
         .chain([
             ("monthCode".into(), Value::String(month_code)),
-            ("calendarId".into(), Value::String("iso8601".into())),
+            ("calendarId".into(), Value::String(calendar)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),

@@ -279,7 +279,23 @@ impl DateTimeOptions {
             return;
         }
         let keys = defaults.unwrap_or(&["year", "month", "day"]);
-        if !self.components.is_empty() {
+        let has_core_component = self.components.iter().any(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "weekday" | "era" | "year" | "month" | "day" | "dayPeriod"
+                    | "hour" | "minute" | "second"
+            )
+        });
+        if has_core_component {
+            if !self.contains("year")
+                && !self.contains("month")
+                && !self.contains("day")
+                && (self.contains("era") || self.contains("weekday"))
+            {
+                for key in keys {
+                    self.set_component(key, "numeric".to_string());
+                }
+            }
             // Date/Time.prototype helpers add their own component defaults
             // when the caller supplied only the opposite half (for example,
             // toLocaleDateString({hour: "numeric"})). Preserve partial
@@ -508,8 +524,8 @@ fn prototype_result(
             Ok(Value::String(format!("{start} – {end}")))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
-            let (start, end) = range_values(arguments, slots)?;
-            Ok(make_array(range_parts(&start, &end)))
+            let parts = range_parts_result(arguments, slots)?;
+            Ok(make_array(parts))
         }
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(
             slots
@@ -523,6 +539,13 @@ fn prototype_result(
 }
 
 fn collapse_range(start: &str, end: &str) -> Option<String> {
+    if let (Some((start_date, start_time)), Some((end_date, end_time))) =
+        (start.split_once(", "), end.split_once(", "))
+    {
+        if start_date == end_date && start_time.contains(':') && end_time.contains(':') {
+            return Some(format!("{start_date}, {start_time} – {end_time}"));
+        }
+    }
     let (start_prefix, start_suffix) = start.rsplit_once(", ")?;
     let (end_prefix, end_suffix) = end.rsplit_once(", ")?;
     if start_suffix != end_suffix {
