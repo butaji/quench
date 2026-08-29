@@ -15,7 +15,7 @@ pub(crate) fn reduce(
     let barrier_len = facts.eval_var_barrier.len();
     facts
         .eval_var_barrier
-        .extend(crate::semantic_early::lexically_declared_names_in(
+        .extend(crate::semantic::early::lexically_declared_names_in(
             &block.body,
         ));
     let result = reduce_body(block, ops, facts, next_register, next_slot, locals);
@@ -34,8 +34,8 @@ fn reduce_body(
     hoist_var_names(block, facts.strict, next_slot, locals);
     let mut block_locals = locals.clone();
     crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
-    let stack = crate::using_scope::reserve(&block.body, &mut block_locals, next_slot);
-    crate::using_scope::emit_tdz(&block.body, ops, &block_locals);
+    let stack = crate::using::scope::reserve(&block.body, &mut block_locals, next_slot);
+    crate::using::scope::emit_tdz(&block.body, ops, &block_locals);
     prepare_block_functions(&block.body, &mut block_locals, next_slot, ops);
     instantiate_block_functions(
         &block.body,
@@ -58,7 +58,7 @@ fn reduce_body(
         ops,
         body,
         stack,
-        crate::using_scope::has_await_using(&block.body),
+        crate::using::scope::has_await_using(&block.body),
         next_register,
     )?;
     Ok(last)
@@ -190,8 +190,8 @@ fn emit_wrapped(
         ops.extend(body);
         return Ok(());
     };
-    crate::using_scope::emit_create(ops, stack, await_using, next_register);
-    ops.extend(crate::using_scope::wrap(
+    crate::using::scope::emit_create(ops, stack, await_using, next_register);
+    ops.extend(crate::using::scope::wrap(
         body,
         stack,
         await_using,
@@ -209,11 +209,11 @@ pub(crate) fn hoist_var_names(
     locals: &mut HashMap<String, u16>,
 ) {
     let hoisted = if strict {
-        crate::semantic_early::strict_var_declared_names_in(&block.body)
+        crate::semantic::early::strict_var_declared_names_in(&block.body)
     } else {
-        crate::semantic_early::var_declared_names_in(&block.body)
+        crate::semantic::early::var_declared_names_in(&block.body)
     };
-    let skip = crate::semantic_early::annex_b_lexical_collisions_in(&block.body);
+    let skip = crate::semantic::early::annex_b_lexical_collisions_in(&block.body);
     for name in hoisted {
         if skip.contains(&name) {
             continue;

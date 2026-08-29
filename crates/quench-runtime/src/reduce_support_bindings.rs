@@ -14,14 +14,14 @@ pub(crate) fn eval_bindings(
     strict: bool,
     global: bool,
 ) -> EvalBindings {
-    let collisions = crate::semantic_early::annex_b_lexical_collisions(program);
-    let names = crate::semantic_early::var_declared_names(program)
+    let collisions = crate::semantic::early::annex_b_lexical_collisions(program);
+    let names = crate::semantic::early::var_declared_names(program)
         .into_iter()
         .filter(|name| {
             !collisions.contains(name) || bindings.iter().any(|(bound, _)| bound == name)
         })
         .collect::<Vec<_>>();
-    let lexical_names = crate::semantic_early::lexically_declared_names(program);
+    let lexical_names = crate::semantic::early::lexically_declared_names(program);
     finish_eval_bindings(
         bindings,
         reusable_var_names,
@@ -126,7 +126,7 @@ pub(crate) fn validate_eval_var_names(
     if strict {
         return Ok(());
     }
-    let names = crate::semantic_early::var_declared_names(program);
+    let names = crate::semantic::early::var_declared_names(program);
     let conflict = names.iter().find(|name| forbidden.contains(name));
     match conflict {
         Some(name) => Err(vec![format!(

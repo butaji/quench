@@ -412,18 +412,18 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     props::builtin_name(builtin)
 }
 
-include!("builtins_escape.rs");
-include!("builtins_uri.rs");
-include!("builtins_core.rs");
-include!("builtins_array_shift.rs");
-include!("builtins_array_reverse.rs");
-include!("builtins_array_pop.rs");
-include!("builtins_array_unshift.rs");
-include!("builtins_array_fill.rs");
-include!("builtins_array_copy_within.rs");
-include!("builtins_array_find_last.rs");
-include!("builtins_array_to_sorted.rs");
-include!("builtins_array_extra.rs");
+include!("builtins/escape.rs");
+include!("builtins/uri.rs");
+include!("builtins/core.rs");
+include!("builtins/array_shift.rs");
+include!("builtins/array_reverse.rs");
+include!("builtins/array_pop.rs");
+include!("builtins/array_unshift.rs");
+include!("builtins/array_fill.rs");
+include!("builtins/array_copy_within.rs");
+include!("builtins/array_find_last.rs");
+include!("builtins/array_to_sorted.rs");
+include!("builtins/array_extra.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let base = arguments
         .first()
@@ -434,7 +434,7 @@ pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmE
     Ok(Value::Number(pow(base, exponent)))
 }
 
-include!("builtins_object_core.rs");
+include!("builtins/object_core.rs");
 #[cold]
 #[inline(never)]
 pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
@@ -478,7 +478,7 @@ pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
-include!("builtins_error_helpers.rs");
+include!("builtins/error_helpers.rs");
 fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
     match target {
         Value::BoundFunction(bound)
@@ -519,8 +519,8 @@ fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
     }
 }
 
-include!("builtins_string_core.rs");
-include!("builtins_property_helpers.rs");
+include!("builtins/string_core.rs");
+include!("builtins/property_helpers.rs");
 
 pub fn define_own_property_public(
     target: &Value,
@@ -592,5 +592,5 @@ mod tests {
         assert!(!data.has_index(2));
     }
 }
-include!("builtins_prototype.rs");
-include!("builtins_value_string.rs");
+include!("builtins/prototype.rs");
+include!("builtins/value_string.rs");

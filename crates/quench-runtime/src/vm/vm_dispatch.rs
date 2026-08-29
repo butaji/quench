@@ -253,10 +253,10 @@ fn run_control_op(
         Branch { .. } => crate::branch::execute(registers, op).map(Some),
         Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
         With { .. } => crate::with_scope::execute(registers, op).map(Some),
-        PrivateScope { .. } => crate::private_environment::execute_scope(registers, op).map(Some),
+        PrivateScope { .. } => crate::private::environment::execute_scope(registers, op).map(Some),
         StaticBlock { .. } => crate::classes::execute_static_block(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
-        WithDispose { .. } => crate::using_scope::execute(registers, op).map(Some),
+        WithDispose { .. } => crate::using::scope::execute(registers, op).map(Some),
         IteratorBinding { .. } => {
             crate::collections::iterator::execute_binding(registers, op).map(Some)
         }
@@ -444,7 +444,7 @@ fn run_get_set_property(
         OptionalGetDynamic { .. } => {
             crate::properties::execute_optional_get_dynamic(registers, op)?
         }
-        GetPrivate { .. } => crate::private_slots::execute_get(registers, op)?,
+        GetPrivate { .. } => crate::private::slots::execute_get(registers, op)?,
         GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => {
             crate::super_scope::execute_get(registers, op)?
         }
@@ -474,9 +474,9 @@ fn run_get_set_property(
         SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => {
             crate::super_scope::execute_set(registers, op)?
         }
-        SetPrivate { .. } => crate::private_slots::execute_set(registers, op)?,
-        DefinePrivate { .. } => crate::private_slots::execute_define(registers, op)?,
-        DefineProperty { .. } => crate::property_define::execute(registers, op)?,
+        SetPrivate { .. } => crate::private::slots::execute_set(registers, op)?,
+        DefinePrivate { .. } => crate::private::slots::execute_define(registers, op)?,
+        DefineProperty { .. } => crate::properties::define::execute(registers, op)?,
         CopyDataProperties { .. } => {
             crate::properties::execute_copy_data_properties(registers, op)?
         }

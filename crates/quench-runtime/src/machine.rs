@@ -1718,7 +1718,7 @@ pub enum Frame {
     },
     Private {
         phase: PrivatePhase,
-        environment: crate::private_environment::PrivateEnvironment,
+        environment: crate::private::environment::PrivateEnvironment,
         body_resume: CodeRange,
         resume: CodeRange,
         yield_dst: u16,

@@ -82,12 +82,12 @@ fn reduce_dynamic_for(
     locals: &mut HashMap<String, u16>,
     dst: u16,
 ) -> Result<Option<u16>, Vec<String>> {
-    let await_using = crate::using_scope::for_init_kind(statement.init.as_ref())
+    let await_using = crate::using::scope::for_init_kind(statement.init.as_ref())
         .is_some_and(|kind| kind == oxc::ast::ast::VariableDeclarationKind::AwaitUsing);
-    let stack = crate::using_scope::for_init_kind(statement.init.as_ref())
-        .map(|_| crate::using_scope::reserve_slot(locals, next_slot));
+    let stack = crate::using::scope::for_init_kind(statement.init.as_ref())
+        .map(|_| crate::using::scope::reserve_slot(locals, next_slot));
     if let Some(stack) = stack {
-        crate::using_scope::emit_create(ops, stack, await_using, next_register);
+        crate::using::scope::emit_create(ops, stack, await_using, next_register);
     }
     let lexical_names = statement
         .init
@@ -183,7 +183,7 @@ fn reduce_dynamic_for(
     });
     if let Some(stack) = stack {
         let loop_op = ops.pop().ok_or_else(|| vec!["missing loop".to_string()])?;
-        ops.extend(crate::using_scope::wrap(
+        ops.extend(crate::using::scope::wrap(
             vec![loop_op],
             stack,
             await_using,

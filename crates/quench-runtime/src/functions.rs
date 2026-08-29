@@ -3,7 +3,7 @@ use crate::{
     ops::{FunctionKind, FunctionStrictness, Op},
 };
 use std::collections::HashMap;
-include!("functions_properties.rs");
+include!("functions/properties.rs");
 const NEW_TARGET: &str = "\0new_target";
 pub(crate) const FUNCTION_SELF: &str = "\0function_self";
 pub(crate) const FUNCTION_NAME_IMMUTABLE: &str = "\0function_name_immutable";
@@ -20,11 +20,11 @@ pub(crate) struct FunctionMetadata {
     pub(crate) counted_method_loop: Option<std::rc::Rc<crate::facts::CountedMethodLoopFact>>,
     pub(crate) direct_method: Option<std::rc::Rc<crate::facts::DirectMethodFact>>,
 }
-include!("functions_direct_constructor_fact.rs");
-include!("functions_forward_construct_call_fact.rs");
-include!("functions_forward_then_call_fact.rs");
-include!("functions_counted_method_loop_fact.rs");
-include!("functions_direct_method_fact.rs");
+include!("functions/direct_constructor_fact.rs");
+include!("functions/forward_construct_call_fact.rs");
+include!("functions/forward_then_call_fact.rs");
+include!("functions/counted_method_loop_fact.rs");
+include!("functions/direct_method_fact.rs");
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
@@ -141,9 +141,11 @@ pub(super) fn function_bindings(
     bindings.extend(parameters);
     bindings
 }
-include!("functions_reduction.rs");
+include!("functions/reduction.rs");
 
-include!("functions_tail.rs");
+include!("functions/tail.rs");
 
-include!("functions_arguments.rs");
-include!("functions_receiver.rs");
+include!("functions/arguments.rs");
+include!("functions/receiver.rs");
+pub(crate) mod dynamic;
+pub(crate) mod write;

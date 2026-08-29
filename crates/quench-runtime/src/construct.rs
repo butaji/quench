@@ -244,7 +244,7 @@ fn construct_dynamic_builtin_in_realm(
     constructor: &Value,
 ) -> Result<Value, crate::execute::VmError> {
     let realm = Some(constructor_realm(constructor));
-    match crate::functions_dynamic::construct_builtin_in_realm(builtin, arguments, realm) {
+    match crate::functions::dynamic::construct_builtin_in_realm(builtin, arguments, realm) {
         Some(result) => result,
         None => Err(crate::vm::not_callable()),
     }
@@ -405,7 +405,7 @@ fn drop_shadowed_error_constructor(mut value: Value) -> Value {
     }
     value
 }
-include!("construct_realm.rs");
+include!("construct/realm.rs");
 fn construct_bound(
     bound: &crate::value::BoundFunctionValue,
     target: &Value,
@@ -504,7 +504,7 @@ fn construct_builtin(
     if is_error_builtin(builtin) {
         return construct_error(&builtin, arguments);
     }
-    if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) {
+    if let Some(result) = crate::functions::dynamic::construct_builtin(builtin, arguments) {
         return result;
     }
     if let Some(result) = construct_typed_builtin(builtin, arguments) {
@@ -513,7 +513,7 @@ fn construct_builtin(
     construct_builtin_match(builtin, arguments)
 }
 
-include!("construct_builtins.rs");
+include!("construct/builtins.rs");
 
 fn construct_builtin_in_realm(
     builtin: crate::ops::Builtin,
@@ -522,7 +522,7 @@ fn construct_builtin_in_realm(
 ) -> Result<Value, crate::execute::VmError> {
     let realm = Some(constructor_realm(new_target));
     if let Some(result) =
-        crate::functions_dynamic::construct_builtin_in_realm(builtin, arguments, realm)
+        crate::functions::dynamic::construct_builtin_in_realm(builtin, arguments, realm)
     {
         return result;
     }
@@ -583,7 +583,7 @@ fn construct_function(
     }
 }
 
-include!("construct_record.rs");
+include!("construct/record.rs");
 
 fn finish_derived_construct(
     result: Value,
@@ -613,7 +613,7 @@ pub(crate) fn initialize_instance_fields(
     let _home = crate::super_scope::Guard::install(&std::rc::Rc::new(function.clone()), &receiver);
     initialize_instance_fields_impl(function, receiver)
 }
-include!("construct_instance_fields.rs");
+include!("construct/instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
@@ -649,4 +649,4 @@ fn is_bare_function_prototype(value: &crate::value::Value) -> bool {
     )
 }
 
-include!("construct_tail.rs");
+include!("construct/tail.rs");

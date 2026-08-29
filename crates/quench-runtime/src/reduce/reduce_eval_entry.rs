@@ -111,7 +111,7 @@ fn reduce_eval_program(
 ) -> Result<ResidualProgram, Vec<String>> {
     facts
         .eval_var_barrier
-        .extend(crate::semantic_early::lexically_declared_names_in(
+        .extend(crate::semantic::early::lexically_declared_names_in(
             statements,
         ));
     let local_slots = locals.clone();

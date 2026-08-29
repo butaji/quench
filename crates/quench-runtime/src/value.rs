@@ -161,7 +161,7 @@ pub enum PromiseState {
     Rejected(Value),
 }
 
-include!("value_promise.rs");
+include!("value/promise.rs");
 
 /// Heap-allocated Promise data.
 #[derive(Debug, Clone, PartialEq)]
@@ -468,7 +468,7 @@ impl SetData {
         }
     }
 }
-include!("value_iterator.rs");
+include!("value/iterator.rs");
 
 #[derive(Debug)]
 ///
@@ -539,7 +539,7 @@ pub struct GeneratorState {
     /// Resume offset within a nested `PrivateScope` body suspended on `yield`.
     pub nested: usize,
     /// Private-name capabilities captured when a class body suspended on `yield`.
-    pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
+    pub private_environment: Option<crate::private::environment::PrivateEnvironment>,
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
     pub(crate) async_for_of: Option<AsyncForOfState>,
     pub(crate) pending_completion: Option<crate::completion::Completion>,
@@ -1731,9 +1731,9 @@ mod object_alias_invariants {
     }
 }
 
-include!("value_buffer.rs");
-include!("value_typed_small.rs");
-include!("value_typed_large.rs");
+include!("value/buffer.rs");
+include!("value/typed_small.rs");
+include!("value/typed_large.rs");
 
 macro_rules! typed_array_prototype_methods {
     ($($name:ident),+ $(,)?) => {
@@ -2742,7 +2742,7 @@ mod array_growth_tests {
     }
 }
 
-include!("value_array_data.rs");
+include!("value/array_data.rs");
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstanceFieldKey {
@@ -2789,7 +2789,7 @@ pub struct FunctionValue {
     pub(crate) with_captures: Vec<Value>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
     pub(crate) private_slots: PrivateSlots,
-    pub(crate) private_environment: crate::private_environment::PrivateEnvironment,
+    pub(crate) private_environment: crate::private::environment::PrivateEnvironment,
     pub instance_fields: Rc<RefCell<Vec<InstanceFieldPlan>>>,
     pub kind: FunctionKind,
     pub strictness: FunctionStrictness,
@@ -2854,8 +2854,8 @@ impl PartialEq for BoundFunctionValue {
         std::ptr::eq(self, other)
     }
 }
-include!("value_constant.rs");
-include!("value_helpers.rs");
+include!("value/constant.rs");
+include!("value/helpers.rs");
 
 #[cfg(test)]
 mod error_tests {

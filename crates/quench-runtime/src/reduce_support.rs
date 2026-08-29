@@ -131,7 +131,7 @@ pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(
     if !import_validator.errors.is_empty() {
         return Err(import_validator.errors);
     }
-    crate::using_early::validate(program)
+    crate::using::early::validate(program)
 }
 
 /// Highest allocated local slot plus one, used as the next register base.
@@ -150,7 +150,7 @@ pub(crate) fn predeclare_functions(
     next_slot: &mut u16,
     strict: bool,
 ) {
-    let excluded: Vec<String> = crate::semantic_early::annex_b_lexical_collisions_in(statements)
+    let excluded: Vec<String> = crate::semantic::early::annex_b_lexical_collisions_in(statements)
         .into_iter()
         .collect();
     predeclare_functions_strict(statements, locals, next_slot, &excluded, strict);

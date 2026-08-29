@@ -294,8 +294,8 @@ fn reduce_statements_opt(
         eval_behavior,
         directive_completion,
     } = options;
-    let stack = crate::using_scope::reserve(statements, &mut locals, &mut next_slot);
-    let await_using = crate::using_scope::has_await_using(statements);
+    let stack = crate::using::scope::reserve(statements, &mut locals, &mut next_slot);
+    let await_using = crate::using::scope::has_await_using(statements);
     let (mut ops, mut next_register, initial_value) = initialize_statement_reduction(
         statements,
         facts,
@@ -304,9 +304,9 @@ fn reduce_statements_opt(
         eval_behavior,
         directive_completion,
     )?;
-    crate::using_scope::emit_tdz(statements, &mut ops, &locals);
+    crate::using::scope::emit_tdz(statements, &mut ops, &locals);
     if let Some(stack) = stack {
-        crate::using_scope::emit_create(&mut ops, stack, await_using, &mut next_register);
+        crate::using::scope::emit_create(&mut ops, stack, await_using, &mut next_register);
     }
     let last_value = reduce_statement_list(
         statements,
@@ -318,7 +318,7 @@ fn reduce_statements_opt(
         (eval_behavior, initial_value),
     )?;
     let ops = match stack {
-        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register)?,
+        Some(stack) => crate::using::scope::wrap(ops, stack, await_using, &mut next_register)?,
         None => ops,
     };
     let ops = finish_statements_opt(ops, last_value, tail)?;
@@ -339,7 +339,7 @@ fn initialize_statement_reduction(
         crate::reduce_support::predeclare_functions(statements, locals, next_slot, facts.strict);
     } else {
         for statement in statements {
-            let excluded = crate::semantic_early::annex_b_lexical_collisions_in(
+            let excluded = crate::semantic::early::annex_b_lexical_collisions_in(
                 std::slice::from_ref(statement),
             )
             .into_iter()

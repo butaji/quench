@@ -307,3 +307,4 @@ pub(crate) fn kind(ty: ValType) -> Result<Kind, LowerError> {
 pub(crate) fn parse_err(error: impl ToString) -> LowerError {
     LowerError::Parse(error.to_string())
 }
+pub(crate) mod atomic;

@@ -290,7 +290,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         }
         return internal_prototype(&object);
     }
-    if let Some(prototype) = crate::typed_array_prototype::get(value) {
+    if let Some(prototype) = crate::typed_array::prototype::get(value) {
         return Some(prototype);
     }
     if let Some(prototype) = custom_object_prototype(value) {

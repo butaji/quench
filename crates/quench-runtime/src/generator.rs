@@ -12,20 +12,20 @@ type InitialGeneratorState = (
     u32,
     Option<Rc<crate::environment::Environment>>,
 );
-include!("generator_private_scope.rs");
-include!("generator_private_frame.rs");
-include!("generator_branch.rs");
-include!("generator_async.rs");
-include!("generator_try.rs");
-include!("generator_try_frame.rs");
-include!("generator_loop.rs");
-include!("generator_iterator_binding.rs");
-include!("generator_suspension.rs");
-include!("generator_reduce.rs");
-include!("generator_machine.rs");
-include!("generator_result.rs");
-include!("generator_completion.rs");
-include!("generator_resume_input.rs");
+include!("generator/private_scope.rs");
+include!("generator/private_frame.rs");
+include!("generator/branch.rs");
+include!("generator/async.rs");
+include!("generator/try.rs");
+include!("generator/try_frame.rs");
+include!("generator/loop.rs");
+include!("generator/iterator_binding.rs");
+include!("generator/suspension.rs");
+include!("generator/reduce.rs");
+include!("generator/machine.rs");
+include!("generator/result.rs");
+include!("generator/completion.rs");
+include!("generator/resume_input.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -74,7 +74,7 @@ fn initialize_parameters(
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
-    let _private_environment = crate::private_environment::Guard::install_environment(
+    let _private_environment = crate::private::environment::Guard::install_environment(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, receiver);
@@ -492,7 +492,7 @@ fn resume_dispose_frame(
     else {
         return Ok(None);
     };
-    let _private = crate::private_environment::Guard::install_environment(
+    let _private = crate::private::environment::Guard::install_environment(
         generator.function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
@@ -532,7 +532,7 @@ fn resume_suspended_contexts(
     let mut completion = completion.clone();
     if state.async_for_of.is_some() {
         let spec = state.async_for_of.take().ok_or(VmError::MissingReturn)?;
-        let _private = crate::private_environment::Guard::install_environment(
+        let _private = crate::private::environment::Guard::install_environment(
             generator.function.private_environment.clone(),
         );
         let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
@@ -654,9 +654,9 @@ fn completed_resume(resume: Resume) -> Result<Value, VmError> {
     }
 }
 
-include!("generator_suspended_try.rs");
+include!("generator/suspended_try.rs");
 
-include!("generator_delegation.rs");
+include!("generator/delegation.rs");
 
 fn initialize_state(generator: &GeneratorData) {
     let mut state = generator.state.borrow_mut();

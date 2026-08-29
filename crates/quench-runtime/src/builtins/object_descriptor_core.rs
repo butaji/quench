@@ -57,8 +57,8 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
-    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
-        if crate::typed_array_prototype::index_exists(value, index) {
+    if let Some(index) = crate::typed_array::ops::typed_array_index(key) {
+        if crate::typed_array::prototype::index_exists(value, index) {
             return Some(descriptor_object_with_flags(
                 crate::execute::get_property(value, key),
                 true,
@@ -67,13 +67,13 @@ fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
             ));
         }
     }
-    if crate::typed_array_ops::canonical_numeric_index(key) {
+    if crate::typed_array::ops::canonical_numeric_index(key) {
         return None;
     }
-    if let Some(metadata) = crate::typed_array_prototype::descriptor(value, key) {
+    if let Some(metadata) = crate::typed_array::prototype::descriptor(value, key) {
         return Some(public_descriptor(&metadata));
     }
-    crate::typed_array_prototype::own_property(value, key)
+    crate::typed_array::prototype::own_property(value, key)
         .map(|property| descriptor_object(&property))
 }
 
