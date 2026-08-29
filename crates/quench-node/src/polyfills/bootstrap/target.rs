@@ -14,7 +14,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= 
     if (signal?.aborted) return undefined;
     const record = { listener, once: Boolean(options.once), passive, signal };
     (this._listeners[name] ||= []).push(record);
-    if (signal) {
+    if (signal && typeof signal.addEventListener === "function") {
       record.abort = () => this.removeEventListener(name, listener);
       signal.addEventListener("abort", record.abort, { once: true });
     }
@@ -41,6 +41,19 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= 
     return true;
   }
 };
+const __quenchEventTargetEvents = Symbol.for("quench.event_target.events");
+if (EventTarget.prototype) {
+  Object.defineProperty(EventTarget.prototype, __quenchEventTargetEvents, {
+    configurable: true,
+    get() {
+      const map = new Map();
+      for (const [name, records] of Object.entries(this._listeners || {})) {
+        map.set(name, { size: records.length });
+      }
+      return map;
+    },
+  });
+}
 globalThis.Event ||= class Event {
   constructor(type, options = {}) {
     if (type === undefined) throw new TypeError("Event type is required");
@@ -84,19 +97,18 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
     return "CustomEvent";
   }
 };
-globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
+globalThis.NodeEventTarget ||= class NodeEventTarget {
   constructor() {
-    super();
+    this._listeners = {};
     this._nodeListeners = {};
   }
   addListener(name, listener, options, nodeStyle = true) {
-    const owner = this;
     const callback = typeof listener === "function"
       ? function (event) {
-        return listener.call(owner, event);
+        return listener(event);
       }
       : function (event) {
-        return listener.handleEvent.call(listener, event);
+        return listener.handleEvent(event);
       };
     (this._nodeListeners[name] ||= []).push({
       listener,
@@ -104,7 +116,13 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
       once: Boolean(options?.once),
       nodeStyle,
     });
-    super.addEventListener(name, callback, options);
+    const eventRecord = {
+      listener: callback,
+      once: Boolean(options?.once),
+      passive: Boolean(options?.passive),
+      signal: options?.signal,
+    };
+    (this._listeners[name] ||= []).push(eventRecord);
     return this;
   }
   addEventListener(name, listener, options) {
@@ -120,7 +138,9 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     const records = this._nodeListeners[name] || [];
     this._nodeListeners[name] = records.filter((record) => {
       if (record.listener !== listener) return true;
-      super.removeEventListener(name, record.callback);
+      this._listeners[name] = (this._listeners[name] || []).filter(
+        (eventRecord) => eventRecord.listener !== record.callback,
+      );
       return false;
     });
     return this;
@@ -129,7 +149,13 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     return this.removeListener(name, listener);
   }
   dispatchEvent(event) {
-    const result = super.dispatchEvent(event);
+    for (const record of [...(this._listeners[event.type] || [])]) {
+      if (!this._listeners[event.type]?.includes(record)) continue;
+      if (record.once) this.removeEventListener(event.type, record.listener);
+      record.listener.call(this, event);
+      if (event._quenchImmediatePropagationStopped) break;
+    }
+    const result = true;
     for (const record of this._nodeListeners[event.type] || []) {
       if (record.once) this.removeListener(event.type, record.listener);
     }
@@ -149,7 +175,9 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   removeAllListeners(name) {
     for (const event of name === undefined ? this.eventNames() : [name]) {
       for (const record of this._nodeListeners[event] || []) {
-        super.removeEventListener(event, record.callback);
+        this._listeners[event] = (this._listeners[event] || []).filter(
+          (eventRecord) => eventRecord.listener !== record.callback,
+        );
       }
       delete this._nodeListeners[event];
     }
@@ -445,11 +473,19 @@ const __quenchEventsRequire = (value) => {
   };
   __quenchEventsModule.setMaxListeners = (limit, ...targets) => {
     __quenchValidateEventLimit(limit);
+    if (targets.length === 0 &&
+        typeof globalThis.__quench_events_set_max === "function") {
+      globalThis.__quench_events_set_max(limit);
+    }
     for (const target of targets) {
       if (!__quenchEventsTargetValid(target)) {
         throw Object.assign(new TypeError("The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       limits.set(target, limit);
+      if (target instanceof EventTarget &&
+          typeof globalThis.__quench_events_set_max === "function") {
+        globalThis.__quench_events_set_max(limit, target);
+      }
     }
     return targets[0];
   };

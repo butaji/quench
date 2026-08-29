@@ -15,7 +15,7 @@ pub struct FsState;
 
 impl Default for FsState {
     fn default() -> Self {
-        Self
+        Self::new()
     }
 }
 
@@ -38,9 +38,67 @@ pub(crate) struct FsOptions {
     pub signal_aborted: bool,
 }
 
-/// `path` argument: string only (Buffer/URL paths unsupported).
+/// Decode Node's shared path input contract once for every fs family.
 pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
-    crate::modules::path::validate_string(value.unwrap_or(&Value::Undefined), "path")
+    let value = value.unwrap_or(&Value::Undefined);
+    if let Ok(path) = crate::modules::path::validate_string(value, "path") {
+        return Ok(path);
+    }
+    if let Value::Uint8Array(view) = value {
+        let bytes = view.buffer.bytes.borrow();
+        let slice = &bytes[view.byte_offset..view.byte_offset + view.length];
+        return String::from_utf8(slice.to_vec()).map_err(|_| {
+            crate::modules::buffer_enc::invalid_arg_type(
+                "The \"path\" argument must be a string, Buffer, or URL".into(),
+            )
+        });
+    }
+    if crate::modules::url_whatwg::is_url_instance(value) {
+        let parsed = crate::modules::url_whatwg::parsed_of(Some(value))?;
+        if parsed.get("protocol") != "file:" || !parsed.get("hostname").is_empty() {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"path\" argument must be a file URL".into(),
+            ));
+        }
+        return decode_percent_path(&parsed.get("pathname"));
+    }
+    Err(crate::modules::buffer_enc::invalid_arg_type(
+        "The \"path\" argument must be a string, Buffer, or URL".into(),
+    ))
+}
+
+fn decode_percent_path(path: &str) -> Result<String, VmError> {
+    let mut bytes = Vec::with_capacity(path.len());
+    let raw = path.as_bytes();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'%' {
+            let Some((&hi, &lo)) = raw.get(index + 1).zip(raw.get(index + 2)) else {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "Invalid file URL path".into(),
+                ));
+            };
+            let hex = |value| match value {
+                b'0'..=b'9' => Some(value - b'0'),
+                b'a'..=b'f' => Some(value - b'a' + 10),
+                b'A'..=b'F' => Some(value - b'A' + 10),
+                _ => None,
+            };
+            let Some(hi) = hex(hi).zip(hex(lo)).map(|(hi, lo)| hi << 4 | lo) else {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "Invalid file URL path".into(),
+                ));
+            };
+            bytes.push(hi);
+            index += 3;
+        } else {
+            bytes.push(raw[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        crate::modules::buffer_enc::invalid_arg_type("Invalid UTF-8 file URL path".into())
+    })
 }
 
 /// Parse the trailing `options` argument (string encoding or object).
@@ -49,7 +107,9 @@ pub(crate) fn parse_options(value: Option<&Value>) -> Result<FsOptions, VmError>
     match value {
         None | Some(Value::Undefined) | Some(Value::Null) => {}
         Some(Value::String(encoding)) => set_encoding(&mut options, encoding)?,
-        Some(object @ Value::Object(_)) => parse_option_object(&mut options, object)?,
+        Some(object @ (Value::Object(_) | Value::Proxy(_))) => {
+            parse_option_object(&mut options, object)?
+        }
         Some(other) => {
             return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
                 "The \"options\" argument must be of type string or an instance of Object.{}",
@@ -58,6 +118,24 @@ pub(crate) fn parse_options(value: Option<&Value>) -> Result<FsOptions, VmError>
         }
     }
     Ok(options)
+}
+
+pub(crate) fn parse_mkdir_options(value: Option<&Value>) -> Result<FsOptions, VmError> {
+    if let Some(Value::Number(mode)) = value {
+        return Ok(FsOptions {
+            mode: Some(*mode as u32),
+            ..FsOptions::default()
+        });
+    }
+    if let Some(Value::String(mode)) = value {
+        if let Ok(mode) = u32::from_str_radix(mode, 8) {
+            return Ok(FsOptions {
+                mode: Some(mode),
+                ..FsOptions::default()
+            });
+        }
+    }
+    parse_options(value)
 }
 
 fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> {
@@ -90,7 +168,13 @@ fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), Vm
     if let Value::Number(mode) = get("mode") {
         options.mode = Some(mode as u32);
     }
-    options.recursive = truthy(&get("recursive"));
+    let recursive = get("recursive");
+    if !matches!(recursive, Value::Undefined | Value::Boolean(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!("The \"options.recursive\" property must be of type boolean.{}", crate::modules::util::invalid_arg_received(&recursive)),
+        ));
+    }
+    options.recursive = truthy(&recursive);
     options.force = truthy(&get("force"));
     options.with_file_types = truthy(&get("withFileTypes"));
     options.throw_if_no_entry = truthy(&get("throwIfNoEntry"));
@@ -178,9 +262,41 @@ pub fn build() -> Value {
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
     ];
     props.extend(sync_props());
+    if let Ok(factory) = eval_function(
+        "(mkdtempSync, rmdirSync, resolve) => (prefix, options) => {\
+          const path = mkdtempSync(prefix, options);\
+          const removalPath = resolve(path);\
+          let removed = false;\
+          const remove = () => {\
+            if (removed) return;\
+            rmdirSync(removalPath);\
+            removed = true;\
+          };\
+          const dispose = Symbol.dispose || (Symbol.dispose = Symbol('dispose'));\
+          return { path, remove, [dispose]: remove };\
+        }",
+    ) {
+        let args = vec![
+            crate::host::capability(SPEC_FS_MKDTEMPSYNC),
+            crate::host::capability(SPEC_FS_RMDIRSYNC),
+            crate::host::capability(SPEC_PATH_RESOLVE),
+        ];
+        if let Ok(disposable) = quench_runtime::execute::call(&factory, &Value::Undefined, &args)
+        {
+            props.push(("mkdtempDisposableSync", disposable));
+        }
+    }
     props.push(("constants", constants()));
     props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+}
+
+fn eval_function(source: &str) -> Result<Value, VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
 
 pub fn validate_stream_options(
@@ -193,12 +309,26 @@ pub fn validate_stream_options(
 }
 
 pub fn validate_watch_options(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     parse_options(args.get(1))?;
-    Ok(host_api::object(vec![("close".into(), Value::Undefined)]))
+    let watcher = crate::modules::events::new_emitter_object(state)?;
+    Ok(quench_runtime::execute::set_property(
+        watcher,
+        "close",
+        crate::host::capability(crate::registry::SPEC_FS_WATCH_CLOSE),
+    ))
+}
+
+pub fn close_watch(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = (state, receiver);
+    Ok(Value::Undefined)
 }
 
 pub fn validate_directory_options(

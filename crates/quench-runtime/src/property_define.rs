@@ -54,6 +54,14 @@ fn descriptor(
 }
 
 pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
+    if let Some(descriptor) = crate::typed_array_prototype::descriptor(value, key) {
+        if let Value::Object(fields) = descriptor {
+            return fields
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == field).then_some(value.clone()));
+        }
+    }
     if let Some(value) = crate::vm::array_accessor(value, key, field) {
         return Some(value);
     }
@@ -97,11 +105,14 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
     match value {
         Value::Object(properties) => {
             accessor_field(properties.as_ref(), key, field).or_else(|| {
-                properties
+                let prototype = properties
                     .iter()
                     .rev()
-                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-                    .and_then(|prototype| accessor_value(&prototype, key, field))
+                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()));
+                match prototype {
+                    Some(prototype) => accessor_value(&prototype, key, field),
+                    None => accessor_builtin(Builtin::ObjectPrototype, key, field),
+                }
             })
         }
         Value::Function(function) => {
@@ -113,11 +124,14 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
         }
         Value::ObjectAlias(alias) => alias.0.borrow().upgrade().and_then(|properties| {
             accessor_field(properties.as_ref(), key, field).or_else(|| {
-                properties
+                let prototype = properties
                     .iter()
                     .rev()
-                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-                    .and_then(|prototype| accessor_value(&prototype, key, field))
+                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()));
+                match prototype {
+                    Some(prototype) => accessor_value(&prototype, key, field),
+                    None => accessor_builtin(Builtin::ObjectPrototype, key, field),
+                }
             })
         }),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow()[..], key, field),
@@ -266,7 +280,13 @@ fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
-        (Builtin::TypedArray, "byteLength") => Builtin::TypedArrayByteLengthGetter,
+        (Builtin::TypedArrayPrototype, "byteLength") => Builtin::TypedArrayByteLengthGetter,
+        (Builtin::TypedArrayPrototype, "byteOffset") => Builtin::TypedArrayByteOffsetGetter,
+        (Builtin::TypedArrayPrototype, "length") => Builtin::TypedArrayLengthGetter,
+        (Builtin::TypedArrayPrototype, "buffer") => Builtin::TypedArrayBufferGetter,
+        (Builtin::TypedArrayPrototype, "Symbol.toStringTag") => {
+            Builtin::TypedArrayToStringTagGetter
+        }
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (

@@ -39,6 +39,11 @@ impl NodeTestRunner {
         Self { sink }
     }
 
+    pub fn with_output_sink(mut self, sink: OutputSink) -> Self {
+        self.sink = sink;
+        self
+    }
+
     pub fn run_file(&mut self, path: &Path) -> NodeOutcome {
         let fixture = match NodeFixture::from_path(path.to_path_buf()) {
             Ok(f) => f,

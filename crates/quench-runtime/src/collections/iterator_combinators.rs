@@ -147,7 +147,10 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
         return Ok(value);
     }
     if !crate::value::is_object(&value) {
-        return open(value);
+        if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+            return open(value);
+        }
+        return Err(not_iterable());
     }
     let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
     if matches!(method, Value::Null | Value::Undefined) {

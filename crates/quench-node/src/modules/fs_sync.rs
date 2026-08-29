@@ -11,7 +11,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::fs::{parse_options, path_arg, FsOptions};
+use super::fs::{parse_mkdir_options, parse_options, path_arg, FsOptions};
 
 fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     let path = path_arg(args.first())?;
@@ -55,11 +55,14 @@ fn view_bytes(
             "The \"data\" argument contains an invalid view".to_string(),
         )
     })?;
-    bytes.get(offset..end).map(ToOwned::to_owned).ok_or_else(|| {
-        crate::modules::buffer_enc::invalid_arg_type(
-            "The \"data\" argument contains an invalid view".to_string(),
-        )
-    })
+    bytes
+        .get(offset..end)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            crate::modules::buffer_enc::invalid_arg_type(
+                "The \"data\" argument contains an invalid view".to_string(),
+            )
+        })
 }
 
 fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {
@@ -290,7 +293,9 @@ pub fn mkdir_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let (path, options) = split(args)?;
+    let path = path_arg(args.first())?;
+    let options = parse_mkdir_options(args.get(1))?;
+    let first_created = options.recursive.then(|| first_missing_path(&path));
     let result = if options.recursive {
         std::fs::create_dir_all(Path::new(&path))
     } else {
@@ -298,7 +303,23 @@ pub fn mkdir_sync(
     };
     result.map_err(|e| super::fs_error::fs_error("mkdir", Some(&path), &e))?;
     apply_mode(&path, options.mode);
-    Ok(Value::Undefined)
+    Ok(first_created
+        .flatten()
+        .map_or(Value::Undefined, Value::String))
+}
+
+fn first_missing_path(path: &str) -> Option<String> {
+    let mut candidate = PathBuf::from(path);
+    if candidate.exists() {
+        return None;
+    }
+    while candidate
+        .parent()
+        .is_some_and(|parent| !parent.exists() && parent != Path::new(""))
+    {
+        candidate = candidate.parent()?.to_path_buf();
+    }
+    Some(candidate.to_string_lossy().into_owned())
 }
 
 pub fn unlink_sync(
@@ -412,12 +433,21 @@ fn check_access(path: &str, mode: u32) -> std::io::Result<()> {
 }
 
 pub fn mkdtemp_sync(
-    _s: &Rc<RefCell<HostState>>,
+    s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let prefix = path_arg(args.first())?;
     super::fs::parse_options(args.get(1))?;
+    if prefix.ends_with('X') {
+        crate::modules::process::emit_warning(
+            s,
+            "Warning",
+            "mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html",
+            None,
+            true,
+        );
+    }
     for attempt in 0..100u32 {
         let candidate = format!("{prefix}{:06x}", random_suffix(attempt));
         match std::fs::create_dir(Path::new(&candidate)) {
@@ -435,7 +465,7 @@ fn random_suffix(attempt: u32) -> u32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    now ^ std::process::id().wrapping_mul(2654435761) ^ attempt.wrapping_mul(40503)
+    (now ^ std::process::id().wrapping_mul(2654435761) ^ attempt.wrapping_mul(40503)) & 0x00ff_ffff
 }
 
 pub fn readlink_sync(
@@ -479,6 +509,11 @@ pub fn chmod_sync(
     let path = path_arg(args.first())?;
     let mode = match args.get(1) {
         Some(Value::Number(m)) => *m as u32,
+        Some(Value::String(m)) => u32::from_str_radix(m, 8).map_err(|_| {
+            crate::modules::buffer_enc::invalid_arg_value(format!(
+                "The \"mode\" argument is invalid: {m}"
+            ))
+        })?,
         _ => {
             return Err(crate::modules::buffer_enc::invalid_arg_type(
                 "The \"mode\" argument must be of type number.".to_string(),

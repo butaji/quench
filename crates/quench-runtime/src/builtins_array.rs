@@ -1,4 +1,21 @@
 pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
+    if crate::typed_array_ops::is_view(&target)
+        && crate::typed_array_ops::canonical_numeric_index(key)
+    {
+        let deleted = crate::typed_array_ops::typed_array_index(key)
+            .is_none_or(|index| !crate::typed_array_prototype::index_exists(&target, index));
+        return (target, deleted);
+    }
+    if crate::typed_array_ops::is_view(&target)
+        && (crate::typed_array_prototype::own_property(&target, key).is_some()
+            || crate::typed_array_prototype::descriptor(&target, key).is_some())
+    {
+        if crate::builtins::descriptor_flag(&target, key, "configurable") == Some(false) {
+            return (target, false);
+        }
+        let removed = crate::typed_array_prototype::remove_own_property(&target, key);
+        return (target, removed);
+    }
     match target {
         Value::Object(properties) => delete_object_property_value(properties, key),
         Value::ObjectAlias(alias) => delete_object_alias_property(alias, key),
@@ -53,13 +70,13 @@ fn delete_object_property_value(
     if global_constant(&properties, key) || boxed_string_non_configurable(&properties, key) {
         return (Value::Object(properties), false);
     }
+    if descriptor_flag_in(properties.as_ref(), key, "configurable") == Some(false) {
+        return (Value::Object(properties), false);
+    }
     if properties.iter().any(|(name, _)| name == "\0realm")
         && !matches!(key, "undefined" | "Infinity" | "NaN")
     {
         return (delete_object_property(properties, key), true);
-    }
-    if descriptor_flag_in(properties.as_ref(), key, "configurable") == Some(false) {
-        return (Value::Object(properties), false);
     }
     (delete_object_property(properties, key), true)
 }
@@ -126,12 +143,18 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
     if let Some(cell) = cell {
-        values.push((crate::builtins::deleted_key(key).into(), Value::BindingCell(cell)));
+        values.push((
+            crate::builtins::deleted_key(key).into(),
+            Value::BindingCell(cell),
+        ));
     }
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
-        values.push((crate::builtins::deleted_key(key).into(), Value::Boolean(true)));
+        values.push((
+            crate::builtins::deleted_key(key).into(),
+            Value::Boolean(true),
+        ));
     }
     Value::Object(Rc::new(crate::value::ObjectData::with_shared_properties(
         values,
@@ -200,10 +223,7 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
                             builtin,
                             "length",
                             Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-                                (
-                                    "value".to_string(),
-                                    Value::Number(f64::from(index) + 1.0),
-                                ),
+                                ("value".to_string(), Value::Number(f64::from(index) + 1.0)),
                                 ("writable".to_string(), Value::Boolean(true)),
                                 ("enumerable".to_string(), Value::Boolean(false)),
                                 ("configurable".to_string(), Value::Boolean(false)),
@@ -249,8 +269,16 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
     let ordinary_dense_index = crate::arrays::array_index(key).is_some()
         && !accessor
         && writable == Some(&Value::Boolean(true))
-        && descriptor.iter().rev().find_map(|(name, value)| (name == "enumerable").then_some(value)) == Some(&Value::Boolean(true))
-        && descriptor.iter().rev().find_map(|(name, value)| (name == "configurable").then_some(value)) == Some(&Value::Boolean(true));
+        && descriptor
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "enumerable").then_some(value))
+            == Some(&Value::Boolean(true))
+        && descriptor
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "configurable").then_some(value))
+            == Some(&Value::Boolean(true));
     // A default indexed data descriptor is the dense element itself. Keeping
     // a second heap object for it duplicates a semantic fact and disables the
     // packed O(1) path on the very next write.
@@ -333,12 +361,26 @@ fn prepare_array_length_definition(
         return Ok(None);
     }
     let Some(value) = array_descriptor_value(descriptor, "value") else {
+        if array_descriptor_value(descriptor, "configurable") == Some(Value::Boolean(true))
+            || array_descriptor_value(descriptor, "enumerable") == Some(Value::Boolean(true))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot redefine non-configurable array length",
+            ));
+        }
         return Ok(None);
     };
     // ArraySetLength performs ToUint32 and ToNumber separately. The first
     // coercion is done by validate_array_length_descriptor; repeat it here
     // for the NumberLen value used by the rest of the algorithm.
     let new_length = crate::conversion::to_number(&value)?;
+    if array_descriptor_value(descriptor, "configurable") == Some(Value::Boolean(true))
+        || array_descriptor_value(descriptor, "enumerable") == Some(Value::Boolean(true))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot redefine non-configurable array length",
+        ));
+    }
     // User code during this second coercion may have replaced the array's
     // structural representative. Read the current one before validation.
     let target = crate::locals::resolved_replacement(target.clone());
@@ -479,7 +521,9 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         return Value::Array(values);
     }
     let Some(index) = crate::arrays::array_index(key) else {
-        Rc::make_mut(&mut values).set_property(key, value);
+        let data = Rc::make_mut(&mut values);
+        data.sync_length_to_storage();
+        data.set_property(key, value);
         publish_array_replacement(&original, &values);
         return Value::Array(values);
     };

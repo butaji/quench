@@ -430,24 +430,86 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if matches!(value, Value::ObjectAlias(_)) {
+        let resolved = crate::builtins::object::resolve_object_alias(value.clone());
+        return get_property_with_receiver(&resolved, key, receiver);
+    }
     // Prototype mutations materialize a replacement object. Resolve it before
     // walking inherited properties so ordinary objects (including generator
     // prototypes) observe the current descriptor rather than the stale view.
-    let value = crate::locals::resolved_replacement(value.clone());
+    let mut value = crate::locals::resolved_replacement(value.clone());
     crate::module_bindings::exports(&value, key)?;
+    // A script's `this` is a derived global view. Global declaration batches
+    // replace the canonical owner with a copy-on-write object; resolve the
+    // view before reading so `this.x` observes the same binding as `x`.
+    if matches!(&value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    {
+        let owner = crate::vm::current_global_object();
+        let distinct_storage = match (&owner, &value) {
+            (Value::Object(owner), Value::Object(view)) => !std::rc::Rc::ptr_eq(owner, view),
+            _ => owner.object_identity() != value.object_identity(),
+        };
+        if distinct_storage {
+            value = owner;
+        }
+    }
     if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
     }
     if let Some(result) = early_property_result(&value, key, receiver) {
         return result;
     }
+    if let Value::Object(properties) = &value {
+        if crate::vm::realm::id_for_global(properties).is_some()
+            || crate::vm::is_global_object(&value)
+        {
+            if let Some(getter) = crate::property_define::accessor(&value, key, "get") {
+                return match getter {
+                    Value::Undefined => Ok(Value::Undefined),
+                    getter => invoke_accessor(&getter, receiver),
+                };
+            }
+            return Ok(crate::vm::object_property(properties, receiver, key));
+        }
+    }
     let intrinsic_bound = matches!(&value, Value::BoundFunction(bound)
         if crate::vm::is_intrinsic_bound(bound));
+    if intrinsic_bound && is_boxed_primitive(receiver) {
+        if let Value::BoundFunction(bound) = &value {
+            let deleted = crate::builtins::deleted_key(key);
+            if bound
+                .properties
+                .borrow()
+                .iter()
+                .any(|(name, _)| name == key || name == &deleted)
+            {
+                return Ok(crate::vm::get_property(&value, key));
+            }
+            return crate::vm::with_realm(bound.realm, || {
+                get_property_with_receiver(&bound.target, key, receiver)
+            })
+            .unwrap_or_else(|| get_property_with_receiver(&bound.target, key, receiver));
+        }
+    }
     if matches!(&value, Value::BoundFunction(_))
         && (intrinsic_bound
             || (crate::property_define::accessor(&value, key, "get").is_none()
                 && crate::property_define::accessor(&value, key, "set").is_none()))
     {
+        if let Value::BoundFunction(bound) = &value {
+            if matches!(bound.target, Value::Builtin(builtin) if crate::builtin_meta::is_prototype(builtin))
+            {
+                if matches!(
+                    bound.target,
+                    Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                ) && key == "evaluate"
+                {
+                    crate::reflect::note_shadow_method_realm(bound.realm);
+                    return Ok(Value::Builtin(Builtin::ShadowRealmEvaluate));
+                }
+                return Ok(crate::execute::get_property(&value, key));
+            }
+        }
         return Ok(crate::execute::get_property(&value, key));
     }
     if let Some(result) = array_property_result(&value, key, receiver) {
@@ -564,7 +626,10 @@ fn function_inherited_property_result(
             "call" => crate::ops::Builtin::FunctionCall,
             _ => crate::ops::Builtin::FunctionBind,
         };
-        return Some(Ok(crate::vm::bind_method(value, Value::Builtin(builtin))));
+        return Some(Ok(crate::vm::bind_method(
+            receiver,
+            Value::Builtin(builtin),
+        )));
     }
     if matches!(key, "prototype") {
         return None;
@@ -668,6 +733,26 @@ fn early_property_result(
             "'caller' and 'arguments' are unavailable on this function",
         )));
     }
+    if key == "Symbol.species"
+        && matches!(
+            value,
+            Value::Builtin(
+                crate::ops::Builtin::Float64Array
+                    | crate::ops::Builtin::Float32Array
+                    | crate::ops::Builtin::Int8Array
+                    | crate::ops::Builtin::Int16Array
+                    | crate::ops::Builtin::Int32Array
+                    | crate::ops::Builtin::Uint8Array
+                    | crate::ops::Builtin::Uint16Array
+                    | crate::ops::Builtin::Uint32Array
+                    | crate::ops::Builtin::Uint8ClampedArray
+                    | crate::ops::Builtin::BigInt64Array
+                    | crate::ops::Builtin::BigUint64Array
+            )
+        )
+    {
+        return Some(Ok(receiver.clone()));
+    }
     if key == "buffer" && is_typed_array_prototype(value) {
         return Some(Err(crate::value::error::throw_type_error(
             "Receiver is not a TypedArray",
@@ -744,6 +829,32 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        if *builtin == crate::ops::Builtin::ObjectPrototype && key == "__proto__" {
+            return Some(crate::builtins::object::get_prototype_of(Some(receiver)));
+        }
+        // NativeError prototypes inherit Error.prototype's stack accessor.
+        // Their intrinsic representation is a builtin value rather than an
+        // ordinary prototype-linked object, so expose that inherited getter
+        // explicitly while preserving the correct own-property descriptor.
+        if key == "stack"
+            && crate::builtins::read_intrinsic_override(*builtin, key).is_none()
+            && matches!(
+                builtin,
+                crate::ops::Builtin::EvalErrorPrototype
+                    | crate::ops::Builtin::AggregateErrorPrototype
+                    | crate::ops::Builtin::RangeErrorPrototype
+                    | crate::ops::Builtin::ReferenceErrorPrototype
+                    | crate::ops::Builtin::SyntaxErrorPrototype
+                    | crate::ops::Builtin::TypeErrorPrototype
+                    | crate::ops::Builtin::URIErrorPrototype
+                    | crate::ops::Builtin::SuppressedErrorPrototype
+            )
+        {
+            return Some(invoke_accessor(
+                &Value::Builtin(crate::ops::Builtin::ErrorPrototypeStackGetter),
+                receiver,
+            ));
+        }
         if let Some(descriptor) = crate::builtins::read_intrinsic_override(*builtin, key) {
             if let Value::Object(fields) = descriptor {
                 if let Some(getter) = fields
@@ -961,6 +1072,7 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
                 Builtin::PromiseResolve
                     | Builtin::PromiseReject
                     | Builtin::PromiseAll
+                    | Builtin::PromiseAllKeyed
                     | Builtin::PromiseAllSettled
                     | Builtin::PromiseAllSettledKeyed
                     | Builtin::PromiseAny
@@ -1006,7 +1118,7 @@ fn should_preserve_receiver_property(
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
         || is_boxed_primitive(receiver) && matches!(property, Value::Builtin(_))
-        || matches!(key, "constructor" | "prototype")
+        || matches!(key, "__proto__" | "constructor" | "prototype")
         // Promise instances must return the prototype's `then`/`catch`/
         // `finally` by reference (ES §27.2.5); binding the receiver
         // creates a fresh BoundFunction per access.

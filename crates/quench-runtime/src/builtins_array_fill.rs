@@ -14,6 +14,16 @@ pub(crate) fn array_fill(
         length,
     )?;
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if let (Value::Array(data), Value::Number(number)) = (&object, &value) {
+        if data.can_fast_fill() {
+            let original = std::rc::Rc::clone(data);
+            let mut updated = data.as_ref().clone();
+            updated.fill_numeric_constant_range(start, end, *number);
+            let result = Value::Array(std::rc::Rc::new(updated));
+            crate::locals::replace_value(&Value::Array(original), &result);
+            return Ok(result);
+        }
+    }
     for index in start..end {
         let updated = crate::properties::assign_set_property(
             &object,

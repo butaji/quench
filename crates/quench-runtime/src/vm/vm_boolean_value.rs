@@ -64,10 +64,21 @@ fn symbol_to_string(receiver: Option<&Value>) -> Result<Value, crate::execute::V
 }
 
 fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Value::String(symbol) = symbol_value_of(receiver)? else {
-        return Err(crate::value::error::throw_type_error(
-            "Symbol description requires a symbol",
-        ));
+    let symbol = match symbol_value_of(receiver)? {
+        Value::String(symbol) => symbol,
+        Value::Builtin(builtin) => {
+            let Some(name) = crate::intl::tolocale::symbol::name(builtin) else {
+                return Err(crate::value::error::throw_type_error(
+                    "Symbol description requires a symbol",
+                ));
+            };
+            return Ok(Value::String(name.to_string()));
+        }
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "Symbol description requires a symbol",
+            ));
+        }
     };
     let full = symbol.trim_end_matches('\0');
     if crate::conversion::well_known_symbol(full).is_some() {

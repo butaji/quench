@@ -22,6 +22,12 @@ pub const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
 pub struct Listener {
     pub callback: Value,
     pub once: bool,
+    /// EventTarget registration identity includes the capture flag. EventEmitter
+    /// listeners always use the default `false` value.
+    pub capture: bool,
+    /// NodeEventTarget's `addEventListener` receives an Event object from
+    /// `emit`; EventEmitter-style methods receive the raw argument list.
+    pub node_event: bool,
     pub weak: bool,
     pub passive: bool,
     pub signal: Option<Value>,
@@ -33,8 +39,6 @@ pub struct EventEmitter {
     pub events: Vec<(String, Vec<Listener>)>,
     /// Per-emitter override of the max-listener count.
     pub max: Option<usize>,
-    /// Whether the max-listeners warning already fired.
-    pub warned: bool,
     /// Route rejected promises returned by listeners to the error channel.
     pub capture_rejections: bool,
 }
@@ -50,7 +54,6 @@ impl EventEmitter {
         Self {
             events: Vec::new(),
             max: None,
-            warned: false,
             capture_rejections: false,
         }
     }
@@ -73,6 +76,8 @@ impl EventEmitter {
                 Listener {
                     callback,
                     once,
+                    capture: false,
+                    node_event: false,
                     weak: false,
                     passive: false,
                     signal: None,
@@ -82,6 +87,8 @@ impl EventEmitter {
             list.push(Listener {
                 callback,
                 once,
+                capture: false,
+                node_event: false,
                 weak: false,
                 passive: false,
                 signal: None,
@@ -126,7 +133,9 @@ pub struct EmitterId(pub u64);
 pub struct EmitterRegistry {
     next: u64,
     emitters: HashMap<EmitterId, Rc<RefCell<EventEmitter>>>,
-    identities: HashMap<usize, EmitterId>,
+    /// Semantic object identity, not an `Rc` address. Runtime copy-on-write
+    /// replacements preserve this id, so host callbacks keep the same state.
+    identities: HashMap<u64, EmitterId>,
     /// `events.defaultMaxListeners`.
     pub default_max: usize,
 }
@@ -159,28 +168,15 @@ impl EmitterRegistry {
     }
 
     pub fn identity(&self, value: &Value) -> Option<EmitterId> {
-        object_identity(value).and_then(|key| self.identities.get(&key).copied())
+        value
+            .object_identity()
+            .and_then(|key| self.identities.get(&key).copied())
     }
 
     pub fn bind_identity(&mut self, value: &Value, id: EmitterId) {
-        if let Some(key) = object_identity(value) {
+        if let Some(key) = value.object_identity() {
             self.identities.insert(key, id);
         }
-    }
-}
-
-fn object_identity(value: &Value) -> Option<usize> {
-    match value {
-        Value::Object(object) => Some(Rc::as_ptr(object) as usize),
-        Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
-            .map(|object| Rc::as_ptr(&object) as usize),
-        Value::Array(array) => Some(Rc::as_ptr(array) as usize),
-        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
-        Value::BoundFunction(function) => Some(Rc::as_ptr(function) as usize),
-        _ => None,
     }
 }
 

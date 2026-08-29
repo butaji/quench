@@ -5,7 +5,38 @@ pub(crate) fn set_with_receiver(
     receiver: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
     if !crate::value::is_object(receiver) {
+        if target.typed_array_meta().is_some()
+            && crate::typed_array_ops::is_index_key(key)
+            && (crate::typed_array_prototype::is_out_of_bounds(target)
+                || crate::typed_array_ops::logical_len(target)
+                    .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+        {
+            return Ok(true);
+        }
         return Ok(false);
+    }
+    if target.typed_array_meta().is_some() {
+        let same_receiver = crate::builtins::same_value(Some(target), Some(receiver));
+        if crate::typed_array_ops::canonical_numeric_index(key)
+            && !crate::typed_array_ops::is_index_key(key)
+        {
+            return Ok(true);
+        }
+        if crate::typed_array_ops::is_index_key(key) {
+            let out_of_bounds = crate::typed_array_prototype::is_out_of_bounds(target)
+                || crate::typed_array_ops::logical_len(target).is_some_and(|length| {
+                    key.parse::<usize>().map_or(true, |index| index >= length)
+                });
+            if !same_receiver && out_of_bounds {
+                return Ok(true);
+            }
+            if same_receiver {
+                if let Some(result) = crate::typed_array_ops::set_property(target, key, value) {
+                    result?;
+                    return Ok(true);
+                }
+            }
+        }
     }
     if crate::module_bindings::is_namespace(target)
         || crate::module_bindings::is_namespace(receiver)
@@ -36,12 +67,34 @@ pub(crate) fn set_with_receiver(
     if key == "length" && crate::regexp::has_regexp_internal_slot(&resolved_target) {
         return set_receiver_data(receiver, key, value);
     }
+    let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
+    if parent.typed_array_meta().is_some()
+        && crate::typed_array_ops::is_index_key(key)
+        && (crate::typed_array_prototype::is_out_of_bounds(&parent)
+            || crate::typed_array_ops::logical_len(&parent)
+                .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
+    {
+        if matches!(
+            parent,
+            crate::value::Value::BigInt64Array(_) | crate::value::Value::BigUint64Array(_)
+        ) {
+            crate::construct::bigint_bits(value)?;
+        } else {
+            crate::conversion::to_number(value)?;
+        }
+        return Ok(true);
+    }
+    if matches!(parent, crate::value::Value::Proxy(_)) {
+        return crate::proxy::proxy_set(&parent, key, value, Some(receiver))
+            .map(|result| crate::execute::is_truthy(&result));
+    }
     let descriptor = inherited_descriptor(target, key)?;
     match descriptor {
         Some(descriptor) if descriptor_field_exists(&descriptor, "set") => {
             call_setter(&descriptor, receiver, value)
         }
         Some(descriptor) if !descriptor_writable(&descriptor)? => Ok(false),
+        _ if !crate::properties::object_is_extensible(&resolved_target) => Ok(false),
         _ => set_receiver_data(receiver, key, value),
     }
 }
@@ -78,7 +131,9 @@ fn set_proven_own_data(
         return false;
     }
     if let Some(slot) = target.hot_properties().position_rev(key) {
-        if let Some(crate::value::Value::BindingCell(cell)) = target.hot_properties().slot_value(slot) {
+        if let Some(crate::value::Value::BindingCell(cell)) =
+            target.hot_properties().slot_value(slot)
+        {
             cell.store(value.clone());
             return true;
         }
@@ -231,12 +286,13 @@ fn set_receiver_data(
     key: &str,
     value: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
-    let receiver_resolved = match receiver {
-        crate::value::Value::BindingCell(cell) => {
-            crate::locals::resolved_replacement(cell.load())
-        }
+    let mut receiver_resolved = match receiver {
+        crate::value::Value::BindingCell(cell) => crate::locals::resolved_replacement(cell.load()),
         _ => crate::locals::resolved_replacement(receiver.clone()),
     };
+    if let crate::value::Value::Array(values) = &mut receiver_resolved {
+        std::rc::Rc::make_mut(values).sync_length_to_storage();
+    }
     let current = crate::builtins::object::descriptor(
         Some(&receiver_resolved),
         Some(&crate::value::Value::String(key.to_string())),

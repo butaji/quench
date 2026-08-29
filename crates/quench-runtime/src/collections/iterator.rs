@@ -413,6 +413,35 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
         return Err(not_iterable());
     }
     if matches!(iterator, Value::Iterator(_)) {
+        if let Value::Iterator(data) = &iterator {
+            if matches!(&*data.state.borrow(), IteratorState::Native { .. }) {
+                if let Some(next) = crate::vm::intrinsic_override_property(
+                    crate::ops::Builtin::ArrayIteratorPrototype,
+                    "next",
+                    &iterator,
+                ) {
+                    return Ok(make_protocol_with_next(
+                        iterator.clone(),
+                        crate::vm::bind_method(&iterator, next),
+                    ));
+                }
+            }
+        }
+        return Ok(iterator);
+    }
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    Ok(make_protocol_with_next(iterator, next))
+}
+
+pub(crate) fn open_with_method(
+    value: &Value,
+    method: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let iterator = call(&method, value)?;
+    if !crate::value::is_object(&iterator) {
+        return Err(not_iterable());
+    }
+    if matches!(iterator, Value::Iterator(_)) {
         return Ok(iterator);
     }
     let next = crate::execute::get_property_result(&iterator, "next")?;
@@ -496,14 +525,43 @@ pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execut
     collect(&iterator)
 }
 
-pub(crate) fn for_each_iterable<F>(
+/// Collect an iterator for Promise combinators.  Once `IteratorStep` or
+/// `IteratorValue` throws, the Promise algorithms mark the iterator record as
+/// done and reject without performing `IteratorClose`.
+pub(crate) fn collect_iterable_no_close(
     value: Value,
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    let iterator = open(value)?;
+    let mut values = Vec::new();
+    loop {
+        match step_value(&iterator) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => return Ok(values),
+            Err(error) => {
+                if let Value::Iterator(data) = &iterator {
+                    mark_done(data);
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
+pub(crate) fn for_each_iterable<F>(value: Value, callback: F) -> Result<(), crate::execute::VmError>
+where
+    F: FnMut(Value) -> Result<(), crate::execute::VmError>,
+{
+    let iterator = open(value)?;
+    for_each_open_iterator(iterator, callback)
+}
+
+pub(crate) fn for_each_open_iterator<F>(
+    iterator: Value,
     mut callback: F,
 ) -> Result<(), crate::execute::VmError>
 where
     F: FnMut(Value) -> Result<(), crate::execute::VmError>,
 {
-    let iterator = open(value)?;
     loop {
         let item = match step_value(&iterator) {
             Ok(Some(item)) => item,

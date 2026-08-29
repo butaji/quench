@@ -67,7 +67,14 @@ fn run_uncaught_handlers(state: &Rc<RefCell<HostState>>, thrown: &Value) -> Resu
         crate::modules::timers::HandlerKind::UncaughtException,
     );
     for handler in handlers {
-        call_callback(&handler, &Value::Undefined, std::slice::from_ref(thrown))?;
+        call_callback(
+            &handler,
+            &Value::Undefined,
+            &[
+                thrown.clone(),
+                Value::String("uncaughtException".to_string()),
+            ],
+        )?;
     }
     Ok(())
 }
@@ -125,6 +132,36 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
     }
 }
 
+pub fn await_promise_with_timeout(
+    state: &Rc<RefCell<HostState>>,
+    promise: &Value,
+    timeout_ms: f64,
+) -> Result<bool, VmError> {
+    let Value::Promise(data) = promise else {
+        return Ok(false);
+    };
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout_ms / 1000.0);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Ok(true);
+        }
+        if let Some(result) = settled(&data.state.borrow()) {
+            result?;
+            return Ok(false);
+        }
+        crate::modules::net::poll(state)?;
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        drain_unhandled_rejections(state)?;
+        fire_due_timers(state)?;
+        drain_immediates(state)?;
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        sleep_until_next(state);
+    }
+}
+
 fn settled(state: &quench_runtime::value::PromiseState) -> Option<Result<(), VmError>> {
     use quench_runtime::value::PromiseState;
     match state {
@@ -157,7 +194,7 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         drain_immediates(state)?;
         if !has_pending(state) {
             let handlers = state.borrow().process.before_exit_handlers.clone();
-            run_handlers(&handlers, 0)?;
+            run_lifecycle_handlers(state, &handlers, 0)?;
             if !has_pending(state) {
                 break;
             }
@@ -178,11 +215,34 @@ pub fn run_exit_handlers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> 
     }
     let code = state.borrow().process.exit_code.unwrap_or(0);
     let handlers = state.borrow().process.exit_handlers.clone();
-    run_handlers(&handlers, code)
+    run_lifecycle_handlers(state, &handlers, code)
 }
 
-fn run_handlers(handlers: &[Value], code: i32) -> Result<(), VmError> {
-    for handler in handlers {
+fn run_lifecycle_handlers(
+    state: &Rc<RefCell<HostState>>,
+    handlers: &[(Value, bool)],
+    code: i32,
+) -> Result<(), VmError> {
+    for (handler, once) in handlers {
+        if *once {
+            let mut guard = state.borrow_mut();
+            if let Some(index) = guard
+                .process
+                .exit_handlers
+                .iter()
+                .position(|(candidate, is_once)| *is_once && candidate == handler)
+            {
+                guard.process.exit_handlers.remove(index);
+            }
+            if let Some(index) = guard
+                .process
+                .before_exit_handlers
+                .iter()
+                .position(|(candidate, is_once)| *is_once && candidate == handler)
+            {
+                guard.process.before_exit_handlers.remove(index);
+            }
+        }
         call_callback(handler, &Value::Undefined, &[Value::Number(code as f64)])?;
     }
     Ok(())
@@ -190,7 +250,13 @@ fn run_handlers(handlers: &[Value], code: i32) -> Result<(), VmError> {
 
 fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
-        if !drain_one_tick(state)? {
+        let drained = match drain_one_tick(state) {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(error);
+            }
+        };
+        if !drained {
             quench_runtime::drain_promise_jobs();
             return Ok(());
         }
@@ -204,7 +270,11 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             continue;
         }
         let mode = state.borrow().process.unhandled_rejection_mode;
-        let has_handlers = !state.borrow().process.unhandled_rejection_handlers.is_empty();
+        let has_handlers = !state
+            .borrow()
+            .process
+            .unhandled_rejection_handlers
+            .is_empty();
         if matches!(mode, crate::modules::process::UnhandledRejectionMode::None) {
             if has_handlers {
                 emit_unhandled_event(state, &promise, &reason)?;
@@ -218,7 +288,12 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
                 continue;
             }
             emit_uncaught_rejection(state, &reason)?;
-        } else if !state.borrow().process.uncaught_exception_handlers.is_empty() {
+        } else if !state
+            .borrow()
+            .process
+            .uncaught_exception_handlers
+            .is_empty()
+        {
             emit_uncaught_rejection(state, &reason)?;
         }
     }
@@ -250,11 +325,13 @@ fn emit_unhandled_event(
     Ok(())
 }
 
-fn emit_uncaught_rejection(
-    state: &Rc<RefCell<HostState>>,
-    reason: &Value,
-) -> Result<(), VmError> {
-    if !state.borrow().process.uncaught_exception_handlers.is_empty() {
+fn emit_uncaught_rejection(state: &Rc<RefCell<HostState>>, reason: &Value) -> Result<(), VmError> {
+    if !state
+        .borrow()
+        .process
+        .uncaught_exception_handlers
+        .is_empty()
+    {
         let error = unhandled_rejection_error(reason);
         crate::modules::process::emit(
             state,
@@ -307,7 +384,14 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
-    let result = call_guarded(state, &task.callback, &Value::Undefined, &task.args);
+    let result = if let Some(domain) = task.domain.as_ref() {
+        let mut call_args = Vec::with_capacity(task.args.len() + 1);
+        call_args.push(task.callback.clone());
+        call_args.extend(task.args.iter().cloned());
+        crate::modules::domain::run(state, Some(domain), &call_args).map(|_| ())
+    } else {
+        call_guarded(state, &task.callback, &Value::Undefined, &task.args)
+    };
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
     }
@@ -365,12 +449,13 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             }
         }
     };
+    crate::modules::async_hooks::resource_before(state, Some(&resource), &[])?;
     let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
+    crate::modules::async_hooks::resource_after(state, None, &[])?;
     let converted = destroy
         && result.is_ok()
         && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
-            &receiver,
-            "_repeat",
+            &receiver, "_repeat",
         ));
     if converted {
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
@@ -432,7 +517,9 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if !timer.referenced && !has_referenced_work(state) {
             continue;
         }
+        crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
         let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
+        crate::modules::async_hooks::resource_after(state, None, &[])?;
         super::timers::async_destroy(&timer.async_resource);
         result?;
         drain_ticks(state)?;
@@ -452,9 +539,7 @@ fn has_referenced_work(state: &Rc<RefCell<HostState>>) -> bool {
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
     let guard = state.borrow();
-    quench_runtime::has_pending_promise_jobs()
-        || !guard.event_loop.microtasks.borrow().is_empty()
-        || !guard.event_loop.immediates.borrow().is_empty()
+    !guard.event_loop.immediates.borrow().is_empty()
         || guard
             .timers
             .timers

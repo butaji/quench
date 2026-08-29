@@ -94,9 +94,18 @@ fn execute_call_continuation_inner(
             return Ok(None);
         };
         if crate::functions::is_class_constructor(function) {
-            return Err(crate::value::error::throw_type_error(
-                "Class constructor cannot be invoked without 'new'",
-            ));
+            let error =
+                crate::vm::with_realm(crate::construct::function_realm_id(function), || {
+                    crate::value::error::throw_type_error(
+                        "Class constructor cannot be invoked without 'new'",
+                    )
+                })
+                .unwrap_or_else(|| {
+                    crate::value::error::throw_type_error(
+                        "Class constructor cannot be invoked without 'new'",
+                    )
+                });
+            return Err(error);
         }
         // Async and generator functions must go through the ordinary invocation
         // path: it creates the Promise/generator wrapper and performs the
@@ -582,10 +591,14 @@ fn tail_object_dispatch(
 ) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
     let result = match builtin {
-        Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
-            arguments.first(),
-            arguments.get(1),
-        ))),
+        Builtin::ObjectIs => {
+            let first = arguments.first().unwrap_or(&Value::Undefined);
+            let second = arguments.get(1).unwrap_or(&Value::Undefined);
+            Ok(Value::Boolean(crate::builtins::same_value(
+                Some(first),
+                Some(second),
+            )))
+        }
         Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first()),
         Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true),
         Builtin::ObjectIsSealed => crate::properties::integrity_level(arguments.first(), false),
@@ -630,6 +643,18 @@ fn tail_constructor_dispatch(
 ) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
     let message = match builtin {
+        Builtin::TypedArray => "TypedArray is not directly constructible",
+        Builtin::Float64Array
+        | Builtin::Float32Array
+        | Builtin::Int8Array
+        | Builtin::Int16Array
+        | Builtin::Int32Array
+        | Builtin::Uint8Array
+        | Builtin::Uint8ClampedArray
+        | Builtin::Uint16Array
+        | Builtin::Uint32Array
+        | Builtin::BigInt64Array
+        | Builtin::BigUint64Array => "Constructor requires 'new'",
         Builtin::ArrayBuffer => "Constructor ArrayBuffer requires 'new'",
         Builtin::DataView => "Constructor DataView requires 'new'",
         Builtin::SharedArrayBuffer => "Constructor SharedArrayBuffer requires 'new'",

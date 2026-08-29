@@ -58,6 +58,62 @@ pub(crate) fn array_copy_within(
     Ok(result)
 }
 
+pub(crate) fn typed_array_copy_within(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = crate::arrays::typed_array_receiver(receiver, "copyWithin")?;
+    if crate::arrays::typed_array_is_immutable(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.copyWithin called on immutable buffer",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let target = copy_index(arguments.first(), length)?;
+    let start = copy_index(arguments.get(1), length)?;
+    let end = arguments
+        .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| copy_index(Some(value), length))
+        .transpose()?
+        .unwrap_or(length);
+    if crate::arrays::typed_array_is_detached(&value)
+        || crate::typed_array_prototype::is_out_of_bounds(&value)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.copyWithin called on invalid view",
+        ));
+    }
+    let count = end.saturating_sub(start).min(length.saturating_sub(target));
+    if count == 0 {
+        return Ok(value);
+    }
+
+    // Snapshot before writing so overlapping ranges preserve the source bits.
+    let source = (0..count)
+        .map(|offset| {
+            let index = start + offset;
+            crate::typed_array_prototype::index_exists(&value, index)
+                .then(|| crate::execute::get_property_result(&value, &index.to_string()))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for (offset, item) in source.into_iter().enumerate() {
+        let destination = target + offset;
+        // A length-tracking view can shrink during argument coercion. Writes
+        // beyond its current extent are ignored, while fixed-length OOB views
+        // were rejected above.
+        if let Some(item) = item {
+            if !matches!(item, Value::Undefined)
+                && crate::typed_array_prototype::index_exists(&value, destination)
+            {
+                crate::properties::assign_set_property(&value, &destination.to_string(), item)?;
+            }
+        }
+    }
+    Ok(value)
+}
+
 fn copy_within_object(
     mut target: Value,
     destination: usize,
@@ -115,8 +171,9 @@ fn copy_index(value: Option<&Value>, length: usize) -> Result<usize, crate::exec
     if number.is_nan() {
         return Ok(0);
     }
-    if number.is_sign_negative() {
-        return Ok(length.saturating_sub(number.abs().floor() as usize));
+    let integer = number.trunc();
+    if integer.is_sign_negative() {
+        return Ok(length.saturating_sub(integer.abs() as usize));
     }
-    Ok((number.floor() as usize).min(length))
+    Ok((integer as usize).min(length))
 }

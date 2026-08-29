@@ -310,6 +310,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainYearMonthEraGetter => Some("era"),
         Builtin::TemporalPlainYearMonthEraYearGetter => Some("eraYear"),
         Builtin::TemporalZonedDateTimeFrom => Some("from"),
+        Builtin::TemporalZonedDateTime => Some("ZonedDateTime"),
         Builtin::TemporalZonedDateTimeCompare => Some("compare"),
         Builtin::TemporalZonedDateTimeToString => Some("toString"),
         Builtin::TemporalZonedDateTimeToJSON => Some("toJSON"),

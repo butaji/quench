@@ -17,6 +17,7 @@ pub(crate) fn function_builtin(
         }
         crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
         crate::ops::Builtin::ArrayJoin => crate::builtins::array_join(receiver, arguments),
+        crate::ops::Builtin::TypedArrayJoin => crate::arrays::typed_array_join(receiver, arguments),
         crate::ops::Builtin::ArrayToString => crate::builtins::array_to_string(receiver),
         crate::ops::Builtin::ArrayPush => crate::builtins::array_push(receiver, arguments),
         crate::ops::Builtin::ArrayShift => crate::builtins::array_shift(receiver),
@@ -26,6 +27,9 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayFill => crate::builtins::array_fill(receiver, arguments),
         crate::ops::Builtin::ArrayCopyWithin => {
             crate::builtins::array_copy_within(receiver, arguments)
+        }
+        crate::ops::Builtin::TypedArrayCopyWithin => {
+            crate::builtins::typed_array_copy_within(receiver, arguments)
         }
         crate::ops::Builtin::ArrayFindLast => crate::builtins::array_find_last(receiver, arguments),
         crate::ops::Builtin::ArrayFindLastIndex => {
@@ -39,9 +43,9 @@ pub(crate) fn function_builtin(
             crate::builtins::array_to_spliced(receiver, arguments)
         }
         crate::ops::Builtin::ArrayWith => crate::builtins::array_with(receiver, arguments),
-        crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
-            crate::builtins::object::object_property_is_enumerable(receiver, arguments),
-        ),
+        crate::ops::Builtin::ObjectPropertyIsEnumerable => {
+            crate::builtins::object::object_property_is_enumerable(receiver, arguments)
+        }
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }
@@ -57,9 +61,14 @@ pub(crate) fn try_execute_specialized(
         function.code.code(),
     );
     if is_class_constructor(function) {
-        return Err(crate::value::error::throw_type_error(
-            "Class constructor cannot be invoked without 'new'",
-        ));
+        let error = crate::vm::with_realm(
+            crate::construct::function_realm_id(function),
+            || crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'"),
+        )
+        .unwrap_or_else(|| {
+            crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'")
+        });
+        return Err(error);
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
     if let Some(result) = execute_forward_construct_call(function, &receiver, arguments) {

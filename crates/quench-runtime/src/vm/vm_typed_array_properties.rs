@@ -24,10 +24,35 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         "transfer" => Value::Builtin(Builtin::ArrayBufferTransfer),
         "transferToFixedLength" => Value::Builtin(Builtin::ArrayBufferTransferToFixedLength),
         "sliceToImmutable" => Value::Builtin(Builtin::ArrayBufferSliceToImmutable),
-        "constructor" | "Symbol.toStringTag" => buffer
+        "__proto__" => {
+            let value = buffer
+                .prototype()
+                .unwrap_or_else(|| crate::vm::realm_intrinsic(Builtin::ArrayBufferPrototype));
+            let normalized = match value {
+                Value::Builtin(builtin) => crate::vm::realm_intrinsic(builtin),
+                value => value,
+            };
+            normalized
+        }
+        "constructor" => buffer
             .prototype()
-            .map(|prototype| get_property(&prototype, key))
-            .filter(|value| !matches!(value, Value::Undefined))
+            .and_then(|prototype| {
+                let value = get_property(&prototype, key);
+                let value = match value {
+                    Value::Builtin(builtin) => crate::vm::realm_intrinsic(builtin),
+                    value => value,
+                };
+                (!matches!(value, Value::Undefined)).then_some(value)
+            })
+            .unwrap_or_else(|| {
+                crate::vm::realm_intrinsic(Builtin::ArrayBuffer)
+            }),
+        "Symbol.toStringTag" => buffer
+            .prototype()
+            .and_then(|prototype| {
+                let value = get_property(&prototype, key);
+                (!matches!(value, Value::Undefined)).then_some(value)
+            })
             .unwrap_or_else(|| crate::builtins::property(Builtin::ArrayBufferPrototype, key)),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }

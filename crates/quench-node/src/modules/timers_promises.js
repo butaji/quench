@@ -8,12 +8,21 @@
   function promiseTimer(schedule, cancel, value, options) {
     options = options === undefined ? {} : options;
     if (!options || typeof options !== "object") {
-      throw new TypeError("The options argument must be an object");
+      const error = new TypeError("The options argument must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
+    if (options.ref !== undefined && typeof options.ref !== "boolean") {
+      const error = new TypeError("The options.ref property must be of type boolean");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
     }
     const signal = options.signal;
     if (signal !== undefined &&
         (!signal || typeof signal.addEventListener !== "function")) {
-      throw new TypeError("The signal option must be an AbortSignal");
+      const error = new TypeError("The signal option must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
     }
     return new Promise(function (resolve, reject) {
       let settled = false;
@@ -43,6 +52,12 @@
     });
   }
   function setTimeout(delay, value, options) {
+    if (options && options.signal !== undefined &&
+        (!options.signal || typeof options.signal.addEventListener !== "function")) {
+      const error = new TypeError("The signal option must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
     return promiseTimer(
       (finish) => timers.setTimeout(finish, delay),
       (timer) => timers.clearTimeout(timer), value, options);
@@ -56,6 +71,11 @@
     options = options === undefined ? {} : options;
     if (!options || typeof options !== "object") {
       throw new TypeError("The options argument must be an object");
+    }
+    if (options.ref !== undefined && typeof options.ref !== "boolean") {
+      const error = new TypeError("The options.ref property must be of type boolean");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
     }
     let timer;
     let closed = false;

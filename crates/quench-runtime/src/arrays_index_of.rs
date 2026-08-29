@@ -36,9 +36,24 @@ pub(crate) fn includes(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    includes_with_mode(receiver, arguments, false)
+}
+
+pub(crate) fn typed_includes(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    includes_with_mode(receiver, arguments, true)
+}
+
+fn includes_with_mode(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    typed: bool,
+) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
     let search = arguments.first().unwrap_or(&Value::Undefined);
-    let length = search_length(&this)?;
+    let length = search_length(&this, typed)?;
     let this = crate::locals::resolved_replacement(this);
     if length == 0 {
         return Ok(Value::Boolean(false));
@@ -59,8 +74,23 @@ pub(crate) fn index_of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    index_of_with_mode(receiver, arguments, false)
+}
+
+pub(crate) fn typed_index_of(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    index_of_with_mode(receiver, arguments, true)
+}
+
+fn index_of_with_mode(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    typed: bool,
+) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
-    let length = search_length(&this)?;
+    let length = search_length(&this, typed)?;
     if length == 0 {
         return Ok(Value::Number(-1.0));
     }
@@ -88,8 +118,23 @@ pub(crate) fn last_index_of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    last_index_of_with_mode(receiver, arguments, false)
+}
+
+pub(crate) fn typed_last_index_of(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    last_index_of_with_mode(receiver, arguments, true)
+}
+
+fn last_index_of_with_mode(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    typed: bool,
+) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
-    let length = search_length(&this)?;
+    let length = search_length(&this, typed)?;
     if length == 0 {
         return Ok(Value::Number(-1.0));
     }
@@ -126,9 +171,12 @@ fn has_search_property(value: &Value, key: &str) -> Result<bool, crate::execute:
     ))
 }
 
-fn search_length(this: &Value) -> Result<isize, crate::execute::VmError> {
+fn search_length(this: &Value, typed: bool) -> Result<isize, crate::execute::VmError> {
     if crate::typed_array_prototype::is_out_of_bounds(this) {
         return Ok(0);
+    }
+    if typed {
+        return Ok(crate::typed_array_ops::logical_len(this).unwrap_or(0) as isize);
     }
     slice_length(this)
 }

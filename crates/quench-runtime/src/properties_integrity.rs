@@ -14,30 +14,12 @@ pub(crate) fn integrity_level(
     if object_is_extensible(target) {
         return Ok(crate::value::Value::Boolean(false));
     }
-    if matches!(
-        target,
-        crate::value::Value::Function(_) | crate::value::Value::BoundFunction(_)
-    ) {
-        return Ok(crate::value::Value::Boolean(true));
-    }
-    if is_boxed_string(target) {
-        return Ok(crate::value::Value::Boolean(true));
-    }
     if let crate::value::Value::Set(data) = target {
         return Ok(crate::value::Value::Boolean(!frozen || data.is_frozen()));
     }
     Ok(crate::value::Value::Boolean(integrity_props(
         target, frozen,
     )))
-}
-
-fn is_boxed_string(target: &crate::value::Value) -> bool {
-    let crate::value::Value::Object(properties) = target else {
-        return false;
-    };
-    properties
-        .iter()
-        .any(|(name, value)| name == "_value" && matches!(value, crate::value::Value::String(_)))
 }
 
 fn integrity_props(target: &crate::value::Value, frozen: bool) -> bool {
@@ -71,6 +53,10 @@ pub(crate) fn integrity_apply(
         ));
     }
     match target {
+        crate::value::Value::Builtin(builtin) => {
+            crate::builtins::mark_builtin_non_extensible(*builtin);
+            Ok(target.clone())
+        }
         crate::value::Value::Set(data) if frozen => {
             data.extensible.set(false);
             data.frozen.set(true);
@@ -90,6 +76,12 @@ pub(crate) fn integrity_apply(
         crate::value::Value::BoundFunction(bound) => {
             let mut properties = bound.properties.borrow_mut();
             integrity_function(&mut properties, frozen);
+            Ok(target.clone())
+        }
+        target if target.typed_array_meta().is_some() => {
+            if let Some(meta) = target.typed_array_meta() {
+                meta.set_extensible(false);
+            }
             Ok(target.clone())
         }
         _ => Ok(target.clone()),
@@ -307,10 +299,7 @@ fn descriptor_object(fields: Vec<(String, crate::value::Value)>) -> crate::value
 
 fn push_non_extensible(properties: &mut crate::value::ObjectData) {
     if !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
-        properties.push((
-            NON_EXTENSIBLE.into(),
-            crate::value::Value::Boolean(true),
-        ));
+        properties.push((NON_EXTENSIBLE.into(), crate::value::Value::Boolean(true)));
     }
 }
 

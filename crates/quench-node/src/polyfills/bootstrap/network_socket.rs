@@ -1,6 +1,7 @@
 //! Polyfill: `network-socket`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   constructor(options = {}) {
     super();
     this.readable = true;
@@ -208,7 +209,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchNetSocket = c
       callback = _options[1];
       _options = _options[0];
     }
-    if (typeof _options !== "object" || _options === null) {
+    if (typeof _options === "string" && _options.startsWith("/")) {
+      _options = { path: _options };
+    } else if (typeof _options !== "object" || _options === null) {
       _options = { port: _options };
     }
     if (this.destroyed) {
@@ -476,4 +479,5 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchNetSocket = c
     return this;
   }
 };
-"#);
+"#
+);

@@ -9,6 +9,7 @@
 //! reserved (sentinel).
 
 use crate::envelope::NodeObject;
+use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 
 /// Stable capability id. Stays under `u16` to fit the runtime's
 /// `HostCapabilityKind::Custom` representation.
@@ -26,6 +27,12 @@ pub struct NodeSpec {
 /// namespace construction, capability dispatch, and future generated
 /// evidence tables; mechanical registrations should not repeat ids inline.
 macro_rules! node_api {
+    ($(($name:ident, $cap_name:ident, $label:literal, $cap:expr)),* $(,)?) => {
+        $(
+            pub const $name: NodeSpec = NodeSpec::new($label, $cap);
+            pub const $cap_name: CapId = $cap;
+        )*
+    };
     ($(($name:ident, $label:literal, $cap:expr)),* $(,)?) => {
         $(pub const $name: NodeSpec = NodeSpec::new($label, $cap);)*
     };
@@ -38,55 +45,110 @@ impl NodeSpec {
 }
 
 /// All Node host capabilities. Stable ids; do not reorder.
-pub const SPEC_EVENTS_NEW: NodeSpec = NodeSpec::new("events:EventEmitter", 0x0100);
-pub const SPEC_EVENTS_FROM: NodeSpec = NodeSpec::new("events:from", 0x0101);
-pub const SPEC_EVENTS_ON: NodeSpec = NodeSpec::new("events:on", 0x0102);
-pub const SPEC_EVENTS_EMIT: NodeSpec = NodeSpec::new("events:emit", 0x0103);
-pub const SPEC_EVENTS_CAPTURE_GET: NodeSpec = NodeSpec::new("events:captureRejections:get", 0x0104);
-pub const SPEC_EVENTS_CAPTURE_SET: NodeSpec = NodeSpec::new("events:captureRejections:set", 0x0119);
-pub const SPEC_EVENTS_DEFAULT_MAX_GET: NodeSpec =
-    NodeSpec::new("events:defaultMaxListeners:get", 0x0125);
-pub const SPEC_EVENTS_DEFAULT_MAX_SET: NodeSpec =
-    NodeSpec::new("events:defaultMaxListeners:set", 0x0126);
-pub const SPEC_EVENTS_RAW_LISTENERS: NodeSpec = NodeSpec::new("events:rawListeners", 0x0127);
+node_api! {
+    (SPEC_TEST, "test:test", 0x1b00),
+    (SPEC_TEST_SKIP, "test:skip", 0x1b01),
+    (SPEC_TEST_MOCK_FN, "test:mock:fn", 0x1b02),
+    (SPEC_TEST_MOCK_CALL, "test:mock:call", 0x1b03),
+    (SPEC_EVENT_TRUSTED_GET, "event:isTrusted:get", 0x1b04),
+    (SPEC_TEST_MOCK_METHOD, "test:mock:method", 0x1b05),
+    (SPEC_TEST_MOCK_RESTORE, "test:mock:restore", 0x1b06),
+    (SPEC_TEST_MOCK_BIND, "test:mock:bind", 0x1b07),
+    (SPEC_TEST_MOCK_BOUND_CALL, "test:mock:bound-call", 0x1b08),
+    (SPEC_TEST_MOCK_GETTER, "test:mock:getter", 0x1b09),
+    (SPEC_TEST_MOCK_SETTER, "test:mock:setter", 0x1b0A),
+    (SPEC_TEST_MOCK_CALL_COUNT, "test:mock:callCount", 0x1b0B),
+    (SPEC_TEST_MOCK_IMPLEMENTATION, "test:mock:implementation", 0x1b0C),
+    (SPEC_TEST_MOCK_IMPLEMENTATION_ONCE, "test:mock:implementationOnce", 0x1b0D),
+    (SPEC_TEST_BEFORE_EACH, "test:beforeEach", 0x1b0E),
+    (SPEC_TEST_AFTER_EACH, "test:afterEach", 0x1b0F),
+    (SPEC_TEST_NESTED, "test:nested", 0x1b10),
+    (SPEC_TEST_MOCK_RESET_CALLS, "test:mock:resetCalls", 0x1b11),
+    (SPEC_TEST_MOCK_RESET, "test:mock:reset", 0x1b12),
+    (SPEC_TEST_MOCK_PROPERTY, "test:mock:property", 0x1b13),
+    (SPEC_TEST_MOCK_ACCESS_COUNT, "test:mock:accessCount", 0x1b14),
+    (SPEC_TEST_MOCK_RESET_ACCESSES, "test:mock:resetAccesses", 0x1b15),
+    (SPEC_TEST_MOCK_PROPERTY_GET, "test:mock:propertyGet", 0x1b16),
+    (SPEC_TEST_MOCK_PROPERTY_SET, "test:mock:propertySet", 0x1b17),
+    (SPEC_TEST_MOCK_PROPERTY_ONCE, "test:mock:propertyOnce", 0x1b18),
+    (SPEC_TEST_MOCK_TIMERS_ENABLE, "test:mock:timers:enable", 0x1b19),
+    (SPEC_TEST_MOCK_TIMERS_TICK, "test:mock:timers:tick", 0x1b1A),
+    (SPEC_TEST_MOCK_TIMERS_SETTIME, "test:mock:timers:setTime", 0x1b1B),
+    (SPEC_TEST_MOCK_TIMERS_RESET, "test:mock:timers:reset", 0x1b1C),
+    (SPEC_TEST_MOCK_MODULE, "test:mock:module", 0x1b1D),
+    (SPEC_TEST_CONTEXT_SKIP, "test:context:skip", 0x1b1E),
+    (SPEC_TEST_CONTEXT_TODO, "test:context:todo", 0x1b1F),
+    (SPEC_TEST_RUN_EMIT, "test:run:emit", 0x1b20),
+    (SPEC_TEST_GET_CONTEXT, "test:getTestContext", 0x1b21),
+}
 
-pub const SPEC_CONSOLE_LOG: NodeSpec = NodeSpec::new("console:log", 0x0200);
-pub const SPEC_CONSOLE_INFO: NodeSpec = NodeSpec::new("console:info", 0x0201);
-pub const SPEC_CONSOLE_WARN: NodeSpec = NodeSpec::new("console:warn", 0x0202);
-pub const SPEC_CONSOLE_ERROR: NodeSpec = NodeSpec::new("console:error", 0x0203);
-pub const SPEC_CONSOLE_DEBUG: NodeSpec = NodeSpec::new("console:debug", 0x0204);
-pub const SPEC_CONSOLE_TRACE: NodeSpec = NodeSpec::new("console:trace", 0x0205);
-
-pub const SPEC_UTIL_FORMAT: NodeSpec = NodeSpec::new("util:format", 0x0300);
-pub const SPEC_UTIL_INSPECT: NodeSpec = NodeSpec::new("util:inspect", 0x0301);
-pub const SPEC_UTIL_ABORTED: NodeSpec = NodeSpec::new("util:aborted", 0x0310);
-pub const SPEC_UTIL_ABORTED_RESOLVE: NodeSpec = NodeSpec::new("util:aborted:resolve", 0x0311);
-pub const SPEC_UTIL_TYPES: NodeSpec = NodeSpec::new("util:types", 0x0302);
-pub const SPEC_UTIL_GETCALLSITES: NodeSpec = NodeSpec::new("util:getCallSites", 0x0303);
-pub const SPEC_UTIL_IS: NodeSpec = NodeSpec::new("util:is", 0x030D);
-pub const SPEC_UTIL_INHERITS: NodeSpec = NodeSpec::new("util:inherits", 0x0304);
-pub const SPEC_UTIL_STRIP_VT: NodeSpec = NodeSpec::new("util:stripVTControlCharacters", 0x0305);
-pub const SPEC_UTIL_FORMAT_WITH_OPTIONS: NodeSpec = NodeSpec::new("util:formatWithOptions", 0x0306);
-pub const SPEC_UTIL_STYLE_TEXT: NodeSpec = NodeSpec::new("util:styleText", 0x0307);
-pub const SPEC_UTIL_IS_DEEP_STRICT_EQUAL: NodeSpec =
-    NodeSpec::new("util:isDeepStrictEqual", 0x0308);
-pub const SPEC_UTIL_TO_USV_STRING: NodeSpec = NodeSpec::new("util:toUSVString", 0x0309);
-pub const SPEC_UTIL_IS_NATIVE_ERROR: NodeSpec = NodeSpec::new("util.types:isNativeError", 0x030A);
-pub const SPEC_UTIL_PARSE_ENV: NodeSpec = NodeSpec::new("util:parseEnv", 0x030B);
-pub const SPEC_UTIL_TYPE_PREDICATE: NodeSpec = NodeSpec::new("util.types:predicate", 0x030C);
-pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream", 0x0F12);
-pub const SPEC_VM_SOURCE_TEXT_MODULE: NodeSpec = NodeSpec::new("vm:SourceTextModule", 0x0F11);
-pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
-pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
-pub const SPEC_TEXT_ENCODER_NEW: NodeSpec = NodeSpec::new("TextEncoder:new", 0x084C);
-pub const SPEC_TEXT_ENCODER_ENCODE: NodeSpec = NodeSpec::new("TextEncoder:encode", 0x084D);
-pub const SPEC_TEXT_ENCODER_ENCODE_INTO: NodeSpec = NodeSpec::new("TextEncoder:encodeInto", 0x084E);
-pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
-pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
-pub const SPEC_TEST_MOCK_FN: NodeSpec = NodeSpec::new("test:mock:fn", 0x1b02);
-pub const SPEC_TEST_MOCK_CALL: NodeSpec = NodeSpec::new("test:mock:call", 0x1b03);
-pub const SPEC_EVENT_TRUSTED_GET: NodeSpec = NodeSpec::new("event:isTrusted:get", 0x1b04);
-
+node_api! {
+    (SPEC_INTERNAL_JS_STREAM, "internal:js_stream", 0x0F12),
+    (SPEC_VM_SOURCE_TEXT_MODULE, "vm:SourceTextModule", 0x0F11),
+    (SPEC_VM_MODULE_LINK, "vm:SourceTextModule:link", 0x0F13),
+    (SPEC_VM_MODULE_EVALUATE, "vm:SourceTextModule:evaluate", 0x0F14),
+    (SPEC_TEXT_DECODER_NEW, "TextDecoder:new", 0x0809),
+    (SPEC_TEXT_DECODER_DECODE, "TextDecoder:decode", 0x080A),
+    (SPEC_TEXT_ENCODER_NEW, "TextEncoder:new", 0x084C),
+    (SPEC_TEXT_ENCODER_ENCODE, "TextEncoder:encode", 0x084D),
+    (SPEC_TEXT_ENCODER_ENCODE_INTO, "TextEncoder:encodeInto", 0x084E),
+    (SPEC_UTIL_FORMAT, "util:format", 0x0300),
+    (SPEC_UTIL_INSPECT, "util:inspect", 0x0301),
+    (SPEC_UTIL_ABORTED, "util:aborted", 0x0310),
+    (SPEC_UTIL_ABORTED_RESOLVE, "util:aborted:resolve", 0x0311),
+    (SPEC_UTIL_TYPES, "util:types", 0x0302),
+    (SPEC_UTIL_GETCALLSITES, "util:getCallSites", 0x0303),
+    (SPEC_UTIL_IS, "util:is", 0x030D),
+    (SPEC_UTIL_INHERITS, "util:inherits", 0x0304),
+    (SPEC_UTIL_STRIP_VT, "util:stripVTControlCharacters", 0x0305),
+    (SPEC_UTIL_FORMAT_WITH_OPTIONS, "util:formatWithOptions", 0x0306),
+    (SPEC_UTIL_STYLE_TEXT, "util:styleText", 0x0307),
+    (SPEC_UTIL_IS_DEEP_STRICT_EQUAL, "util:isDeepStrictEqual", 0x0308),
+    (SPEC_UTIL_TO_USV_STRING, "util:toUSVString", 0x0309),
+    (SPEC_UTIL_IS_NATIVE_ERROR, "util.types:isNativeError", 0x030A),
+    (SPEC_UTIL_PARSE_ENV, "util:parseEnv", 0x030B),
+    (SPEC_UTIL_TYPE_PREDICATE, "util.types:predicate", 0x030C),
+    (SPEC_CONSOLE_LOG, "console:log", 0x0200),
+    (SPEC_CONSOLE_INFO, "console:info", 0x0201),
+    (SPEC_CONSOLE_WARN, "console:warn", 0x0202),
+    (SPEC_CONSOLE_ERROR, "console:error", 0x0203),
+    (SPEC_CONSOLE_DEBUG, "console:debug", 0x0204),
+    (SPEC_CONSOLE_TRACE, "console:trace", 0x0205),
+}
+node_api! {
+    (SPEC_EVENTS_NEW, CAP_EVENTS_NEW, "events:EventEmitter", 0x0100),
+    (SPEC_EVENTS_FROM, CAP_EVENTS_FROM, "events:from", 0x0101),
+    (SPEC_EVENTS_ON, CAP_EVENTS_ON, "events:on", 0x0102),
+    (SPEC_EVENTS_EMIT, CAP_EVENTS_EMIT, "events:emit", 0x0103),
+    (SPEC_EVENTS_CAPTURE_GET, CAP_EVENTS_CAPTURE_GET, "events:captureRejections:get", 0x0104),
+    (SPEC_EVENTS_CAPTURE_SET, CAP_EVENTS_CAPTURE_SET, "events:captureRejections:set", 0x0119),
+    (SPEC_EVENTS_DEFAULT_MAX_GET, CAP_EVENTS_DEFAULT_MAX_GET, "events:defaultMaxListeners:get", 0x0125),
+    (SPEC_EVENTS_DEFAULT_MAX_SET, CAP_EVENTS_DEFAULT_MAX_SET, "events:defaultMaxListeners:set", 0x0126),
+    (SPEC_EVENTS_RAW_LISTENERS, CAP_EVENTS_RAW_LISTENERS, "events:rawListeners", 0x0127),
+    (SPEC_EVENTS_ONCE, CAP_EVENTS_ONCE, "events:once", 0x0105),
+    (SPEC_EVENTS_REMOVE_LISTENER, CAP_EVENTS_REMOVE_LISTENER, "events:removeListener", 0x0106),
+    (SPEC_EVENTS_REMOVE_ALL, CAP_EVENTS_REMOVE_ALL, "events:removeAllListeners", 0x0107),
+    (SPEC_EVENTS_LISTENERS, CAP_EVENTS_LISTENERS, "events:listeners", 0x0108),
+    (SPEC_EVENTS_EVENT_NAMES, CAP_EVENTS_EVENT_NAMES, "events:eventNames", 0x0109),
+    (SPEC_EVENTS_LISTENER_COUNT, CAP_EVENTS_LISTENER_COUNT, "events:listenerCount", 0x010A),
+    (SPEC_EVENTS_PREPEND, CAP_EVENTS_PREPEND, "events:prependListener", 0x010B),
+    (SPEC_EVENTS_PREPEND_ONCE, CAP_EVENTS_PREPEND_ONCE, "events:prependOnceListener", 0x010C),
+    (SPEC_EVENTS_SET_MAX, CAP_EVENTS_SET_MAX, "events:setMaxListeners", 0x010D),
+    (SPEC_EVENTS_GET_MAX, CAP_EVENTS_GET_MAX, "events:getMaxListeners", 0x010E),
+    (SPEC_EVENTS_SET_MAX_STATIC, CAP_EVENTS_SET_MAX_STATIC, "events:setMaxListeners:static", 0x010F),
+    (SPEC_EVENTS_GET_LISTENERS, CAP_EVENTS_GET_LISTENERS, "events:getEventListeners", 0x0110),
+    (SPEC_EVENTS_LISTENER_COUNT_STATIC, CAP_EVENTS_LISTENER_COUNT_STATIC, "events:listenerCount:static", 0x0111),
+    (SPEC_EVENTS_GET_MAX_STATIC, CAP_EVENTS_GET_MAX_STATIC, "events:getMaxListeners:static", 0x0112),
+    (SPEC_TARGET_ADD, CAP_TARGET_ADD, "eventTarget:addEventListener", 0x0113),
+    (SPEC_TARGET_REMOVE, CAP_TARGET_REMOVE, "eventTarget:removeEventListener", 0x0114),
+    (SPEC_TARGET_DISPATCH, CAP_TARGET_DISPATCH, "eventTarget:dispatchEvent", 0x0115),
+    (SPEC_EVENT_TARGET_NEW, CAP_EVENT_TARGET_NEW, "eventTarget:EventTarget", 0x0116),
+    (SPEC_RUN_UNCAUGHT, CAP_RUN_UNCAUGHT, "process:runUncaught", 0x0117),
+    (SPEC_EVENT_TARGET_REJECTION, CAP_EVENT_TARGET_REJECTION, "eventTarget:promiseRejection", 0x0128),
+    (SPEC_EVENTS_ABORT_LISTENER, CAP_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
+    (SPEC_EVENTS_ABORT_DISPOSE, CAP_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
+    (SPEC_EVENTS_ADD_ABORT, CAP_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
+}
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
     (SPEC_DIAGNOSTICS_SUBSCRIBE, "diagnostics_channel:subscribe", 0x1F01),
@@ -120,9 +182,6 @@ node_api! {
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),
     (SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC, "diagnostics_channel:TracingChannel:traceSync", 0x1F0D),
-    (SPEC_EVENTS_ABORT_LISTENER, "events:addAbortListener:listener", 0x0130),
-    (SPEC_EVENTS_ABORT_DISPOSE, "events:addAbortListener:dispose", 0x0131),
-    (SPEC_EVENTS_ADD_ABORT, "events:addAbortListener", 0x0132),
     (SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, "diagnostics_channel:boundedChannel", 0x1F0E),
     (SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, "diagnostics_channel:BoundedChannel:subscribe", 0x1F0F),
     (SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE, "diagnostics_channel:BoundedChannel:unsubscribe", 0x1F10),
@@ -162,98 +221,118 @@ node_api! {
     (SPEC_WASI_IMPORT_OBJECT, "wasi:WASI:getImportObject", 0x1C03),
 }
 
-pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
-pub const SPEC_PATH_RESOLVE: NodeSpec = NodeSpec::new("path:resolve", 0x0401);
-pub const SPEC_PATH_NORMALIZE: NodeSpec = NodeSpec::new("path:normalize", 0x0402);
-pub const SPEC_PATH_DIRNAME: NodeSpec = NodeSpec::new("path:dirname", 0x0403);
-pub const SPEC_PATH_BASENAME: NodeSpec = NodeSpec::new("path:basename", 0x0404);
-pub const SPEC_PATH_EXTNAME: NodeSpec = NodeSpec::new("path:extname", 0x0405);
-pub const SPEC_PATH_ISABSOLUTE: NodeSpec = NodeSpec::new("path:isAbsolute", 0x0406);
-pub const SPEC_PATH_RELATIVE: NodeSpec = NodeSpec::new("path:relative", 0x0409);
-pub const SPEC_PATH_PARSE: NodeSpec = NodeSpec::new("path:parse", 0x040A);
-pub const SPEC_PATH_FORMAT: NodeSpec = NodeSpec::new("path:format", 0x040B);
-pub const SPEC_PATH_TO_NAMESPACED: NodeSpec = NodeSpec::new("path:toNamespacedPath", 0x040C);
-pub const SPEC_PATH_MATCHES_GLOB: NodeSpec = NodeSpec::new("path:matchesGlob", 0x040D);
+node_api! {
+    (SPEC_PATH_JOIN, CAP_PATH_JOIN, "path:join", 0x0400),
+    (SPEC_PATH_RESOLVE, CAP_PATH_RESOLVE, "path:resolve", 0x0401),
+    (SPEC_PATH_NORMALIZE, CAP_PATH_NORMALIZE, "path:normalize", 0x0402),
+    (SPEC_PATH_DIRNAME, CAP_PATH_DIRNAME, "path:dirname", 0x0403),
+    (SPEC_PATH_BASENAME, CAP_PATH_BASENAME, "path:basename", 0x0404),
+    (SPEC_PATH_EXTNAME, CAP_PATH_EXTNAME, "path:extname", 0x0405),
+    (SPEC_PATH_ISABSOLUTE, CAP_PATH_ISABSOLUTE, "path:isAbsolute", 0x0406),
+    (SPEC_PATH_RELATIVE, CAP_PATH_RELATIVE, "path:relative", 0x0409),
+    (SPEC_PATH_PARSE, CAP_PATH_PARSE, "path:parse", 0x040A),
+    (SPEC_PATH_FORMAT, CAP_PATH_FORMAT, "path:format", 0x040B),
+    (SPEC_PATH_TO_NAMESPACED, CAP_PATH_TO_NAMESPACED, "path:toNamespacedPath", 0x040C),
+    (SPEC_PATH_MATCHES_GLOB, CAP_PATH_MATCHES_GLOB, "path:matchesGlob", 0x040D),
+    (SPEC_PATH_WIN32_JOIN, CAP_PATH_WIN32_JOIN, "path.win32:join", 0x0410),
+    (SPEC_PATH_WIN32_RESOLVE, CAP_PATH_WIN32_RESOLVE, "path.win32:resolve", 0x0411),
+    (SPEC_PATH_WIN32_NORMALIZE, CAP_PATH_WIN32_NORMALIZE, "path.win32:normalize", 0x0412),
+    (SPEC_PATH_WIN32_DIRNAME, CAP_PATH_WIN32_DIRNAME, "path.win32:dirname", 0x0413),
+    (SPEC_PATH_WIN32_BASENAME, CAP_PATH_WIN32_BASENAME, "path.win32:basename", 0x0414),
+    (SPEC_PATH_WIN32_EXTNAME, CAP_PATH_WIN32_EXTNAME, "path.win32:extname", 0x0415),
+    (SPEC_PATH_WIN32_ISABSOLUTE, CAP_PATH_WIN32_ISABSOLUTE, "path.win32:isAbsolute", 0x0416),
+    (SPEC_PATH_WIN32_RELATIVE, CAP_PATH_WIN32_RELATIVE, "path.win32:relative", 0x0417),
+    (SPEC_PATH_WIN32_PARSE, CAP_PATH_WIN32_PARSE, "path.win32:parse", 0x0418),
+    (SPEC_PATH_WIN32_FORMAT, CAP_PATH_WIN32_FORMAT, "path.win32:format", 0x0419),
+    (SPEC_PATH_WIN32_TO_NAMESPACED, CAP_PATH_WIN32_TO_NAMESPACED, "path.win32:toNamespacedPath", 0x041A),
+    (SPEC_PATH_WIN32_MATCHES_GLOB, CAP_PATH_WIN32_MATCHES_GLOB, "path.win32:matchesGlob", 0x041B),
+}
 
-pub const SPEC_PATH_WIN32_JOIN: NodeSpec = NodeSpec::new("path.win32:join", 0x0410);
-pub const SPEC_PATH_WIN32_RESOLVE: NodeSpec = NodeSpec::new("path.win32:resolve", 0x0411);
-pub const SPEC_PATH_WIN32_NORMALIZE: NodeSpec = NodeSpec::new("path.win32:normalize", 0x0412);
-pub const SPEC_PATH_WIN32_DIRNAME: NodeSpec = NodeSpec::new("path.win32:dirname", 0x0413);
-pub const SPEC_PATH_WIN32_BASENAME: NodeSpec = NodeSpec::new("path.win32:basename", 0x0414);
-pub const SPEC_PATH_WIN32_EXTNAME: NodeSpec = NodeSpec::new("path.win32:extname", 0x0415);
-pub const SPEC_PATH_WIN32_ISABSOLUTE: NodeSpec = NodeSpec::new("path.win32:isAbsolute", 0x0416);
-pub const SPEC_PATH_WIN32_RELATIVE: NodeSpec = NodeSpec::new("path.win32:relative", 0x0417);
-pub const SPEC_PATH_WIN32_PARSE: NodeSpec = NodeSpec::new("path.win32:parse", 0x0418);
-pub const SPEC_PATH_WIN32_FORMAT: NodeSpec = NodeSpec::new("path.win32:format", 0x0419);
-pub const SPEC_PATH_WIN32_TO_NAMESPACED: NodeSpec =
-    NodeSpec::new("path.win32:toNamespacedPath", 0x041A);
-pub const SPEC_PATH_WIN32_MATCHES_GLOB: NodeSpec = NodeSpec::new("path.win32:matchesGlob", 0x041B);
+node_api! {
+    (SPEC_URL_PARSE, CAP_URL_PARSE, "url:parse", 0x0500),
+    (SPEC_URL_FORMAT, CAP_URL_FORMAT, "url:format", 0x0501),
+    (SPEC_URL_RESOLVE, CAP_URL_RESOLVE, "url:resolve", 0x0502),
+    (SPEC_URL_NEW, CAP_URL_NEW, "url:URL", 0x0503),
+    (SPEC_URL_LEGACY_NEW, CAP_URL_LEGACY_NEW, "url:Url", 40),
+    (SPEC_URL_RESOLVE_OBJECT, CAP_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
+    (SPEC_URL_SEARCHPARAMS_NEW, CAP_URL_SEARCH, "url:URLSearchParams", 0x0504),
+}
 
-pub const SPEC_URL_PARSE: NodeSpec = NodeSpec::new("url:parse", 0x0500);
-pub const SPEC_URL_FORMAT: NodeSpec = NodeSpec::new("url:format", 0x0501);
-pub const SPEC_URL_RESOLVE: NodeSpec = NodeSpec::new("url:resolve", 0x0502);
-pub const SPEC_URL_NEW: NodeSpec = NodeSpec::new("url:URL", 0x0503);
-pub const SPEC_URL_LEGACY_NEW: NodeSpec = NodeSpec::new("url:Url", 40);
-pub const SPEC_URL_RESOLVE_OBJECT: NodeSpec = NodeSpec::new("url:resolveObject", 0x0520);
-pub const SPEC_URL_SEARCHPARAMS_NEW: NodeSpec = NodeSpec::new("url:URLSearchParams", 0x0504);
+node_api! {
+    (SPEC_QS_PARSE, CAP_QS_PARSE, "querystring:parse", 0x0600),
+    (SPEC_QS_STRINGIFY, CAP_QS_STRINGIFY, "querystring:stringify", 0x0601),
+    (SPEC_QS_ESCAPE, CAP_QS_ESCAPE, "querystring:escape", 0x0602),
+    (SPEC_QS_UNESCAPE, CAP_QS_UNESCAPE, "querystring:unescape", 0x0603),
+    (SPEC_QS_UNESCAPE_BUFFER, CAP_QS_UNESCAPE_BUFFER, "querystring:unescapeBuffer", 0x0604),
+}
 
-pub const SPEC_QS_PARSE: NodeSpec = NodeSpec::new("querystring:parse", 0x0600);
-pub const SPEC_QS_STRINGIFY: NodeSpec = NodeSpec::new("querystring:stringify", 0x0601);
-pub const SPEC_QS_ESCAPE: NodeSpec = NodeSpec::new("querystring:escape", 0x0602);
-pub const SPEC_QS_UNESCAPE: NodeSpec = NodeSpec::new("querystring:unescape", 0x0603);
-pub const SPEC_QS_UNESCAPE_BUFFER: NodeSpec = NodeSpec::new("querystring:unescapeBuffer", 0x0604);
-
-pub const SPEC_TIMERS_SETTIMEOUT: NodeSpec = NodeSpec::new("timers:setTimeout", 0x0700);
-pub const SPEC_TIMERS_CLEARTIMEOUT: NodeSpec = NodeSpec::new("timers:clearTimeout", 0x0701);
-pub const SPEC_TIMERS_SETINTERVAL: NodeSpec = NodeSpec::new("timers:setInterval", 0x0702);
-pub const SPEC_TIMERS_CLEARINTERVAL: NodeSpec = NodeSpec::new("timers:clearInterval", 0x0703);
-pub const SPEC_TIMERS_SETIMMEDIATE: NodeSpec = NodeSpec::new("timers:setImmediate", 0x0704);
-pub const SPEC_TIMERS_CLEARIMMEDIATE: NodeSpec = NodeSpec::new("timers:clearImmediate", 0x0705);
-pub const SPEC_TIMERS_TICK: NodeSpec = NodeSpec::new("timers:tick", 0x0706);
-pub const SPEC_TIMERS_UNREF: NodeSpec = NodeSpec::new("timers:unref", 0x0708);
-pub const SPEC_TIMERS_REF: NodeSpec = NodeSpec::new("timers:ref", 0x0709);
-pub const SPEC_TIMERS_HASREF: NodeSpec = NodeSpec::new("timers:hasRef", 0x070A);
-pub const SPEC_TIMERS_REFRESH: NodeSpec = NodeSpec::new("timers:refresh", 0x070B);
-pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
-pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
-pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
-pub const SPEC_INTERNAL_UTIL_ASSERT_CRYPTO: NodeSpec =
-    NodeSpec::new("internal/util:assertCrypto", 0x0721);
-pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
-pub const SPEC_TIMERS_TO_PRIMITIVE: NodeSpec = NodeSpec::new("timers:toPrimitive", 0x071D);
-pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
-pub const SPEC_UTIL_PROMISIFY: NodeSpec = NodeSpec::new("util:promisify", 0x071E);
+node_api! {
+    (SPEC_TIMERS_SETTIMEOUT, CAP_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
+    (SPEC_TIMERS_CLEARTIMEOUT, CAP_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
+    (SPEC_TIMERS_SETINTERVAL, CAP_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
+    (SPEC_TIMERS_CLEARINTERVAL, CAP_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
+    (SPEC_TIMERS_SETIMMEDIATE, CAP_TIMERS_SETIMMEDIATE, "timers:setImmediate", 0x0704),
+    (SPEC_TIMERS_CLEARIMMEDIATE, CAP_TIMERS_CLEARIMMEDIATE, "timers:clearImmediate", 0x0705),
+    (SPEC_TIMERS_TICK, CAP_TIMERS_TICK, "timers:tick", 0x0706),
+    (SPEC_TIMERS_UNREF, CAP_TIMERS_UNREF, "timers:unref", 0x0708),
+    (SPEC_TIMERS_REF, CAP_TIMERS_REF, "timers:ref", 0x0709),
+    (SPEC_TIMERS_HASREF, CAP_TIMERS_HASREF, "timers:hasRef", 0x070A),
+    (SPEC_TIMERS_REFRESH, CAP_TIMERS_REFRESH, "timers:refresh", 0x070B),
+}
+node_api! {
+    (SPEC_RUN_LOOP, CAP_RUN_LOOP, "__quench_run_loop__", 0x070C),
+    (SPEC_RUN_EXIT, CAP_RUN_EXIT, "__quench_run_exit__", 0x070D),
+    (SPEC_INTERNAL_UTIL_SLEEP, CAP_INTERNAL_UTIL_SLEEP, "internal/util:sleep", 0x070E),
+    (SPEC_INTERNAL_UTIL_ASSERT_CRYPTO, CAP_INTERNAL_UTIL_ASSERT_CRYPTO, "internal/util:assertCrypto", 0x0721),
+    (SPEC_TIMERS_CLOSE, CAP_TIMERS_CLOSE, "timers:close", 0x070F),
+    (SPEC_TIMERS_TO_PRIMITIVE, CAP_TIMERS_TO_PRIMITIVE, "timers:toPrimitive", 0x071D),
+    (SPEC_TIMERS_GET_LIBUV_NOW, CAP_TIMERS_GET_LIBUV_NOW, "timers:getLibuvNow", 0x0714),
+    (SPEC_UTIL_PROMISIFY, CAP_UTIL_PROMISIFY, "util:promisify", 0x071E),
+    (SPEC_UTIL_PROMISIFIED_CALL, CAP_UTIL_PROMISIFIED_CALL, "util:promisifiedCall", 0x071F),
+    (SPEC_UTIL_PROMISIFIED_CALLBACK, CAP_UTIL_PROMISIFIED_CALLBACK, "util:promisifiedCallback", 0x0720),
+    (SPEC_LINKED_LIST_INIT, CAP_LINKED_LIST_INIT, "internal/linkedlist:init", 0x0718),
+    (SPEC_LINKED_LIST_REMOVE, CAP_LINKED_LIST_REMOVE, "internal/linkedlist:remove", 0x0719),
+    (SPEC_LINKED_LIST_APPEND, CAP_LINKED_LIST_APPEND, "internal/linkedlist:append", 0x071A),
+    (SPEC_LINKED_LIST_IS_EMPTY, CAP_LINKED_LIST_IS_EMPTY, "internal/linkedlist:isEmpty", 0x071B),
+    (SPEC_LINKED_LIST_PEEK, CAP_LINKED_LIST_PEEK, "internal/linkedlist:peek", 0x071C),
+    (SPEC_TIMERS_SCHEDULE, CAP_TIMERS_SCHEDULE, "timers:scheduleTimer", 0x0715),
+    (SPEC_TIMERS_TOGGLE_REF, CAP_TIMERS_TOGGLE_REF, "timers:toggleTimerRef", 0x0716),
+    (SPEC_TIMERS_TOGGLE_IMMEDIATE_REF, CAP_TIMERS_TOGGLE_IMMEDIATE_REF, "timers:toggleImmediateRef", 0x0717),
+}
+pub const SPEC_QUEUE_MICROTASK: NodeSpec = NodeSpec::new("timers:queueMicrotask", 0x0707);
 pub const SPEC_UTIL_DEPRECATE: NodeSpec = NodeSpec::new("util:deprecate", 0x0730);
 pub const SPEC_UTIL_DEPRECATED_CALL: NodeSpec = NodeSpec::new("util:deprecatedCall", 0x0731);
 pub const SPEC_UTIL_SYSTEM_ERROR_NAME: NodeSpec = NodeSpec::new("util:getSystemErrorName", 0x0733);
 pub const SPEC_UTIL_DEBUGLOG: NodeSpec = NodeSpec::new("util:debuglog", 0x0735);
 pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec =
     NodeSpec::new("util:exceptionWithHostPort", 0x0734);
+pub const SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: NodeSpec =
+    NodeSpec::new("util:convertProcessSignalToExitCode", 0x2203);
+pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kill", 0x2204);
+pub const SPEC_CP_STDIN_WRITE: NodeSpec = NodeSpec::new("child_process:stdin:write", 0x1E09);
+pub const SPEC_CP_STDIN_END: NodeSpec = NodeSpec::new("child_process:stdin:end", 0x1E0A);
+pub const SPEC_CP_ABORT: NodeSpec = NodeSpec::new("child_process:abort", 0x1E0B);
+pub const SPEC_CP_ABORT_EMIT: NodeSpec = NodeSpec::new("child_process:abortEmit", 0x1E0C);
+pub const SPEC_CP_FORK: NodeSpec = NodeSpec::new("child_process:fork", 0x1E0D);
+pub const SPEC_CP_SEND: NodeSpec = NodeSpec::new("child_process:send", 0x1E0E);
+pub const SPEC_CP_MESSAGE_EMIT: NodeSpec = NodeSpec::new("child_process:messageEmit", 0x1E0F);
+pub const SPEC_CP_DISCONNECT: NodeSpec = NodeSpec::new("child_process:disconnect", 0x1E10);
+pub const SPEC_CP_DISCONNECT_EMIT: NodeSpec = NodeSpec::new("child_process:disconnectEmit", 0x1E11);
+pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
+pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
+    NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
 pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec =
-    NodeSpec::new("internal/util:emitExperimentalWarning", 0x0735);
+    NodeSpec::new("internal/util:emitExperimentalWarning", 0x2201);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
 pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
     NodeSpec::new("internal/os:getHomeDirectory", 0x0738);
-pub const SPEC_UTIL_PROMISIFIED_CALL: NodeSpec = NodeSpec::new("util:promisifiedCall", 0x071F);
-pub const SPEC_UTIL_PROMISIFIED_CALLBACK: NodeSpec =
-    NodeSpec::new("util:promisifiedCallback", 0x0720);
-pub const SPEC_LINKED_LIST_INIT: NodeSpec = NodeSpec::new("internal/linkedlist:init", 0x0718);
-pub const SPEC_LINKED_LIST_REMOVE: NodeSpec = NodeSpec::new("internal/linkedlist:remove", 0x0719);
-pub const SPEC_LINKED_LIST_APPEND: NodeSpec = NodeSpec::new("internal/linkedlist:append", 0x071A);
-pub const SPEC_LINKED_LIST_IS_EMPTY: NodeSpec =
-    NodeSpec::new("internal/linkedlist:isEmpty", 0x071B);
-pub const SPEC_LINKED_LIST_PEEK: NodeSpec = NodeSpec::new("internal/linkedlist:peek", 0x071C);
-pub const SPEC_TIMERS_SCHEDULE: NodeSpec = NodeSpec::new("timers:scheduleTimer", 0x0715);
-pub const SPEC_TIMERS_TOGGLE_REF: NodeSpec = NodeSpec::new("timers:toggleTimerRef", 0x0716);
-pub const SPEC_TIMERS_TOGGLE_IMMEDIATE_REF: NodeSpec =
-    NodeSpec::new("timers:toggleImmediateRef", 0x0717);
 pub const SPEC_INTERNAL_BINDING: NodeSpec = NodeSpec::new("internal:test-binding", 0x0710);
 pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-fill", 0x0711);
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
     NodeSpec::new("internal:view-has-buffer", 0x0712);
 pub const SPEC_INTERNAL_GET_PROXY_DETAILS: NodeSpec =
-    NodeSpec::new("internal:get-proxy-details", 0x0721);
+    NodeSpec::new("internal:get-proxy-details", 0x2200);
 pub const SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET: NodeSpec =
     NodeSpec::new("internal:buffer-array-buffer-aligned-offset", 0x0713);
 
@@ -334,6 +413,7 @@ pub const SPEC_TTY_ISATTY: NodeSpec = NodeSpec::new("tty:isatty", 0x0900);
 
 pub const SPEC_PROCESS_GET: NodeSpec = NodeSpec::new("process:get", 0x0A00);
 pub const SPEC_PROCESS_EXIT: NodeSpec = NodeSpec::new("process:exit", 0x0A01);
+pub const SPEC_PROCESS_KILL: NodeSpec = NodeSpec::new("process:kill", 0x0A20);
 pub const SPEC_PROCESS_CWD: NodeSpec = NodeSpec::new("process:cwd", 0x0A02);
 pub const SPEC_PROCESS_CHDIR: NodeSpec = NodeSpec::new("process:chdir", 0x0A03);
 pub const SPEC_PROCESS_NEXT_TICK: NodeSpec = NodeSpec::new("process:nextTick", 0x0A04);
@@ -341,8 +421,10 @@ pub const SPEC_PROCESS_HRTIME: NodeSpec = NodeSpec::new("process:hrtime", 0x0A05
 pub const SPEC_PROCESS_HRTIME_BIGINT: NodeSpec = NodeSpec::new("process:hrtime.bigint", 0x0A0B);
 pub const SPEC_PROCESS_CPU_USAGE: NodeSpec = NodeSpec::new("process:cpuUsage", 0x0A10);
 pub const SPEC_PROCESS_UPTIME: NodeSpec = NodeSpec::new("process:uptime", 0x0A11);
-pub const SPEC_PROCESS_AVAILABLE_MEMORY: NodeSpec = NodeSpec::new("process:availableMemory", 0x0A1B);
-pub const SPEC_PROCESS_CONSTRAINED_MEMORY: NodeSpec = NodeSpec::new("process:constrainedMemory", 0x0A1C);
+pub const SPEC_PROCESS_AVAILABLE_MEMORY: NodeSpec =
+    NodeSpec::new("process:availableMemory", 0x0A1B);
+pub const SPEC_PROCESS_CONSTRAINED_MEMORY: NodeSpec =
+    NodeSpec::new("process:constrainedMemory", 0x0A1C);
 pub const SPEC_PROCESS_GETUID: NodeSpec = NodeSpec::new("process:getuid", 0x0A12);
 pub const SPEC_PROCESS_GETGID: NodeSpec = NodeSpec::new("process:getgid", 0x0A13);
 pub const SPEC_PROCESS_GETEUID: NodeSpec = NodeSpec::new("process:geteuid", 0x0A14);
@@ -361,6 +443,8 @@ pub const SPEC_PROCESS_REMOVE_ALL_LISTENERS: NodeSpec =
     NodeSpec::new("process:removeAllListeners", 0x0A0F);
 pub const SPEC_PROCESS_EMIT: NodeSpec = NodeSpec::new("process:emit", 0x0A0C);
 pub const SPEC_PROCESS_EMIT_WARNING: NodeSpec = NodeSpec::new("process:emitWarning", 0x0A0D);
+pub const SPEC_PROCESS_EXIT_CODE_GET: NodeSpec = NodeSpec::new("process:exitCode:get", 0x0A21);
+pub const SPEC_PROCESS_EXIT_CODE_SET: NodeSpec = NodeSpec::new("process:exitCode:set", 0x0A22);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -437,6 +521,7 @@ pub const SPEC_NET_SOCKET_ADDRESS: NodeSpec = NodeSpec::new("net:socket:address"
 pub const SPEC_NET_SOCKET_SET_NO_DELAY: NodeSpec = NodeSpec::new("net:socket:setNoDelay", 0x100E);
 pub const SPEC_NET_SOCKET_SET_KEEP_ALIVE: NodeSpec =
     NodeSpec::new("net:socket:setKeepAlive", 0x100F);
+pub const SPEC_NET_LOOKUP_CALLBACK: NodeSpec = NodeSpec::new("net:lookupCallback", 0x1016);
 pub const SPEC_NET_SOCKET_SET_ENCODING: NodeSpec = NodeSpec::new("net:socket:setEncoding", 0x1010);
 pub const SPEC_NET_SOCKET_PAUSE: NodeSpec = NodeSpec::new("net:socket:pause", 0x1011);
 pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 0x1012);
@@ -488,6 +573,7 @@ pub const SPEC_FS_STAT_ISFIFO: NodeSpec = NodeSpec::new("fs:Stats:isFIFO", 0x113
 pub const SPEC_FS_STAT_ISSOCKET: NodeSpec = NodeSpec::new("fs:Stats:isSocket", 0x1136);
 pub const SPEC_FS_REALPATH: NodeSpec = NodeSpec::new("fs:realpath", 0x1137);
 pub const SPEC_FS_WATCH: NodeSpec = NodeSpec::new("fs:watch", 0x1152);
+pub const SPEC_FS_WATCH_CLOSE: NodeSpec = NodeSpec::new("fs:watch:close", 0x1157);
 pub const SPEC_FS_READSTREAM: NodeSpec = NodeSpec::new("fs:ReadStream", 0x1153);
 pub const SPEC_FS_WRITESTREAM: NodeSpec = NodeSpec::new("fs:WriteStream", 0x1154);
 pub const SPEC_FS_OPENDIR: NodeSpec = NodeSpec::new("fs:opendir", 0x1155);
@@ -526,60 +612,82 @@ pub const SPEC_CP_SPAWNSYNC: NodeSpec = NodeSpec::new("child_process:spawnSync",
 pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0x1e01);
 pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
 pub const SPEC_CP_EXECFILE: NodeSpec = NodeSpec::new("child_process:execFile", 0x1e03);
+pub const SPEC_CP_EXECFILE_ABORT: NodeSpec = NodeSpec::new("child_process:execFileAbort", 0x1e07);
+pub const SPEC_CP_EXECFILE_COMPLETE: NodeSpec =
+    NodeSpec::new("child_process:execFileComplete", 0x1e08);
 pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e06);
 pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
-pub const SPEC_URL_PATH_TO_FILE_URL: NodeSpec = NodeSpec::new("url:pathToFileURL", 0x0505);
-pub const SPEC_URL_GET_HREF: NodeSpec = NodeSpec::new("url:get:href", 0x0506);
-pub const SPEC_URL_GET_PROTOCOL: NodeSpec = NodeSpec::new("url:get:protocol", 0x0507);
-pub const SPEC_URL_GET_USERNAME: NodeSpec = NodeSpec::new("url:get:username", 0x0508);
-pub const SPEC_URL_GET_PASSWORD: NodeSpec = NodeSpec::new("url:get:password", 0x0509);
-pub const SPEC_URL_GET_HOST: NodeSpec = NodeSpec::new("url:get:host", 0x050A);
-pub const SPEC_URL_GET_HOSTNAME: NodeSpec = NodeSpec::new("url:get:hostname", 0x050B);
-pub const SPEC_URL_GET_PORT: NodeSpec = NodeSpec::new("url:get:port", 0x050C);
-pub const SPEC_URL_GET_PATHNAME: NodeSpec = NodeSpec::new("url:get:pathname", 0x050D);
-pub const SPEC_URL_GET_SEARCH: NodeSpec = NodeSpec::new("url:get:search", 0x050E);
-pub const SPEC_URL_GET_HASH: NodeSpec = NodeSpec::new("url:get:hash", 0x050F);
-pub const SPEC_URL_GET_ORIGIN: NodeSpec = NodeSpec::new("url:get:origin", 0x0510);
-pub const SPEC_URL_GET_SEARCH_PARAMS: NodeSpec = NodeSpec::new("url:get:searchParams", 0x0511);
-pub const SPEC_URL_TO_STRING: NodeSpec = NodeSpec::new("url:toString", 0x0512);
-pub const SPEC_URL_TO_JSON: NodeSpec = NodeSpec::new("url:toJSON", 0x0513);
-pub const SPEC_URL_REVOKE_OBJECT_URL: NodeSpec = NodeSpec::new("url:revokeObjectURL", 0x0514);
-pub const SPEC_URL_FILE_URL_TO_PATH: NodeSpec = NodeSpec::new("url:fileURLToPath", 0x0515);
-pub const SPEC_URL_TO_HTTP_OPTIONS: NodeSpec = NodeSpec::new("url:urlToHttpOptions", 0x0516);
-pub const SPEC_URL_DOMAIN_TO_ASCII: NodeSpec = NodeSpec::new("url:domainToASCII", 0x0517);
-pub const SPEC_URL_DOMAIN_TO_UNICODE: NodeSpec = NodeSpec::new("url:domainToUnicode", 0x0518);
-pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1F36);
-pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
-pub const SPEC_GC: NodeSpec = NodeSpec::new("gc", 0x2117);
-pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1F22);
-pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1F25);
-pub const SPEC_ABORT_CONTROLLER_SIGNAL_GET: NodeSpec = NodeSpec::new("AbortController.signal:get", 0x1F27);
-pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
-pub const SPEC_ABORT_SIGNAL_ABORTED_GET: NodeSpec = NodeSpec::new("AbortSignal.aborted:get", 0x1F28);
-pub const SPEC_ABORT_SIGNAL_HAS_INSTANCE: NodeSpec = NodeSpec::new("AbortSignal.hasInstance", 0x1F29);
-pub const SPEC_ABORT_SIGNAL_THROW_IF_ABORTED: NodeSpec = NodeSpec::new("AbortSignal.throwIfAborted", 0x1F2A);
-pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
-pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F30);
-pub const SPEC_ABORT_SIGNAL_ANY: NodeSpec = NodeSpec::new("AbortSignal.any", 0x1F32);
-pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1F26);
-pub const SPEC_EVENT: NodeSpec = NodeSpec::new("Event", 0x0118);
-pub const SPEC_EVENT_PREVENT_DEFAULT: NodeSpec = NodeSpec::new("Event.preventDefault", 0x011a);
-pub const SPEC_EVENT_STOP_PROPAGATION: NodeSpec = NodeSpec::new("Event.stopPropagation", 0x011b);
-pub const SPEC_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("Event.stopImmediatePropagation", 0x011c);
-pub const SPEC_EVENT_COMPOSED_PATH: NodeSpec = NodeSpec::new("Event.composedPath", 0x011d);
-pub const SPEC_EVENT_GET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.get", 0x011e);
-pub const SPEC_EVENT_SET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.set", 0x011f);
-pub const SPEC_DEFINE_EVENT_HANDLER: NodeSpec =
-    NodeSpec::new("internal:eventTarget:defineEventHandler", 0x0120);
-pub const SPEC_EVENT_HANDLER_GET: NodeSpec = NodeSpec::new("EventHandler.get", 0x0121);
-pub const SPEC_EVENT_HANDLER_SET: NodeSpec = NodeSpec::new("EventHandler.set", 0x0122);
-pub const SPEC_CUSTOM_EVENT: NodeSpec = NodeSpec::new("CustomEvent", 0x0123);
-pub const SPEC_EVENT_SOURCE: NodeSpec = NodeSpec::new("EventSource", 0x0124);
+node_api! {
+    (SPEC_URL_PATH_TO_FILE_URL, CAP_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
+    (SPEC_URL_GET_HREF, CAP_URL_GET_HREF, "url:get:href", 0x0506),
+    (SPEC_URL_GET_PROTOCOL, CAP_URL_GET_PROTOCOL, "url:get:protocol", 0x0507),
+    (SPEC_URL_GET_USERNAME, CAP_URL_GET_USERNAME, "url:get:username", 0x0508),
+    (SPEC_URL_GET_PASSWORD, CAP_URL_GET_PASSWORD, "url:get:password", 0x0509),
+    (SPEC_URL_GET_HOST, CAP_URL_GET_HOST, "url:get:host", 0x050A),
+    (SPEC_URL_GET_HOSTNAME, CAP_URL_GET_HOSTNAME, "url:get:hostname", 0x050B),
+    (SPEC_URL_GET_PORT, CAP_URL_GET_PORT, "url:get:port", 0x050C),
+    (SPEC_URL_GET_PATHNAME, CAP_URL_GET_PATHNAME, "url:get:pathname", 0x050D),
+    (SPEC_URL_GET_SEARCH, CAP_URL_GET_SEARCH, "url:get:search", 0x050E),
+    (SPEC_URL_GET_HASH, CAP_URL_GET_HASH, "url:get:hash", 0x050F),
+    (SPEC_URL_GET_ORIGIN, CAP_URL_GET_ORIGIN, "url:get:origin", 0x0510),
+    (SPEC_URL_GET_SEARCH_PARAMS, CAP_URL_GET_SEARCH_PARAMS, "url:get:searchParams", 0x0511),
+    (SPEC_URL_TO_STRING, CAP_URL_TO_STRING, "url:toString", 0x0512),
+    (SPEC_URL_TO_JSON, CAP_URL_TO_JSON, "url:toJSON", 0x0513),
+    (SPEC_URL_REVOKE_OBJECT_URL, CAP_URL_REVOKE_OBJECT_URL, "url:revokeObjectURL", 0x0514),
+    (SPEC_URL_FILE_URL_TO_PATH, CAP_URL_FILE_URL_TO_PATH, "url:fileURLToPath", 0x0515),
+    (SPEC_URL_TO_HTTP_OPTIONS, CAP_URL_TO_HTTP_OPTIONS, "url:urlToHttpOptions", 0x0516),
+    (SPEC_URL_DOMAIN_TO_ASCII, CAP_URL_DOMAIN_TO_ASCII, "url:domainToASCII", 0x0517),
+    (SPEC_URL_DOMAIN_TO_UNICODE, CAP_URL_DOMAIN_TO_UNICODE, "url:domainToUnicode", 0x0518),
+}
+node_api! {
+    (SPEC_STRUCTURED_CLONE, "structuredClone", 0x1F36),
+    (SPEC_FETCH, "fetch", 0x1F21),
+    (SPEC_GC, "gc", 0x2117),
+    (SPEC_ABORT_CONTROLLER, "AbortController", 0x1F22),
+    (SPEC_ABORT_CONTROLLER_ABORT, "AbortController.abort", 0x1F25),
+    (SPEC_ABORT_CONTROLLER_SIGNAL_GET, "AbortController.signal:get", 0x1F27),
+    (SPEC_ABORT_SIGNAL, "AbortSignal", 0x1F23),
+    (SPEC_ABORT_SIGNAL_ABORTED_GET, "AbortSignal.aborted:get", 0x1F28),
+    (SPEC_ABORT_SIGNAL_HAS_INSTANCE, "AbortSignal.hasInstance", 0x1F29),
+    (SPEC_ABORT_SIGNAL_THROW_IF_ABORTED, "AbortSignal.throwIfAborted", 0x1F2A),
+    (SPEC_ABORT_SIGNAL_ABORT, "AbortSignal.abort", 0x1F24),
+    (SPEC_ABORT_SIGNAL_TIMEOUT, "AbortSignal.timeout", 0x1F40),
+    (SPEC_ABORT_SIGNAL_ANY, "AbortSignal.any", 0x1F41),
+    (SPEC_ABORT_EVENT_STOP_IMMEDIATE, "AbortEvent.stopImmediatePropagation", 0x1F26),
+}
+node_api! {
+    (SPEC_NODE_EVENT_TARGET_NEW, CAP_NODE_EVENT_TARGET_NEW, "eventTarget:NodeEventTarget", 0x0139),
+    (SPEC_NODE_EVENT_TARGET_ADD, CAP_NODE_EVENT_TARGET_ADD, "nodeEventTarget:addEventListener", 0x013A),
+    (SPEC_NODE_EVENT_TARGET_REMOVE, CAP_NODE_EVENT_TARGET_REMOVE, "nodeEventTarget:removeEventListener", 0x013B),
+    (SPEC_NODE_EVENT_TARGET_DISPATCH, CAP_NODE_EVENT_TARGET_DISPATCH, "nodeEventTarget:dispatchEvent", 0x013C),
+    (SPEC_NODE_EVENT_TARGET_ON, CAP_NODE_EVENT_TARGET_ON, "nodeEventTarget:on", 0x013D),
+    (SPEC_NODE_EVENT_TARGET_ONCE, CAP_NODE_EVENT_TARGET_ONCE, "nodeEventTarget:once", 0x013E),
+    (SPEC_NODE_EVENT_TARGET_REMOVE_ALL, CAP_NODE_EVENT_TARGET_REMOVE_ALL, "nodeEventTarget:removeAllListeners", 0x013F),
+    (SPEC_NODE_EVENT_TARGET_LISTENER_COUNT, CAP_NODE_EVENT_TARGET_LISTENER_COUNT, "nodeEventTarget:listenerCount", 0x0140),
+    (SPEC_NODE_EVENT_TARGET_EVENT_NAMES, CAP_NODE_EVENT_TARGET_EVENT_NAMES, "nodeEventTarget:eventNames", 0x0141),
+    (SPEC_NODE_EVENT_TARGET_SET_MAX, CAP_NODE_EVENT_TARGET_SET_MAX, "nodeEventTarget:setMaxListeners", 0x0142),
+    (SPEC_NODE_EVENT_TARGET_GET_MAX, CAP_NODE_EVENT_TARGET_GET_MAX, "nodeEventTarget:getMaxListeners", 0x0143),
+    (SPEC_NODE_EVENT_TARGET_EMIT, CAP_NODE_EVENT_TARGET_EMIT, "nodeEventTarget:emit", 0x0144),
+    (SPEC_MESSAGE_CHANNEL, CAP_MESSAGE_CHANNEL, "messageChannel:MessageChannel", 0x0145),
+}
+node_api! {
+    (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
+    (SPEC_EVENT_PREVENT_DEFAULT, CAP_EVENT_PREVENT_DEFAULT, "Event.preventDefault", 0x011a),
+    (SPEC_EVENT_STOP_PROPAGATION, CAP_EVENT_STOP_PROPAGATION, "Event.stopPropagation", 0x011b),
+    (SPEC_EVENT_STOP_IMMEDIATE, CAP_EVENT_STOP_IMMEDIATE, "Event.stopImmediatePropagation", 0x011c),
+    (SPEC_EVENT_COMPOSED_PATH, CAP_EVENT_COMPOSED_PATH, "Event.composedPath", 0x011d),
+    (SPEC_EVENT_GET_CANCEL_BUBBLE, CAP_EVENT_GET_CANCEL_BUBBLE, "Event.cancelBubble.get", 0x011e),
+    (SPEC_EVENT_SET_CANCEL_BUBBLE, CAP_EVENT_SET_CANCEL_BUBBLE, "Event.cancelBubble.set", 0x011f),
+    (SPEC_DEFINE_EVENT_HANDLER, CAP_DEFINE_EVENT_HANDLER, "internal:eventTarget:defineEventHandler", 0x0120),
+    (SPEC_EVENT_HANDLER_GET, CAP_EVENT_HANDLER_GET, "EventHandler.get", 0x0121),
+    (SPEC_EVENT_HANDLER_SET, CAP_EVENT_HANDLER_SET, "EventHandler.set", 0x0122),
+    (SPEC_EVENT_GET_PROPERTY, CAP_EVENT_GET_PROPERTY, "Event.property:get", 0x0129),
+    (SPEC_CUSTOM_EVENT, CAP_CUSTOM_EVENT, "CustomEvent", 0x0123),
+    (SPEC_EVENT_SOURCE, CAP_EVENT_SOURCE, "EventSource", 0x0124),
+}
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1420);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1421);
@@ -599,7 +707,7 @@ pub const SPEC_ASSERT_CONSTRUCTOR: NodeSpec = NodeSpec::new("assert:Assert", 0x1
 pub const SPEC_ASSERTION_ERROR_CONSTRUCTOR: NodeSpec =
     NodeSpec::new("assert:AssertionError", 0x142E);
 pub const SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL: NodeSpec =
-    NodeSpec::new("assert:partialDeepStrictEqual", 0x142E);
+    NodeSpec::new("assert:partialDeepStrictEqual", 0x2202);
 pub const SPEC_ASSERT_DEEP_EQUAL: NodeSpec = NodeSpec::new("assert:deepEqual", 0x142F);
 pub const SPEC_ASSERT_NOT_DEEP_EQUAL: NodeSpec = NodeSpec::new("assert:notDeepEqual", 0x1430);
 
@@ -679,6 +787,10 @@ pub fn namespace_bindings(
     out.push((
         "queueMicrotask".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),
+    ));
+    out.push((
+        "__quench_events_set_max".to_string(),
+        crate::host::capability(SPEC_EVENTS_SET_MAX_STATIC),
     ));
     // QuickJS exposes the Float16 view storage but not its constructor.  The
     // Node facade still needs the two-byte view in common buffer-source paths;
@@ -771,8 +883,10 @@ pub fn namespace_bindings(
             "get".into(),
             crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER_SIGNAL_GET),
         )]),
-    ).unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
-    let abort_controller = quench_runtime::execute::set_property(abort_controller, "prototype", controller_prototype);
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+    let abort_controller =
+        quench_runtime::execute::set_property(abort_controller, "prototype", controller_prototype);
     out.push(("AbortController".to_string(), abort_controller));
     let abort_signal = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL);
     let abort = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_ABORT);
@@ -798,44 +912,81 @@ pub fn namespace_bindings(
             "get".into(),
             crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_ABORTED_GET),
         )]),
-    ).unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
-    let abort_signal = quench_runtime::execute::set_property(abort_signal, "prototype", signal_prototype);
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+    let abort_signal =
+        quench_runtime::execute::set_property(abort_signal, "prototype", signal_prototype);
     out.push(("AbortSignal".to_string(), abort_signal));
-    out.push(("gc".to_string(), crate::host::capability(crate::registry::SPEC_GC)));
+    out.push((
+        "gc".to_string(),
+        crate::host::capability(crate::registry::SPEC_GC),
+    ));
     out.push((
         "console".to_string(),
+        crate::modules::console::build_value(),
+    ));
+    let event_target = crate::host::capability(SPEC_EVENT_TARGET_NEW);
+    let event_target_prototype = quench_runtime::execute::define_property(
+        crate::modules::event_target::prototype(),
+        "constructor",
         crate::host::namespace_object_from_pairs(vec![
-            ("log".to_string(), crate::host::capability(SPEC_CONSOLE_LOG)),
+            ("value".into(), event_target.clone()),
             (
-                "info".to_string(),
-                crate::host::capability(SPEC_CONSOLE_INFO),
+                "writable".into(),
+                quench_runtime::value::Value::Boolean(true),
             ),
             (
-                "warn".to_string(),
-                crate::host::capability(SPEC_CONSOLE_WARN),
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(false),
             ),
             (
-                "error".to_string(),
-                crate::host::capability(SPEC_CONSOLE_ERROR),
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
             ),
         ]),
-    ));
+    )
+    .unwrap_or_else(|_| crate::modules::event_target::prototype());
+    let _ = quench_runtime::execute::set_callable_property(
+        &event_target,
+        "prototype",
+        event_target_prototype,
+    );
+    out.push(("EventTarget".to_string(), event_target));
     out.push((
-        "EventTarget".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116)),
+        "MessageChannel".to_string(),
+        crate::host::capability(SPEC_MESSAGE_CHANNEL),
     ));
-    let event = crate::host::capability(crate::registry::SPEC_EVENT);
+    let mut event = crate::host::capability(crate::registry::SPEC_EVENT);
+    let event_prototype = quench_runtime::execute::define_property(
+        crate::host::namespace_object_from_pairs(Vec::new()),
+        "constructor",
+        crate::host::namespace_object_from_pairs(vec![
+            ("value".into(), event.clone()),
+            (
+                "writable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+    let event_prototype = install_event_prototype(event_prototype);
     let _ = quench_runtime::execute::set_callable_property(
         &event,
         "prototype",
-        crate::host::namespace_object_from_pairs(Vec::new()),
+        event_prototype.clone(),
     );
-    out.push(("Event".to_string(), event));
-    let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
     let _ = quench_runtime::execute::set_callable_property(
-        &custom_event,
-        "prototype",
-        crate::host::namespace_object_from_pairs(Vec::new()),
+        &event,
+        "length",
+        quench_runtime::value::Value::Number(1.0),
     );
     for (name, value) in [
         ("NONE", 0.0),
@@ -843,11 +994,23 @@ pub fn namespace_bindings(
         ("AT_TARGET", 2.0),
         ("BUBBLING_PHASE", 3.0),
     ] {
-        let _ = quench_runtime::execute::set_callable_property(
-            &custom_event,
-            name,
-            quench_runtime::value::Value::Number(value),
-        );
+        event = define_event_constant(event, name, value);
+    }
+    out.push(("Event".to_string(), event));
+    let mut custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+    let custom_event_prototype = install_custom_event_prototype(event_prototype.clone());
+    let _ = quench_runtime::execute::set_callable_property(
+        &custom_event,
+        "prototype",
+        custom_event_prototype,
+    );
+    for (name, value) in [
+        ("NONE", 0.0),
+        ("CAPTURING_PHASE", 1.0),
+        ("AT_TARGET", 2.0),
+        ("BUBBLING_PHASE", 3.0),
+    ] {
+        custom_event = define_event_constant(custom_event, name, value);
     }
     let _ = quench_runtime::execute::set_callable_property(
         &custom_event,
@@ -868,6 +1031,29 @@ pub fn namespace_bindings(
     out
 }
 
+fn define_event_constant(
+    target: quench_runtime::value::Value,
+    name: &str,
+    value: f64,
+) -> quench_runtime::value::Value {
+    let descriptor = quench_runtime::host_api::object(vec![
+        ("value".into(), quench_runtime::value::Value::Number(value)),
+        (
+            "writable".into(),
+            quench_runtime::value::Value::Boolean(false),
+        ),
+        (
+            "enumerable".into(),
+            quench_runtime::value::Value::Boolean(true),
+        ),
+        (
+            "configurable".into(),
+            quench_runtime::value::Value::Boolean(false),
+        ),
+    ]);
+    quench_runtime::execute::define_property(target.clone(), name, descriptor).unwrap_or(target)
+}
+
 fn push_bindings(
     out: &mut Vec<(String, quench_runtime::value::Value)>,
     argv: &[String],
@@ -882,6 +1068,125 @@ fn push_bindings(
         crate::modules::process::build(argv, exec_path),
     ));
     out.push(("Buffer".to_string(), crate::modules::buffer::build_object()));
+}
+
+fn install_event_prototype(
+    mut prototype: quench_runtime::value::Value,
+) -> quench_runtime::value::Value {
+    for (name, value) in [
+        (
+            "preventDefault",
+            crate::host::capability(SPEC_EVENT_PREVENT_DEFAULT),
+        ),
+        (
+            "stopPropagation",
+            crate::host::capability(SPEC_EVENT_STOP_PROPAGATION),
+        ),
+        (
+            "stopImmediatePropagation",
+            crate::host::capability(SPEC_EVENT_STOP_IMMEDIATE),
+        ),
+        (
+            "composedPath",
+            crate::host::capability(SPEC_EVENT_COMPOSED_PATH),
+        ),
+    ] {
+        quench_runtime::execute::set_property_in_place(&prototype, name, value);
+    }
+    let accessors = [
+        "target",
+        "currentTarget",
+        "srcElement",
+        "type",
+        "cancelable",
+        "defaultPrevented",
+        "timeStamp",
+        "returnValue",
+        "bubbles",
+        "composed",
+        "eventPhase",
+    ];
+    for name in accessors {
+        let getter = quench_runtime::host_api::bound_capability_with_arguments(
+            HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::Custom(SPEC_EVENT_GET_PROPERTY.cap),
+            },
+            vec![quench_runtime::value::Value::String(name.into())],
+        );
+        prototype = quench_runtime::execute::define_property(
+            prototype,
+            name,
+            quench_runtime::host_api::object(vec![
+                ("get".into(), getter),
+                (
+                    "enumerable".into(),
+                    quench_runtime::value::Value::Boolean(true),
+                ),
+                (
+                    "configurable".into(),
+                    quench_runtime::value::Value::Boolean(true),
+                ),
+            ]),
+        )
+        .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+    }
+    quench_runtime::execute::define_property(
+        prototype,
+        "cancelBubble",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                crate::host::capability(SPEC_EVENT_GET_CANCEL_BUBBLE),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(SPEC_EVENT_SET_CANCEL_BUBBLE),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()))
+}
+
+fn install_custom_event_prototype(
+    event_prototype: quench_runtime::value::Value,
+) -> quench_runtime::value::Value {
+    let prototype = quench_runtime::host_api::object(Vec::new());
+    let prototype = quench_runtime::execute::set_prototype_of(&prototype, &event_prototype)
+        .unwrap_or(prototype);
+    quench_runtime::execute::define_property(
+        prototype,
+        "detail",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                quench_runtime::host_api::bound_capability_with_arguments(
+                    HostCapabilityRef {
+                        realm: RealmId::ROOT,
+                        kind: HostCapabilityKind::Custom(SPEC_EVENT_GET_PROPERTY.cap),
+                    },
+                    vec![quench_runtime::value::Value::String("detail".into())],
+                ),
+            ),
+            (
+                "enumerable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "configurable".into(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+        ]),
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()))
 }
 
 fn timers_binding(

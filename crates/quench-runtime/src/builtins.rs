@@ -260,6 +260,10 @@ pub(crate) fn is_deleted_key_for(stored: &str, key: &str) -> bool {
     stored.strip_prefix(DELETED_PREFIX) == Some(key)
 }
 #[inline]
+pub(crate) fn is_deleted_marker(stored: &str) -> bool {
+    stored.starts_with(DELETED_PREFIX)
+}
+#[inline]
 pub(crate) fn is_descriptor_key_for(stored: &str, key: &str) -> bool {
     stored.strip_prefix(DESCRIPTOR_PREFIX) == Some(key)
 }
@@ -277,11 +281,7 @@ pub(crate) fn descriptor_metadata<P: crate::value::PropertyEntries + ?Sized>(
     properties: &P,
     key: &str,
 ) -> Option<Value> {
-    properties
-        .entries()
-        .rev()
-        .find(|(name, _)| is_descriptor_key_for(name, key))
-        .map(|(_, value)| value)
+    properties.descriptor_metadata_for_key(key)
 }
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {
     overrides::read(builtin, key)
@@ -330,6 +330,14 @@ pub(crate) fn builtin_prototype_property_is_removed(builtin: Builtin, key: &str)
     overrides::is_removed(builtin, key)
 }
 
+pub(crate) fn mark_builtin_non_extensible(builtin: Builtin) {
+    overrides::mark_non_extensible(builtin)
+}
+
+pub(crate) fn builtin_is_non_extensible(builtin: Builtin) -> bool {
+    overrides::is_non_extensible(builtin)
+}
+
 /// Install an override for the intrinsic `builtin`'s `[[Prototype]]` so
 /// `Object.setPrototypeOf(Number.prototype, spy)` changes the lookup chain.
 pub fn set_intrinsic_prototype_override(builtin: Builtin, value: Value) {
@@ -352,6 +360,24 @@ pub fn reset_intrinsic_prototype_state() {
 }
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
+    if matches!(
+        builtin,
+        Builtin::TypedArrayPrototype
+            | Builtin::Float64ArrayPrototype
+            | Builtin::Float32ArrayPrototype
+            | Builtin::Int8ArrayPrototype
+            | Builtin::Int16ArrayPrototype
+            | Builtin::Int32ArrayPrototype
+            | Builtin::Uint8ArrayPrototype
+            | Builtin::Uint16ArrayPrototype
+            | Builtin::Uint32ArrayPrototype
+            | Builtin::Uint8ClampedArrayPrototype
+            | Builtin::BigInt64ArrayPrototype
+            | Builtin::BigUint64ArrayPrototype
+    ) && key == "slice"
+    {
+        return Value::Builtin(Builtin::TypedArraySlice);
+    }
     let value = props::lookup(builtin, key);
     if !matches!(value, Value::Undefined) {
         return value;

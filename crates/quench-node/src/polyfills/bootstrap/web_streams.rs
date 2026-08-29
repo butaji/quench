@@ -453,6 +453,10 @@ const __quenchWebStreams = {
   TextEncoderStream: __quenchTextEncoderStream,
   TextDecoderStream: __quenchTextDecoderStream
 };
+Object.defineProperty(globalThis, "__quenchWebStreams", {
+  configurable: true,
+  value: __quenchWebStreams
+});
 for (const [name, constructor] of Object.entries(__quenchWebStreams)) {
   globalThis[name] ||= constructor;
 }

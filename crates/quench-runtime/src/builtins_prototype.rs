@@ -62,9 +62,16 @@ pub(crate) fn prototype_to_string_result(
     if let Value::Builtin(builtin) = value {
         if matches!(builtin, Builtin::Math | Builtin::Json)
             && crate::builtins::read_intrinsic_override(*builtin, "Symbol.toStringTag").is_none()
-            && !crate::builtins::builtin_prototype_property_is_removed(*builtin, "Symbol.toStringTag")
+            && !crate::builtins::builtin_prototype_property_is_removed(
+                *builtin,
+                "Symbol.toStringTag",
+            )
         {
-            let tag = if *builtin == Builtin::Math { "Math" } else { "JSON" };
+            let tag = if *builtin == Builtin::Math {
+                "Math"
+            } else {
+                "JSON"
+            };
             return Ok(Value::String(format!("[object {tag}]")));
         }
     }
@@ -77,21 +84,35 @@ pub(crate) fn prototype_to_string_result(
             }
         }
     }
-    if let Value::Generator(_) = value {
+    if false {
         if let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(value)) {
-            if let Some(getter) =
-                crate::property_define::accessor(&prototype, "Symbol.toStringTag", "get")
-            {
-                let tag = match getter {
-                    Value::Builtin(builtin) => {
-                        crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))?
-                    }
-                    getter => crate::functions::execute_target(&getter, value, &[])?,
-                };
-                return Ok(match tag {
-                    Value::String(tag) => Value::String(format!("[object {tag}]")),
-                    _ => Value::String("[object Object]".into()),
-                });
+            let has_data_tag = crate::builtins::object::descriptor(
+                Some(&prototype),
+                Some(&Value::String("Symbol.toStringTag".into())),
+            )
+            .ok()
+            .and_then(|descriptor| match descriptor {
+                Value::Object(fields) => {
+                    fields.iter().any(|(name, _)| name == "value").then_some(())
+                }
+                _ => None,
+            })
+            .is_some();
+            if !has_data_tag {
+                if let Some(getter) =
+                    crate::property_define::accessor(&prototype, "Symbol.toStringTag", "get")
+                {
+                    let tag = match getter {
+                        Value::Builtin(builtin) => {
+                            crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))?
+                        }
+                        getter => crate::functions::execute_target(&getter, value, &[])?,
+                    };
+                    return Ok(match tag {
+                        Value::String(tag) => Value::String(format!("[object {tag}]")),
+                        _ => Value::String("[object Object]".into()),
+                    });
+                }
             }
         }
     }
@@ -112,10 +133,32 @@ pub(crate) fn prototype_to_string_result(
             return Ok(Value::String(format!("[object {tag}]")));
         }
     }
+    if matches!(value, Value::Generator(_)) {
+        return Ok(Value::String("[object Object]".into()));
+    }
     if intrinsic_tag_is_overridden(value) || intrinsic_tag_is_removed(value) {
         return Ok(Value::String("[object Object]".into()));
     }
     Ok(prototype_to_string(Some(value)))
+}
+
+/// Implement `Object.prototype.toLocaleString` by forwarding to the receiver's
+/// own/prototypal `toString` method.
+pub(crate) fn prototype_to_locale_string_result(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "Object.prototype.toLocaleString called on null or undefined",
+        )
+    })?;
+    let method = crate::execute::get_property_result(value, "toString")?;
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.prototype.toLocaleString called on non-callable toString",
+        ));
+    }
+    crate::functions::execute_target_with_receiver(&method, value, &[]).map(|(value, _)| value)
 }
 
 fn intrinsic_tag_data_value(value: &Value) -> Option<Value> {
@@ -493,7 +536,7 @@ fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<Str
 }
 
 fn native_function_source() -> Value {
-    Value::String("function () { [ native code ] }".to_string())
+    Value::String("function () { [native code] }".to_string())
 }
 
 fn native_builtin_source(builtin: crate::ops::Builtin) -> String {
@@ -507,9 +550,9 @@ fn native_builtin_source(builtin: crate::ops::Builtin) -> String {
     };
     let name = name.rsplit('.').next().unwrap_or(name);
     if name.is_empty() || !valid_native_identifier(name) {
-        "function () { [ native code ] }".to_string()
+        "function () { [native code] }".to_string()
     } else {
-        format!("function {prefix}{name}() {{ [ native code ] }}")
+        format!("function {prefix}{name}() {{ [native code] }}")
     }
 }
 

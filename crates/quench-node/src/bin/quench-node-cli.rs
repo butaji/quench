@@ -25,10 +25,8 @@ fn main() -> ExitCode {
     };
     if script == "-e" || script == "--eval" {
         let source = args.get(1).cloned().unwrap_or_default();
-        let outcome = quench_node::run::eval_script(
-            &source,
-            std::sync::Arc::new(|line| println!("{line}")),
-        );
+        let outcome =
+            quench_node::run::eval_script(&source, std::sync::Arc::new(|line| println!("{line}")));
         if let Some(error) = &outcome.error {
             eprintln!("{error}");
         }
