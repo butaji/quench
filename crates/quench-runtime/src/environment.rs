@@ -191,6 +191,16 @@ impl SlotStore {
         index: usize,
     ) {
         self.ensure(index);
+        self.load_existing_into(registers, dst, index);
+    }
+
+    #[inline(always)]
+    fn load_existing_into(
+        &self,
+        registers: &mut crate::register_file::RegisterFile,
+        dst: u16,
+        index: usize,
+    ) {
         let value = self
             .bridges()
             .and_then(|bridges| bridges.get(index))
@@ -722,7 +732,22 @@ impl Environment {
         let slots = self.slots_ref();
         slots
             .with_binding(usize::from(slot), |store, index| {
-                store.load_into(registers, dst, index)
+                store.load_existing_into(registers, dst, index)
+            })
+            .is_some()
+    }
+
+    #[inline(always)]
+    pub(crate) fn load_existing_proven_into(
+        &self,
+        registers: &mut crate::register_file::RegisterFile,
+        dst: u16,
+        slot: u16,
+    ) -> bool {
+        let slots = self.slots_ref();
+        slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_existing_into(registers, dst, index)
             })
             .is_some()
     }
