@@ -336,7 +336,7 @@ fn has_invalid_calendar_annotation(text: &str) -> bool {
             continue;
         }
         seen = true;
-        return !value.eq_ignore_ascii_case("iso8601");
+        return !crate::temporal::plain_date::is_supported_calendar_name(value);
     }
     false
 }
