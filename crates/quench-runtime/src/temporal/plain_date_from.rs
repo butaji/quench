@@ -251,6 +251,12 @@ fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
+    if crate::intl::supported_calendars()
+        .iter()
+        .any(|calendar| matches!(calendar, Value::String(name) if name.eq_ignore_ascii_case(value)))
+    {
+        return true;
+    }
     if value.starts_with("-000000") || value.starts_with('\u{2212}') {
         return false;
     }
