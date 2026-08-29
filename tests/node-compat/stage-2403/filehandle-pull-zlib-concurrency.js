@@ -4,7 +4,8 @@ const path = require("path");
 const { text, pull } = require("stream/iter");
 const { compressGzip, decompressGzip } = require("zlib/iter");
 
-const root = fs.mkdtempSync(path.join(process.cwd(), "pull-zlib-"));
+fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
+const root = fs.mkdtempSync(path.join(process.cwd(), "tmp", "pull-zlib-"));
 const jobs = ["aaabbbcccddd", "bbbccc", "0123456789"].map(
   async (value, index) => {
     const filename = path.join(root, `input-${index}`);

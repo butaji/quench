@@ -4,7 +4,8 @@ const path = require("path");
 const vfs = require("node:vfs");
 
 (async () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), "real-link-"));
+  fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
+  const root = fs.mkdtempSync(path.join(process.cwd(), "tmp", "real-link-"));
   const provider = new vfs.RealFSProvider(root);
   const filesystem = vfs.create(provider);
   try {

@@ -2,9 +2,9 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const root = path.join(process.cwd(), "stage-2492-rerun");
+const root = path.join(process.cwd(), "tmp", "stage-2492-rerun");
 fs.rmSync(root, { recursive: true, force: true });
-fs.mkdirSync(root);
+fs.mkdirSync(root, { recursive: true });
 
 const file = path.join(root, "file.txt");
 const link = path.join(root, "link");

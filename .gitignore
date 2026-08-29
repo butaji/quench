@@ -31,21 +31,7 @@ Thumbs.db
 /target/test262_report.json
 /target/test262_report.md
 
-# quench-node test byproducts - cp/pull/stream tests create scratch dirs at the repo root
-/cp-error-*/
-/pull-concurrent-*/
-/pull-lifecycle-*/
-/pull-many-*/
-/pull-zlib-*/
-/stage-*.txt
-/stage-????-*/
-
-# quench-node bun build artifacts (large binary fixtures)
-crates/quench-node/.*.bun-build
-# tests/node-compat/stage-N runs may write runtime fixtures next to the .js test
-/tests/node-compat/stage-*/access.txt
-/tests/node-compat/stage-*/read-only
-/tests/node-compat/stage-*/root/
+# quench-node test byproducts write under /tmp/ (gitignored above).
 
 # Legacy build-target directories (consolidated into /target/)
 /target-array-assembly/

@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vfs = require("node:vfs");
 
-const root = path.join(process.cwd(), "stage-2389-readlink");
+const root = path.join(process.cwd(), "tmp", "stage-2389-readlink");
 fs.mkdirSync(root, { recursive: true });
 fs.writeFileSync(path.join(root, "target.txt"), "x");
 const relativeLink = path.join(root, "relative-link");

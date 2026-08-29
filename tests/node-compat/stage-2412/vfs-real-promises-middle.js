@@ -4,7 +4,8 @@ const path = require("path");
 const vfs = require("node:vfs");
 
 (async () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), "real-promises-mid-"));
+  fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
+  const root = fs.mkdtempSync(path.join(process.cwd(), "tmp", "real-promises-mid-"));
   const filesystem = vfs.create(new vfs.RealFSProvider(root));
   try {
     await filesystem.promises.writeFile("/a.txt", "hello");

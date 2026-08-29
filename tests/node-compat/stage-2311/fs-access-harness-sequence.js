@@ -2,7 +2,8 @@ const assert = require("assert");
 const common = require("../../../tests/node/common");
 const fs = require("fs");
 
-const path = `${process.cwd()}/tests/node-compat/stage-2311/access.txt`;
+const path = `${process.cwd()}/tmp/stage-2311/access.txt`;
+fs.mkdirSync(`${process.cwd()}/tmp/stage-2311`, { recursive: true });
 try {
   fs.unlinkSync(path);
 } catch (_) {}
