@@ -189,7 +189,7 @@ fn execute_interpreter(
         };
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
-        arguments = std::borrow::Cow::Owned(request.arguments);
+        arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
     }
 }
 
@@ -231,7 +231,7 @@ fn execute_with_dynamic_scope(
         };
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
-        arguments = std::borrow::Cow::Owned(request.arguments);
+        arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
     }
 }
 

@@ -2,6 +2,151 @@ use std::rc::Rc;
 
 use crate::value::{PromiseData, Value};
 
+const INLINE_CALL_ARGUMENTS: usize = 4;
+
+/// Owned call arguments with a small inline representation and one spill
+/// representation. This is the single physical storage fact used by ordinary
+/// and tail continuations; consumers continue to see a `&[Value]`.
+#[derive(Debug)]
+pub struct CallArguments {
+    storage: CallArgumentStorage,
+}
+
+#[derive(Debug)]
+enum CallArgumentStorage {
+    Inline {
+        values: [std::mem::MaybeUninit<Value>; INLINE_CALL_ARGUMENTS],
+        len: usize,
+    },
+    Heap(Vec<Value>),
+}
+
+impl CallArguments {
+    pub fn new() -> Self {
+        Self {
+            storage: CallArgumentStorage::Inline {
+                values: [const { std::mem::MaybeUninit::uninit() }; INLINE_CALL_ARGUMENTS],
+                len: 0,
+            },
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        if capacity <= INLINE_CALL_ARGUMENTS {
+            Self::new()
+        } else {
+            Self {
+                storage: CallArgumentStorage::Heap(Vec::with_capacity(capacity)),
+            }
+        }
+    }
+
+    pub fn push(&mut self, value: Value) {
+        match &mut self.storage {
+            CallArgumentStorage::Inline { values, len } if *len < INLINE_CALL_ARGUMENTS => {
+                values[*len].write(value);
+                *len += 1;
+            }
+            CallArgumentStorage::Inline { values, len } => {
+                let mut heap = Vec::with_capacity((*len + 1).max(INLINE_CALL_ARGUMENTS + 1));
+                for value in values.iter_mut().take(*len) {
+                    heap.push(unsafe { value.assume_init_read() });
+                }
+                heap.push(value);
+                self.storage = CallArgumentStorage::Heap(heap);
+            }
+            CallArgumentStorage::Heap(values) => values.push(value),
+        }
+    }
+
+    pub fn extend(&mut self, values: impl IntoIterator<Item = Value>) {
+        for value in values {
+            self.push(value);
+        }
+    }
+
+    pub fn into_vec(self) -> Vec<Value> {
+        let storage = unsafe { std::ptr::read(&self.storage) };
+        std::mem::forget(self);
+        match storage {
+            CallArgumentStorage::Inline { values, len } => values
+                .into_iter()
+                .take(len)
+                .map(|value| unsafe { value.assume_init() })
+                .collect(),
+            CallArgumentStorage::Heap(values) => values,
+        }
+    }
+}
+
+impl Default for CallArguments {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Vec<Value>> for CallArguments {
+    fn from(values: Vec<Value>) -> Self {
+        if values.len() > INLINE_CALL_ARGUMENTS {
+            return Self {
+                storage: CallArgumentStorage::Heap(values),
+            };
+        }
+        let mut arguments = Self::new();
+        arguments.extend(values);
+        arguments
+    }
+}
+
+impl Clone for CallArguments {
+    fn clone(&self) -> Self {
+        self.iter().cloned().collect()
+    }
+}
+
+impl PartialEq for CallArguments {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl std::iter::FromIterator<Value> for CallArguments {
+    fn from_iter<T: IntoIterator<Item = Value>>(iter: T) -> Self {
+        let mut arguments = Self::new();
+        arguments.extend(iter);
+        arguments
+    }
+}
+
+impl std::ops::Deref for CallArguments {
+    type Target = [Value];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl CallArguments {
+    fn as_slice(&self) -> &[Value] {
+        match &self.storage {
+            CallArgumentStorage::Inline { values, len } => unsafe {
+                std::slice::from_raw_parts(values.as_ptr().cast::<Value>(), *len)
+            },
+            CallArgumentStorage::Heap(values) => values,
+        }
+    }
+}
+
+impl Drop for CallArguments {
+    fn drop(&mut self) {
+        if let CallArgumentStorage::Inline { values, len } = &mut self.storage {
+            for value in values.iter_mut().take(*len) {
+                unsafe { value.assume_init_drop() };
+            }
+        }
+    }
+}
+
 /// State required to resume a caller after a non-tail call completes.
 ///
 /// `caller_code` and `caller_pc` are compact integer return addresses.  The
@@ -12,7 +157,7 @@ use crate::value::{PromiseData, Value};
 pub struct CallContinuation {
     pub callee: Value,
     pub receiver: Value,
-    pub arguments: Vec<Value>,
+    pub arguments: CallArguments,
     pub caller_code: crate::identity::CodeId,
     pub caller_pc: u32,
     pub caller_registers: crate::register_file::RegisterFile,
@@ -38,7 +183,7 @@ impl ContinuationGuards {
 pub struct TailCallRequest {
     pub callee: Value,
     pub receiver: Value,
-    pub arguments: Vec<Value>,
+    pub arguments: CallArguments,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,5 +283,28 @@ impl Completion {
                 "Unconsumed yield completion".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod call_argument_tests {
+    use super::CallArguments;
+    use crate::value::Value;
+
+    #[test]
+    fn inline_arguments_round_trip_without_spill() {
+        let mut arguments = CallArguments::new();
+        arguments.push(Value::Number(1.0));
+        arguments.push(Value::Boolean(true));
+        assert_eq!(arguments.as_slice(), &[Value::Number(1.0), Value::Boolean(true)]);
+        assert_eq!(arguments.clone().into_vec(), arguments.as_slice());
+    }
+
+    #[test]
+    fn spill_arguments_preserve_order_and_values() {
+        let values = (0..6).map(|value| Value::Number(value as f64)).collect::<Vec<_>>();
+        let arguments: CallArguments = values.clone().into();
+        assert_eq!(arguments.as_slice(), values.as_slice());
+        assert_eq!(arguments.clone().into_vec(), values);
     }
 }
