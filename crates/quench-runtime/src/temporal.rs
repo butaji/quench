@@ -659,17 +659,13 @@ fn normalize_offset_identifier(text: &str) -> Option<String> {
         ),
         _ => return None,
     };
-    if hour > 23 || minute > 59 || second > 59 {
+    // Time-zone identifiers are minute-granular.  ISO date-time offsets may
+    // spell trailing zero seconds, but any non-zero sub-minute offset is not
+    // a valid identifier.
+    if hour > 23 || minute > 59 || second != 0 {
         return None;
     }
-    Some(if second == 0 {
-        format!("{}{:02}:{:02}", bytes[0] as char, hour, minute)
-    } else {
-        format!(
-            "{}{:02}:{:02}:{:02}",
-            bytes[0] as char, hour, minute, second
-        )
-    })
+    Some(format!("{}{:02}:{:02}", bytes[0] as char, hour, minute))
 }
 
 fn valid_iso_offset(text: &str) -> bool {
@@ -1203,7 +1199,25 @@ mod stubs {
             ));
         }
         if super::is_zoned_receiver(value, 0) {
-            return Ok(value.clone());
+            if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+                if !crate::value::is_object(options) {
+                    return Err(crate::value::error::throw_type_error("Invalid options"));
+                }
+            }
+            let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
+            let epoch = match epoch {
+                Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?,
+                _ => return Err(crate::value::error::throw_type_error("Invalid ZonedDateTime")),
+            };
+            let timezone = crate::conversion::to_string(
+                &crate::execute::get_property_result(value, "timeZoneId")?,
+            )?;
+            let calendar = crate::conversion::to_string(
+                &crate::execute::get_property_result(value, "calendarId")?,
+            )?;
+            return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
         let option_string =
             |name: &str, allowed: &[&str], default: &str| -> Result<String, VmError> {
@@ -2398,6 +2412,7 @@ mod stubs {
             let mut month_provided = false;
             let mut month_code_provided = false;
             let mut offset_provided = false;
+            let mut date_change = false;
             for name in [
                 "day",
                 "hour",
@@ -2414,6 +2429,7 @@ mod stubs {
                 let raw = crate::execute::get_property_result(partial, name)?;
                 if !matches!(raw, Value::Undefined) {
                     has_field = true;
+                    date_change |= matches!(name, "year" | "month" | "monthCode" | "day");
                     month_provided |= name == "month";
                     month_code_provided |= name == "monthCode";
                     offset_provided |= name == "offset";
@@ -2444,12 +2460,14 @@ mod stubs {
                 }
                 prepared.push((name, value));
             }
-            let has_calendar_date_field = ["era", "eraYear"].iter().any(|name| {
-                !matches!(
-                    crate::execute::get_property_result(partial, name),
-                    Ok(Value::Undefined)
-                )
-            });
+            let instance_calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            let has_calendar_date_field = instance_calendar != "iso8601"
+                && ["era", "eraYear"].iter().any(|name| {
+                    !matches!(
+                        crate::execute::get_property_result(partial, name),
+                        Ok(Value::Undefined)
+                    )
+                });
             if !has_field && !has_calendar_date_field {
                 return Err(crate::value::error::throw_type_error(
                     "Insufficient date-time data",
@@ -2524,14 +2542,7 @@ mod stubs {
             // resolver here gives ZonedDateTime.with the same era, leap-month,
             // and overflow semantics without maintaining a second calendar VM.
             let calendar_id = crate::conversion::to_string(&property("calendarId")?)?;
-            let date_change = ["year", "month", "monthCode", "day", "era", "eraYear"]
-                .iter()
-                .any(|name| {
-                    !matches!(
-                        crate::execute::get_property_result(partial, name),
-                        Ok(Value::Undefined)
-                    )
-                });
+            let date_change = has_calendar_date_field || date_change;
             if date_change && calendar_id != "iso8601" {
                 let date_receiver =
                     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
@@ -3671,7 +3682,7 @@ mod stubs {
             }
             let delta = (right_epoch - left_epoch) * direction;
             if matches!(receiver_calendar.as_str(), "iso8601" | "gregory")
-                && (largest == "day" || (largest_was_default && largest == "hour"))
+                && largest == "day"
                 && smallest == "day"
             {
                 if delta < 0
@@ -3748,7 +3759,7 @@ mod stubs {
                 return crate::temporal::duration::construct(&fields);
             }
             if matches!(receiver_calendar.as_str(), "iso8601" | "gregory")
-                && (largest == "day" || (largest_was_default && largest == "hour"))
+                && largest == "day"
                 && smallest == "nanosecond"
                 && rounding_mode == "trunc"
                 && increment_number.is_none()
