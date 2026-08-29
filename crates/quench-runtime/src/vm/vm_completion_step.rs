@@ -15,9 +15,17 @@ pub(crate) fn execute_code_completion_step_in_place(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<CompletionStep, VmError> {
+    execute_code_completion_step_from_in_place(code, 0, registers)
+}
+
+pub(crate) fn execute_code_completion_step_from_in_place(
+    code: crate::machine::CodeView<'_>,
+    start: usize,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<CompletionStep, VmError> {
     let context = current_context_or_default();
     if crate::locals::is_installed() {
-        return run_code_completion_step_from(code, 0, registers, &context);
+        return run_code_completion_step_from(code, start, registers, &context);
     }
     let environment = crate::environment::Environment::child(
         &crate::environment::Environment::new(),
@@ -26,9 +34,12 @@ pub(crate) fn execute_code_completion_step_in_place(
     let _context_guard = ContextGuard::install(&context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    let step = run_code_completion_step_from(code, 0, registers, &context)?;
+    let step = run_code_completion_step_from(code, start, registers, &context)?;
     let completion = preserve_frame_completion(step.completion)?;
-    Ok(CompletionStep { completion, next: step.next })
+    Ok(CompletionStep {
+        completion,
+        next: step.next,
+    })
 }
 
 fn execute_completion_step_context(
@@ -48,5 +59,8 @@ fn execute_completion_step_context(
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let step = run_ops_completion_step(ops, registers, context)?;
     let completion = preserve_frame_completion(step.completion)?;
-    Ok(CompletionStep { completion, next: step.next })
+    Ok(CompletionStep {
+        completion,
+        next: step.next,
+    })
 }
