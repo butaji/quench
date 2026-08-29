@@ -81,9 +81,15 @@ fn response_data(response: &Value, bytes: &[u8]) -> Value {
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
     let agent = args.first().and_then(|options| {
-        matches!(options, Value::Object(_) | Value::ObjectAlias(_))
-            .then(|| execute::get_property(options, "agent"))
-            .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return None;
+        }
+        let configured = execute::get_property(options, "agent");
+        if !matches!(configured, Value::Undefined | Value::Null) {
+            return Some(configured);
+        }
+        let connector = execute::get_property(options, "createConnection");
+        quench_runtime::is_callable(&connector).then(|| options.clone())
     });
     let omit_host = args.first().is_some_and(|options| {
         matches!(
