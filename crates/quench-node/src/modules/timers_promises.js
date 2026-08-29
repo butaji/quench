@@ -1,9 +1,17 @@
 (function (timers) {
   "use strict";
-  function abortError() {
-    return Object.assign(new Error("The operation was aborted"), {
+  function abortError(signal) {
+    const error = Object.assign(new Error("The operation was aborted"), {
       name: "AbortError", code: "ABORT_ERR"
     });
+    if (signal && signal.reason !== undefined) error.cause = signal.reason;
+    return error;
+  }
+  function invalidDelay(delay) {
+    if (delay === undefined || typeof delay === "number") return null;
+    const error = new TypeError('The "delay" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return error;
   }
   function promiseTimer(schedule, cancel, value, options) {
     options = options === undefined ? {} : options;
@@ -41,7 +49,7 @@
         settled = true;
         cancel(timer);
         cleanup();
-        reject(abortError());
+        reject(abortError(signal));
       };
       timer = schedule(finish);
       if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
@@ -52,6 +60,8 @@
     });
   }
   function setTimeout(delay, value, options) {
+    const delayError = invalidDelay(delay);
+    if (delayError) return Promise.reject(delayError);
     if (options && options.signal !== undefined &&
         (!options.signal || typeof options.signal.addEventListener !== "function")) {
       const error = new TypeError("The signal option must be an AbortSignal");
@@ -100,7 +110,7 @@
       optionError = new TypeError("The signal option must be an AbortSignal");
       optionError.code = "ERR_INVALID_ARG_TYPE";
     }
-    const onAbort = () => reject(abortError());
+    const onAbort = () => reject(abortError(signal));
     const removeAbortListener = () => {
       if (signal) signal.removeEventListener("abort", onAbort);
     };
