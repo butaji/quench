@@ -2,6 +2,7 @@
 enum DispatchClass {
     Call,
     Global,
+    Branch,
     Other,
 }
 const _: () = assert!(std::mem::size_of::<DispatchClass>() <= 1);
@@ -14,6 +15,8 @@ fn classify_dispatch(op: &Op) -> DispatchClass {
         DispatchClass::Call
     } else if is_global_declaration_op(op) {
         DispatchClass::Global
+    } else if matches!(op, Op::Branch { .. }) {
+        DispatchClass::Branch
     } else {
         // All remaining opcodes share the same slow-path handoff. Keeping
         // this as one class avoids carrying speculative sub-classifications
@@ -32,6 +35,12 @@ fn run_op(
     match classify_dispatch(op) {
         DispatchClass::Call => return run_call_completion(registers, op, context).map(Some),
         DispatchClass::Global => crate::vm::begin_global_declaration_batch(),
+        DispatchClass::Branch => {
+            if crate::vm::is_global_declaration_batch_active() {
+                crate::vm::flush_global_declaration_batch(registers);
+            }
+            return crate::branch::execute_with_context(registers, op, context).map(Some);
+        }
         DispatchClass::Other => {
             if crate::vm::is_global_declaration_batch_active() {
                 crate::vm::flush_global_declaration_batch(registers);
