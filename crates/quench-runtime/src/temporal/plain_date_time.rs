@@ -2269,19 +2269,43 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             Value::Undefined
         };
     }
+    let era_value = crate::execute::get_property_result(value, "era")?;
+    let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+    let calendar_name = match &calendar {
+        Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value)
+            .unwrap_or_else(|| value.clone()),
+        Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
+        _ => "iso8601".into(),
+    };
+    if !matches!(era_value, Value::Undefined) && !present[0] {
+        if matches!(era_year_value, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "era and eraYear must be provided together",
+            ));
+        }
+        let era_text = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        if crate::temporal::plain_date::canonical_era_name(&calendar_name, &era_text).is_none() {
+            if crate::temporal::plain_date::era_for_calendar(&calendar_name, 0.0).is_some() {
+                return Err(crate::value::error::throw_range_error("Invalid era"));
+            }
+            return Err(crate::value::error::throw_type_error("Calendar does not use eras"));
+        }
+    } else if !matches!(era_value, Value::Undefined) {
+        let era_text = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        if crate::temporal::plain_date::era_for_calendar(&calendar_name, 0.0).is_some()
+            && crate::temporal::plain_date::canonical_era_name(&calendar_name, &era_text)
+                .is_none()
+        {
+            return Err(crate::value::error::throw_range_error("Invalid era"));
+        }
+    }
     if !present[0] {
-        let calendar_name = match &calendar {
-            Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value)
-                .unwrap_or_else(|| value.clone()),
-            Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
-            _ => "iso8601".into(),
-        };
-        let era = crate::execute::get_property_result(value, "era")?;
-        let era_year = crate::execute::get_property_result(value, "eraYear")?;
+        let era = era_value;
+        let era_year = era_year_value;
         if !matches!(era, Value::Undefined) && !matches!(era_year, Value::Undefined) {
             let era = crate::conversion::to_string(&era)?.to_ascii_lowercase();
             let era = crate::temporal::plain_date::canonical_era_name(&calendar_name, &era)
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+                .ok_or_else(|| crate::value::error::throw_type_error("Calendar does not use eras"))?;
             let era_year = crate::conversion::to_number(&era_year)?.trunc();
             if !era_year.is_finite() {
                 return Err(crate::value::error::throw_range_error("Invalid eraYear"));
