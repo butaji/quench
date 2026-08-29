@@ -741,6 +741,12 @@ fn iso_offset_nanos(text: &str) -> i128 {
     sign * (hour * 3_600 + minute * 60 + second) * 1_000_000_000
 }
 
+fn iso_offset_has_seconds(text: &str) -> bool {
+    let body = text.get(1..).unwrap_or_default();
+    let core = body.split_once(['.', ',']).map_or(body, |(core, _)| core);
+    core.replace(':', "").len() == 6
+}
+
 fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     if depth > 4 {
         return false;
@@ -1340,7 +1346,8 @@ mod stubs {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if supplied_offset != actual_offset
-                    && (supplied_offset % 60_000_000_000 == 0 || timezone.starts_with(['+', '-']))
+                    && (super::iso_offset_has_seconds(offset_text)
+                        || timezone.starts_with(['+', '-']))
                 {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
@@ -1355,11 +1362,29 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
-            if offset_start.is_some() && matches!(offset_mode.as_str(), "ignore" | "prefer") {
+            if offset_start.is_some()
+                && (matches!(offset_mode.as_str(), "ignore" | "prefer")
+                    || (offset_mode == "reject" && !super::iso_offset_has_seconds(offset_text)))
+            {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
-                if offset_mode == "ignore" || supplied_offset != actual_offset {
-                    epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                let previous_offset =
+                    super::timezone_offset_nanos(&timezone, epoch - 86_400_000_000_000);
+                let use_previous = offset_mode == "reject"
+                    && !super::iso_offset_has_seconds(offset_text)
+                    && previous_offset != actual_offset
+                    && (supplied_offset - previous_offset).abs() <= 30_000_000_000;
+                if offset_mode == "ignore"
+                    || (supplied_offset != actual_offset
+                        && (!super::iso_offset_has_seconds(offset_text) || offset_mode == "prefer"))
+                    || use_previous
+                {
+                    if use_previous {
+                        epoch = local_epoch - previous_offset;
+                    } else {
+                        epoch =
+                            super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                    }
                     if epoch == i128::MIN {
                         return Err(crate::value::error::throw_range_error(
                             "Invalid ZonedDateTime",
