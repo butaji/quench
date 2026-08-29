@@ -1726,28 +1726,43 @@ mod stubs {
                 (("ethiopic" | "ethioaa"), Some("aa"))
             ) {
                 super::plain_date::date_serial(year as f64, month as f64, day as f64)
+            } else if let Some(code) = month_code_text.as_deref() {
+                if matches!(calendar.as_str(), "iso8601" | "gregory") {
+                    super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                } else {
+                    let serial = super::plain_date::calendar_date_serial_for_code(
+                        year as f64,
+                        code,
+                        day as f64,
+                        &calendar,
+                    );
+                    serial
+                        .or_else(|| {
+                            if !code.ends_with('L') {
+                                super::plain_date::calendar_date_serial(
+                                    year as f64,
+                                    month as f64,
+                                    day as f64,
+                                    &calendar,
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            crate::value::error::throw_range_error("Invalid monthCode")
+                        })?
+                }
             } else {
-                month_code_text
-                    .as_deref()
-                    .and_then(|code| {
-                        super::plain_date::calendar_date_serial_for_code(
-                            year as f64,
-                            code,
-                            day as f64,
-                            &calendar,
-                        )
-                    })
-                    .or_else(|| {
-                        super::plain_date::calendar_date_serial(
-                            year as f64,
-                            month as f64,
-                            day as f64,
-                            &calendar,
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        super::plain_date::date_serial(year as f64, month as f64, day as f64)
-                    })
+                super::plain_date::calendar_date_serial(
+                    year as f64,
+                    month as f64,
+                    day as f64,
+                    &calendar,
+                )
+                .unwrap_or_else(|| {
+                    super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                })
             };
             let local_epoch =
                 i128::from(date_serial - super::plain_date::date_serial(1970.0, 1.0, 1.0))
@@ -1797,6 +1812,12 @@ mod stubs {
                         || !matches!(calendar.as_str(), "hebrew" | "chinese" | "dangi")
                     {
                         object.set_property_in_place("month", Value::Number(month as f64));
+                        if month_code_text.is_none() {
+                            object.set_property_in_place(
+                                "monthCode",
+                                Value::String(format!("M{month:02}")),
+                            );
+                        }
                     } else if let Some(code) = month_code_text.as_deref() {
                         if code.ends_with('L') {
                             if let Ok(month) = code[1..3].parse::<u32>() {
@@ -1843,28 +1864,26 @@ mod stubs {
                 if let Value::Object(object) = &mut result {
                     let object = std::rc::Rc::make_mut(object);
                     object.set_property_in_place("year", Value::Number(year as f64));
-                    object.set_property_in_place("month", Value::Number(month as f64));
                     object.set_property_in_place("day", Value::Number(day as f64));
-                    if let Some(code) = month_code_text.as_deref() {
-                        if matches!(calendar.as_str(), "hebrew" | "chinese" | "dangi") {
-                            if let Ok(month) = code[1..3].parse::<u32>() {
-                                let hebrew_shift = calendar == "hebrew"
-                                    && matches!(year.rem_euclid(19), 0 | 3 | 6 | 8 | 11 | 14 | 17)
-                                    && month >= 6;
-                                object.set_property_in_place(
-                                    "month",
-                                    Value::Number(f64::from(month + u32::from(hebrew_shift))),
-                                );
-                            }
-                        }
-                    }
-                    if month_code_text.is_some() || calendar != "hebrew" {
-                        object.set_property_in_place(
-                            "monthCode",
-                            Value::String(
-                                month_code_text.unwrap_or_else(|| format!("M{month:02}")),
-                            ),
-                        );
+                    let resolved = month_code_text
+                        .as_deref()
+                        .and_then(|code| {
+                            super::plain_date::calendar_date_from_code(year, code, day, &calendar)
+                        })
+                        .or_else(|| {
+                            super::plain_date::calendar_month_code_for_ordinal(
+                                year, month, day, &calendar,
+                            )
+                            .and_then(|code| {
+                                super::plain_date::calendar_date_from_code(
+                                    year, &code, day, &calendar,
+                                )
+                                .map(|(ordinal, canonical)| (ordinal, canonical))
+                            })
+                        });
+                    if let Some((ordinal, code)) = resolved {
+                        object.set_property_in_place("month", Value::Number(f64::from(ordinal)));
+                        object.set_property_in_place("monthCode", Value::String(code));
                     }
                 }
             }
@@ -2421,6 +2440,7 @@ mod stubs {
                 }
                 let code_number = code
                     .strip_prefix('M')
+                    .and_then(|value| value.get(..2))
                     .and_then(|value| value.parse::<f64>().ok())
                     .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
                 let calendar_id = crate::conversion::to_string(&property("calendarId")?)?;
@@ -2434,7 +2454,7 @@ mod stubs {
             if month_provided {
                 fields.push(("month".to_string(), month));
             } else if month_code_provided {
-                fields.push(("monthCode".to_string(), month_code));
+                fields.push(("monthCode".to_string(), month_code.clone()));
             } else {
                 fields.push(("month".to_string(), value_for("month")));
             }
@@ -2967,8 +2987,9 @@ mod stubs {
                 let year = crate::conversion::to_number(&property("year")?)? as i32;
                 let month = crate::conversion::to_number(&property("month")?)? as u32;
                 let day = crate::conversion::to_number(&property("day")?)? as u32;
-                let local_days = super::plain_date::date_serial(year as f64, month as f64, day as f64)
-                    - super::plain_date::date_serial(1970.0, 1.0, 1.0);
+                let local_days =
+                    super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                        - super::plain_date::date_serial(1970.0, 1.0, 1.0);
                 let local_epoch = i128::from(local_days) * 86_400_000_000_000
                     + units[0] as i128 * 3_600_000_000_000
                     + units[1] as i128 * 60_000_000_000
@@ -3146,13 +3167,6 @@ mod stubs {
                 let target_year = crate::conversion::to_number(&target[0])?;
                 let target_month = crate::conversion::to_number(&target[1])?;
                 let mut target_day = crate::conversion::to_number(&target[2])?;
-                if matches!(calendar.as_str(), "chinese" | "dangi")
-                    && values[1] != 0.0
-                    && target_day > 29.0
-                {
-                    target_day = 29.0;
-                    target[2] = Value::Number(target_day);
-                }
                 let local_epoch = super::plain_date::calendar_date_serial(
                     target_year,
                     target_month,
@@ -3358,21 +3372,43 @@ mod stubs {
                 + (values[7] as i128) * 1_000_000
                 + (values[8] as i128) * 1_000
                 + values[9] as i128;
-            let old_date = chrono::NaiveDate::from_ymd_opt(
-                crate::conversion::to_number(&property("year")?)? as i32,
-                crate::conversion::to_number(&property("month")?)? as u32,
-                crate::conversion::to_number(&property("day")?)? as u32,
-            )
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-            let date_delta = (date - old_date).num_days() as i128 * 86_400_000_000_000;
-            let epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => {
-                    value.parse::<i128>().unwrap_or(0) + date_delta + time_delta * sign as i128
+            let epoch = if month_count != 0 || day_count != 0.0 {
+                let local_serial = super::plain_date::date_serial(
+                    f64::from(date.year()),
+                    f64::from(date.month()),
+                    f64::from(date.day()),
+                );
+                let local_epoch = (local_serial - super::plain_date::date_serial(1970.0, 1.0, 1.0))
+                    as i128
+                    * 86_400_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("hour")?)? as i64)
+                        * 3_600_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("minute")?)? as i64)
+                        * 60_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("second")?)? as i64)
+                        * 1_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("millisecond")?)? as i64)
+                        * 1_000_000
+                    + i128::from(crate::conversion::to_number(&property("microsecond")?)? as i64)
+                        * 1_000
+                    + i128::from(crate::conversion::to_number(&property("nanosecond")?)? as i64);
+                let epoch = super::timezone_local_epoch(&timezone, local_epoch, "compatible");
+                if epoch == i128::MIN {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid ZonedDateTime",
+                    ));
                 }
-                _ => {
-                    return Err(crate::value::error::throw_type_error(
-                        "Invalid epochNanoseconds",
-                    ))
+                epoch + time_delta * sign as i128
+            } else {
+                match property("epochNanoseconds")? {
+                    Value::BigInt(value) => {
+                        value.parse::<i128>().unwrap_or(0) + time_delta * sign as i128
+                    }
+                    _ => {
+                        return Err(crate::value::error::throw_type_error(
+                            "Invalid epochNanoseconds",
+                        ))
+                    }
                 }
             };
             if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
@@ -3539,6 +3575,27 @@ mod stubs {
                 1
             };
             let receiver_calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            let other_calendar = crate::conversion::to_string(
+                &crate::execute::get_property_result(&other, "calendarId")?,
+            )?;
+            if super::plain_date::canonical_calendar_id(&receiver_calendar)
+                != super::plain_date::canonical_calendar_id(&other_calendar)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "ZonedDateTime calendars do not match",
+                ));
+            }
+            let receiver_timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let other_timezone = crate::conversion::to_string(
+                &crate::execute::get_property_result(&other, "timeZoneId")?,
+            )?;
+            if super::timezone_primary_name(&receiver_timezone)
+                != super::timezone_primary_name(&other_timezone)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "ZonedDateTime time zones do not match",
+                ));
+            }
             if receiver_calendar.starts_with("islamic")
                 && (largest.starts_with("year") || largest.starts_with("month"))
             {
@@ -3560,8 +3617,9 @@ mod stubs {
                     return crate::temporal::duration::construct(&result);
                 }
             }
-            if receiver_calendar != "iso8601"
-                && receiver_calendar != "gregory"
+            if (receiver_calendar == "gregory"
+                && super::timezone_primary_name(&receiver_timezone) == "UTC"
+                || receiver_calendar != "iso8601" && receiver_calendar != "gregory")
                 && matches!(largest.as_str(), "year" | "month" | "week" | "day")
                 && smallest == "nanosecond"
                 && rounding_mode == "trunc"
@@ -4363,6 +4421,33 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            if smallest == "day" {
+                let start = super::timezone_start_of_day_epoch(&timezone, epoch)
+                    .unwrap_or(epoch - 86_400_000_000_000);
+                let next =
+                    super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
+                        .unwrap_or(start + 86_400_000_000_000);
+                let length = (next - start).max(1);
+                let elapsed = (epoch - start).clamp(0, length);
+                let round_up = match mode.as_str() {
+                    "trunc" | "floor" => false,
+                    "ceil" | "expand" => elapsed != 0,
+                    "halfExpand" | "halfCeil" => elapsed * 2 >= length,
+                    "halfFloor" | "halfTrunc" => elapsed * 2 > length,
+                    "halfEven" => elapsed * 2 > length,
+                    _ => {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid roundingMode",
+                        ))
+                    }
+                };
+                let rounded = if round_up { next } else { start };
+                return Ok(super::zoned_record_with_calendar(
+                    rounded, timezone, calendar,
+                ));
+            }
             let offset = match property("offsetNanoseconds")? {
                 Value::Number(value) => value as i128,
                 _ => 0,
@@ -4399,8 +4484,6 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
-            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             return Ok(super::zoned_record_with_calendar(
                 rounded, timezone, calendar,
             ));
@@ -4798,9 +4881,8 @@ mod stubs {
                     hour = chrono::Timelike::hour(&date);
                     minute = chrono::Timelike::minute(&date);
                     second = chrono::Timelike::second(&date);
-                    offset = super::format_offset(
-                        corrected_offset / 60_000_000_000 * 60_000_000_000,
-                    );
+                    offset =
+                        super::format_offset(corrected_offset / 60_000_000_000 * 60_000_000_000);
                 }
             }
         }
