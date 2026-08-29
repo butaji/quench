@@ -43,10 +43,9 @@ use crate::registry::{
     SPEC_ASYNC_LOCAL_BIND_CALL, SPEC_ASYNC_LOCAL_DISABLE, SPEC_ASYNC_LOCAL_ENTER,
     SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_SNAPSHOT,
     SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER,
-    SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_DOMAIN,
-    SPEC_ASYNC_RESOURCE_BIND, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
-    SPEC_ASYNC_RESOURCE_STATIC_BIND, SPEC_ASYNC_RESOURCE_TRIGGER,
-    SPEC_ASYNC_TRIGGER_ID,
+    SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_BIND, SPEC_ASYNC_RESOURCE_DESTROY,
+    SPEC_ASYNC_RESOURCE_DOMAIN, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
+    SPEC_ASYNC_RESOURCE_STATIC_BIND, SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID,
 };
 
 #[derive(Debug)]
@@ -66,6 +65,7 @@ pub struct AsyncHooksState {
     resource_stack: Vec<(u64, Option<Value>)>,
     destroyed_resources: HashSet<u64>,
     tracked_resources: HashMap<u64, (Value, bool)>,
+    fatal_error: Option<Value>,
 }
 
 impl AsyncHooksState {
@@ -86,6 +86,7 @@ impl AsyncHooksState {
             resource_stack: Vec::new(),
             destroyed_resources: HashSet::new(),
             tracked_resources: HashMap::new(),
+            fatal_error: None,
         }
     }
 
@@ -98,6 +99,36 @@ impl AsyncHooksState {
     pub(crate) fn has_local_store(&self) -> bool {
         !self.local_stores.is_empty()
     }
+}
+
+fn record_hook_error(state: &Rc<RefCell<HostState>>, error: VmError) {
+    let VmError::Thrown(value) = error else {
+        return;
+    };
+    // Hook callbacks are normally fatal, but a few bootstrap objects expose
+    // host-only slots that may reject an incidental assignment. Preserve the
+    // Node fatal-hook contract for primitive throws (the observable case)
+    // while leaving those internal object-shape probes on their ordinary
+    // best-effort path.
+    let primitive = matches!(value, Value::Null | Value::Undefined)
+        || matches!(&value, Value::String(text) if text.starts_with("Symbol.") && text.contains('\0'));
+    if !primitive {
+        return;
+    }
+    let mut host = state.borrow_mut();
+    if host.async_hooks.fatal_error.is_none() {
+        host.async_hooks.fatal_error = Some(value);
+    }
+}
+
+fn call_hook(state: &Rc<RefCell<HostState>>, callback: &Value, args: &[Value]) {
+    if let Err(error) = execute::call(callback, &Value::Undefined, args) {
+        record_hook_error(state, error);
+    }
+}
+
+pub fn take_fatal_error(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    state.borrow_mut().async_hooks.fatal_error.take()
 }
 
 pub fn build() -> Value {
@@ -137,10 +168,7 @@ pub fn build() -> Value {
         crate::host::capability(SPEC_ASYNC_RESOURCE_STATIC_BIND),
     );
     crate::host::namespace_object(vec![
-        (
-            "AsyncResource",
-            constructor,
-        ),
+        ("AsyncResource", constructor),
         (
             "executionAsyncId",
             crate::host::capability(SPEC_ASYNC_EXECUTION_ID),
@@ -746,9 +774,9 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
     for callback in callbacks {
-        let _ = execute::call(
+        call_hook(
+            state,
             &callback,
-            &Value::Undefined,
             &[
                 id_value.clone(),
                 resource_type.clone(),
@@ -776,9 +804,9 @@ pub fn attach_resource(
     let trigger_value = Value::Number(trigger as f64);
     let resource_type = Value::String(resource_type.into());
     for callback in active_callbacks(state, HookEvent::Init) {
-        let _ = execute::call(
+        call_hook(
+            state,
             &callback,
-            &Value::Undefined,
             &[
                 id_value.clone(),
                 resource_type.clone(),
@@ -823,9 +851,9 @@ pub fn worker_resource(
     let resource = execute::set_property(resource, ASYNC_ID, Value::Number(id as f64));
     let resource = execute::set_property(resource, TRIGGER_ID, Value::Number(trigger as f64));
     for callback in active_callbacks(state, HookEvent::Init) {
-        let _ = execute::call(
+        call_hook(
+            state,
             &callback,
-            &Value::Undefined,
             &[
                 Value::Number(id as f64),
                 Value::String("WORKER".into()),
@@ -868,19 +896,18 @@ pub fn resource_before(
     let id = id_property(&resource, ASYNC_ID)
         .and_then(number)
         .unwrap_or(1);
-    let mut state = state.borrow_mut();
-    let previous_id = state.async_hooks.current_id;
-    let previous_resource = state.async_hooks.current_resource.clone();
-    state
-        .async_hooks
+    let mut host = state.borrow_mut();
+    let previous_id = host.async_hooks.current_id;
+    let previous_resource = host.async_hooks.current_resource.clone();
+    host.async_hooks
         .resource_stack
         .push((previous_id, previous_resource));
-    state.async_hooks.current_id = id;
-    state.async_hooks.current_resource = Some(resource);
-    let callbacks = active_callbacks_from(&state.async_hooks, HookEvent::Before);
-    drop(state);
+    host.async_hooks.current_id = id;
+    host.async_hooks.current_resource = Some(resource);
+    let callbacks = active_callbacks_from(&host.async_hooks, HookEvent::Before);
+    drop(host);
     for callback in callbacks {
-        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+        call_hook(state, &callback, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
@@ -890,16 +917,16 @@ pub fn resource_after(
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
-    let mut state = state.borrow_mut();
-    let id = state.async_hooks.current_id;
-    let callbacks = active_callbacks_from(&state.async_hooks, HookEvent::After);
-    if let Some((id, resource)) = state.async_hooks.resource_stack.pop() {
-        state.async_hooks.current_id = id;
-        state.async_hooks.current_resource = resource;
+    let mut host = state.borrow_mut();
+    let id = host.async_hooks.current_id;
+    let callbacks = active_callbacks_from(&host.async_hooks, HookEvent::After);
+    if let Some((id, resource)) = host.async_hooks.resource_stack.pop() {
+        host.async_hooks.current_id = id;
+        host.async_hooks.current_resource = resource;
     }
-    drop(state);
+    drop(host);
     for callback in callbacks {
-        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+        call_hook(state, &callback, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
@@ -924,7 +951,7 @@ pub fn resource_destroy(
         active_callbacks_from(&host.async_hooks, HookEvent::Destroy)
     };
     for callback in callbacks {
-        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+        call_hook(state, &callback, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
@@ -988,12 +1015,7 @@ fn bind_factory(
     execute::call(
         &factory,
         &Value::Undefined,
-        &[
-            resource,
-            callback,
-            this_arg,
-            Value::Boolean(has_this_arg),
-        ],
+        &[resource, callback, this_arg, Value::Boolean(has_this_arg)],
     )
 }
 
@@ -1035,9 +1057,7 @@ pub fn resource_static_bind(
     bind_factory(
         resource,
         callback,
-        args.get(2)
-            .cloned()
-            .unwrap_or(Value::Undefined),
+        args.get(2).cloned().unwrap_or(Value::Undefined),
         args.len() > 2,
     )
 }
@@ -1115,7 +1135,7 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             host.async_hooks.current_resource = Some(resource);
             drop(host);
             for callback in callbacks {
-                let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+                call_hook(state, &callback, &[Value::Number(id as f64)]);
             }
         }
     } else if event == "after" {
@@ -1131,7 +1151,7 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             (callbacks, id)
         };
         for callback in callbacks {
-            let _ = execute::call(&callback, &Value::Undefined, &[id.clone()]);
+            call_hook(state, &callback, &[id.clone()]);
         }
         let mut host = state.borrow_mut();
         host.async_hooks.current_id = 1;
@@ -1147,7 +1167,7 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         if let Some(resource) = resource {
             let id = id_property(&resource, ASYNC_ID).unwrap_or(Value::Number(0.0));
             for callback in callbacks {
-                let _ = execute::call(&callback, &Value::Undefined, &[id.clone()]);
+                call_hook(state, &callback, &[id.clone()]);
             }
         }
     }

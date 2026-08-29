@@ -20,7 +20,11 @@ fn settle(result: Result<Value, VmError>) -> Value {
 
 fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Value, VmError> {
     let op = super::fs::sync_op(name).ok_or(VmError::NotCallable)?;
-    Ok(settle(op(state, None, args)))
+    let resource =
+        crate::modules::async_hooks::new_resource(state, &[Value::String("FSREQPROMISE".into())])?;
+    let promise = settle(op(state, None, args));
+    crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
+    Ok(promise)
 }
 
 macro_rules! promise_op {

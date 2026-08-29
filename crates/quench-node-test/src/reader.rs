@@ -263,7 +263,7 @@ impl NodeRunner {
                 reason: format!("exit code {code}: {}", error.render()),
             },
             (Err(error), None) => NodeOutcome::Fail {
-                reason: format!("runtime: {error:?}"),
+                reason: format!("runtime: {}", render_uncaught(&error)),
             },
         }
     }
@@ -286,6 +286,17 @@ impl NodeRunner {
             result => result,
         }
     }
+}
+
+fn render_uncaught(error: &quench_runtime::vm::VmError) -> String {
+    if let quench_runtime::vm::VmError::Thrown(value) = error {
+        if matches!(value, Value::Null | Value::Undefined)
+            || matches!(value, Value::String(text) if text.starts_with("Symbol.") && text.contains('\0'))
+        {
+            return format!("Error: {}", error.render());
+        }
+    }
+    error.render()
 }
 
 struct FixtureCwdGuard(Option<PathBuf>);
