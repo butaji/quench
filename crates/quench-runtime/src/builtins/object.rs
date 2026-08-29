@@ -39,9 +39,7 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
             require_object_coercible(target)?;
-            let key = crate::properties::dynamic_property_key(
-                key.unwrap_or(&Value::Undefined),
-            )?;
+            let key = crate::properties::dynamic_property_key(key.unwrap_or(&Value::Undefined))?;
             if let Some(target @ Value::Proxy(_)) = target {
                 return crate::proxy::proxy_get_own_property_descriptor(target, &key);
             }
