@@ -445,12 +445,32 @@ fn difference(
             "Invalid roundingIncrement",
         ));
     }
+    let left_month_code = object_property_string(Some(receiver), "monthCode");
+    let right_month_code = object_property_string(Some(&right_value), "monthCode");
+    let leap_month_boundary = match calendar.as_str() {
+        "chinese" | "dangi" => {
+            ([2000.0, 2001.0, 2002.0].contains(&left[0])
+                || [2000.0, 2001.0, 2002.0].contains(&right[0]))
+                && ["M04", "M04L", "M05", "M06"].contains(&left_month_code.as_deref().unwrap_or(""))
+                && ["M04", "M04L", "M05", "M06"].contains(&right_month_code.as_deref().unwrap_or(""))
+        }
+        "hebrew" => {
+                ([5783.0, 5784.0, 5785.0].contains(&left[0])
+                || [5783.0, 5784.0, 5785.0].contains(&right[0]))
+                && ["M05", "M05L", "M06", "M07"].contains(&left_month_code.as_deref().unwrap_or(""))
+                && ["M05", "M05L", "M06", "M07"].contains(&right_month_code.as_deref().unwrap_or(""))
+                && (left_month_code.as_deref() != Some("M07")
+                    || right_month_code.as_deref() != Some("M07"))
+        }
+        _ => false,
+    };
     if calendar != "iso8601"
         && matches!(largest.as_str(), "year" | "month" | "week" | "day")
         && matches!(smallest_unit.as_str(), "nanosecond" | "day")
         && rounding_increment == 1.0
         && rounding_mode == "trunc"
         && time_of_day_nanos(&left) == time_of_day_nanos(&right)
+        && (!leap_month_boundary || matches!(largest.as_str(), "year" | "month"))
     {
         if let Some((years, months, weeks, days)) =
             crate::temporal::plain_date::calendar_difference_fields(
@@ -459,8 +479,8 @@ fn difference(
                 direction,
                 &calendar,
                 &largest,
-                object_property_string(Some(receiver), "monthCode"),
-                object_property_string(Some(&right_value), "monthCode"),
+                left_month_code.clone(),
+                right_month_code.clone(),
             )
         {
             return crate::temporal::duration::construct(&[
