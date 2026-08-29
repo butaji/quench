@@ -60,7 +60,7 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => {
-                    fs_access_sync(arguments).map_err(invalid_path_error)
+                    crate::modules::fs_sync::access_sync(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
                     self.fs_write_file(arguments)
@@ -79,7 +79,7 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::FsFstatSync) => self.fs_fstat(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsChmodSync) => fs_chmod(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => {
-                    fs_access_async(arguments)
+                    crate::modules::fs_async::access(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsExistsSync) => fs_access(arguments),
                 HostCapabilityKind::Custom(CapabilityName::FsExists) => fs_exists(arguments),
@@ -236,7 +236,7 @@ impl QuenchNodeHost {
                     fs_rename_promise(arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsAccessPromise) => {
-                    fs_access_promise(arguments)
+                    crate::modules::fs_promises::access(&self.state, receiver, arguments)
                 }
                 HostCapabilityKind::Custom(CapabilityName::FsChmodPromise) => {
                     fs_chmod_promise(arguments)

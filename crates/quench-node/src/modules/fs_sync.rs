@@ -527,12 +527,28 @@ pub fn access_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    let mode = match args.get(1) {
-        Some(Value::Number(m)) => *m as u32,
-        _ => 0,
-    };
+    let mode = access_mode(args)?;
     check_access(&path, mode).map_err(|e| super::fs_error::fs_error("access", Some(&path), &e))?;
     Ok(Value::Undefined)
+}
+
+pub(crate) fn access_mode(args: &[Value]) -> Result<u32, VmError> {
+    let Some(mode) = args.get(1) else {
+        return Ok(0);
+    };
+    let Value::Number(mode) = mode else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"mode\" argument must be of type number".into(),
+        ));
+    };
+    if !mode.is_finite() || mode.fract() != 0.0 || !(0.0..=7.0).contains(mode) {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "mode",
+            "an integer",
+            &crate::modules::buffer_enc::fmt_num(*mode),
+        ));
+    }
+    Ok(*mode as u32)
 }
 
 fn check_access(path: &str, mode: u32) -> std::io::Result<()> {

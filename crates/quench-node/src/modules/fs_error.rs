@@ -13,17 +13,39 @@ pub fn fs_error(syscall: &str, path: Option<&str>, error: &std::io::Error) -> Vm
         Some(p) => format!("{code}: {detail}, {syscall} '{p}'"),
         None => format!("{code}: {detail}, {syscall}"),
     };
-    let mut props = vec![
-        ("name".to_string(), Value::String("Error".to_string())),
-        ("message".to_string(), Value::String(message)),
-        ("code".to_string(), Value::String(code.to_string())),
-        ("errno".to_string(), Value::Number(errno as f64)),
-        ("syscall".to_string(), Value::String(syscall.to_string())),
-    ];
-    if let Some(p) = path {
-        props.push(("path".to_string(), Value::String(p.to_string())));
+    let error = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::Error),
+        &Value::Undefined,
+        &[Value::String(message)],
+    )
+    .unwrap_or_else(|_| host_api::object(vec![]));
+    for (name, value) in [
+        ("code", Value::String(code.to_string())),
+        ("errno", Value::Number(errno as f64)),
+        ("syscall", Value::String(syscall.to_string())),
+    ] {
+        let _ = quench_runtime::execute::set_property_in_place(&error, name, value);
     }
-    VmError::Thrown(host_api::object(props))
+    if let Some(p) = path {
+        let _ = quench_runtime::execute::set_property_in_place(
+            &error,
+            "path",
+            Value::String(p.to_string()),
+        );
+    }
+    if syscall == "access" {
+        let stack = quench_runtime::execute::get_property(&error, "stack");
+        let stack = match stack {
+            Value::String(stack) => format!("{stack}\n    at async Object.access"),
+            _ => "Error\n    at async Object.access".to_string(),
+        };
+        let _ = quench_runtime::execute::set_property_in_place(
+            &error,
+            "stack",
+            Value::String(stack),
+        );
+    }
+    VmError::Thrown(error)
 }
 
 /// Node/libuv-style code and (negative) errno for an I/O error.
