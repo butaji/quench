@@ -70,6 +70,9 @@ pub(crate) fn take_call_continuation(
 }
 
 fn peel_binding_cell(mut value: Value) -> Value {
+    if !matches!(&value, Value::BindingCell(_)) {
+        return value;
+    }
     let mut seen = std::collections::HashSet::new();
     loop {
         let Value::BindingCell(cell) = value else {
