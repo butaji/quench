@@ -56,6 +56,15 @@ pub(crate) fn prototype_to_string_result(
     if matches!(value, Value::Null | Value::Undefined) {
         return Ok(prototype_to_string(Some(value)));
     }
+    if matches!(value, Value::Builtin(Builtin::Intl)) {
+        let tag = crate::execute::get_property_result(value, "Symbol.toStringTag")?;
+        return Ok(match tag {
+            Value::String(tag) if !crate::conversion::is_symbol_string(&tag) => {
+                Value::String(format!("[object {tag}]"))
+            }
+            _ => Value::String("[object Object]".into()),
+        });
+    }
     if is_callable_builtin(value) {
         return Ok(Value::String("[object Function]".into()));
     }

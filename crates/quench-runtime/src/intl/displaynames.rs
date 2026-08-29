@@ -261,6 +261,9 @@ fn display_name(
         "calendar" if super::supported_values::is_supported_calendar(code) => {
             Value::String(code.to_string())
         }
+        "currency" if super::supported_values::is_supported_currency(code) => {
+            Value::String(code.to_string())
+        }
         "region" | "currency" | "script" | "calendar" | "dateTimeField" => {
             code_fallback(code, fallback)
         }
