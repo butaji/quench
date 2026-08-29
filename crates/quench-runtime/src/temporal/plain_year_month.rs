@@ -433,6 +433,15 @@ pub(crate) fn execute(
 }
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let value = receiver
+        .filter(|value| {
+            matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+                (key == "\0temporal-plain-year-month" && value == Value::Boolean(true))
+                    || (key == "\0prototype" && value == Value::Builtin(crate::ops::Builtin::TemporalPlainYearMonthPrototype))
+            }))
+        })
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?
+        .clone();
     if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
         let time_style = crate::execute::get_property_result(options, "timeStyle")?;
         if !matches!(time_style, Value::Undefined) {
@@ -441,9 +450,6 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
             ));
         }
     }
-    let value = receiver
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?
-        .clone();
     crate::intl::datetime::format_temporal_value(&value, arguments, &["year", "month"])
 }
 
@@ -503,6 +509,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
         if (calendars > 1 && text.contains("[!u-ca=")) || time_zones > 1 {
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
+        if calendars > 0 && calendar_id.as_deref() != Some("iso8601") {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
         let base = text.split('[').next().unwrap_or(&text);
         if base.len() == 9 && base.starts_with('+') {
@@ -614,8 +623,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     validate_property_calendar(&calendar)?;
     let calendar_name = match &calendar {
         Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value)
+            .or_else(|| is_iso_calendar_string(value).then_some("iso8601".into()))
             .unwrap_or_else(|| value.clone()),
-        Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
+        Value::StringUnits(_) => {
+            let value = crate::conversion::to_string(&calendar)?;
+            crate::temporal::plain_date::canonical_calendar_id(&value)
+                .or_else(|| is_iso_calendar_string(&value).then_some("iso8601".into()))
+                .unwrap_or(value)
+        }
         _ => "iso8601".into(),
     };
     let month_value = crate::execute::get_property_result(value, "month")?;

@@ -2379,7 +2379,20 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         }
         Value::Object(value)
             if value.iter().any(|(key, value)| {
-                key == "calendarId" && value == Value::String("iso8601".into())
+                key == "calendarId"
+                    && crate::conversion::to_string(&value)
+                        .ok()
+                        .is_some_and(|id| id == "iso8601")
+            })
+            || value.iter().any(|(key, value)| {
+                matches!(
+                    (key.as_str(), value),
+                    ("\0temporal-plain-date", Value::Boolean(true))
+                        | ("\0temporal-plain-date-time", Value::Boolean(true))
+                        | ("\0temporal-plain-month-day", Value::Boolean(true))
+                        | ("\0temporal-plain-year-month", Value::Boolean(true))
+                        | ("\0temporal-zoned-date-time", Value::Boolean(true))
+                )
             }) =>
         {
             "iso8601".into()
@@ -2620,6 +2633,11 @@ fn with(
     let month = if month_code_text.is_none() {
         explicit_month
     } else {
+        if receiver_calendar == "iso8601"
+            && month_code_text.as_deref().is_some_and(|code| code.ends_with('L'))
+        {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
         let month = month_code_number_text(
             month_code_text.as_deref().unwrap_or_default(),
             calendar_supports_month13(&receiver_calendar),
@@ -2636,11 +2654,7 @@ fn with(
         } else {
             month
         };
-        if explicit_month != month
-            && !matches!(
-                crate::execute::get_property_result(changes, "month")?,
-                Value::Undefined
-            )
+        if explicit_month != month && month_was_provided
         {
             return Err(crate::value::error::throw_range_error(
                 "month and monthCode conflict",
