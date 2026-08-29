@@ -583,11 +583,6 @@ fn normalize_offset_identifier(text: &str) -> Option<String> {
             text[4..6].parse::<u8>().ok()?,
             0,
         ),
-        9 if bytes[3] == b':' && bytes[6] == b':' => (
-            text[1..3].parse::<u8>().ok()?,
-            text[4..6].parse::<u8>().ok()?,
-            text[7..9].parse::<u8>().ok()?,
-        ),
         _ => return None,
     };
     if hour > 23 || minute > 59 || second > 59 {
