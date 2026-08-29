@@ -63,6 +63,16 @@ const __quenchNetModule = {
             queueMicrotask(() => socket.emit("error", error));
             return;
           }
+          // With the default single-address lookup contract, Node requires a
+          // string result. An array is only valid when `all`/auto-selection
+          // was requested; reject it asynchronously without invoking the
+          // connect callback.
+          if (Array.isArray(value) && !autoSelect) {
+            const invalid = new Error("Invalid IP address: lookup returned an array");
+            invalid.code = "ERR_INVALID_IP_ADDRESS";
+            queueMicrotask(() => socket.emit("error", invalid));
+            return;
+          }
           const addresses = Array.isArray(value) ? value : [{
             address: value,
             family,
