@@ -35,6 +35,13 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             .collect::<Vec<_>>(),
     )?;
     validate(&fields)?;
+    let calendar = arguments
+        .get(9)
+        .and_then(|value| match value {
+            Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| "iso8601".into());
     let month_code = format!("M{:02}", fields[1] as u32);
     let properties = NAMES
         .into_iter()
@@ -52,7 +59,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 "\0temporal-slot:\0monthCode".into(),
                 Value::String(month_code),
             ),
-            ("calendarId".into(), Value::String("iso8601".into())),
+            ("calendarId".into(), Value::String(calendar)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
@@ -1817,6 +1824,33 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         numeric[index] = crate::conversion::to_number(&field)?.trunc();
         present[index] = true;
     }
+    if !present[0] {
+        let calendar_name = match &calendar {
+            Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value)
+                .unwrap_or_else(|| value.clone()),
+            Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
+            _ => "iso8601".into(),
+        };
+        let era = crate::execute::get_property_result(value, "era")?;
+        let era_year = crate::execute::get_property_result(value, "eraYear")?;
+        if !matches!(era, Value::Undefined) && !matches!(era_year, Value::Undefined) {
+            let era = crate::conversion::to_string(&era)?.to_ascii_lowercase();
+            let era = crate::temporal::plain_date::canonical_era_name(&calendar_name, &era)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+            let era_year = crate::conversion::to_number(&era_year)?.trunc();
+            if !era_year.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+            }
+            if let Some(year) = crate::temporal::plain_date::derive_year_from_era(
+                &calendar_name,
+                era,
+                era_year,
+            ) {
+                numeric[0] = year;
+                present[0] = true;
+            }
+        }
+    }
     if !present[0] || !present[2] || (!present[1] && month_code_value.is_none()) {
         return Err(crate::value::error::throw_type_error(
             "Missing date-time field",
@@ -1825,6 +1859,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !matches!(calendar, Value::Undefined) {
         validate_calendar(&calendar)?;
     }
+    let calendar_id = match &calendar {
+        Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value)
+            .unwrap_or_else(|| value.clone()),
+        Value::StringUnits(_) => crate::conversion::to_string(&calendar)?,
+        _ => "iso8601".into(),
+    };
     let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
         if !(1.0..=12.0).contains(&month_code) {
@@ -1855,7 +1895,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             }
         }
     }
-    construct(&numeric.into_iter().map(Value::Number).collect::<Vec<_>>())
+    let mut arguments = numeric.into_iter().map(Value::Number).collect::<Vec<_>>();
+    arguments.push(Value::String(calendar_id));
+    construct(&arguments)
 }
 
 fn from_overflow_option(options: Option<&Value>) -> Result<String, VmError> {
@@ -1932,6 +1974,7 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 fn parse_string(text: &str) -> Result<Value, VmError> {
     let mut calendar_annotation = false;
     let mut calendar_critical = false;
+    let mut calendar_id = None;
     let mut time_zone_annotation = false;
     for part in text.split('[').skip(1) {
         let annotation = part
@@ -1957,6 +2000,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
                 }
                 calendar_annotation = true;
                 calendar_critical = critical;
+                calendar_id = crate::temporal::plain_date::canonical_calendar_id(value);
             } else if critical {
                 return Err(crate::value::error::throw_range_error("Invalid annotation"));
             }
@@ -2105,5 +2149,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if fields[6..].iter().any(|value| *value > 999.0) {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    construct(&fields.into_iter().map(Value::Number).collect::<Vec<_>>())
+    let mut arguments = fields.into_iter().map(Value::Number).collect::<Vec<_>>();
+    if let Some(calendar) = calendar_id {
+        arguments.push(Value::String(calendar));
+    }
+    construct(&arguments)
 }
