@@ -1,3 +1,5 @@
+use chrono::{Offset, TimeZone};
+
 pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if value.is_some_and(crate::conversion::is_symbol) {
         return Err(crate::value::error::throw_type_error(
@@ -564,13 +566,13 @@ fn validate_relative_string(text: &str) -> Result<(), VmError> {
         }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
             let offset = &base[sign..];
-            if !valid_offset(offset) {
+            if !valid_string_offset(offset) {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
         if let Some((_, annotation)) = time.split_once('[') {
             let annotation = annotation.strip_suffix(']').unwrap_or(annotation);
-            if annotation.starts_with(['+', '-']) && !valid_offset(annotation) {
+            if annotation.starts_with(['+', '-']) && !valid_string_offset(annotation) {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
@@ -586,6 +588,28 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
         return Ok(());
     };
     let annotation = annotation.strip_suffix(']').unwrap_or(annotation);
+    if annotation.contains('/') && base.matches(':').count() > 1 {
+        if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
+            let offset = &base[sign..];
+            let supplied_seconds = offset_seconds(offset);
+            let clock = &base[..sign];
+            if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(clock, "%Y-%m-%dT%H:%M:%S") {
+                if let Some(epoch) = date_time.and_utc().timestamp_opt().single() {
+                    if let Ok(zone) = annotation.parse::<chrono_tz::Tz>() {
+                        let actual_seconds = zone
+                            .timestamp_opt(epoch, 0)
+                            .single()
+                            .map(|date| date.offset().fix().local_minus_utc());
+                        if actual_seconds != Some(supplied_seconds) {
+                            return Err(crate::value::error::throw_range_error(
+                                "Offset does not match time zone",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Some(base) = offset_minutes(base) {
         if let Some(annotation) = offset_minutes(annotation) {
             if base != annotation {
@@ -596,6 +620,15 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
         }
     }
     Ok(())
+}
+
+fn offset_seconds(value: &str) -> i32 {
+    let sign = if value.starts_with('-') { -1 } else { 1 };
+    let digits = value[1..].replace(':', "");
+    let hour = digits.get(0..2).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    let minute = digits.get(2..4).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    let second = digits.get(4..6).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    sign * (hour * 3600 + minute * 60 + second)
 }
 
 fn has_z_without_annotation(text: &str) -> bool {
@@ -612,7 +645,7 @@ fn validate_timezone_string(text: &str) -> Result<(), VmError> {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
-            if base[sign..].matches(':').count() > 1 {
+            if base[sign..].matches(':').count() > 2 {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
@@ -647,6 +680,23 @@ fn valid_offset(value: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn valid_string_offset(value: &str) -> bool {
+    if valid_offset(value) {
+        return true;
+    }
+    let Some(value) = value.strip_prefix(['+', '-']) else {
+        return false;
+    };
+    let parts = value.split(':').collect::<Vec<_>>();
+    matches!(parts.as_slice(), [hour, minute, second]
+        if hour.len() == 2
+            && minute.len() == 2
+            && second.len() == 2
+            && hour.bytes().all(|byte| byte.is_ascii_digit())
+            && minute.bytes().all(|byte| byte.is_ascii_digit())
+            && second.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn offset_minutes(value: &str) -> Option<i32> {
