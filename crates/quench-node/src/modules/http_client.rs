@@ -15,6 +15,7 @@ use crate::modules::net;
 
 /// Hidden property mapping a ClientRequest object to its state.
 const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
+const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
 /// `(host, port, method, path, headers)` for one outbound request.
@@ -331,6 +332,14 @@ pub fn req_destroy(
             .net
             .pending_events
             .push((request.clone(), "error".into(), vec![error]));
+    }
+    if response.is_none() {
+        set_request_property(receiver, CLIENT_CLOSE_PENDING_PROP, Value::Boolean(true));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((request.clone(), "close".into(), Vec::new()));
     }
     if let Some(response) = response {
         let signal = execute::get_property(&response, "signal");
@@ -657,6 +666,12 @@ pub fn req_close(
         .client_signals
         .retain(|_, request_id| *request_id != client_id);
     if let Some(request) = request {
+        if matches!(
+            execute::get_property(&request, CLIENT_CLOSE_PENDING_PROP),
+            Value::Boolean(true)
+        ) {
+            return Ok(Value::Undefined);
+        }
         net::emit(state, &request, "close", Vec::new())?;
     }
     Ok(Value::Undefined)
@@ -897,6 +912,10 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             ("aborted".to_string(), Value::Boolean(false)),
             ("destroyed".to_string(), Value::Boolean(false)),
             ("finished".to_string(), Value::Boolean(false)),
+            (
+                CLIENT_CLOSE_PENDING_PROP.to_string(),
+                Value::Boolean(false),
+            ),
         ],
     )?;
     Ok((object, id))
