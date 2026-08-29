@@ -508,7 +508,30 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::RegExp => &["length", "name", "prototype"],
+        Builtin::RegExp => &[
+            "length",
+            "name",
+            "prototype",
+            "$_",
+            "$&",
+            "$`",
+            "$'",
+            "$+",
+            "$1",
+            "$2",
+            "$3",
+            "$4",
+            "$5",
+            "$6",
+            "$7",
+            "$8",
+            "$9",
+            "input",
+            "lastMatch",
+            "lastParen",
+            "leftContext",
+            "rightContext",
+        ],
         Builtin::RegExpPrototype => &[
             "constructor",
             "exec",

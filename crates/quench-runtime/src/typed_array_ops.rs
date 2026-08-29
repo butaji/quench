@@ -113,6 +113,9 @@ pub(crate) fn set_property(
     key: &str,
     value: &Value,
 ) -> Option<Result<Value, VmError>> {
+    if target.typed_array_meta().is_none() {
+        return None;
+    }
     if typed_array_index(key).is_none() {
         if let Some(result) = set_named_property(target, key, value.clone()) {
             return Some(Ok(result));

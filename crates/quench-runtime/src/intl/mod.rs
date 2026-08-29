@@ -111,11 +111,25 @@ pub(crate) fn execute(
         Builtin::IntlPluralRulesSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
-        Builtin::IntlDurationFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlDurationFormatSupportedLocalesOf => {
+            Some(duration_supported_locales_of(arguments))
+        }
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
     }
+}
+
+fn duration_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
+    let locales = requested_locales(arguments)?;
+    validate_supported_options(arguments.get(1))?;
+    Ok(make_array(
+        locales
+            .into_iter()
+            .filter(|locale| !locale.eq_ignore_ascii_case("zxx"))
+            .map(Value::String)
+            .collect(),
+    ))
 }
 
 fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
@@ -224,7 +238,7 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
-    if arguments.is_empty() {
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
         return Ok(make_array(Vec::new()));
     }
     let locales = resolve_locales(arguments)?;
@@ -256,7 +270,8 @@ pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmErro
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             resolve_locale_list(&crate::construct::to_object(locales)?)
         }
-        Value::String(_) => Ok(vec![canonicalize(&crate::conversion::to_string(locales)?)?]),
+        Value::String(value) => Ok(vec![canonicalize(value)?]),
+        Value::StringUnits(value) => Ok(vec![canonicalize(&String::from_utf16_lossy(value))?]),
         locales if crate::value::is_object(locales) => {
             if let Some(tag) = locale_object_tag(locales) {
                 Ok(vec![canonicalize(&tag)?])
@@ -348,6 +363,24 @@ pub(crate) fn numbering_system(locale: &str) -> Option<&str> {
     supported_values::NUMBERING_SYSTEMS
         .contains(&value)
         .then_some(value)
+}
+
+pub(crate) fn default_numbering_system(locale: &str) -> &'static str {
+    let language = locale.split('-').next().unwrap_or(locale);
+    match language {
+        "ar" => "arab",
+        "fa" => "arabext",
+        "bn" => "beng",
+        "gu" => "gujr",
+        "he" => "latn",
+        "hi" | "mr" | "ne" => "deva",
+        "km" => "khmr",
+        "ko" => "latn",
+        "lo" => "laoo",
+        "my" => "mymr",
+        "th" => "thai",
+        _ => "latn",
+    }
 }
 
 include!("locale_canonicalization.rs");

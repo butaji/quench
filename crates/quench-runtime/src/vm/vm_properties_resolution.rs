@@ -370,6 +370,16 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if key == "format" { eprintln!("DEBUG get format value {:?} receiver {:?}", value, receiver); }
+    if matches!(value, Value::Builtin(crate::ops::Builtin::RegExp))
+        && crate::builtins::object::is_regexp_legacy_accessor(key)
+    {
+        return crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::RegExpLegacyGetter,
+            &[],
+            Some(receiver),
+        );
+    }
     if matches!(value, Value::ObjectAlias(_)) {
         let resolved = crate::builtins::object::resolve_object_alias(value.clone());
         return get_property_with_receiver(&resolved, key, receiver);
@@ -447,6 +457,23 @@ pub(crate) fn get_property_with_receiver(
                     crate::reflect::note_shadow_method_realm(bound.realm);
                     return Ok(Value::Builtin(Builtin::ShadowRealmEvaluate));
                 }
+                if bound.target == Value::Builtin(Builtin::RegExpPrototype)
+                    && key == "compile"
+                    && crate::regexp::has_regexp_internal_slot(receiver)
+                {
+                    let property = crate::execute::get_property(&value, key);
+                    let method = crate::vm::with_realm(bound.realm, || match property.clone() {
+                        Value::BoundFunction(method) => match method.target {
+                            Value::Builtin(builtin) => {
+                                crate::vm::bind_method(receiver, Value::Builtin(builtin))
+                            }
+                            _ => Value::BoundFunction(method),
+                        },
+                        property => property,
+                    })
+                    .unwrap_or(property);
+                    return Ok(method);
+                }
                 return Ok(crate::execute::get_property(&value, key));
             }
         }
@@ -494,6 +521,17 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
         }
     }
     let own = own?;
+    if key == "format"
+        && matches!(
+            own,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        // Reading Intl's format accessor must capture the formatter receiver.
+        return None;
+    }
     if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
@@ -628,6 +666,33 @@ fn object_inherited_property_result(
     let prototype = properties.slot_value(prototype_slot)?;
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
+    }
+    if key == "format"
+        && matches!(
+            prototype,
+            Value::Builtin(Builtin::IntlDateTimeFormatPrototype)
+        )
+    {
+        let getter = Value::Builtin(Builtin::IntlDateTimeFormatFormatGetter);
+        return Some(invoke_accessor(&getter, receiver));
+    }
+    if matches!(
+        prototype,
+        Value::Builtin(Builtin::IntlDateTimeFormatPrototype)
+    ) {
+        let method = match key {
+            "formatToParts" => Some(Builtin::IntlDateTimeFormatFormatToParts),
+            "formatRange" => Some(Builtin::IntlDateTimeFormatFormatRange),
+            "formatRangeToParts" => Some(Builtin::IntlDateTimeFormatFormatRangeToParts),
+            "resolvedOptions" => Some(Builtin::IntlDateTimeFormatResolvedOptions),
+            _ => None,
+        };
+        if let Some(method) = method {
+            return Some(Ok(crate::vm::bind_method(
+                receiver,
+                Value::Builtin(method),
+            )));
+        }
     }
     Some(get_property_with_receiver(&prototype, key, receiver))
 }
@@ -995,6 +1060,12 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         }
     }
     let property = get_property(value, key);
+    if matches!(
+        property,
+        Value::Builtin(Builtin::IntlDateTimeFormatFormatGetter)
+    ) {
+        return invoke_accessor(&property, receiver).unwrap_or(Value::Undefined);
+    }
     if let Value::BoundFunction(bound) = &property {
         if matches!(
             bound.target,
@@ -1029,6 +1100,9 @@ fn should_preserve_receiver_property(
     property: &Value,
     receiver: &Value,
 ) -> bool {
+    if matches!(property, Value::Builtin(Builtin::IntlDateTimeFormatFormat)) {
+        return false;
+    }
     if object_has_property(value, key) {
         return true;
     }
@@ -1099,6 +1173,9 @@ fn is_intl_number_format_property(property: &Value) -> bool {
 }
 
 pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
+    if matches!(property, Value::Builtin(Builtin::IntlNumberFormatFormat)) {
+        eprintln!("DEBUG bind nf receiver {:?}", receiver);
+    }
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
