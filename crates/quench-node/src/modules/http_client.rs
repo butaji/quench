@@ -1409,9 +1409,12 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                 return Err(unescaped_path_error());
             }
             let mut headers: Vec<(String, String)> = Vec::new();
-            if let Ok(hv) = execute::get_property_result(&options, "headers") {
+            let hv = execute::get_property(&options, "headers");
+            if !matches!(hv, Value::Undefined | Value::Null) {
                 if let Ok(host_header) = execute::get_property_result(&hv, "host") {
-                    if !matches!(host_header, Value::Undefined | Value::Null | Value::String(_)) {
+                    if is_array_value(&host_header)
+                        || !matches!(host_header, Value::Undefined | Value::Null | Value::String(_))
+                    {
                         return Err(execute::type_error(
                             "The \"options.headers.host\" property must be of type string",
                         ));
@@ -1453,7 +1456,7 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                         let Ok(item) = execute::get_property_result(&hv, &key) else {
                             continue;
                         };
-                        if key.eq_ignore_ascii_case("host") && matches!(item, Value::Array(_)) {
+                        if key.eq_ignore_ascii_case("host") && is_array_value(&item) {
                             return Err(execute::type_error(
                                 "The \"options.headers.host\" property must be of type string",
                             ));
@@ -1505,6 +1508,17 @@ fn unescaped_path_error() -> VmError {
         other => return other,
     };
     VmError::Thrown(error)
+}
+
+fn is_array_value(value: &Value) -> bool {
+    matches!(
+        execute::execute_builtin_with_receiver(
+            quench_runtime::ops::Builtin::ArrayIsArray,
+            &[],
+            Some(value),
+        ),
+        Ok(Value::Boolean(true))
+    )
 }
 
 fn invalid_method_error(method: &str) -> VmError {
