@@ -641,10 +641,7 @@
       if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
-          // Consuming the final buffered chunk already delivered the
-          // readable notification for this turn. Do not manufacture an
-          // additional empty `readable` event before `end`.
-          st.emittedReadable = true;
+          if (!this._isTransform && size > 0) st.emittedReadable = true;
           nextTick(() => {
             if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
