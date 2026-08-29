@@ -1145,16 +1145,28 @@ fn calendar_getter(
             )
             .map_or(Value::Undefined, Value::Number)
         }
-        crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => Value::Number(
-            chrono::NaiveDate::from_ymd_opt(year, month, day)
-                .map(|date| date.iso_week().week() as f64)
-                .unwrap_or(f64::NAN),
-        ),
-        crate::ops::Builtin::TemporalPlainDateTimeYearOfWeekGetter => Value::Number(
-            chrono::NaiveDate::from_ymd_opt(year, month, day)
-                .map(|date| date.iso_week().year() as f64)
-                .unwrap_or(f64::NAN),
-        ),
+        crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => {
+            if calendar == "iso8601" {
+                Value::Number(
+                    chrono::NaiveDate::from_ymd_opt(year, month, day)
+                        .map(|date| date.iso_week().week() as f64)
+                        .unwrap_or(f64::NAN),
+                )
+            } else {
+                Value::Undefined
+            }
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeYearOfWeekGetter => {
+            if calendar == "iso8601" {
+                Value::Number(
+                    chrono::NaiveDate::from_ymd_opt(year, month, day)
+                        .map(|date| date.iso_week().year() as f64)
+                        .unwrap_or(f64::NAN),
+                )
+            } else {
+                Value::Undefined
+            }
+        }
         _ => Value::Undefined,
     })
 }

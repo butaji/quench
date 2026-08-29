@@ -725,8 +725,12 @@ fn zoned_record_with_calendar(
         crate::ops::Builtin::TemporalZonedDateTimePrototype,
     );
     if let crate::value::Value::Object(object) = &mut record {
-        std::rc::Rc::make_mut(object)
-            .set_property_in_place("calendarId", crate::value::Value::String(calendar));
+        let object = std::rc::Rc::make_mut(object);
+        if calendar != "iso8601" {
+            object.set_property_in_place("weekOfYear", crate::value::Value::Undefined);
+            object.set_property_in_place("yearOfWeek", crate::value::Value::Undefined);
+        }
+        object.set_property_in_place("calendarId", crate::value::Value::String(calendar));
     }
     record
 }
@@ -1546,6 +1550,10 @@ mod stubs {
                 return Ok(Value::Number(24.0));
             }
             crate::ops::Builtin::TemporalZonedDateTimeWeekOfYearGetter => {
+                let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                if calendar != "iso8601" {
+                    return Ok(Value::Undefined);
+                }
                 let year = crate::conversion::to_number(&property("year")?)? as i32;
                 let month = crate::conversion::to_number(&property("month")?)? as u32;
                 let day = crate::conversion::to_number(&property("day")?)? as u32;
@@ -1555,6 +1563,10 @@ mod stubs {
                 return Ok(Value::Number(week));
             }
             crate::ops::Builtin::TemporalZonedDateTimeYearOfWeekGetter => {
+                let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                if calendar != "iso8601" {
+                    return Ok(Value::Undefined);
+                }
                 let year = crate::conversion::to_number(&property("year")?)? as i32;
                 let month = crate::conversion::to_number(&property("month")?)? as u32;
                 let day = crate::conversion::to_number(&property("day")?)? as u32;
