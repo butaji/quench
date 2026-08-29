@@ -69,6 +69,23 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     connect_with_receiver(state, None, args)
 }
 
+pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value, VmError> {
+    let port = state.borrow().net.paths.get(path).copied();
+    match port {
+        Some(port) => connect(state, &[Value::Number(port as f64), Value::String("127.0.0.1".into())]),
+        None => {
+            let (object, _) = new_net_object(state, socket_props())?;
+            let error = host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("code".into(), Value::String("ENOENT".into())),
+                ("syscall".into(), Value::String("connect".into())),
+            ]);
+            state.borrow_mut().net.pending_errors.push((object.clone(), error));
+            Ok(object)
+        }
+    }
+}
+
 pub fn connect_existing(
     state: &Rc<RefCell<HostState>>,
     receiver: &Value,
@@ -88,36 +105,19 @@ fn connect_with_receiver(
         .filter(|value| matches!(value, Value::String(_)))
     {
         let path = execute::to_js_string(path)?;
-        if path.starts_with('/') {
-            let (object, _) = new_net_object(state, socket_props())?;
-            let error = host_api::object(vec![
-                ("name".into(), Value::String("Error".into())),
-                ("code".into(), Value::String("ENOENT".into())),
-                ("syscall".into(), Value::String("connect".into())),
-            ]);
-            let error = execute::define_property(
-                error,
-                "message",
-                host_api::object(vec![
-                    (
-                        "value".into(),
-                        Value::String(format!("connect ENOENT {path}")),
-                    ),
-                    ("enumerable".into(), Value::Boolean(false)),
-                ]),
-            )?;
-            state
-                .borrow_mut()
-                .net
-                .pending_errors
-                .push((object.clone(), error));
-            return Ok(object);
+        if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
+            return connect_path(state, &path);
         }
     }
     if let Some(options) = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
+        if let Value::String(path) = execute::get_property(options, "port") {
+            if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
+                return connect_path(state, &path);
+            }
+        }
         let auto_select_family = execute::get_property(options, "autoSelectFamily");
         if !matches!(auto_select_family, Value::Undefined | Value::Boolean(_)) {
             return Err(VmError::Thrown(host_api::object(vec![
@@ -213,6 +213,11 @@ fn connect_with_receiver(
                     Value::String("The \"path\" argument must be a string".into()),
                 ),
             ])));
+        }
+        if let Value::String(path) = path {
+            if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
+                return connect_path(state, &path);
+            }
         }
     }
     let (port, host) = connect_target(state, args)?;
@@ -481,12 +486,21 @@ pub fn server_listen(
         return Ok(receiver);
     }
     if let Some(Value::String(path)) = args.first() {
-        if path.starts_with('/') {
-            state
-                .borrow_mut()
-                .net
-                .pending_errors
-                .push((receiver.clone(), server_path_error(path)));
+        if path.starts_with('/') || path.parse::<u16>().is_err() {
+            let listener = match bind_listener(0, None) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    state.borrow_mut().net.pending_errors.push((
+                        receiver.clone(),
+                        server_bind_error(&error, None, 0),
+                    ));
+                    return Ok(receiver);
+                }
+            };
+            let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
+            state.borrow_mut().net.paths.insert(path.clone(), port);
+            register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
+            add_listener_cb(state, &receiver, args.last(), "listening")?;
             return Ok(receiver);
         }
     }
@@ -505,20 +519,6 @@ pub fn server_listen(
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
-}
-
-fn server_path_error(path: &str) -> Value {
-    host_api::object(vec![
-        ("name".into(), Value::String("Error".into())),
-        (
-            "message".into(),
-            Value::String("No such file or directory".into()),
-        ),
-        ("code".into(), Value::String("ENOENT".into())),
-        ("address".into(), Value::String(path.into())),
-        ("port".into(), Value::Number(0.0)),
-        ("syscall".into(), Value::String("bind".into())),
-    ])
 }
 
 /// Resolve the `(port, host)` listen target, mirroring `connect_target`.
@@ -604,9 +604,19 @@ pub fn server_close(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
+    let path = state
+        .borrow()
+        .net
+        .servers
+        .get(&id)
+        .and_then(|server| server.borrow().path.clone());
+    if let Some(path) = path {
+        state.borrow_mut().net.paths.remove(&path);
+    }
     if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
         let mut server = server.borrow_mut();
         server.listener.take();
+        server.path.take();
         server.listening = false;
         server.closed = true;
     }
@@ -664,13 +674,22 @@ pub fn server_address(
     let Some(id) = receiver.and_then(net_id) else {
         return Ok(Value::Null);
     };
-    let bind_addr = state
+    let server = state
         .borrow()
         .net
         .servers
         .get(&id)
-        .and_then(|s| s.borrow().bind_addr);
-    Ok(bind_addr.map_or(Value::Null, address_value))
+        .cloned();
+    let Some(server) = server else {
+        return Ok(Value::Null);
+    };
+    let server = server.borrow();
+    Ok(server
+        .path
+        .clone()
+        .map(Value::String)
+        .or_else(|| server.bind_addr.map(address_value))
+        .unwrap_or(Value::Null))
 }
 
 /// `socket.write(data[, encoding][, cb])` — buffers bytes and flushes

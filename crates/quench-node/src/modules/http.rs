@@ -735,11 +735,13 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
 /// The `http` module namespace.
 pub fn build() -> Value {
     let agent = crate::host::capability(crate::registry::SPEC_HTTP_AGENT);
-    let agent = quench_runtime::execute::set_property(
-        agent,
-        "prototype",
-        host_api::object(Vec::new()),
-    );
+    let agent_prototype = host_api::object(vec![
+        (
+            "createConnection".into(),
+            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+        ),
+    ]);
+    let agent = quench_runtime::execute::set_property(agent, "prototype", agent_prototype);
     let mut module = crate::host::namespace_object(vec![
         (
             "createServer",
