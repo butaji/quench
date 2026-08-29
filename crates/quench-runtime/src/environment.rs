@@ -1068,6 +1068,9 @@ impl Environment {
     }
 
     pub(crate) fn is_deleted_slot(&self, slot: u16) -> bool {
+        if usize::from(slot) >= self.captured_len() && self.deleted_cells.borrow().is_none() {
+            return false;
+        }
         let Some(cell) = self.slot(slot).and_then(|binding| binding.existing_cell()) else {
             return false;
         };
@@ -1110,6 +1113,9 @@ impl Environment {
     }
 
     pub(crate) fn is_uninitialized(&self, slot: u16) -> bool {
+        if usize::from(slot) >= self.captured_len() && self.uninitialized.borrow().is_none() {
+            return false;
+        }
         let local = self
             .uninitialized
             .borrow()
