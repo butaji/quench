@@ -91,7 +91,11 @@ const __nodePerformance = {
       const startTime = __nodePerformance.now();
       let result;
       if (new.target) {
-        result = Reflect.construct(functionToWrap, args, new.target);
+        // Direct construction must retain the wrapped constructor's
+        // prototype (Node's timerify wrapper is transparent to `instanceof`).
+        // A derived constructor still supplies its own newTarget.
+        const newTarget = new.target === wrapped ? functionToWrap : new.target;
+        result = Reflect.construct(functionToWrap, args, newTarget);
       } else {
         result = Reflect.apply(functionToWrap, this, args);
       }
