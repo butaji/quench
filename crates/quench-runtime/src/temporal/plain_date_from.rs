@@ -157,12 +157,11 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     } else {
         Value::String(month_code_text(&month_code)?)
     };
-    let year = crate::execute::get_property_result(value, "year")?;
+    let mut year = crate::execute::get_property_result(value, "year")?;
+    let era = crate::execute::get_property_result(value, "era")?;
+    let era_year = crate::execute::get_property_result(value, "eraYear")?;
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
-    }
-    if matches!(year, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error("Missing year"));
     }
     if matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing month"));
@@ -175,6 +174,30 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
+    }
+    let calendar_name = calendar_text.as_deref().unwrap_or("iso8601");
+    let era_name = if matches!(era, Value::Undefined) {
+        None
+    } else if matches!(calendar_name, "chinese" | "dangi") {
+        None
+    } else {
+        let text = crate::conversion::to_string(&era)?.to_ascii_lowercase();
+        let canonical = canonical_era_name(calendar_name, &text)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+        Some(canonical)
+    };
+    if matches!(year, Value::Undefined) {
+        let era_year = if matches!(era_year, Value::Undefined) {
+            None
+        } else {
+            Some(crate::conversion::to_number(&era_year)?.trunc())
+        };
+        year = match (era_name, era_year) {
+            (Some(era), Some(value)) => derive_year_from_era(calendar_name, era, value)
+                .map(Value::Number)
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing year"))?,
+            _ => return Err(crate::value::error::throw_type_error("Missing year")),
+        };
     }
     let year = Value::Number(crate::conversion::to_number(&year)?.trunc());
     let overflow = overflow_value(options)?;
@@ -244,6 +267,43 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     construct(&[year, month, Value::Number(day), calendar])
 }
 
+pub(crate) fn canonical_era_name(calendar: &str, era: &str) -> Option<&'static str> {
+    match calendar {
+        "gregory" | "japanese" => match era {
+            "ad" | "ce" => Some("ce"),
+            "bc" | "bce" => Some("bce"),
+            "be" => Some("be"),
+            "heisei" => Some("heisei"),
+            "reiwa" => Some("reiwa"),
+            "showa" => Some("showa"),
+            "taisho" => Some("taisho"),
+            "meiji" => Some("meiji"),
+            _ => None,
+        },
+        "buddhist" if era == "be" => Some("be"),
+        "hebrew" if era == "am" => Some("am"),
+        value if value.starts_with("islamic") && era == "ah" => Some("ah"),
+        "persian" if era == "ap" => Some("ap"),
+        "coptic" | "ethiopic" if era == "am" => Some("am"),
+        "ethioaa" if era == "aa" => Some("aa"),
+        "indian" if era == "shaka" => Some("shaka"),
+        "roc" if era == "roc" => Some("roc"),
+        "roc" if era == "broc" => Some("broc"),
+        _ => None,
+    }
+}
+
+pub(crate) fn derive_year_from_era(calendar: &str, era: &str, era_year: f64) -> Option<f64> {
+    if !era_year.is_finite() || era_year < 1.0 {
+        return None;
+    }
+    match (calendar, era) {
+        ("gregory" | "japanese", "bce") => Some(1.0 - era_year),
+        ("gregory" | "japanese", "ce") => Some(era_year),
+        _ => Some(era_year),
+    }
+}
+
 fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok("constrain");
@@ -268,6 +328,9 @@ fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
+    if crate::temporal::plain_date::is_supported_calendar_name(value) {
+        return true;
+    }
     if crate::intl::supported_calendars()
         .iter()
         .any(|calendar| matches!(calendar, Value::String(name) if name.eq_ignore_ascii_case(value)))

@@ -1157,7 +1157,8 @@ pub(crate) fn era_for_calendar(calendar: &str, year: f64) -> Option<&'static str
 pub(crate) fn era_year_for_calendar(calendar: &str, year: f64) -> Option<f64> {
     match calendar {
         "buddhist" => Some(year),
-        "hebrew" | "persian" | "coptic" | "ethiopic" | "ethioaa" | "gregory" => Some(year),
+        "hebrew" | "persian" | "coptic" | "ethiopic" | "ethioaa" => Some(year),
+        "gregory" => Some(if year >= 1.0 { year } else { 1.0 - year }),
         value if value.starts_with("islamic") => Some(year),
         "indian" => Some(year),
         "roc" => Some(year),
@@ -1195,8 +1196,10 @@ fn japanese_era_year(year: f64) -> f64 {
         year - 1911.0
     } else if year >= 1868.0 {
         year - 1867.0
-    } else {
+    } else if year >= 1.0 {
         year
+    } else {
+        1.0 - year
     }
 }
 
