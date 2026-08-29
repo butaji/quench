@@ -2166,7 +2166,7 @@ mod stubs {
                 "compatible",
             )?;
             let offset_mode =
-                option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
+                option_string("offset", &["prefer", "use", "ignore", "reject"], "prefer")?;
             let overflow = option_string("overflow", &["constrain", "reject"], "constrain")?;
             if overflow != "constrain" && overflow != "reject" {
                 return Err(crate::value::error::throw_range_error("Invalid overflow"));
@@ -2236,6 +2236,9 @@ mod stubs {
                         fields.push((name.to_string(), value));
                     }
                 }
+            }
+            if !offset_provided && offset_mode != "ignore" {
+                fields.push(("offset".to_string(), property("offset")?));
             }
             let year_number = fields
                 .iter()
@@ -2332,10 +2335,11 @@ mod stubs {
                         "disambiguation".to_string(),
                         Value::String(disambiguation.clone()),
                     ),
-                    ("offset".to_string(), Value::String(offset_mode)),
+                    ("offset".to_string(), Value::String(offset_mode.clone())),
                 ],
             )));
             let result = if matches!(partial_offset, Value::Undefined)
+                && offset_mode == "ignore"
                 && calendar_id == "iso8601"
             {
                 let number = |name: &str| -> Result<i128, VmError> {
