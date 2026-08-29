@@ -2211,7 +2211,15 @@ fn with(
         if let Value::String(code) =
             crate::execute::get_property_result(receiver.unwrap(), "monthCode")?
         {
-            if code.ends_with('L') {
+            if let Some((ordinal, _)) = calendar_date_from_code(
+                year as i32,
+                &code,
+                1,
+                &receiver_calendar,
+            ) {
+                month_code_text = Some(code);
+                explicit_month = ordinal as f64;
+            } else if code.ends_with('L') {
                 if calendar_date_from_code(year as i32, &code, 1, &receiver_calendar).is_some() {
                     month_code_text = Some(code);
                 } else if overflow == "reject" {
