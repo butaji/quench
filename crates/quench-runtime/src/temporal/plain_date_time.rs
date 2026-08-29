@@ -928,10 +928,10 @@ fn to_zoned_date_time(
         _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
     };
     let time_zone = normalize_time_zone_identifier(&time_zone)?;
-    let _ = disambiguation;
-    let mut epoch = epoch_nanos(&values);
-    if let Some(offset) = fixed_offset_nanos(&time_zone) {
-        epoch -= offset;
+    let local_epoch = epoch_nanos(&values);
+    let epoch = crate::temporal::timezone_local_epoch(&time_zone, local_epoch, &disambiguation);
+    if epoch == i128::MIN {
+        return Err(crate::value::error::throw_range_error("Invalid time zone transition"));
     }
     const INSTANT_LIMIT: i128 = 8_640_000_000_000_000_000_000;
     if !(-INSTANT_LIMIT..=INSTANT_LIMIT).contains(&epoch) {
