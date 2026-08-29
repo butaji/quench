@@ -117,7 +117,30 @@ pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, V
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
-    construct(arguments)
+    let calendar = arguments
+        .get(9)
+        .and_then(|value| match value {
+            Value::String(value) => crate::temporal::plain_date::canonical_calendar_id(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| "iso8601".into());
+    if calendar == "iso8601" || calendar == "gregory" {
+        return construct(arguments);
+    }
+    let date = crate::temporal::plain_date::construct_from_iso(&[
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+        arguments.get(2).cloned().unwrap_or(Value::Undefined),
+        Value::String(calendar.clone()),
+    ])?;
+    let year = crate::execute::get_property_result(&date, "year")?;
+    let month = crate::execute::get_property_result(&date, "month")?;
+    let day = crate::execute::get_property_result(&date, "day")?;
+    let month_code = crate::execute::get_property_result(&date, "monthCode")?;
+    let mut rebuilt = vec![year, month, day];
+    rebuilt.extend((3..9).map(|index| arguments.get(index).cloned().unwrap_or(Value::Number(0.0))));
+    rebuilt.extend([Value::String(calendar), month_code]);
+    construct(&rebuilt)
 }
 
 fn validate(fields: &[f64]) -> Result<(), VmError> {
@@ -170,9 +193,11 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeToString => {
             Some(to_string(_receiver, arguments.first()))
         }
-        crate::ops::Builtin::TemporalPlainDateTimeToJSON
-        | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
+        crate::ops::Builtin::TemporalPlainDateTimeToJSON => {
             Some(to_string(_receiver, None))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
+            Some(to_locale_string(_receiver, arguments))
         }
         crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateTimeEquals => {
@@ -233,6 +258,17 @@ pub(crate) fn execute(
         }
         _ => None,
     }
+}
+
+fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let value = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?
+        .clone();
+    crate::intl::datetime::format_temporal_value(
+        &value,
+        arguments,
+        &["year", "month", "day", "hour", "minute", "second"],
+    )
 }
 
 fn difference(
