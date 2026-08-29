@@ -123,6 +123,58 @@ pub fn connect_existing(
     connect_with_receiver(state, Some(receiver), args)
 }
 
+/// Resume a custom lookup that completed from a later event-loop turn.
+/// Lookup completion is data-driven: the saved socket/options are consumed,
+/// validated once, and then fed back into the ordinary connect path.
+pub fn complete_lookup(
+    state: &Rc<RefCell<HostState>>,
+    result: Value,
+) -> Result<Value, VmError> {
+    let pending = state.borrow_mut().net.pending_lookups.remove(0);
+    let error = execute::get_property(&result, "0");
+    if !matches!(error, Value::Undefined | Value::Null) {
+        state
+            .borrow_mut()
+            .net
+            .pending_errors
+            .push((pending.socket.clone(), error));
+        return Ok(pending.socket);
+    }
+    let Some(address) = custom_lookup_address(&pending.options, &result).ok().flatten() else {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("Invalid IP address: lookup returned an invalid address".into())],
+        );
+        let error = execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_INVALID_IP_ADDRESS".into()),
+        );
+        state
+            .borrow_mut()
+            .net
+            .pending_errors
+            .push((pending.socket.clone(), error));
+        return Ok(pending.socket);
+    };
+    let family = lookup_family(&result).map(|value| Value::Number(value as f64));
+    state.borrow_mut().net.pending_events.push((
+        pending.socket.clone(),
+        "lookup".into(),
+        vec![Value::Null, Value::String(address.clone()), family.unwrap_or(Value::Undefined)],
+    ));
+    let options = execute::set_property(
+        execute::set_property(pending.options, "lookup", Value::Undefined),
+        "host",
+        Value::String(address),
+    );
+    let mut args = pending.args;
+    if let Some(first) = args.first_mut() {
+        *first = options;
+    }
+    connect_with_receiver(state, Some(&pending.socket), &args)
+}
+
 fn connect_with_receiver(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -163,6 +215,12 @@ fn connect_with_receiver(
         }
         if quench_runtime::is_callable(&lookup) {
             state.borrow_mut().net.lookup_result = None;
+            let lookup_socket = if let Some(receiver) = receiver {
+                receiver.clone()
+            } else {
+                let (object, _) = new_net_object(state, socket_props())?;
+                install_socket_counters(object)?
+            };
             let callback = crate::host::capability(crate::registry::SPEC_NET_LOOKUP_CALLBACK);
             let lookup_options = if matches!(
                 execute::get_property(options, "autoSelectFamily"),
@@ -172,21 +230,59 @@ fn connect_with_receiver(
             } else {
                 options.clone()
             };
-            let result = execute::call(
+            state.borrow_mut().net.pending_lookups.push(super::PendingLookup {
+                socket: lookup_socket.clone(),
+                options: lookup_options.clone(),
+                args: args.to_vec(),
+            });
+            state.borrow_mut().net.lookup_in_call = true;
+            let result = match execute::call(
                 &lookup,
                 &Value::Undefined,
                 &[
                     execute::get_property(options, "host"),
-                    lookup_options,
+                    lookup_options.clone(),
                     callback,
                 ],
-            )?;
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    let mut host = state.borrow_mut();
+                    host.net.lookup_in_call = false;
+                    let _ = host.net.pending_lookups.pop();
+                    return Err(error);
+                }
+            };
+            state.borrow_mut().net.lookup_in_call = false;
             let callback_result = state.borrow_mut().net.lookup_result.take();
             if callback_result.is_none() {
+                return Ok(lookup_socket);
+            }
+            let _ = state.borrow_mut().net.pending_lookups.pop();
+            let result = callback_result.unwrap_or(result);
+            // A custom lookup's result shape is part of the API contract:
+            // `all: false` returns one address string, while `all: true`
+            // returns an array of `{ address, family }` records. Reject any
+            // other shape asynchronously on the socket, before attempting
+            // a connection with an undefined host.
+            if custom_lookup_address(&lookup_options, &result)
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 let (object, _) = new_net_object(state, socket_props())?;
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("Invalid IP address: lookup returned an invalid address".into())],
+                );
+                let error = execute::set_property(
+                    error,
+                    "code",
+                    Value::String("ERR_INVALID_IP_ADDRESS".into()),
+                );
+                state.borrow_mut().net.pending_errors.push((object.clone(), error));
                 return Ok(object);
             }
-            let result = callback_result.unwrap_or(result);
             lookup_address = lookup_address_for(&result);
             if let Some(family) = lookup_family(&result) {
                 if family != 4 && family != 6 {
@@ -419,6 +515,29 @@ fn lookup_family(result: &Value) -> Option<i64> {
         Value::Number(value) if value.is_finite() && value.fract() == 0.0 => Some(value as i64),
         _ => None,
     }
+}
+
+fn custom_lookup_address(options: &Value, result: &Value) -> Result<Option<String>, ()> {
+    let addresses = execute::get_property(result, "1");
+    let all = matches!(execute::get_property(options, "all"), Value::Boolean(true));
+    if all {
+        let Value::Array(_) = &addresses else {
+            return Err(());
+        };
+        let length = match execute::get_property(&addresses, "length") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        };
+        if (0..length).any(|index| {
+            let entry = execute::get_property(&addresses, &index.to_string());
+            !matches!(execute::get_property(&entry, "address"), Value::String(_))
+        }) {
+            return Err(());
+        }
+    } else if !matches!(addresses, Value::String(_)) {
+        return Err(());
+    }
+    Ok(lookup_address_for(result))
 }
 
 fn lookup_address_for(result: &Value) -> Option<String> {
