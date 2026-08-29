@@ -129,6 +129,11 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
 
 fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
+    let calendar_text = match &calendar {
+        Value::String(value) => Some(value.to_ascii_lowercase()),
+        Value::StringUnits(_) => Some(crate::conversion::to_string(&calendar)?.to_ascii_lowercase()),
+        _ => None,
+    };
     let day = crate::execute::get_property_result(value, "day")?;
     let day = if matches!(day, Value::Undefined) {
         day
@@ -177,7 +182,11 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         if !(1.0..=12.0).contains(&crate::conversion::to_number(month_number)?) {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
-        if matches!(&month_code, Value::String(value) if value.ends_with('L')) {
+        if matches!(&month_code, Value::String(value) if value.ends_with('L'))
+            && !calendar_text.as_deref().is_some_and(|value| {
+                matches!(value, "chinese" | "dangi" | "hebrew")
+            })
+        {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
     }
@@ -188,7 +197,10 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             if !is_iso_calendar_string(&text) {
                 return Err(crate::value::error::throw_range_error("Invalid calendar"));
             }
-            Value::String("iso8601".into())
+            Value::String(
+                crate::temporal::plain_date::canonical_calendar_id(&text)
+                    .unwrap_or_else(|| "iso8601".into()),
+            )
         }
         value if crate::temporal::plain_date::is_temporal_date_like(&value) => {
             Value::String("iso8601".into())
