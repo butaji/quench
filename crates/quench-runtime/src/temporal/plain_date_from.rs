@@ -397,6 +397,28 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             &month_code,
         ));
     }
+    if overflow == "reject" {
+        let calendar_name = match &calendar {
+            Value::String(name) => crate::temporal::plain_date::canonical_calendar_id(name)
+                .unwrap_or_else(|| name.clone()),
+            _ => "iso8601".to_string(),
+        };
+        let max_day = match &month_code {
+            Value::String(code) => crate::temporal::plain_date::calendar_days_in_month_for_code(
+                year_number as i32,
+                code,
+                &calendar_name,
+            ),
+            _ => crate::temporal::plain_date::calendar_days_in_month(
+                year_number as i32,
+                month_number as u32,
+                &calendar_name,
+            ),
+        };
+        if max_day.is_some_and(|max_day| day > f64::from(max_day)) {
+            return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+        }
+    }
     let result = construct(&[year, month, Value::Number(day), calendar.clone()])?;
     let calendar_name = match &calendar {
         Value::String(name) => name.as_str(),
