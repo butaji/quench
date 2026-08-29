@@ -307,20 +307,21 @@ fn effective_format_slots(slots: &[(String, Value)]) -> Vec<(String, Value)> {
     if slots.iter().any(|(name, _)| {
         matches!(
             name.as_str(),
-            "weekday" | "era" | "year" | "month" | "day" | "hour" | "minute" | "second"
+            "weekday" | "year" | "month" | "day" | "hour" | "minute" | "second"
         )
     }) {
         let mut result = slots.to_vec();
-        if slot_string(slots, "dayPeriod").is_some() && slot_string(slots, "hour").is_some() {
-            for name in ["minute", "second"] {
-                if !result.iter().any(|(existing, _)| existing == name) {
-                    result.push((name.into(), Value::String("numeric".into())));
-                }
-            }
-        }
         return result;
     }
     let mut result = slots.to_vec();
+    if slots.iter().any(|(name, _)| name == "era") {
+        result.extend([
+            ("year".into(), Value::String("numeric".into())),
+            ("month".into(), Value::String("numeric".into())),
+            ("day".into(), Value::String("numeric".into())),
+        ]);
+        return result;
+    }
     let date_style = slot_string(slots, "dateStyle");
     let time_style = slot_string(slots, "timeStyle");
     match date_style.as_deref() {
@@ -422,7 +423,15 @@ fn temporal_default_slots(
         return result;
     }
     match fields.kind {
-        TemporalKind::Instant => {}
+        TemporalKind::Instant => {
+            if result.iter().any(|(name, _)| name == "era") {
+                result.extend([
+                    ("year".to_string(), Value::String("numeric".to_string())),
+                    ("month".to_string(), Value::String("numeric".to_string())),
+                    ("day".to_string(), Value::String("numeric".to_string())),
+                ]);
+            }
+        }
         TemporalKind::PlainTime => {
             result.push(("hour".to_string(), Value::String("numeric".to_string())));
             result.push(("hour12".to_string(), Value::Boolean(true)));
@@ -1243,6 +1252,11 @@ fn single_parts(
                     fields.millisecond,
                 ));
             }
+            let slots = temporal_slots(slots, &fields)?;
+            let number = range_number(value)?;
+            if let Some(parts) = date_time_parts(&slots, number) {
+                return Ok(parts);
+            }
         }
     }
     let number = range_number(value.unwrap_or(&Value::Undefined))?;
@@ -1293,7 +1307,7 @@ fn hour_day_period_format(slots: &[(String, Value)], number: f64) -> Option<Stri
         0 => 12,
         value => value,
     };
-    let text = if slot_string(slots, "minute").is_some() || slot_string(slots, "dayPeriod").is_some() {
+    let text = if slot_string(slots, "minute").is_some() {
         format!("{display_hour}:{minute:02}:{second:02}")
     } else {
         format!("{display_hour}")
@@ -1373,7 +1387,7 @@ fn range_values(
             ));
         }
         if start_temporal.kind == TemporalKind::Instant {
-            let slots = effective_format_slots(slots);
+            let slots = temporal_slots(slots, &start_temporal)?;
             let start_number = range_number(arguments.first().unwrap())?;
             let end_number = range_number(arguments.get(1).unwrap())?;
             let start = date_format_result(&slots, start_number)
