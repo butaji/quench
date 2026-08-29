@@ -119,8 +119,12 @@ fn error_stack_setter_dispatch(value: &Value, stack: &Value) -> Result<bool, VmE
         )
     };
     if owns_stack {
-        let updated = crate::properties::set_with_receiver(value, "stack", stack, value)?;
-        if !updated {
+        let updated = if matches!(value, Value::Proxy(_)) {
+            crate::proxy::proxy_set(value, "stack", stack, Some(value))?
+        } else {
+            Value::Boolean(crate::properties::set_with_receiver(value, "stack", stack, value)?)
+        };
+        if !crate::execute::is_truthy(&updated) {
             return Ok(false);
         }
     } else if matches!(value, Value::Proxy(_)) {

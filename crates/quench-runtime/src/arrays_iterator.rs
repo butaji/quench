@@ -23,6 +23,11 @@ fn typed_array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execut
             "TypedArray iterator called on detached TypedArray",
         ));
     }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on out-of-bounds TypedArray",
+        ));
+    }
     Ok(crate::collections::iterator::make_typed(value.clone()))
 }
 
@@ -33,7 +38,7 @@ fn unwrap_binding_cells(value: &Value) -> Value {
     }
 }
 
-fn typed_array_is_detached(value: &Value) -> bool {
+pub(crate) fn typed_array_is_detached(value: &Value) -> bool {
     let buffer = match value {
         Value::Float64Array(data) => &data.buffer,
         Value::Float32Array(data) => &data.buffer,
@@ -56,11 +61,6 @@ fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError
         return Ok(crate::collections::iterator::make_array_keys(Rc::clone(data)));
     }
     if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
-        if typed_array_is_detached(value) {
-            return Err(crate::value::error::throw_type_error(
-                "Array iterator called on detached TypedArray",
-            ));
-        }
         return Ok(crate::collections::iterator::make_typed_keys(value.clone()));
     }
     let values = array_iterator_values(receiver)?;
@@ -86,6 +86,46 @@ fn array_entries(receiver: Option<&Value>) -> Result<Value, crate::execute::VmEr
             .map(|(index, value)| Value::array(vec![Value::Number(index as f64), value]))
             .collect(),
     ))
+}
+
+fn typed_array_entries(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.entries called on incompatible receiver",
+        ));
+    };
+    if typed_array_is_detached(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on detached TypedArray",
+        ));
+    }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on out-of-bounds TypedArray",
+        ));
+    }
+    Ok(crate::collections::iterator::make_typed_entries(value.clone()))
+}
+
+fn typed_array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.keys called on incompatible receiver",
+        ));
+    };
+    if typed_array_is_detached(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on detached TypedArray",
+        ));
+    }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on out-of-bounds TypedArray",
+        ));
+    }
+    Ok(crate::collections::iterator::make_typed_keys(value.clone()))
 }
 
 fn array_iterator_values(receiver: Option<&Value>) -> Result<Vec<Value>, crate::execute::VmError> {

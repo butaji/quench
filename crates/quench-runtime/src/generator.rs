@@ -93,6 +93,7 @@ fn initialize_parameters(
             private_environment: None,
             suspension: None,
             async_for_of: None,
+            pending_completion: None,
         }),
         registers,
         marker as u32,
@@ -277,6 +278,7 @@ pub(crate) enum Resume {
 
 pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.running.borrow() {
+        *generator.done.borrow_mut() = true;
         return Err(crate::value::error::throw_type_error(
             "Generator is already executing",
         ));
@@ -327,7 +329,7 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
     set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     capture_suspended_private_environment(generator, &mut state, &step.completion);
-    update_machine_frame(generator, &state)?;
+    update_machine_frame(generator, &state, &step.completion)?;
     update_await_frame(generator, &mut state, &step.completion)?;
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
@@ -343,7 +345,11 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
         .ok_or(VmError::MissingReturn)
 }
 
-fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+fn update_machine_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+    completion: &crate::completion::Completion,
+) -> Result<(), VmError> {
     if let Some(crate::continuation::SuspensionPoint::Loop {
         label,
         body,
@@ -372,6 +378,11 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
             },
         )?;
         return Ok(());
+    }
+    if completion.is_suspension() && state.suspension.is_none() {
+        if push_initial_try_frames(generator)? {
+            return Ok(());
+        }
     }
     if push_nested_frame(generator, state)? {
         return Ok(());
@@ -659,5 +670,6 @@ fn initialize_state(generator: &GeneratorData) {
         private_environment: None,
         suspension: None,
         async_for_of: None,
+        pending_completion: None,
     });
 }

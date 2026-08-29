@@ -31,29 +31,85 @@ fn byte_length_getter(
     byte_offset: usize,
     byte_length: usize,
 ) -> Option<Result<Value, VmError>> {
-    if builtin != Builtin::TypedArrayByteLengthGetter {
-        return None;
+    match builtin {
+        Builtin::TypedArrayByteLengthGetter => {
+            let length = if buffer_length < byte_offset.saturating_add(byte_length) {
+                0.0
+            } else {
+                byte_length as f64
+            };
+            Some(Ok(Value::Number(length)))
+        }
+        Builtin::TypedArrayByteOffsetGetter => {
+            let offset = if buffer_length < byte_offset.saturating_add(byte_length) {
+                0.0
+            } else {
+                byte_offset as f64
+            };
+            Some(Ok(Value::Number(offset)))
+        }
+        _ => None,
     }
-    let length = if buffer_length < byte_offset + byte_length {
-        0.0
-    } else {
-        byte_length as f64
-    };
-    Some(Ok(Value::Number(length)))
 }
 
 fn typed_array_accessor(
     builtin: Builtin,
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
+    if builtin == Builtin::TypedArrayToStringTagGetter {
+        let tag = match receiver {
+            Some(Value::Float64Array(_)) => Some("Float64Array"),
+            Some(Value::Float32Array(_)) => Some("Float32Array"),
+            Some(Value::Int8Array(_)) => Some("Int8Array"),
+            Some(Value::Int16Array(_)) => Some("Int16Array"),
+            Some(Value::Int32Array(_)) => Some("Int32Array"),
+            Some(Value::Uint8Array(_)) => Some("Uint8Array"),
+            Some(Value::Uint8ClampedArray(_)) => Some("Uint8ClampedArray"),
+            Some(Value::Uint16Array(_)) => Some("Uint16Array"),
+            Some(Value::Uint32Array(_)) => Some("Uint32Array"),
+            Some(Value::BigInt64Array(_)) => Some("BigInt64Array"),
+            Some(Value::BigUint64Array(_)) => Some("BigUint64Array"),
+            _ => None,
+        };
+        return Some(Ok(tag.map_or(Value::Undefined, |tag| Value::String(tag.into()))));
+    }
+    if builtin == Builtin::TypedArrayBufferGetter {
+        let buffer = match receiver {
+            Some(Value::Float64Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Float32Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Int8Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Int16Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Int32Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint8Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint8ClampedArray(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint16Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint32Array(view)) => Some(view.buffer.clone()),
+            Some(Value::BigInt64Array(view)) => Some(view.buffer.clone()),
+            Some(Value::BigUint64Array(view)) => Some(view.buffer.clone()),
+            _ => None,
+        };
+        return Some(buffer
+            .map(Value::ArrayBuffer)
+            .ok_or_else(|| type_error("TypedArray buffer getter called on incompatible receiver")));
+    }
     macro_rules! access {
         ($view:expr) => {
-            byte_length_getter(
-                builtin,
-                $view.buffer.byte_length(),
-                $view.byte_offset,
-                $view.byte_length(),
-            )
+            if builtin == Builtin::TypedArrayLengthGetter {
+                let out_of_bounds = $view.buffer.byte_length()
+                    < $view.byte_offset.saturating_add($view.byte_length());
+                Some(Ok(Value::Number(if out_of_bounds {
+                    0.0
+                } else {
+                    $view.logical_len() as f64
+                })))
+            } else {
+                byte_length_getter(
+                    builtin,
+                    $view.buffer.byte_length(),
+                    $view.byte_offset,
+                    $view.byte_length(),
+                )
+            }
         };
     }
     match receiver {

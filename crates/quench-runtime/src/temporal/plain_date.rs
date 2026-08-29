@@ -71,6 +71,10 @@ fn days_in_month(year: f64, month: f64) -> f64 {
     }
 }
 
+pub(crate) fn days_in_month_for_record(year: i32, month: u32) -> u32 {
+    days_in_month(f64::from(year), f64::from(month)) as u32
+}
+
 fn is_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
@@ -779,13 +783,15 @@ fn to_zoned_date_time(
     let nanos = crate::conversion::to_number(&values[3])? as u32 * 1_000_000
         + crate::conversion::to_number(&values[4])? as u32 * 1_000
         + crate::conversion::to_number(&values[5])? as u32;
-    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
-    let local = date
-        .and_hms_nano_opt(hour, minute, second, nanos)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid time"))?;
-    let epoch = local.and_utc().timestamp_nanos_opt().unwrap_or(0) as i128
-        - fixed_timezone_offset(&timezone);
+    let day_delta = i128::from(date_serial(year, month, day) - date_serial(1970.0, 1.0, 1.0));
+    let time_nanos = i128::from(hour) * 3_600_000_000_000
+        + i128::from(minute) * 60_000_000_000
+        + i128::from(second) * 1_000_000_000
+        + i128::from(nanos);
+    let epoch = day_delta * 86_400_000_000_000 + time_nanos - fixed_timezone_offset(&timezone);
+    if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
     crate::temporal::zoned_construct(&[Value::BigInt(epoch.to_string()), Value::String(timezone)])
 }
 
@@ -882,11 +888,7 @@ fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<V
             crate::temporal::plain_year_month::construct(year, month)
         }
         crate::ops::Builtin::TemporalZonedDateTimePrototype => {
-            let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-            let epoch = date
-                .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch"))
-                .num_days() as i128
+            let epoch = i128::from(date_serial(year, month, day) - date_serial(1970.0, 1.0, 1.0))
                 * 86_400_000_000_000;
             crate::temporal::zoned_construct(&[
                 Value::BigInt(epoch.to_string()),
@@ -1461,7 +1463,13 @@ fn validate_date_options(options: Option<&Value>, difference: bool) -> Result<()
 fn has_date_fields(object: &crate::value::ObjectData) -> bool {
     object.iter().any(|(key, value)| {
         (key == "\0prototype"
-            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype))
+            && matches!(
+                value,
+                Value::Builtin(
+                    crate::ops::Builtin::TemporalPlainDatePrototype
+                        | crate::ops::Builtin::TemporalZonedDateTimePrototype
+                )
+            ))
             || (key == "\0temporal-plain-date" && value == Value::Boolean(true))
     }) && ["year", "month", "day"].iter().all(|name| {
         object

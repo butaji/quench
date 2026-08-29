@@ -57,7 +57,7 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
-    if let Ok(index) = key.parse::<usize>() {
+    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
         if crate::typed_array_prototype::index_exists(value, index) {
             return Some(descriptor_object_with_flags(
                 crate::execute::get_property(value, key),
@@ -66,6 +66,12 @@ fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
                 true,
             ));
         }
+    }
+    if crate::typed_array_ops::canonical_numeric_index(key) {
+        return None;
+    }
+    if let Some(metadata) = crate::typed_array_prototype::descriptor(value, key) {
+        return Some(public_descriptor(&metadata));
     }
     crate::typed_array_prototype::own_property(value, key)
         .map(|property| descriptor_object(&property))
@@ -153,18 +159,10 @@ fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
         }
     }
     if let Some(metadata) = super::descriptor_metadata(properties, key) {
-        let live = properties
-            .entries()
-            .rev()
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| public_value(&value));
+        let live = properties.value_for_key(key).map(|value| public_value(&value));
         return Some(live_descriptor(&metadata, live));
     }
-    properties
-        .entries()
-        .rev()
-        .find(|(name, _)| *name == key)
-        .map(|(_, value)| {
+    properties.value_for_key(key).map(|value| {
             if matches!(value, Value::Builtin(_)) && crate::vm::global_builtin_exists(key) {
                 descriptor_object_with_flags(value.clone(), true, false, true)
             } else {
@@ -257,7 +255,11 @@ pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
-        (Builtin::TypedArray, "byteLength") => Builtin::TypedArrayByteLengthGetter,
+        (Builtin::TypedArrayPrototype, "byteLength") => Builtin::TypedArrayByteLengthGetter,
+        (Builtin::TypedArrayPrototype, "byteOffset") => Builtin::TypedArrayByteOffsetGetter,
+        (Builtin::TypedArrayPrototype, "length") => Builtin::TypedArrayLengthGetter,
+        (Builtin::TypedArrayPrototype, "buffer") => Builtin::TypedArrayBufferGetter,
+        (Builtin::TypedArrayPrototype, "Symbol.toStringTag") => Builtin::TypedArrayToStringTagGetter,
         _ => return intrinsic_getter_extended(builtin, key),
     };
     Some(getter)
@@ -412,6 +414,11 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    // A user-defined own descriptor shadows any intrinsic accessor or method
+    // metadata for the same key (for example RegExp's legacy `$1` accessor).
+    if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
+        return Some(public_descriptor(&descriptor));
+    }
     if builtin == Builtin::SymbolPrototype && key == "constructor" {
         return Some(descriptor_object_with_flags(
             super::property(builtin, key),
@@ -464,6 +471,12 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::ObjectPrototype && key == "__proto__" {
+        return Some(accessor_descriptor_with_setter(
+            Builtin::ObjectPrototypeGetProto,
+            Some(Builtin::ObjectPrototypeSetProto),
+        ));
+    }
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return Some(descriptor_object_with_flags(
             crate::builtins::generator_prototype(),

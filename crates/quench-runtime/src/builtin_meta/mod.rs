@@ -152,6 +152,18 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::AsyncDisposableStack => Some(Builtin::AsyncDisposableStackPrototype),
         Builtin::FinalizationRegistry => Some(Builtin::FinalizationRegistryPrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
+        Builtin::TypedArray => Some(Builtin::TypedArrayPrototype),
+        Builtin::Float64Array => Some(Builtin::Float64ArrayPrototype),
+        Builtin::Float32Array => Some(Builtin::Float32ArrayPrototype),
+        Builtin::Int8Array => Some(Builtin::Int8ArrayPrototype),
+        Builtin::Int16Array => Some(Builtin::Int16ArrayPrototype),
+        Builtin::Int32Array => Some(Builtin::Int32ArrayPrototype),
+        Builtin::Uint8Array => Some(Builtin::Uint8ArrayPrototype),
+        Builtin::Uint8ClampedArray => Some(Builtin::Uint8ClampedArrayPrototype),
+        Builtin::Uint16Array => Some(Builtin::Uint16ArrayPrototype),
+        Builtin::Uint32Array => Some(Builtin::Uint32ArrayPrototype),
+        Builtin::BigInt64Array => Some(Builtin::BigInt64ArrayPrototype),
+        Builtin::BigUint64Array => Some(Builtin::BigUint64ArrayPrototype),
         Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
         Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
         Builtin::AsyncGeneratorFunction => Some(Builtin::AsyncGeneratorFunctionPrototype),
@@ -176,6 +188,18 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
 
 fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
     match builtin {
+        Builtin::TypedArrayPrototype => Some(Builtin::ObjectPrototype),
+        Builtin::Float64ArrayPrototype
+        | Builtin::Float32ArrayPrototype
+        | Builtin::Int8ArrayPrototype
+        | Builtin::Int16ArrayPrototype
+        | Builtin::Int32ArrayPrototype
+        | Builtin::Uint8ArrayPrototype
+        | Builtin::Uint16ArrayPrototype
+        | Builtin::Uint32ArrayPrototype
+        | Builtin::Uint8ClampedArrayPrototype
+        | Builtin::BigInt64ArrayPrototype
+        | Builtin::BigUint64ArrayPrototype => Some(Builtin::TypedArrayPrototype),
         Builtin::ArrayBuffer => Some(Builtin::ArrayBufferPrototype),
         Builtin::DataView => Some(Builtin::DataViewPrototype),
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
@@ -235,6 +259,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::IteratorPrototype
+            | Builtin::TypedArrayPrototype
             | Builtin::ArrayBufferPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::Float64ArrayPrototype
@@ -342,7 +367,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainTime => Some(0.0),
         Builtin::TemporalPlainMonthDay => Some(2.0),
         Builtin::TemporalPlainYearMonth => Some(2.0),
-        Builtin::TemporalZonedDateTime => Some(3.0),
+        Builtin::TemporalZonedDateTime => Some(2.0),
         Builtin::TemporalPlainDate => Some(3.0),
         Builtin::AbstractModuleSource | Builtin::ShadowRealm => Some(0.0),
         Builtin::DisposableStack => Some(0.0),

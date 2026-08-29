@@ -28,6 +28,12 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
         let descriptor = descriptor_fields(&descriptor)?;
         let result = define_own_property(&target, &key, &descriptor)?;
         crate::locals::replace_value(&target, &result);
+        // `defineProperties` is a host-side builtin and has no opcode
+        // register file to publish a copy-on-write global transition. Keep
+        // the realm's canonical global representative aligned after each
+        // property, just like the single-property path does.
+        let mut registers = crate::register_file::RegisterFile::new();
+        crate::vm::synchronize_global_object(&mut registers, &target, &result);
         Ok(result)
     })
 }
@@ -83,6 +89,17 @@ pub(crate) fn descriptor_fields(
         fields.push((field.to_string(), value));
     }
     validate_accessor_fields(&fields)?;
+    let has_accessor = fields
+        .iter()
+        .any(|(name, _)| name == "get" || name == "set");
+    let has_data = fields
+        .iter()
+        .any(|(name, _)| name == "value" || name == "writable");
+    if has_accessor && has_data {
+        return Err(crate::value::error::throw_type_error(
+            "Property descriptor cannot mix accessor and data fields",
+        ));
+    }
     Ok(fields)
 }
 

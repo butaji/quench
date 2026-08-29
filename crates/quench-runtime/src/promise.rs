@@ -156,7 +156,13 @@ fn process_promise_in_context(promise: &Rc<PromiseData>) {
     }
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
-        process_continuation(continuation, &state);
+        if matches!(state, PromiseState::Pending)
+            && matches!(&continuation, PromiseContinuation::Aggregate { .. })
+        {
+            promise.continuations.borrow_mut().push(continuation);
+        } else {
+            process_continuation(continuation, &state);
+        }
     }
 }
 
@@ -286,7 +292,11 @@ fn process_async_continuation(
         crate::generator::resume_async_after_await(&generator, false, value)
     };
     match resume {
-        Ok(value) => resolve_promise(&result, async_result_value(value, async_function)),
+        Ok(value) => settle_async_result(
+            &result,
+            async_result_value(value, async_function),
+            async_function,
+        ),
         Err(VmError::Suspended(awaited)) => {
             register_async_generator(&awaited, generator, result, async_function);
         }
@@ -395,7 +405,11 @@ pub(crate) fn settle_async_generator_completion(
     async_function: bool,
 ) {
     match completion {
-        Ok(value) => resolve_promise(&promise, async_result_value(value, async_function)),
+        Ok(value) => settle_async_result(
+            &promise,
+            async_result_value(value, async_function),
+            async_function,
+        ),
         Err(VmError::Suspended(awaited)) => {
             register_async_generator(&awaited, generator, promise, async_function)
         }
@@ -433,6 +447,16 @@ fn async_result_value(value: Value, async_function: bool) -> Value {
     } else {
         value
     }
+}
+
+fn settle_async_result(result: &Rc<PromiseData>, value: Value, async_function: bool) {
+    if async_function {
+        if let Value::Promise(promise) = value {
+            adopt_promise(result, &promise);
+            return;
+        }
+    }
+    resolve_promise(result, value);
 }
 
 fn queue_promise(promise: &Rc<PromiseData>) {
@@ -503,6 +527,11 @@ pub fn resolve_promise(promise: &Rc<PromiseData>, value: Value) {
         return;
     }
     set_promise_state(promise, PromiseState::Fulfilled(value));
+    let hooks = std::mem::take(&mut *promise.aggregate_hooks.borrow_mut());
+    let state = promise.state.borrow().clone();
+    for (aggregate, index) in hooks {
+        aggregate_settle(&aggregate, index, &state);
+    }
     promise_resolved(promise);
     queue_promise(promise);
 }
@@ -513,6 +542,11 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
         return;
     }
     set_promise_state(promise, PromiseState::Rejected(reason));
+    let hooks = std::mem::take(&mut *promise.aggregate_hooks.borrow_mut());
+    let state = promise.state.borrow().clone();
+    for (aggregate, index) in hooks {
+        aggregate_settle(&aggregate, index, &state);
+    }
     promise_resolved(promise);
     queue_promise(promise);
     if !promise.rejection_handled.get() && !promise.unhandled_queued.replace(true) {
@@ -792,6 +826,9 @@ pub fn execute_builtin(
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
+        Builtin::PromiseAllKeyed => {
+            promise_keyed_combinator(PromiseAggregateKind::All, receiver, arguments)
+        }
         Builtin::PromiseAllSettled => {
             promise_combinator(PromiseAggregateKind::AllSettled, receiver, arguments)
         }

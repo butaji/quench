@@ -234,10 +234,7 @@ pub fn make_instance(state: &Rc<RefCell<HostState>>, parsed: &Parsed) -> Value {
             native_prototype
         }
     };
-    let object = host_api::object(vec![(
-        "\0url".to_string(),
-        Value::String(parsed.href()),
-    )]);
+    let object = host_api::object(vec![("\0url".to_string(), Value::String(parsed.href()))]);
     execute::set_prototype_of(&object, &prototype).unwrap_or(object)
 }
 

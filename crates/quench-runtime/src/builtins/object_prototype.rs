@@ -62,7 +62,7 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::TypedArray)
         }
         Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
+            Value::Builtin(Builtin::TypedArrayPrototype)
         }
         Value::Builtin(
             Builtin::RangeErrorPrototype
@@ -180,6 +180,10 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }
+        Value::String(_) => Value::Builtin(Builtin::StringPrototype),
+        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
+        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
+        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
         Value::Object(properties) => {
             internal_prototype(properties.as_ref(), Builtin::ObjectPrototype)
         }
@@ -335,13 +339,13 @@ pub(crate) fn define_legacy_accessor(
     field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
-    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let accessor = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&accessor) {
         return Err(crate::value::error::throw_type_error(
             "Accessor must be callable",
         ));
     }
+    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let descriptor = vec![
         (field.to_string(), accessor),
         ("enumerable".to_string(), Value::Boolean(true)),
@@ -357,9 +361,19 @@ pub(crate) fn lookup_legacy_accessor(
     arguments: &[Value],
     field: &str,
 ) -> Result<Value, crate::execute::VmError> {
-    let target = require_object_receiver(receiver)?;
+    let target = require_object_receiver(receiver)?.clone();
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
-    Ok(crate::property_define::accessor(target, &key, field).unwrap_or(Value::Undefined))
+    let mut current = target;
+    loop {
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(&current, &key)?;
+        if !matches!(descriptor, Value::Undefined) {
+            return crate::execute::get_property_result(&descriptor, field);
+        }
+        current = crate::builtins::object::get_prototype_of(Some(&current))?;
+        if matches!(current, Value::Null) {
+            return Ok(Value::Undefined);
+        }
+    }
 }
 
 fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::execute::VmError> {
@@ -472,10 +486,12 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
         builtin,
         Builtin::ObjectPrototype
             | Builtin::DatePrototype
+            | Builtin::RegExpPrototype
             | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::PromisePrototype
+            | Builtin::TypedArrayPrototype
             | Builtin::MapPrototype
             | Builtin::SetPrototype
             | Builtin::WeakMapPrototype
@@ -526,6 +542,8 @@ fn is_typed_array_constructor(builtin: Builtin) -> bool {
             | Builtin::Uint16Array
             | Builtin::Uint32Array
             | Builtin::Uint8ClampedArray
+            | Builtin::BigInt64Array
+            | Builtin::BigUint64Array
     )
 }
 

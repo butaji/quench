@@ -6,12 +6,34 @@ pub use crate::vm::{
 };
 use std::rc::Rc;
 
+pub fn get_own_property_descriptor(
+    target: &crate::value::Value,
+    key: &str,
+) -> Result<crate::value::Value, VmError> {
+    crate::proxy::proxy_get_own_property_descriptor(target, key)
+}
+
 pub fn call(
     function: &crate::value::Value,
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, VmError> {
     crate::functions::execute_target(function, receiver, arguments)
+}
+
+pub fn construct_value(
+    constructor: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, VmError> {
+    crate::construct::construct_value(constructor, arguments)
+}
+
+pub fn construct_value_with_new_target(
+    constructor: &crate::value::Value,
+    new_target: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, VmError> {
+    crate::construct::construct_value_with_new_target(constructor, new_target, arguments)
 }
 
 pub fn set_property(
@@ -35,6 +57,24 @@ pub fn set_property_in_place(
             Some(object) => object,
             None => return false,
         },
+        crate::value::Value::BoundFunction(bound) => {
+            bound.properties.borrow_mut().push((key.to_string(), value));
+            return true;
+        }
+        crate::value::Value::Function(function) => {
+            function
+                .properties
+                .borrow_mut()
+                .push((key.to_string(), value));
+            return true;
+        }
+        crate::value::Value::Array(array) => {
+            unsafe {
+                (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData))
+                    .set_property(key, value);
+            }
+            return true;
+        }
         _ => return false,
     };
     // The host has exclusive semantic ownership of this identity-sensitive
@@ -42,6 +82,32 @@ pub fn set_property_in_place(
     unsafe {
         (&mut *(Rc::as_ptr(&object) as *mut crate::value::ObjectData))
             .set_property_in_place(key, value);
+    }
+    true
+}
+
+/// Mutate an array element while preserving the array identity held by host
+/// wrappers. This is the array counterpart of `set_property_in_place`.
+pub fn set_array_element_in_place(
+    target: &crate::value::Value,
+    index: usize,
+    value: crate::value::Value,
+) -> bool {
+    let crate::value::Value::Array(array) = target else {
+        return false;
+    };
+    unsafe {
+        (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_index(index, value);
+    }
+    true
+}
+
+pub fn set_array_length_in_place(target: &crate::value::Value, length: usize) -> bool {
+    let crate::value::Value::Array(array) = target else {
+        return false;
+    };
+    unsafe {
+        (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_length(length);
     }
     true
 }
@@ -221,6 +287,13 @@ pub fn has_own_property(value: &crate::value::Value, key: &str) -> bool {
 /// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).
 pub fn to_js_string(value: &crate::value::Value) -> Result<String, VmError> {
     crate::conversion::to_string(value)
+}
+
+/// JavaScript's explicit string form used by observable diagnostics. Unlike
+/// `to_js_string`, symbols render as `Symbol(description)` instead of
+/// throwing, matching APIs such as EventEmitter warning messages.
+pub fn to_js_string_explicit(value: &crate::value::Value) -> Result<String, VmError> {
+    crate::conversion::to_string_explicit(value)
 }
 
 /// Canonical `Number::toString` (radix 10) for host code.

@@ -21,6 +21,29 @@ use crate::host::HostState;
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    if matches!(spec.as_str(), "child_process" | "node:child_process") {
+        let global = quench_runtime::vm::current_global_object();
+        let module = quench_runtime::execute::get_property(&global, "__nodeRequireChildProcess");
+        if matches!(module, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(module);
+        }
+        let factory = quench_runtime::execute::get_property(&global, "__nodeChildProcessModule");
+        if matches!(factory, Value::Function(_) | Value::BoundFunction(_)) {
+            let module = quench_runtime::execute::call(&factory, &Value::Undefined, &[])?;
+            state.borrow_mut().module_cache.insert("child_process".into(), module.clone());
+            return Ok(module);
+        }
+    }
+    if let Some(mock) = crate::modules::test::mocked_module(&spec) {
+        if crate::modules::test::mock_module_cache(&spec) {
+            let key = format!("\0mock:{spec}");
+            if let Some(cached) = state.borrow().module_cache.get(&key) {
+                return Ok(cached.clone());
+            }
+            state.borrow_mut().module_cache.insert(key, mock.clone());
+        }
+        return Ok(mock);
+    }
     if spec == "node:url" {
         let cached = state.borrow().module_cache.get("url").cloned();
         if let Some(value) = cached {
@@ -95,11 +118,9 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         if let Some(cached) = state.borrow().module_cache.get(requested_key) {
             return Ok(cached.clone());
         }
-        let promises = crate::modules::timers::build_promises()
+        let timers = crate::modules::timers::build_with_promises()
             .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
-        let mut bindings = crate::modules::timers::build();
-        bindings.push(("promises".to_string(), promises.clone()));
-        let timers = crate::host::namespace_object_from_pairs(bindings);
+        let promises = quench_runtime::execute::get_property(&timers, "promises");
         state
             .borrow_mut()
             .module_cache
@@ -188,7 +209,10 @@ fn execute_module(
         .map(|pending| pending.module.clone());
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
+    let context = quench_runtime::vm::current_context()
+        .as_ref()
+        .clone()
+        .with_source_text(source.to_owned());
     // Re-entrant execution: `execute_with_context` would reset the
     // runtime's locals state and corrupt the frame that called `require`.
     let mut registers = quench_runtime::register_file::RegisterFile::new();
@@ -330,12 +354,46 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         ])),
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {
-            let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
-            let _ = quench_runtime::execute::set_callable_property(
-                &custom_event,
-                "prototype",
-                crate::host::namespace_object_from_pairs(Vec::new()),
-            );
+            let global = quench_runtime::vm::current_global_object();
+            let event_target = quench_runtime::execute::get_property(&global, "EventTarget");
+            let event = quench_runtime::execute::get_property(&global, "Event");
+            for (name, value) in [
+                ("NONE", 0.0),
+                ("CAPTURING_PHASE", 1.0),
+                ("AT_TARGET", 2.0),
+                ("BUBBLING_PHASE", 3.0),
+            ] {
+                let _ = quench_runtime::execute::set_callable_property(
+                    &event,
+                    name,
+                    Value::Number(value),
+                );
+            }
+            let node_event_target = {
+                let constructor =
+                    crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_NEW);
+                let prototype = crate::modules::event_target::node_prototype();
+                let event_prototype = quench_runtime::execute::get_property(
+                    &quench_runtime::execute::get_property(&global, "EventTarget"),
+                    "prototype",
+                );
+                let prototype =
+                    quench_runtime::execute::set_prototype_of(&prototype, &event_prototype)
+                        .unwrap_or(prototype);
+                crate::modules::event_target::set_node_prototype(prototype.clone());
+                let _ = quench_runtime::execute::set_callable_property(
+                    &constructor,
+                    "prototype",
+                    prototype,
+                );
+                let _ = quench_runtime::execute::set_callable_property(
+                    &constructor,
+                    "defaultMaxListeners",
+                    Value::Number(10.0),
+                );
+                constructor
+            };
+            let custom_event = quench_runtime::execute::get_property(&global, "CustomEvent");
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
@@ -356,30 +414,22 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
                     "Event".to_string(),
-                    crate::host::capability(crate::registry::SPEC_EVENT),
+                    event,
                 ),
                 ("CustomEvent".to_string(), custom_event),
                 (
                     "defineEventHandler".to_string(),
                     crate::host::capability(crate::registry::SPEC_DEFINE_EVENT_HANDLER),
                 ),
-                (
-                    "EventTarget".to_string(),
-                    crate::host::capability(crate::registry::NodeSpec::new(
-                        "events:EventTarget",
-                        0x0116,
-                    )),
-                ),
-                (
-                    "NodeEventTarget".to_string(),
-                    crate::host::capability(crate::registry::NodeSpec::new(
-                        "events:EventTarget",
-                        0x0116,
-                    )),
-                ),
+                ("EventTarget".to_string(), event_target),
+                ("NodeEventTarget".to_string(), node_event_target),
                 (
                     "kWeakHandler".to_string(),
                     Value::String("kWeakHandler\0quench".to_string()),
+                ),
+                (
+                    "kEvents".to_string(),
+                    Value::String("Symbol.for.quench.event_target.events\0".to_string()),
                 ),
             ]))
         }
@@ -464,18 +514,74 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let test_fn = crate::host::capability(crate::registry::SPEC_TEST);
             let skip_fn = crate::host::capability(crate::registry::SPEC_TEST_SKIP);
             let _ = attach(&test_fn, "skip", skip_fn.clone());
-            for alias in ["test", "describe", "it", "suite"] {
+            for alias in ["test", "it"] {
                 let _ = attach(&test_fn, alias, test_fn.clone());
             }
+            let nested_fn = crate::host::capability(crate::registry::SPEC_TEST_NESTED);
+            for alias in ["describe", "suite"] {
+                let _ = attach(&test_fn, alias, nested_fn.clone());
+            }
+            let _ = attach(&test_fn, "run", test_fn.clone());
+            let _ = attach(
+                &test_fn,
+                "getTestContext",
+                crate::host::capability(crate::registry::SPEC_TEST_GET_CONTEXT),
+            );
+            let _ = attach(
+                &test_fn,
+                "before",
+                crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH),
+            );
+            let _ = attach(
+                &test_fn,
+                "after",
+                crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH),
+            );
+            let mock = quench_runtime::host_api::object(vec![
+                (
+                    "fn".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                ),
+                (
+                    "method".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
+                ),
+                (
+                    "getter".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER),
+                ),
+                (
+                    "setter".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER),
+                ),
+                (
+                    "property".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY),
+                ),
+            ]);
+            let _ = attach(&test_fn, "mock", mock);
+            let _ = quench_runtime::execute::set_property_in_place(
+                &quench_runtime::execute::get_property(&test_fn, "mock"),
+                "reset",
+                crate::host::capability(crate::registry::SPEC_TEST_MOCK_RESET),
+            );
             Some(test_fn)
         }
-        "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "ReadableStream".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "stream_web:ReadableStream",
-                0x1c00,
-            )),
-        )])),
+        "stream/web" => {
+            let global = quench_runtime::vm::current_global_object();
+            match quench_runtime::execute::get_property(&global, "__quenchWebStreams") {
+                Value::Object(_) | Value::ObjectAlias(_) => Some(
+                    quench_runtime::execute::get_property(&global, "__quenchWebStreams"),
+                ),
+                _ => Some(crate::host::namespace_object_from_pairs(vec![(
+                    "ReadableStream".to_string(),
+                    crate::host::capability(crate::registry::NodeSpec::new(
+                        "stream_web:ReadableStream",
+                        0x1c00,
+                    )),
+                )])),
+            }
+        }
         "stream/consumers" => Some(crate::host::namespace_object_from_pairs(vec![(
             "text".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
@@ -499,43 +605,63 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 )),
             ),
         ])),
-        "timers" => {
-            let mut bindings = crate::modules::timers::build();
-            let promises = crate::modules::timers::build_promises()
-                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
-            bindings.push(("promises".to_string(), promises));
-            Some(crate::host::namespace_object_from_pairs(bindings))
-        }
+        "timers" => Some(
+            crate::modules::timers::build_with_promises()
+                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
+        ),
         "timers/promises" => Some(
             crate::modules::timers::build_promises()
                 .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
         ),
-        "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "spawnSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
-            ),
-            (
-                "execSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
-            ),
-            (
-                "exec".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXEC),
-            ),
-            (
-                "execFile".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECFILE),
-            ),
-            (
-                "execFileSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
-            ),
-            (
-                "spawn".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWN),
-            ),
-        ])),
+        "child_process" => {
+            let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
+            let constructor = crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR);
+            let prototype = host_api::object(Vec::new());
+            let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
+            let global = quench_runtime::vm::current_global_object();
+            let _ = quench_runtime::execute::define_property(
+                global,
+                "__nodeChildProcessPrototype",
+                host_api::object(vec![
+                    ("value".into(), prototype),
+                    ("writable".into(), Value::Boolean(false)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(false)),
+                ]),
+            );
+            Some(crate::host::namespace_object_from_pairs(vec![
+                (
+                    "fork".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_FORK),
+                ),
+                (
+                    "ChildProcess".to_string(),
+                    constructor,
+                ),
+                (
+                    "spawnSync".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
+                ),
+                (
+                    "execSync".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
+                ),
+                (
+                    "exec".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_EXEC),
+                ),
+                ("execFile".to_string(), exec_file.clone()),
+                ("\0quench:child_process_execFile".to_string(), exec_file),
+                (
+                    "execFileSync".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
+                ),
+                (
+                    "spawn".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_SPAWN),
+                ),
+            ]))
+        }
         _ => None,
     }
 }

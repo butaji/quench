@@ -118,14 +118,32 @@ fn ensure_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> O
 }
 
 pub fn initialize_emitter(state: &Rc<RefCell<HostState>>, receiver: &Value) -> Result<(), VmError> {
-    ensure_emitter(state, Some(receiver))
-        .map(|_| ())
-        .ok_or_else(|| execute::type_error("receiver is not an EventEmitter"))
+    let Some(id) = expect_emitter(state, Some(receiver)) else {
+        return ensure_emitter(state, Some(receiver))
+            .map(|_| ())
+            .ok_or_else(|| execute::type_error("receiver is not an EventEmitter"));
+    };
+    if let Some(emitter) = state.borrow().emitters.get(id) {
+        let capture = CAPTURE_REJECTIONS.with(Cell::get);
+        *emitter.borrow_mut() = EventEmitter::new();
+        emitter.borrow_mut().capture_rejections = capture;
+    }
+    reset_emitter_properties(receiver);
+    Ok(())
+}
+
+fn reset_emitter_properties(receiver: &Value) {
+    let events = execute::set_property(host_api::object(Vec::new()), "\0prototype", Value::Null);
+    let updated = execute::set_property(receiver.clone(), "_events", events);
+    let updated = execute::set_property(updated, "_eventsCount", Value::Number(0.0));
+    let updated = execute::set_property(updated, "domain", Value::Undefined);
+    execute::replace_value(receiver, &updated);
 }
 
 fn event_name(value: Option<&Value>) -> Result<String, VmError> {
     match value {
         Some(Value::String(name)) => Ok(name.clone()),
+        Some(Value::Null) => Ok("null".into()),
         // Node canonicalizes numeric event names through property-key
         // coercion (`on(1, fn)` and `emit('1')` address the same channel).
         Some(Value::Number(number)) => Ok(execute::number_to_js_string(*number)),
@@ -155,6 +173,7 @@ fn add_listener(
     once: bool,
     prepend: bool,
 ) -> Result<Value, VmError> {
+    let event_value = args.first().cloned().unwrap_or(Value::Undefined);
     let event = event_name(args.first())?;
     let callback = expect_listener(args)?;
     let Some(id) = ensure_emitter(state, receiver) else {
@@ -174,10 +193,11 @@ fn add_listener(
             ],
         )?;
     }
-    let (count, max, already_warned) = {
+    let already_warned = receiver.is_some_and(|value| event_is_warned(value, &event));
+    let (count, max) = {
         let mut guard = emitter.borrow_mut();
         let count = guard.add(&event, callback.clone(), once, prepend);
-        (count, guard.max, guard.warned)
+        (count, guard.max)
     };
     if let Some(receiver) = receiver {
         if let Ok(events) = execute::get_property_result(receiver, "_events") {
@@ -198,10 +218,39 @@ fn add_listener(
     }
     let limit = max.unwrap_or(state.borrow().emitters.default_max);
     if count > limit && limit > 0 && !already_warned {
-        emitter.borrow_mut().warned = true;
-        warn_max_listeners(state, &event, count);
+        mark_event_warned(receiver.expect("validated emitter"), &event);
+        warn_max_listeners(
+            state,
+            receiver.expect("validated emitter"),
+            &event,
+            &event_value,
+            count,
+            limit,
+        );
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn mark_event_warned(receiver: &Value, event: &str) {
+    let Ok(events) = execute::get_property_result(receiver, "_events") else {
+        return;
+    };
+    let current = execute::get_property(&events, event);
+    if matches!(current, Value::Array(_)) {
+        let updated = execute::set_property(current.clone(), "warned", Value::Boolean(true));
+        execute::replace_value(&current, &updated);
+    }
+}
+
+fn event_is_warned(receiver: &Value, event: &str) -> bool {
+    let Ok(events) = execute::get_property_result(receiver, "_events") else {
+        return false;
+    };
+    let current = execute::get_property(&events, event);
+    matches!(
+        execute::get_property(&current, "warned"),
+        Value::Boolean(true)
+    )
 }
 
 fn sync_event_property(receiver: Option<&Value>, event: &str, listeners: &[Listener]) {
@@ -230,30 +279,47 @@ fn sync_event_property(receiver: Option<&Value>, event: &str, listeners: &[Liste
 
 /// Queue a `MaxListenersExceededWarning` process warning, mirroring
 /// Node's one-warning-per-emitter behavior.
-fn warn_max_listeners(state: &Rc<RefCell<HostState>>, event: &str, count: usize) {
+fn warn_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    emitter: &Value,
+    event: &str,
+    event_value: &Value,
+    count: usize,
+    limit: usize,
+) {
+    let label = match execute::get_property(emitter, "constructor") {
+        constructor if quench_runtime::is_callable(&constructor) => {
+            match execute::get_property(&constructor, "name") {
+                Value::String(name) if !name.is_empty() && name != "Object" => {
+                    format!("[{name}]")
+                }
+                _ => "[EventEmitter]".into(),
+            }
+        }
+        _ => "[EventEmitter]".into(),
+    };
+    let display = execute::to_js_string_explicit(event_value)
+        .unwrap_or_else(|_| event.to_string());
     let message = format!(
-        "Possible EventEmitter memory leak detected. {count} {event} listeners added. Use emitter.setMaxListeners() to increase limit"
+        "Possible EventEmitter memory leak detected. {count} {display} listeners added to {label}. MaxListeners is {limit}. Use emitter.setMaxListeners() to increase limit"
     );
-    let warning = host_api::object(vec![
-        (
-            "name".to_string(),
-            Value::String("MaxListenersExceededWarning".to_string()),
-        ),
-        ("message".to_string(), Value::String(message)),
-    ]);
-    let handlers: Vec<Value> = state
-        .borrow()
-        .process
-        .warning_handlers
-        .iter()
-        .map(|(handler, _)| handler.clone())
-        .collect();
-    for handler in handlers {
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(handler, vec![warning.clone()]);
-    }
+    let warning = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let warning = execute::set_property(
+        warning,
+        "name",
+        Value::String("MaxListenersExceededWarning".into()),
+    );
+    let warning = execute::set_property(warning, "emitter", emitter.clone());
+    let warning = execute::set_property(warning, "count", Value::Number(count as f64));
+    let warning = execute::set_property(warning, "type", event_value.clone());
+    let process_emit = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(process_emit, vec![Value::String("warning".into()), warning]);
 }
 
 pub fn method_on(
@@ -462,12 +528,14 @@ fn route_domain_error(
     if handler.is_none() || matches!(handler, Some(Value::Undefined | Value::Null)) {
         return Ok(None);
     }
-    let original = argument.cloned();
-    let error = argument.cloned().unwrap_or_else(|| {
-        host_api::object(vec![(
-            "message".into(),
-            Value::String("Unhandled error.".into()),
-        )])
+    let original = argument
+        .cloned()
+        .filter(|value| !matches!(value, Value::Null | Value::Undefined | Value::Boolean(false)));
+    let error = original.clone().unwrap_or_else(|| {
+        quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("Unhandled error.".into())],
+        )
     });
     let error = execute::set_property(error, "domain", domain.clone());
     let error = execute::set_property(error, "domainEmitter", receiver.clone());
@@ -818,7 +886,7 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
             emitter.borrow_mut().capture_rejections = capture;
         }
     }
-    install_emitter_props(object)
+    install_emitter_props(object, false)
 }
 
 /// Build a fresh EventEmitter-backed object with all standard emitter
@@ -827,8 +895,11 @@ pub fn new_emitter_object(state: &Rc<RefCell<HostState>>) -> Result<Value, VmErr
     new_emitter(state, &[])
 }
 
-fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
-    for (key, value) in emitter_props() {
+fn install_emitter_props(mut object: Value, include_constructor: bool) -> Result<Value, VmError> {
+    for (key, value) in emitter_props()
+        .into_iter()
+        .filter(|(key, _)| include_constructor || *key != "constructor")
+    {
         let descriptor = host_api::object(vec![
             ("value".to_string(), value),
             ("writable".to_string(), Value::Boolean(true)),
@@ -844,7 +915,7 @@ fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
 /// global constructor. Keeping one declaration prevents host/JS realms from
 /// drifting on deletion and override semantics.
 pub fn emitter_prototype() -> Result<Value, VmError> {
-    install_emitter_props(host_api::object(Vec::new()))
+    install_emitter_props(host_api::object(Vec::new()), true)
 }
 
 fn emitter_props() -> Vec<(&'static str, Value)> {
@@ -1076,7 +1147,10 @@ pub fn build() -> Value {
             done = true;
             cleanup();
             const pending = waiters.splice(0);
-            pending.forEach(({ resolve, reject }) => error ? reject(error) : resolve({ value: undefined, done: true }));
+            if (error && pending.length) {
+              pending.shift().reject(error);
+            }
+            pending.forEach(({ resolve }) => resolve({ value: undefined, done: true }));
           };
           const push = (value) => {
             if (done) return;
@@ -1112,7 +1186,7 @@ pub fn build() -> Value {
                 throw error;
               }
               finish(reason);
-              return Promise.reject(reason);
+              return undefined;
             },
             [Symbol.asyncIterator]() { return this; }
           };

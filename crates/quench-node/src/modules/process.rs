@@ -29,8 +29,8 @@ pub enum UnhandledRejectionMode {
 
 pub struct ProcessState {
     pub argv: Vec<String>,
-    pub exit_handlers: Vec<Value>,
-    pub before_exit_handlers: Vec<Value>,
+    pub exit_handlers: Vec<(Value, bool)>,
+    pub before_exit_handlers: Vec<(Value, bool)>,
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
@@ -39,6 +39,7 @@ pub struct ProcessState {
     pub other_handlers: Vec<(String, Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
+    pub deprecations_emitted: Vec<(Value, Option<String>)>,
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
@@ -75,6 +76,7 @@ impl ProcessState {
             unhandled_rejection_mode: UnhandledRejectionMode::Throw,
             other_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
+            deprecations_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
             version: "v22.0.0".into(),
@@ -86,14 +88,56 @@ impl ProcessState {
     }
 }
 
+pub(crate) fn mark_deprecation(
+    state: &Rc<RefCell<HostState>>,
+    callback: &Value,
+    code: Option<&str>,
+) -> bool {
+    let mut guard = state.borrow_mut();
+    let seen = guard
+        .process
+        .deprecations_emitted
+        .iter()
+        .any(
+            |(seen_callback, seen_code)| match (code, seen_code.as_deref()) {
+                (Some(code), Some(seen)) => code == seen,
+                (None, None) => callback == seen_callback,
+                _ => false,
+            },
+        );
+    if !seen {
+        guard
+            .process
+            .deprecations_emitted
+            .push((callback.clone(), code.map(str::to_string)));
+    }
+    !seen
+}
+
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
     props.extend(method_props());
-    crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
+    let process =
+        crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
+    let descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_GET),
+        ),
+        (
+            "set".into(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_SET),
+        ),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(false)),
+    ]);
+    let _ = quench_runtime::execute::define_property(process.clone(), "exitCode", descriptor);
+    process
 }
 
 fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
     vec![
+        ("Symbol.toStringTag", Value::String("process".into())),
         (
             "argv",
             host_api::array(argv.iter().cloned().map(Value::String).collect()),
@@ -101,22 +145,18 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("env", env_object()),
         (
             "config",
-            crate::host::readonly_namespace_from_pairs(vec![
-                (
-                    "variables".to_string(),
-                    crate::host::readonly_namespace_from_pairs(vec![
-                        (
-                            "v8_enable_i18n_support".to_string(),
-                            Value::Number(1.0),
-                        ),
-                    ]),
-                ),
-            ]),
+            crate::host::readonly_namespace_from_pairs(vec![(
+                "variables".to_string(),
+                crate::host::readonly_namespace_from_pairs(vec![(
+                    "v8_enable_i18n_support".to_string(),
+                    Value::Number(1.0),
+                )]),
+            )]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
         (
             "argv0",
-            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| "node".into())),
+            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| exec_path.to_string())),
         ),
         (
             "release",
@@ -150,6 +190,16 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
     ]
 }
 
+#[cfg(unix)]
+fn process_parent_id() -> u32 {
+    std::os::unix::process::parent_id()
+}
+
+#[cfg(not(unix))]
+fn process_parent_id() -> u32 {
+    0
+}
+
 pub fn features() -> Value {
     host_api::object(vec![
         ("inspector".into(), Value::Boolean(false)),
@@ -174,6 +224,12 @@ fn std_stream(is_error: bool) -> Value {
     crate::host::namespace_object_from_pairs(vec![
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
+        ("writable".to_string(), Value::Boolean(true)),
+        (
+            "fd".to_string(),
+            Value::Number(if is_error { 2.0 } else { 1.0 }),
+        ),
+        ("writeTimes".to_string(), Value::Number(0.0)),
         (
             "write".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
@@ -206,6 +262,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         (
             "exit",
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
+        ),
+        (
+            "kill",
+            crate::host::capability(crate::registry::SPEC_PROCESS_KILL),
         ),
         (
             "abort",
@@ -376,7 +436,24 @@ pub fn versions_props() -> Vec<(String, Value)> {
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let code = args.first().map(value_to_i32).unwrap_or(0);
     state.borrow_mut().process.exit_code = Some(code);
-    Err(VmError::Thrown(Value::String(format!("process.exit({code})"))))
+    Err(VmError::Thrown(Value::String(format!(
+        "process.exit({code})"
+    ))))
+}
+
+pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let pid = args.first().and_then(|value| match value {
+        Value::Number(number) if number.is_finite() => Some(*number as i64),
+        _ => None,
+    });
+    if pid != Some(std::process::id() as i64) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String("kill ESRCH".into())),
+            ("code".into(), Value::String("ESRCH".into())),
+        ])));
+    }
+    Ok(Value::Boolean(true))
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -401,12 +478,22 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             ("code".into(), Value::String("ENOENT".into())),
             (
                 "message".into(),
-                Value::String(format!("ENOENT: no such file or directory, chdir {} -> '{}'", state.borrow().process.cwd.display(), path)),
+                Value::String(format!(
+                    "ENOENT: no such file or directory, chdir {} -> '{}'",
+                    state.borrow().process.cwd.display(),
+                    path
+                )),
             ),
-            ("path".into(), Value::String(state.borrow().process.cwd.to_string_lossy().into_owned())),
+            (
+                "path".into(),
+                Value::String(state.borrow().process.cwd.to_string_lossy().into_owned()),
+            ),
             ("syscall".into(), Value::String("chdir".into())),
             ("dest".into(), Value::String(path.clone())),
-            ("errno".into(), Value::Number(error.raw_os_error().unwrap_or(2) as f64)),
+            (
+                "errno".into(),
+                Value::Number(error.raw_os_error().unwrap_or(2) as f64),
+            ),
         ]))),
     }
 }
@@ -432,10 +519,17 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
     }
+    let domain = match quench_runtime::execute::get_property(&global, "__quench_active_domain") {
+        Value::Object(_) => Some(quench_runtime::execute::get_property(
+            &global,
+            "__quench_active_domain",
+        )),
+        _ => None,
+    };
     state
         .borrow_mut()
         .event_loop
-        .queue_microtask_with_resource(cb, rest, resource);
+        .queue_microtask_with_resource_domain(cb, rest, resource, domain);
     Ok(Value::Undefined)
 }
 
@@ -515,9 +609,16 @@ fn std_env(name: &str, default: &str) -> String {
 pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
         match event.as_str() {
-            "exit" | "beforeExit" => {
-                on(state, args)?;
-            }
+            "exit" => state
+                .borrow_mut()
+                .process
+                .exit_handlers
+                .push((handler.clone(), true)),
+            "beforeExit" => state
+                .borrow_mut()
+                .process
+                .before_exit_handlers
+                .push((handler.clone(), true)),
             "uncaughtException" | "warning" | "unhandledRejection" => {
                 push_handler(state, handler, event.as_str(), true)
             }
@@ -615,12 +716,12 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 .borrow_mut()
                 .process
                 .exit_handlers
-                .push(handler.clone()),
+                .push((handler.clone(), false)),
             "beforeExit" => state
                 .borrow_mut()
                 .process
                 .before_exit_handlers
-                .push(handler.clone()),
+                .push((handler.clone(), false)),
             "uncaughtException" | "unhandledRejection" => {
                 push_handler(state, handler, event, false)
             }
@@ -668,6 +769,7 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         (
             handlers
                 .iter()
+                .filter(|(_, once)| !*once)
                 .map(|(handler, _)| handler.clone())
                 .collect::<Vec<_>>(),
             handlers
@@ -679,6 +781,7 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     };
     for handler in once {
         remove_handler(state, event, &handler);
+        quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
     }
     for handler in normal {
         quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
@@ -722,6 +825,12 @@ pub fn remove_all_listeners(
     }
     if event.is_none() || event == Some("unhandledRejection") {
         process.unhandled_rejection_handlers.clear();
+    }
+    if event.is_none() || event == Some("exit") {
+        process.exit_handlers.clear();
+    }
+    if event.is_none() || event == Some("beforeExit") {
+        process.before_exit_handlers.clear();
     }
     process
         .other_handlers
@@ -779,15 +888,13 @@ pub(crate) fn emit_warning_with_detail(
     detail: Option<&str>,
     once_per_process: bool,
 ) {
-    {
+    if once_per_process {
         let mut guard = state.borrow_mut();
         let key = format!("{name}:{message}");
         if guard.process.warnings_emitted.iter().any(|n| n == &key) {
             return;
         }
-        if once_per_process {
-            guard.process.warnings_emitted.push(key);
-        }
+        guard.process.warnings_emitted.push(key);
     }
     let mut props = vec![
         ("name".to_string(), Value::String(name.to_string())),

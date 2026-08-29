@@ -21,6 +21,7 @@ pub const WINDOWS: bool = cfg!(target_os = "windows");
 pub fn validate_string(value: &Value, name: &str) -> Result<String, VmError> {
     match value {
         Value::String(s) if !quench_runtime::execute::is_symbol(value) => Ok(s.clone()),
+        Value::StringUnits(_) => quench_runtime::execute::to_js_string(value),
         other => Err(invalid_arg_type(name, other)),
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     facts::ProgramDb,
     ops::Op,
-    value::{ObjectData, Value},
+    value::{ObjectData, PropertyEntries, Value},
 };
 use std::{collections::HashMap, rc::Rc};
 pub(crate) fn reduce(
@@ -146,6 +146,20 @@ fn construct_builtin_target(
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
     let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
+    if builtin == crate::ops::Builtin::Object && needs_new_target {
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let prototype = if crate::value::is_object(&prototype) {
+            prototype
+        } else {
+            crate::vm::realm_intrinsic_for(
+                constructor_realm(new_target),
+                crate::ops::Builtin::ObjectPrototype,
+            )
+        };
+        return Ok(crate::value::Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![("\0prototype".into(), prototype)]),
+        )));
+    }
     if builtin == crate::ops::Builtin::Iterator && !needs_new_target {
         return Err(crate::value::error::throw_type_error(
             "Iterator is not constructable",
@@ -175,6 +189,11 @@ fn construct_builtin_target(
         let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
         return apply_new_target_prototype(value, target, new_target, prototype);
     }
+    if is_typed_array_constructor_builtin(builtin) && needs_new_target {
+        let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        return apply_new_target_prototype(value, target, new_target, prototype);
+    }
     let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
@@ -190,6 +209,23 @@ fn construct_builtin_target(
     };
     validate_data_view(&value)?;
     Ok(value)
+}
+
+fn is_typed_array_constructor_builtin(builtin: crate::ops::Builtin) -> bool {
+    matches!(
+        builtin,
+        crate::ops::Builtin::Float64Array
+            | crate::ops::Builtin::Float32Array
+            | crate::ops::Builtin::Int8Array
+            | crate::ops::Builtin::Int16Array
+            | crate::ops::Builtin::Int32Array
+            | crate::ops::Builtin::Uint8Array
+            | crate::ops::Builtin::Uint8ClampedArray
+            | crate::ops::Builtin::Uint16Array
+            | crate::ops::Builtin::Uint32Array
+            | crate::ops::Builtin::BigInt64Array
+            | crate::ops::Builtin::BigUint64Array
+    )
 }
 
 fn is_dynamic_function_constructor(builtin: crate::ops::Builtin) -> bool {
@@ -338,6 +374,9 @@ fn set_internal_prototype(
     value: Value,
     prototype: Value,
 ) -> Result<Value, crate::execute::VmError> {
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        return crate::builtins::object::set_prototype_of(&[value, prototype]);
+    }
     if matches!(
         value,
         Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_)
@@ -457,6 +496,11 @@ fn construct_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if builtin == crate::ops::Builtin::TypedArray {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray is not directly constructible",
+        ));
+    }
     if is_error_builtin(builtin) {
         return construct_error(&builtin, arguments);
     }
@@ -495,7 +539,14 @@ fn construct_function(
     if is_default_derived_constructor(function) {
         let super_constructor = derived_constructor(function)?;
         let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
-        return initialize_instance_fields(function, receiver);
+        let receiver = initialize_instance_fields(function, receiver)?;
+        // A default derived constructor must honor the active newTarget.  In
+        // nested typed-array subclasses, using this function's prototype
+        // loses the outer subclass constructor and breaks species creation.
+        let prototype = get_prototype_from_constructor(target, |_| {
+            crate::execute::get_property(&Value::Function(function.clone()), "prototype")
+        });
+        return set_internal_prototype(receiver, prototype);
     }
     if crate::functions::is_derived_constructor(function) {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
@@ -503,7 +554,7 @@ fn construct_function(
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
         return finish_derived_construct(result, final_this);
     }
-    if function.instance_fields.borrow().is_empty() {
+    if function.instance_fields.borrow().is_empty() && !matches!(target, Value::Proxy(_)) {
         if let Some(object) = try_record_constructor(function, target, arguments) {
             return Ok(object);
         }
