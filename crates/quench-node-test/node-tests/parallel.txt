@@ -57,6 +57,7 @@ test-stream-pipe-cleanup.js
 test-stream-unpipe-event.js
 test-stream-write-destroy.js
 test-stream-destroy.js
+test-stream-consumers.js
 test-stream-pipe-error-handling.js
 test-stream-pipe-error-unhandled.js
 test-stream-readable-setEncoding-existing-buffers.js

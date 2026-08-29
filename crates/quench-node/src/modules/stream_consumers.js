@@ -46,12 +46,23 @@
     Buffer.concat((await consume(stream)).map(binaryChunk));
   const text = async (stream) =>
     Buffer.concat((await consume(stream)).map(textChunk)).toString();
+  const makeBlob = (data) => {
+    if (typeof Blob === "function" && typeof Blob.prototype.arrayBuffer === "function") {
+      return new Blob([data]);
+    }
+    return {
+      size: data.byteLength,
+      type: "",
+      arrayBuffer: async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+      text: async () => data.toString()
+    };
+  };
   return {
     buffer,
     arrayBuffer: async (stream) => (await buffer(stream)).buffer,
     text,
     json: async (stream) => JSON.parse(await text(stream)),
     bytes: async (stream) => new Uint8Array(await buffer(stream)),
-    blob: async (stream) => new Blob([await buffer(stream)])
+    blob: async (stream) => makeBlob(await buffer(stream))
   };
 })()
