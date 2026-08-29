@@ -447,6 +447,19 @@ fn difference(
     }
     let left_month_code = object_property_string(Some(receiver), "monthCode");
     let right_month_code = object_property_string(Some(&right_value), "monthCode");
+    let left_era = crate::temporal::plain_date::era_for_calendar_date(
+        &calendar, left[0], left[1], left[2],
+    );
+    let right_era = crate::temporal::plain_date::era_for_calendar_date(
+        &calendar, right[0], right[1], right[2],
+    );
+    let era_boundary_week_day = match calendar.as_str() {
+        "ethiopic" => left_era != right_era,
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" | "roc" => {
+            left_era != right_era
+        }
+        _ => false,
+    };
     let leap_month_boundary = match calendar.as_str() {
         "chinese" | "dangi" => {
             ([2000.0, 2001.0, 2002.0].contains(&left[0])
@@ -470,7 +483,8 @@ fn difference(
         && rounding_increment == 1.0
         && rounding_mode == "trunc"
         && time_of_day_nanos(&left) == time_of_day_nanos(&right)
-        && (!leap_month_boundary || matches!(largest.as_str(), "year" | "month"))
+        && (!leap_month_boundary && !era_boundary_week_day
+            || matches!(largest.as_str(), "year" | "month"))
     {
         if let Some((years, months, weeks, days)) =
             crate::temporal::plain_date::calendar_difference_fields(
