@@ -159,6 +159,9 @@ const __nodeFsReadWithBuffer = (bytes, options, encoding) => {
   if (!(target instanceof Uint8Array)) {
     throw Object.assign(new TypeError('The "buffer" option must return a Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
+  if (target.length < buffer.length) {
+    throw Object.assign(new RangeError('The "buffer" option must be at least as large as the file'), { code: "ERR_INVALID_ARG_VALUE" });
+  }
   target.set(buffer.subarray(0, target.length));
   return encoding
     ? target.toString(encoding)
