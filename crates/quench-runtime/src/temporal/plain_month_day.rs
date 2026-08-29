@@ -18,13 +18,19 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
         ));
     }
     let calendar = arguments.get(2).unwrap_or(&Value::Undefined);
+    let calendar_id = if matches!(calendar, Value::Undefined) {
+        "iso8601".to_string()
+    } else {
+        let text = crate::conversion::to_string(calendar)?;
+        if !crate::temporal::plain_date::is_supported_calendar_name(&text) {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+        crate::temporal::plain_date::canonical_calendar_id(&text)
+            .unwrap_or_else(|| "iso8601".into())
+    };
     if !matches!(calendar, Value::Undefined) {
         if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
-        }
-        let calendar = crate::conversion::to_string(calendar)?;
-        if !crate::temporal::plain_date::is_supported_calendar_name(&calendar) {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
     let default_year = Value::Number(1972.0);
@@ -39,7 +45,18 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
             "Invalid PlainMonthDay",
         ));
     }
-    construct_with_year(month, day, year)
+    Ok(set_calendar_id(
+        construct_with_year(month, day, year)?,
+        &calendar_id,
+    ))
+}
+
+fn set_calendar_id(mut value: Value, calendar: &str) -> Value {
+    if let Value::Object(object) = &mut value {
+        std::rc::Rc::make_mut(object)
+            .set_property_in_place("calendarId", Value::String(calendar.to_string()));
+    }
+    value
 }
 
 fn construct_with_year(month: f64, day: f64, year: f64) -> Result<Value, VmError> {
@@ -123,6 +140,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         let text = crate::conversion::to_string(value)?;
+        let calendar_id = text
+            .split_once("[u-ca=")
+            .and_then(|(_, rest)| rest.split(']').next())
+            .and_then(crate::temporal::plain_date::canonical_calendar_id)
+            .unwrap_or_else(|| "iso8601".into());
         if text.contains(['\u{2212}', 'Z', 'z']) || text.starts_with("-000000") {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainMonthDay",
@@ -254,7 +276,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             ));
         }
         let _ = overflow_reject(options)?;
-        return construct(month, day);
+        return Ok(set_calendar_id(construct(month, day)?, &calendar_id));
     }
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error(
@@ -276,6 +298,15 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     validate_calendar(&calendar)?;
+    let calendar_id = match &calendar {
+        Value::String(text) => crate::temporal::plain_date::canonical_calendar_id(text)
+            .unwrap_or_else(|| "iso8601".into()),
+        Value::StringUnits(_) => crate::temporal::plain_date::canonical_calendar_id(
+            &crate::conversion::to_string(&calendar)?,
+        )
+        .unwrap_or_else(|| "iso8601".into()),
+        _ => "iso8601".into(),
+    };
     let day_value = crate::execute::get_property_result(value, "day")?;
     if matches!(day_value, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
@@ -339,7 +370,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let day = apply_overflow(year, month, day, reject)?;
     // A property bag's ISO year only participates in overflow handling; it is
     // not retained as the PlainMonthDay reference year.
-    construct(month, day)
+    Ok(set_calendar_id(construct(month, day)?, &calendar_id))
 }
 
 fn parse_month_code(value: &str) -> Result<f64, VmError> {
