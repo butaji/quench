@@ -1015,11 +1015,19 @@ fn with(
             None => result,
         });
     }
-    let max_month = if crate::temporal::plain_date::calendar_supports_month13(&receiver_calendar) {
-        13.0
-    } else {
-        12.0
-    };
+    let max_month = crate::temporal::plain_date::calendar_months_in_year(
+        year as i32,
+        1,
+        &receiver_calendar,
+    )
+    .map(f64::from)
+    .unwrap_or_else(|| {
+        if crate::temporal::plain_date::calendar_supports_month13(&receiver_calendar) {
+            13.0
+        } else {
+            12.0
+        }
+    });
     if !constrain && month > max_month {
         return Err(crate::value::error::throw_range_error("Invalid PlainYearMonth"));
     }
