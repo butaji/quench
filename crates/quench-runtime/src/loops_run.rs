@@ -110,7 +110,7 @@ fn run_loop_inner(
                 body.instruction(pc)
                     .is_some_and(|instruction| instruction.opcode != crate::ir::Opcode::Slow)
             });
-            if stable_iteration_binding && compact_body {
+            if stable_iteration_binding && compact_body && counted_body_is_pure(body) {
                 if let Some(completion) = run_counted_for(
                     fact,
                     body,
@@ -738,6 +738,34 @@ fn run_counted_for(
             };
         }
     }
+}
+
+/// Counted-loop admission must not turn an arbitrary compact instruction
+/// stream into a second call/property interpreter. Calls and observable
+/// reads/writes stay on the ordinary loop path; only register/local arithmetic
+/// has a closed transition that the Rust loop can replay safely.
+#[inline]
+fn counted_body_is_pure(body: crate::machine::CodeView<'_>) -> bool {
+    (0..body.len()).all(|pc| {
+        body.instruction(pc).is_some_and(|instruction| {
+            matches!(
+                instruction.opcode,
+                crate::ir::Opcode::LoadConst
+                    | crate::ir::Opcode::Move
+                    | crate::ir::Opcode::Add
+                    | crate::ir::Opcode::Sub
+                    | crate::ir::Opcode::Mul
+                    | crate::ir::Opcode::Div
+                    | crate::ir::Opcode::LoadLocal
+                    | crate::ir::Opcode::LoadLocalChecked
+                    | crate::ir::Opcode::UpdateLocal
+                    | crate::ir::Opcode::StoreLocal
+                    | crate::ir::Opcode::StoreLocalChecked
+                    | crate::ir::Opcode::InitLocal
+                    | crate::ir::Opcode::Binary
+            )
+        })
+    })
 }
 
 #[inline(always)]
