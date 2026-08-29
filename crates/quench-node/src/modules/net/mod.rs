@@ -64,6 +64,7 @@ pub struct NetSocket {
     pub stream: Option<TcpStream>,
     pub js: Value,
     pub state: SocketState,
+    pub refed: bool,
     pub server_id: Option<u64>,
     pub write_buf: Vec<u8>,
     pub bytes_read: u64,
@@ -128,7 +129,8 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         || !host.net.pending_lookups.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
-            socket.state != SocketState::Closed
+            socket.refed
+                && socket.state != SocketState::Closed
                 && !socket.read_eof
                 && (socket.stream.is_some() || socket.server_id.is_some())
         })

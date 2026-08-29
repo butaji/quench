@@ -583,6 +583,7 @@ pub fn req_end(
         .and_then(|req| req.socket.clone());
     let socket = match (existing, custom) {
         (Some(socket), _) => {
+            net::socket_ref(state, Some(&socket), &[])?;
             let mut bytes = head.into_bytes();
             bytes.extend_from_slice(&body);
             net::socket_write(state, Some(&socket), &[host_api::bytes(&bytes)])?;
@@ -1017,7 +1018,8 @@ pub fn data_handler(
             if let Some(response) = client_value(state, client_id, false) {
                 net::emit(state, &response, "readable", Vec::new())?;
             }
-            flush_body(state, client_id)
+            flush_body(state, client_id)?;
+            finish_known_response(state, client_id)
         }
         None if head_parsed => {
             if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
@@ -1033,6 +1035,7 @@ pub fn data_handler(
                     net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
                 }
             }
+            finish_known_response(state, client_id)?;
             Ok(())
         }
         None => Ok(()),
@@ -1103,6 +1106,35 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
                 net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
             }
         }
+    }
+    Ok(())
+}
+
+fn finish_known_response(
+    state: &Rc<RefCell<HostState>>,
+    client_id: u64,
+) -> Result<(), VmError> {
+    let socket = {
+        let guard = state.borrow();
+        let Some(req) = guard.http.clientreqs.get(&client_id) else {
+            return Ok(());
+        };
+        let Some(response) = req.res.as_ref() else {
+            return Ok(());
+        };
+        let headers = execute::get_property(response, "headers");
+        let expected = execute::to_js_string(&execute::get_property(&headers, "content-length"))
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok());
+        let chunked = execute::to_js_string(&execute::get_property(&headers, "transfer-encoding"))
+            .ok()
+            .is_some_and(|value| value.eq_ignore_ascii_case("chunked"));
+        let complete = expected.is_some_and(|length| req.response_received >= length)
+            || (chunked && req.response_chunked_done);
+        complete.then(|| req.socket.clone()).flatten()
+    };
+    if let Some(socket) = socket {
+        res_end_handler(state, Some(&socket), &[])?;
     }
     Ok(())
 }
@@ -1256,6 +1288,20 @@ pub fn res_end_handler(
             let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
+        }
+        let pooled = state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&client_id)
+            .and_then(|request| request.agent.as_ref())
+            .is_some();
+        if pooled {
+            // Idle HTTP agent sockets are retained for reuse but do not keep
+            // the process alive. A later request refs the socket when reused.
+            net::socket_unref(state, Some(socket), &[])?;
+        } else {
+            net::socket_destroy(state, Some(socket), &[])?;
         }
     } else if let Some(error) = invalid_response_start(state, client_id) {
         if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
