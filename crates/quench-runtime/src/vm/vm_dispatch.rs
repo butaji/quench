@@ -342,10 +342,22 @@ fn run_make_object(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), VmError> {
-    if let Op::MakeObject { dst, properties } | Op::MakeGlobalObjectView { dst, properties } = op {
-        execute_object(registers, *dst, properties)?;
-        if matches!(op, Op::MakeGlobalObjectView { .. }) {
-            let view = crate::execute::read_register(registers, *dst)?.clone();
+    let (dst, is_global_view) = match op {
+        Op::MakeObject { dst, properties } => {
+            execute_object(registers, *dst, properties)?;
+            (*dst, false)
+        }
+        Op::MakeGlobalObjectView { dst, properties } => {
+            execute_global_object(registers, *dst, properties)?;
+            (*dst, true)
+        }
+        _ => return Ok(()),
+    };
+    {
+        let dst = dst;
+        let is_global_view = is_global_view;
+        if is_global_view {
+            let view = crate::execute::read_register(registers, dst)?.clone();
             if let Value::Object(view) = view {
                 let owner = match crate::vm::current_global_object() {
                     Value::Object(owner) => owner,
@@ -368,11 +380,11 @@ fn run_make_object(
                         )),
                     ),
                 ));
-                crate::execute::write_value(registers, *dst, value);
+                crate::execute::write_value(registers, dst, value);
             }
         }
-        if let Value::Object(object) = read_register(registers, *dst)? {
-            if matches!(op, Op::MakeObject { .. }) {
+        if let Value::Object(object) = read_register(registers, dst)? {
+            if !is_global_view {
                 realm::initialize_current_global(object);
             }
         }
@@ -594,6 +606,25 @@ fn execute_array(
 include!("vm_array_build.rs");
 
 fn execute_object(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    properties: &[(crate::value::PropertyName, u16)],
+) -> Result<(), VmError> {
+    let values = properties
+        .iter()
+        .map(|(key, index)| Ok((key.clone(), read_register(registers, *index)?)))
+        .collect::<Result<Vec<_>, VmError>>()?;
+    write_value(
+        registers,
+        dst,
+        Value::Object(Rc::new(crate::value::ObjectData::new_property_names(
+            values,
+        ))),
+    );
+    Ok(())
+}
+
+fn execute_global_object(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     properties: &[(String, u16)],
