@@ -96,13 +96,13 @@ if (!globalThis.navigator) {
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
   const __nodeBlobPart = (part) => {
-    if (typeof part === "string") return NodeBuffer.from(part);
-    if (part instanceof ArrayBuffer) return NodeBuffer.from(part);
-    if (ArrayBuffer.isView(part)) return NodeBuffer.from(part);
+    if (typeof part === "string") return Buffer.from(part);
+    if (part instanceof ArrayBuffer) return Buffer.from(part);
+    if (ArrayBuffer.isView(part)) return Buffer.from(part);
     if (part && part._data && typeof part._data.byteLength === "number") {
-      return NodeBuffer.from(part._data);
+      return Buffer.from(part._data);
     }
-    return NodeBuffer.from(String(part));
+    return Buffer.from(String(part));
   };
   class Blob {
     constructor(parts = [], options = {}) {
@@ -112,7 +112,7 @@ if (typeof globalThis.Blob !== "function" ||
           { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
-      this._data = NodeBuffer.concat(parts.map(__nodeBlobPart));
+      this._data = Buffer.concat(parts.map(__nodeBlobPart));
       this.size = this._data.byteLength;
       const type = String(options?.type || "").toLowerCase();
       this.type = /^[\x20-\x7e]*$/.test(type) ? type : "";
@@ -154,6 +154,27 @@ if (typeof globalThis.Blob !== "function" ||
   Object.defineProperty(Blob.prototype, Symbol.toStringTag, {
     value: "Blob", configurable: true
   });
-  globalThis.Blob = Blob;
+  Object.defineProperty(globalThis, "Blob", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: Blob
+  });
+}
+if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "function") {
+  class File extends globalThis.Blob {
+    constructor(parts = [], name = "", options = {}) {
+      super(parts, options);
+      this.name = String(name);
+      const modified = options && options.lastModified;
+      this.lastModified = modified === undefined ? Date.now() : Number(modified);
+    }
+  }
+  Object.defineProperty(globalThis, "File", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: File
+  });
 }
 "#);

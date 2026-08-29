@@ -151,6 +151,8 @@ impl NodeRunner {
         // Node exposes WHATWG stream constructors globally. Install the
         // shared surface before the fixture so globals and `stream/web`
         // resolve to one constructor identity.
+        let globals_surface = quench_node::polyfills::bootstrap::lookup("globals-extra")
+            .unwrap_or("");
         let web_streams_surface = ["web-streams"]
             .into_iter()
             .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
@@ -169,7 +171,7 @@ impl NodeRunner {
             "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
         );
         let source =
-            format!("{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+            format!("{globals_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         self.host
             .state()
             .borrow_mut()
