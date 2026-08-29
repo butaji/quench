@@ -161,7 +161,18 @@ fn process_promise_in_context(promise: &Rc<PromiseData>) {
         {
             promise.continuations.borrow_mut().push(continuation);
         } else {
+            let async_continuation = matches!(
+                &continuation,
+                PromiseContinuation::AsyncGenerator { .. }
+                    | PromiseContinuation::AsyncGeneratorYield { .. }
+            );
+            if async_continuation {
+                promise_phase(promise, "before");
+            }
             process_continuation(continuation, &state);
+            if async_continuation {
+                promise_phase(promise, "after");
+            }
         }
     }
 }
