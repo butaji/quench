@@ -98,12 +98,29 @@ async_op!(rmdir, "rmdir");
 async_op!(rm, "rm");
 async_op!(rename, "rename");
 async_op!(copy_file, "copyFile");
-async_op!(access, "access");
 async_op!(mkdtemp, "mkdtemp");
 async_op!(readlink, "readlink");
 async_op!(chmod, "chmod");
 async_op!(truncate, "truncate");
 async_op!(realpath, "realpath");
+
+pub fn access(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (leading, callback) = super::fs::async_args(args)?;
+    super::fs::path_arg(leading.first())?;
+    super::fs_sync::access_mode(leading)?;
+    let op = super::fs::sync_op("access").ok_or(VmError::NotCallable)?;
+    let result = op(state, None, leading);
+    let error = super::fs::err_value(&result);
+    let callback = crate::modules::domain::current(state)
+        .and_then(|domain| crate::modules::domain::bind(state, Some(&domain), &[callback.clone()]).ok())
+        .unwrap_or(callback);
+    quench_runtime::execute::call(&callback, &Value::Undefined, &[error])?;
+    Ok(Value::Undefined)
+}
 
 /// `fs.exists(path, callback)` — never errors; the callback receives
 /// a single boolean. Invalid path types yield `false` (no throw),

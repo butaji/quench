@@ -1290,10 +1290,10 @@ pub fn internal_binding(
         return Ok(binding);
     }
     if name == "uv" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![(
-            "UV_EAI_MEMORY".to_string(),
-            Value::Number(-3001.0),
-        )]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            ("UV_EAI_MEMORY".to_string(), Value::Number(-3001.0)),
+            ("UV_ENOENT".to_string(), Value::Number(-2.0)),
+        ]));
     }
     if name == "tty_wrap" {
         let mut tty = host_api::object(Vec::new());
