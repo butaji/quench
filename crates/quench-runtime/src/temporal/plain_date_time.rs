@@ -729,34 +729,7 @@ fn to_zoned_date_time(
     time_zone: Option<&Value>,
     options: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let disambiguation =
-        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
-            if !crate::value::is_object(options) {
-                return Err(crate::value::error::throw_type_error("Invalid options"));
-            }
-            let value = crate::execute::get_property_result(options, "disambiguation")?;
-            if matches!(value, Value::Undefined) {
-                "compatible".to_string()
-            } else {
-                if crate::conversion::is_symbol(&value) {
-                    return Err(crate::value::error::throw_type_error(
-                        "Invalid disambiguation",
-                    ));
-                }
-                let value = crate::conversion::to_string(&value)?;
-                if !matches!(
-                    value.as_str(),
-                    "compatible" | "earlier" | "later" | "reject"
-                ) {
-                    return Err(crate::value::error::throw_range_error(
-                        "Invalid disambiguation",
-                    ));
-                }
-                value
-            }
-        } else {
-            "compatible".to_string()
-        };
+    let disambiguation = crate::temporal::options::disambiguation(options)?;
     let values = fields(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
@@ -798,7 +771,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
-    let _calendar = crate::conversion::to_string(calendar)?;
+    let calendar = crate::conversion::to_string(calendar)?;
     let values = fields(receiver)?;
     let month_code = format!("M{:02}", values[1] as u32);
     let properties = NAMES
@@ -808,7 +781,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         .map(|(name, value)| (name.into(), Value::Number(value)))
         .chain([
             ("monthCode".into(), Value::String(month_code)),
-            ("calendarId".into(), Value::String("iso8601".into())),
+            ("calendarId".into(), Value::String(calendar)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
@@ -1146,22 +1119,7 @@ fn number_property(value: &Value, name: &str) -> f64 {
 }
 
 fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("constrain".into());
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    let value = crate::execute::get_property_result(options, "overflow")?;
-    if matches!(value, Value::Undefined) {
-        return Ok("constrain".into());
-    }
-    let value = crate::conversion::to_string(&value)?;
-    if matches!(value.as_str(), "constrain" | "reject") {
-        Ok(value)
-    } else {
-        Err(crate::value::error::throw_range_error("Invalid overflow"))
-    }
+    crate::temporal::options::overflow(options)
 }
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
@@ -1892,21 +1850,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
 }
 
 fn from_overflow_option(options: Option<&Value>) -> Result<String, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("constrain".into());
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    let overflow = crate::execute::get_property_result(options, "overflow")?;
-    if matches!(overflow, Value::Undefined) {
-        return Ok("constrain".into());
-    }
-    let overflow = crate::conversion::to_string(&overflow)?;
-    if !matches!(overflow.as_str(), "constrain" | "reject") {
-        return Err(crate::value::error::throw_range_error("Invalid overflow"));
-    }
-    Ok(overflow)
+    crate::temporal::options::overflow(options)
 }
 
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
