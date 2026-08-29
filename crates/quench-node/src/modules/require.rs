@@ -70,6 +70,14 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state.borrow_mut().module_cache.insert(spec, value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "stream/consumers" | "node:stream/consumers") {
+        let module = crate::modules::stream::build_consumers(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("stream/consumers".into(), module.clone());
+        return Ok(module);
+    }
     // `node:assert` exports a callable value whose identity is stable
     // across requires (assert.strict === assert); cache it like a CJS module.
     if matches!(
