@@ -957,7 +957,7 @@ fn validate_timezone_string(text: &str) -> Result<(), VmError> {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
-            if base[sign..].matches(':').count() > 2 {
+            if base[sign..].matches(':').count() > 1 {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
@@ -1008,7 +1008,7 @@ fn valid_string_offset(value: &str) -> bool {
             && second.len() == 2
             && hour.bytes().all(|byte| byte.is_ascii_digit())
             && minute.bytes().all(|byte| byte.is_ascii_digit())
-            && second.bytes().all(|byte| byte.is_ascii_digit()))
+            && *second == "00")
 }
 
 fn offset_minutes(value: &str) -> Option<i32> {

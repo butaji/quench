@@ -9,6 +9,11 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
             });
             if let [Some(year), Some(month), Some(day)] = hidden {
                 let _ = overflow_value(options)?;
+                let calendar = object
+                    .iter()
+                    .find(|(key, _)| key == "calendarId")
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(|| Value::String("iso8601".into()));
                 let is_plain_date = object.iter().any(|(key, value)| {
                     key == "\0temporal-plain-date"
                         && value == Value::Boolean(true)
@@ -18,13 +23,8 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
                             )
                 });
                 if is_plain_date {
-                    return Ok(value.clone());
+                    return construct(&[year, month, day, calendar]);
                 }
-                let calendar = object
-                    .iter()
-                    .find(|(key, _)| key == "calendarId")
-                    .map(|(_, value)| value.clone())
-                    .unwrap_or_else(|| Value::String("iso8601".into()));
                 return construct(&[year, month, day, calendar]);
             }
             let direct = ["year", "month", "day"].map(|name| {
@@ -200,6 +200,11 @@ fn preserve_calendar_month_code(
 
 fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined | Value::String(_) | Value::StringUnits(_))
+        && !crate::temporal::plain_date::is_temporal_date_like(&calendar)
+    {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
     let calendar_text = match &calendar {
         Value::String(value) => Some(value.to_ascii_lowercase()),
         Value::StringUnits(_) => {
@@ -226,8 +231,17 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         Value::String(month_code_text(&month_code)?)
     };
     let mut year = crate::execute::get_property_result(value, "year")?;
-    let era = crate::execute::get_property_result(value, "era")?;
-    let era_year = crate::execute::get_property_result(value, "eraYear")?;
+    let calendar_name = calendar_text.as_deref().unwrap_or("iso8601");
+    // ISO calendars have no era fields; do not probe (or reject) optional
+    // era/eraYear properties on an ISO property bag.
+    let (era, era_year) = if calendar_name == "iso8601" {
+        (Value::Undefined, Value::Undefined)
+    } else {
+        (
+            crate::execute::get_property_result(value, "era")?,
+            crate::execute::get_property_result(value, "eraYear")?,
+        )
+    };
     let era_provided = !matches!(era, Value::Undefined);
     let era_year_provided = !matches!(era_year, Value::Undefined);
     if era_provided != era_year_provided {
@@ -250,7 +264,6 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
     }
-    let calendar_name = calendar_text.as_deref().unwrap_or("iso8601");
     let era_name = if matches!(era, Value::Undefined) {
         None
     } else if matches!(calendar_name, "chinese" | "dangi") {
