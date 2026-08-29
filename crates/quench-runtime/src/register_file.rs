@@ -21,7 +21,11 @@ fn encode(value: Value) -> TaggedValue {
     .expect("aligned execute payload pointer exceeds tag layout")
 }
 
+#[inline(always)]
 fn retain(word: TaggedValue) {
+    if !word.owns_rc() {
+        return;
+    }
     // SAFETY: every pointer originates in `encode`; every copied word retains
     // once, and every discarded word releases once using the same payload type.
     unsafe {
@@ -43,7 +47,11 @@ fn retain(word: TaggedValue) {
     }
 }
 
+#[inline(always)]
 fn release(word: TaggedValue) {
+    if !word.owns_rc() {
+        return;
+    }
     // SAFETY: each arm consumes exactly the typed strong reference owned by
     // `word`; the tag and pointer are created together in `encode`.
     unsafe {
