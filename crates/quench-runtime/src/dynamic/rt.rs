@@ -65,9 +65,10 @@ impl Runtime {
     }
 
     pub fn new_string(&mut self, s: &str) -> JsValue {
-        let latin1 = s.bytes().all(|b| b < 0x80);
+        // QuickJS: 8-bit if every code point fits in Latin-1, else UTF-16.
+        let latin1 = s.chars().all(|c| (c as u32) <= 0xff);
         let body = if latin1 {
-            JsString::Bytes(s.as_bytes().to_vec().into_boxed_slice())
+            JsString::Bytes(s.chars().map(|c| c as u8).collect::<Vec<_>>().into_boxed_slice())
         } else {
             JsString::Units(s.encode_utf16().collect::<Vec<_>>().into_boxed_slice())
         };
@@ -154,6 +155,8 @@ mod tests {
         assert_eq!(s.tag(), Tag::String);
         assert!(matches!(rt.strings[0], super::JsString::Bytes(_)));
         let w = rt.new_string("é");
-        assert!(matches!(rt.strings[1], super::JsString::Units(_)));
+        assert!(matches!(rt.strings[1], super::JsString::Bytes(_)));
+        let wide = rt.new_string("🙂");
+        assert!(matches!(rt.strings[2], super::JsString::Units(_)));
     }
 }

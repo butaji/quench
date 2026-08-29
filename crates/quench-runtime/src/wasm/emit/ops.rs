@@ -1,13 +1,13 @@
 //! Numeric, convert, local-free operator maps.
 
-use quench_runtime::hir::Inst;
-use quench_runtime::native::{
+use crate::hir::Inst;
+use crate::native::{
     BinF32, BinF64, BinI32, BinI64, ConvOp, SimdOp, UnF32, UnF64, UnI32, UnI64,
 };
 use wasmparser::Operator;
 
 use super::Context;
-use crate::lower::LowerError;
+use crate::wasm::LowerError;
 
 pub(super) fn emit_numeric(ctx: &mut Context<'_>, op: &Operator<'_>) -> Result<bool, LowerError> {
     if emit_const(ctx, op)? {
@@ -580,6 +580,8 @@ fn simd(op: &Operator<'_>) -> Option<SimdOp> {
         Operator::F32x4RelaxedNmadd => SimdOp::RelaxedNmaddF32,
         Operator::F64x2RelaxedMadd => SimdOp::RelaxedMaddF64,
         Operator::F64x2RelaxedNmadd => SimdOp::RelaxedNmaddF64,
+        Operator::I16x8RelaxedDotI8x16I7x16S => SimdOp::I16x8RelaxedDot,
+        Operator::I32x4RelaxedDotI8x16I7x16AddS => SimdOp::I32x4RelaxedDotAdd,
         _ => return None,
     })
 }

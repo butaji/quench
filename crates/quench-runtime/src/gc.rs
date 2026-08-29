@@ -24,6 +24,7 @@ pub struct GcExn {
 pub struct GcStruct {
     pub type_idx: u32,
     pub fields: Vec<Slot>,
+    pub desc: RefVal,
 }
 
 #[derive(Clone, Debug)]
@@ -31,11 +32,21 @@ pub struct GcArray {
     pub type_idx: u32,
     pub elem: GcStorage,
     pub elems: Vec<Slot>,
+    pub desc: RefVal,
 }
 
-pub fn alloc_struct(heap: &mut GcHeap, type_idx: u32, fields: Vec<Slot>) -> RefVal {
+pub fn alloc_struct(
+    heap: &mut GcHeap,
+    type_idx: u32,
+    fields: Vec<Slot>,
+    desc: RefVal,
+) -> RefVal {
     let id = heap.structs.len() as u32;
-    heap.structs.push(GcStruct { type_idx, fields });
+    heap.structs.push(GcStruct {
+        type_idx,
+        fields,
+        desc,
+    });
     RefVal::Struct(id)
 }
 
@@ -45,6 +56,7 @@ pub fn alloc_array(heap: &mut GcHeap, type_idx: u32, elem: GcStorage, elems: Vec
         type_idx,
         elem,
         elems,
+        desc: RefVal::Null,
     });
     RefVal::Array(id)
 }
@@ -65,14 +77,30 @@ pub fn step(
     match op {
         GcOp::StructNewDefault { type_idx } => {
             let fields = zeros(vm, type_idx)?;
-            let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields);
+            let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields, RefVal::Null);
             regs[dst as usize] = Slot::Native(Native::Ref(r));
         }
         GcOp::StructNew { type_idx } => {
-            let n = args.len();
             let fields: Vec<_> = args.iter().map(|r| regs[*r as usize].clone()).collect();
-            let _ = n;
-            let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields);
+            let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields, RefVal::Null);
+            regs[dst as usize] = Slot::Native(Native::Ref(r));
+        }
+        GcOp::StructNewDesc { type_idx } => {
+            let desc = pop_desc(regs, args.last().copied())?;
+            let fields: Vec<_> = args
+                .iter()
+                .rev()
+                .skip(1)
+                .rev()
+                .map(|r| regs[*r as usize].clone())
+                .collect();
+            let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields, desc);
+            regs[dst as usize] = Slot::Native(Native::Ref(r));
+        }
+        GcOp::StructNewDefaultDesc { type_idx } => {
+            let desc = pop_desc(regs, args.first().copied())?;
+            let fields = zeros(vm, type_idx)?;
+            let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields, desc);
             regs[dst as usize] = Slot::Native(Native::Ref(r));
         }
         GcOp::StructGet { field, signed, pack } => {
@@ -169,22 +197,50 @@ pub fn step(
         GcOp::ArrayInitElem { elem } => array_init_elem(vm, args, regs, elem)?,
         GcOp::RefCast {
             nullable,
+            exact,
             heap,
             type_idx,
         } => {
             let r = read_ref(regs, args[0])?;
-            if !cast_ok(vm, r, nullable, heap, type_idx) {
+            if !cast_ok(vm, r, nullable, exact, heap, type_idx) {
                 return Err(Failure::Trap(Trap::CastFailure));
             }
             regs[dst as usize] = Slot::Native(Native::Ref(r));
         }
         GcOp::RefTest {
             nullable,
+            exact,
             heap,
             type_idx,
         } => {
             let r = read_ref(regs, args[0])?;
-            let ok = cast_ok(vm, r, nullable, heap, type_idx);
+            let ok = cast_ok(vm, r, nullable, exact, heap, type_idx);
+            regs[dst as usize] = Slot::Native(Native::I32(i32::from(ok)));
+        }
+        GcOp::RefGetDesc => {
+            let r = read_ref(regs, args[0])?;
+            regs[dst as usize] = Slot::Native(Native::Ref(get_desc(vm, r)?));
+        }
+        GcOp::RefCastDesc {
+            nullable,
+            exact,
+            type_idx,
+        } => {
+            let r = read_ref(regs, args[0])?;
+            let desc = read_ref(regs, args[1])?;
+            if !desc_cast_ok(vm, r, desc, nullable, exact, type_idx)? {
+                return Err(Failure::Trap(Trap::DescriptorCast));
+            }
+            regs[dst as usize] = Slot::Native(Native::Ref(r));
+        }
+        GcOp::RefTestDesc {
+            nullable,
+            exact,
+            type_idx,
+        } => {
+            let r = read_ref(regs, args[0])?;
+            let desc = read_ref(regs, args[1])?;
+            let ok = desc_cast_ok(vm, r, desc, nullable, exact, type_idx)?;
             regs[dst as usize] = Slot::Native(Native::I32(i32::from(ok)));
         }
         GcOp::AnyConvertExtern => {
@@ -427,7 +483,7 @@ pub(crate) fn zero_storage(s: GcStorage) -> Slot {
         GcStorage::Val(crate::hir::Kind::F32) => Slot::Native(Native::F32(0)),
         GcStorage::Val(crate::hir::Kind::F64) => Slot::Native(Native::F64(0)),
         GcStorage::Val(crate::hir::Kind::V128) => Slot::Native(Native::V128(0)),
-        _ => Slot::Native(Native::Ref(RefVal::Null)),
+        GcStorage::Ref { .. } | _ => Slot::Native(Native::Ref(RefVal::Null)),
     }
 }
 
@@ -475,10 +531,81 @@ fn arr(regs: &[Slot], r: u16) -> Result<u32, Failure> {
     obj(regs, r, false)
 }
 
+fn pop_desc(regs: &[Slot], r: Option<u16>) -> Result<RefVal, Failure> {
+    let r = r.ok_or(Failure::Trap(Trap::NullDescriptor))?;
+    match read_ref(regs, r)? {
+        RefVal::Null => Err(Failure::Trap(Trap::NullDescriptor)),
+        other => Ok(other),
+    }
+}
+
+fn get_desc(vm: &Instance, r: RefVal) -> Result<RefVal, Failure> {
+    match r {
+        RefVal::Null => Err(Failure::Trap(Trap::NullReference)),
+        RefVal::Struct(id) => vm
+            .gc()
+            .borrow()
+            .structs
+            .get(id as usize)
+            .map(|s| s.desc)
+            .ok_or(Failure::Trap(Trap::NullReference)),
+        RefVal::Array(id) => vm
+            .gc()
+            .borrow()
+            .arrays
+            .get(id as usize)
+            .map(|a| a.desc)
+            .ok_or(Failure::Trap(Trap::NullReference)),
+        _ => Err(Failure::Trap(Trap::CastFailure)),
+    }
+}
+
+fn desc_cast_ok(
+    vm: &Instance,
+    val: RefVal,
+    desc: RefVal,
+    nullable: bool,
+    exact: bool,
+    type_idx: Option<u32>,
+) -> Result<bool, Failure> {
+    if matches!(desc, RefVal::Null) {
+        return Err(Failure::Trap(Trap::NullDescriptor));
+    }
+    if matches!(val, RefVal::Null) {
+        return Ok(nullable);
+    }
+    let (got, got_desc) = match val {
+        RefVal::Struct(id) => vm
+            .gc()
+            .borrow()
+            .structs
+            .get(id as usize)
+            .map(|s| (s.type_idx, s.desc))
+            .ok_or(Failure::Trap(Trap::NullReference))?,
+        RefVal::Array(id) => vm
+            .gc()
+            .borrow()
+            .arrays
+            .get(id as usize)
+            .map(|a| (a.type_idx, a.desc))
+            .ok_or(Failure::Trap(Trap::NullReference))?,
+        _ => return Ok(false),
+    };
+    if got_desc != desc {
+        return Ok(false);
+    }
+    Ok(concrete_ok(vm, val, type_idx) && (!exact || type_eq_val(vm, got, type_idx)))
+}
+
+fn type_eq_val(vm: &Instance, got: u32, type_idx: Option<u32>) -> bool {
+    type_idx.is_some_and(|want| type_eq(vm, got, want))
+}
+
 fn cast_ok(
     vm: &Instance,
     r: RefVal,
     nullable: bool,
+    exact: bool,
     heap: HeapKind,
     type_idx: Option<u32>,
 ) -> bool {
@@ -496,8 +623,49 @@ fn cast_ok(
         HeapKind::Func => matches!(r, RefVal::Func { .. }),
         HeapKind::Exn => matches!(r, RefVal::Exn(_)),
         HeapKind::NoExn | HeapKind::NoFunc | HeapKind::NoExtern => false,
-        HeapKind::Concrete => concrete_ok(vm, r, type_idx),
+        HeapKind::Concrete => {
+            if exact {
+                concrete_exact(vm, r, type_idx)
+            } else {
+                concrete_ok(vm, r, type_idx)
+            }
+        }
         HeapKind::Other => true,
+    }
+}
+
+fn concrete_exact(vm: &Instance, r: RefVal, type_idx: Option<u32>) -> bool {
+    let want = match type_idx {
+        Some(idx) => idx,
+        None => return false,
+    };
+    let got = match r {
+        RefVal::Struct(id) => vm.gc().borrow().structs.get(id as usize).map(|s| s.type_idx),
+        RefVal::Array(id) => vm.gc().borrow().arrays.get(id as usize).map(|a| a.type_idx),
+        RefVal::Func { inst, index } => {
+            return func_ok(vm, inst, index, want, true);
+        }
+        _ => return false,
+    };
+    got.is_some_and(|got| type_eq(vm, got, want))
+}
+
+pub(crate) fn func_type_ok(vm: &Instance, inst: u32, index: u32, want: u32, exact: bool) -> bool {
+    func_ok(vm, inst, index, want, exact)
+}
+
+fn func_ok(vm: &Instance, inst: u32, index: u32, want: u32, exact: bool) -> bool {
+    let Some(got) = crate::instance::lookup_func(inst, index).and_then(|c| c.func_sig(index))
+    else {
+        return false;
+    };
+    let Some(want) = vm.types().get(want as usize) else {
+        return false;
+    };
+    if exact {
+        got == *want
+    } else {
+        got.assignable_to(want)
     }
 }
 
@@ -539,10 +707,7 @@ fn concrete_ok(vm: &Instance, r: RefVal, type_idx: Option<u32>) -> bool {
         RefVal::Struct(id) => vm.gc().borrow().structs.get(id as usize).map(|s| s.type_idx),
         RefVal::Array(id) => vm.gc().borrow().arrays.get(id as usize).map(|a| a.type_idx),
         RefVal::Func { inst, index } => {
-            return crate::instance::lookup_func(inst, index)
-                .and_then(|callee| callee.func_sig(index))
-                .zip(vm.types().get(want as usize))
-                .is_some_and(|(got, want)| got == *want);
+            return func_ok(vm, inst, index, want, false);
         }
         _ => return false,
     };
@@ -554,8 +719,9 @@ fn is_sub_ty(vm: &Instance, got: u32, want: u32) -> bool {
         return true;
     }
     match vm.gc_type(got) {
-        Some(GcType::Struct { super_idx, .. }) | Some(GcType::Array { super_idx, .. }) => super_idx
-            .is_some_and(|s| is_sub_ty(vm, s, want)),
+        Some(GcType::Struct { super_idx, .. })
+        | Some(GcType::Array { super_idx, .. })
+        | Some(GcType::Func { super_idx, .. }) => super_idx.is_some_and(|s| is_sub_ty(vm, s, want)),
         _ => false,
     }
 }
@@ -569,22 +735,48 @@ fn type_eq(vm: &Instance, a: u32, b: u32) -> bool {
             Some(GcType::Struct {
                 fields: fa,
                 super_idx: sa,
+                descriptor_idx: da,
+                describes_idx: dsa,
+                is_final: fa_final,
             }),
             Some(GcType::Struct {
                 fields: fb,
                 super_idx: sb,
+                descriptor_idx: db,
+                describes_idx: dsb,
+                is_final: fb_final,
             }),
-        ) => fa == fb && super_eq(vm, sa, sb),
+        ) => fa == fb && da == db && dsa == dsb && fa_final == fb_final && super_eq(vm, sa, sb),
         (
             Some(GcType::Array {
                 elem: ea,
                 super_idx: sa,
+                descriptor_idx: da,
+                describes_idx: dsa,
+                is_final: fa_final,
             }),
             Some(GcType::Array {
                 elem: eb,
                 super_idx: sb,
+                descriptor_idx: db,
+                describes_idx: dsb,
+                is_final: fb_final,
             }),
-        ) => ea == eb && super_eq(vm, sa, sb),
+        ) => ea == eb && da == db && dsa == dsb && fa_final == fb_final && super_eq(vm, sa, sb),
+        (
+            Some(GcType::Func {
+                super_idx: sa,
+                descriptor_idx: da,
+                describes_idx: dsa,
+                is_final: fa_final,
+            }),
+            Some(GcType::Func {
+                super_idx: sb,
+                descriptor_idx: db,
+                describes_idx: dsb,
+                is_final: fb_final,
+            }),
+        ) => da == db && dsa == dsb && fa_final == fb_final && super_eq(vm, sa, sb),
         _ => false,
     }
 }

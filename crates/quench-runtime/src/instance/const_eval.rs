@@ -7,6 +7,7 @@ use super::{Global, InvokeError};
 use crate::hir::{ConstExpr, ConstOp};
 use crate::native::{Native, RefVal};
 use crate::slot::Slot;
+use crate::unwind::{Failure, Trap};
 
 pub fn eval(
     expr: &ConstExpr,
@@ -112,7 +113,25 @@ fn apply(
             }
             fields.reverse();
             let r = if let Some(heap) = heap {
-                crate::gc::alloc_struct(&mut heap.borrow_mut(), type_idx, fields)
+                crate::gc::alloc_struct(&mut heap.borrow_mut(), type_idx, fields, RefVal::Null)
+            } else {
+                RefVal::Struct(0)
+            };
+            stack.push(Slot::Native(Native::Ref(r)));
+        }
+        ConstOp::StructNewDesc(type_idx) => {
+            let desc = pop_desc(stack)?;
+            let n = match gc_types.get(type_idx as usize) {
+                Some(crate::hir::GcType::Struct { fields, .. }) => fields.len(),
+                _ => 0,
+            };
+            let mut fields = Vec::with_capacity(n);
+            for _ in 0..n {
+                fields.push(stack.pop().ok_or(InvokeError::Unimplemented)?);
+            }
+            fields.reverse();
+            let r = if let Some(heap) = heap {
+                crate::gc::alloc_struct(&mut heap.borrow_mut(), type_idx, fields, desc)
             } else {
                 RefVal::Struct(0)
             };
@@ -126,7 +145,22 @@ fn apply(
                 _ => Vec::new(),
             };
             let r = if let Some(heap) = heap {
-                crate::gc::alloc_struct(&mut heap.borrow_mut(), type_idx, fields)
+                crate::gc::alloc_struct(&mut heap.borrow_mut(), type_idx, fields, RefVal::Null)
+            } else {
+                RefVal::Struct(0)
+            };
+            stack.push(Slot::Native(Native::Ref(r)));
+        }
+        ConstOp::StructNewDefaultDesc(type_idx) => {
+            let desc = pop_desc(stack)?;
+            let fields = match gc_types.get(type_idx as usize) {
+                Some(crate::hir::GcType::Struct { fields, .. }) => {
+                    fields.iter().map(|s| crate::gc::zero_storage(*s)).collect()
+                }
+                _ => Vec::new(),
+            };
+            let r = if let Some(heap) = heap {
+                crate::gc::alloc_struct(&mut heap.borrow_mut(), type_idx, fields, desc)
             } else {
                 RefVal::Struct(0)
             };
@@ -195,6 +229,16 @@ fn pop_i32(stack: &mut Vec<Slot>) -> Result<i32, InvokeError> {
 fn pop_i64(stack: &mut Vec<Slot>) -> Result<i64, InvokeError> {
     match stack.pop() {
         Some(Slot::Native(Native::I64(v))) => Ok(v),
+        _ => Err(InvokeError::Unimplemented),
+    }
+}
+
+fn pop_desc(stack: &mut Vec<Slot>) -> Result<RefVal, InvokeError> {
+    match stack.pop() {
+        Some(Slot::Native(Native::Ref(RefVal::Null))) => {
+            Err(InvokeError::Failure(Failure::Trap(Trap::NullDescriptor)))
+        }
+        Some(Slot::Native(Native::Ref(r))) => Ok(r),
         _ => Err(InvokeError::Unimplemented),
     }
 }
