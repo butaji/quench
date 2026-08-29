@@ -1415,9 +1415,7 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                     if is_array_value(&host_header)
                         || !matches!(host_header, Value::Undefined | Value::Null | Value::String(_))
                     {
-                        return Err(execute::type_error(
-                            "The \"options.headers.host\" property must be of type string",
-                        ));
+                        return Err(invalid_header_type_error());
                     }
                 }
                 if matches!(hv, Value::Array(_)) {
@@ -1457,9 +1455,7 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                             continue;
                         };
                         if key.eq_ignore_ascii_case("host") && is_array_value(&item) {
-                            return Err(execute::type_error(
-                                "The \"options.headers.host\" property must be of type string",
-                            ));
+                            return Err(invalid_header_type_error());
                         }
                         let value = if key.eq_ignore_ascii_case("cookie")
                             && matches!(item, Value::Array(_))
@@ -1519,6 +1515,17 @@ fn is_array_value(value: &Value) -> bool {
         ),
         Ok(Value::Boolean(true))
     )
+}
+
+fn invalid_header_type_error() -> VmError {
+    match execute::type_error("The \"options.headers.host\" property must be of type string") {
+        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
+            value,
+            "code",
+            Value::String("ERR_INVALID_ARG_TYPE".into()),
+        )),
+        other => other,
+    }
 }
 
 fn invalid_method_error(method: &str) -> VmError {
