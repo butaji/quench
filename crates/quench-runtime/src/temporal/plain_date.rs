@@ -331,9 +331,9 @@ pub(crate) fn calendar_iso_date_for_code(
     day: u32,
     calendar: &str,
 ) -> Option<(u32, u32)> {
-    for month in 1..=12 {
+    for month in (1..=12).rev() {
         let max_day = days_in_month_for_record(iso_year, month);
-        for iso_day in 1..=max_day {
+        for iso_day in (1..=max_day).rev() {
             let fields = calendar_fields_from_iso(iso_year, month, iso_day, calendar)?;
             if fields.month_code == code && fields.day == day {
                 return Some((month, iso_day));
@@ -1549,7 +1549,39 @@ fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<V
     };
     match prototype {
         crate::ops::Builtin::TemporalPlainMonthDayPrototype => {
-            crate::temporal::plain_month_day::construct(month, day)
+            if calendar != "iso8601" && calendar != "gregory" {
+                let code = crate::execute::get_property_result(
+                    receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainDate"))?,
+                    "monthCode",
+                )?;
+                let code = crate::conversion::to_string(&code)?;
+                let (code, reference_year) = match calendar_reference_iso_year_for_code(
+                    &code,
+                    day as u32,
+                    &calendar,
+                ) {
+                    Some(year) => (code, year),
+                    None if code.ends_with('L') => {
+                        let regular = code.trim_end_matches('L').to_string();
+                        let year = calendar_reference_iso_year_for_code(
+                            &regular,
+                            day as u32,
+                            &calendar,
+                        )
+                        .unwrap_or(1972);
+                        (regular, year)
+                    }
+                    None => (code, 1972),
+                };
+                crate::temporal::plain_month_day::construct_calendar_month_day(
+                    &code,
+                    day,
+                    f64::from(reference_year),
+                    &calendar,
+                )
+            } else {
+                crate::temporal::plain_month_day::construct(month, day)
+            }
         }
         crate::ops::Builtin::TemporalPlainYearMonthPrototype => {
             crate::temporal::plain_year_month::construct_with_calendar(year, month, &calendar)

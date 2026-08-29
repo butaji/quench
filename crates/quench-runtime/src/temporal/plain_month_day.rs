@@ -71,7 +71,7 @@ fn set_calendar_id(mut value: Value, calendar: &str) -> Value {
     value
 }
 
-fn construct_calendar_month_day(
+pub(crate) fn construct_calendar_month_day(
     code: &str,
     day: f64,
     reference_year: f64,
