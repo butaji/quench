@@ -91,6 +91,22 @@ mod tests {
     }
 
     #[test]
+    fn shared_dense_appends_advance_the_canonical_length_header() {
+        let numbers = ArrayData::new(vec![Value::Number(1.0)]);
+        assert!(numbers.append_shared_numbers(&[
+            Value::Number(2.0),
+            Value::Number(3.0),
+        ]));
+        assert_eq!(numbers.logical_len(), 3);
+        assert_eq!(numbers.dense_number_at(2), Some(3.0));
+
+        let values = ArrayData::new(vec![Value::String("a".into())]);
+        assert!(values.append_shared_values(&[Value::String("b".into())]));
+        assert_eq!(values.logical_len(), 2);
+        assert_eq!(values.dense_value_at(1), Some(Value::String("b".into())));
+    }
+
+    #[test]
     fn existing_object_index_write_preserves_dense_tail() {
         let first = Value::Object(Rc::new(ObjectData::new(Vec::new())));
         let second = Value::Object(Rc::new(ObjectData::new(Vec::new())));
