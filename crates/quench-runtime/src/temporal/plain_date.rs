@@ -1862,7 +1862,11 @@ fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year"));
     let month = number_field(field(object, "month"));
     let calendar = calendar_name(object);
-    let value = calendar_days_in_month(year as i32, month as u32, &calendar)
+    let value = match field(object, "monthCode") {
+        Value::String(code) => calendar_days_in_month_for_code(year as i32, code, &calendar),
+        _ => None,
+    }
+        .or_else(|| calendar_days_in_month(year as i32, month as u32, &calendar))
         .unwrap_or_else(|| days_in_month(year, month) as u32);
     Ok(Value::Number(value as f64))
 }
