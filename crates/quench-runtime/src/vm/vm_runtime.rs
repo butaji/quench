@@ -331,37 +331,38 @@ fn run_instruction(
                     return Ok(None);
                 }
             }
-            if instruction.a != instruction.b {
-                let object = registers.read_object(usize::from(instruction.b));
-                let global_like = object.as_ref().is_some_and(|object| {
-                    crate::vm::current_global_object().object_identity() == Some(object.identity())
-                        || object
-                            .iter()
-                            .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
-                });
-                if let Some(payload) = object.as_ref().filter(|_| !global_like).and_then(|object| {
-                    get_named_cached_payload(object, &metadata.named_cache)
-                }) {
-                    match payload {
-                        NamedCachedPayload::Word(word) => {
-                            // SAFETY: the source register owns the containing
-                            // object until this complete word copy returns.
-                            unsafe { &*word }
-                                .copy_to_register(registers, usize::from(instruction.a));
-                        }
-                        NamedCachedPayload::Cell(cell) => {
-                            // SAFETY: the source register keeps the containing
-                            // object alive until the word copy completes.
-                            unsafe { &*cell }.with_word(|word| {
-                                registers.write_owned(usize::from(instruction.a), word)
-                            });
-                        }
-                        NamedCachedPayload::Value(value) => {
-                            write_value(registers, instruction.a, value)
-                        }
+            let object = registers.read_object(usize::from(instruction.b));
+            let global_like = object.as_ref().is_some_and(|object| {
+                crate::vm::current_global_object().object_identity() == Some(object.identity())
+                    || object
+                        .iter()
+                        .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+            });
+            if let Some(payload) = object.as_ref().filter(|_| !global_like).and_then(|object| {
+                get_named_cached_payload(object, &metadata.named_cache)
+            }) {
+                match payload {
+                    NamedCachedPayload::Word(word) => {
+                        // SAFETY: the source register owns the containing
+                        // object until this complete word copy returns. The
+                        // retain-before-replace sequence also handles an
+                        // in-place GetN where source and destination match.
+                        unsafe { &*word }
+                            .copy_to_register(registers, usize::from(instruction.a));
                     }
-                    return Ok(None);
+                    NamedCachedPayload::Cell(cell) => {
+                        // SAFETY: the source register keeps the containing
+                        // object alive until the word copy completes. The
+                        // destination may be the source register itself.
+                        unsafe { &*cell }.with_word(|word| {
+                            registers.write_owned(usize::from(instruction.a), word)
+                        });
+                    }
+                    NamedCachedPayload::Value(value) => {
+                        write_value(registers, instruction.a, value)
+                    }
                 }
+                return Ok(None);
             }
             let object = read_register(registers, instruction.b)?;
             let value = get_named_property_result(&object, key, &metadata.named_cache)?;
