@@ -329,7 +329,6 @@ pub(crate) fn execute_set_named_cached(
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
         return Ok(());
     }
-    let transition = named_write_source(&target, key);
     if !regexp_target {
         if let crate::value::Value::Object(data) = &target {
             if data.has_replacement() {
@@ -369,6 +368,7 @@ pub(crate) fn execute_set_named_cached(
             },
         )?;
     }
+    let transition = named_write_source(&target, key);
     let updated = crate::execute::read_register(registers, object)?;
     if install_named_write_transition(cache, transition, &updated, key) {
         return Ok(());
