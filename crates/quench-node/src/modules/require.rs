@@ -657,17 +657,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let prototype = host_api::object(Vec::new());
             let constructor =
                 quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
-            let global = quench_runtime::vm::current_global_object();
-            let _ = quench_runtime::execute::define_property(
-                global,
-                "__nodeChildProcessPrototype",
-                host_api::object(vec![
-                    ("value".into(), prototype),
-                    ("writable".into(), Value::Boolean(false)),
-                    ("enumerable".into(), Value::Boolean(false)),
-                    ("configurable".into(), Value::Boolean(false)),
-                ]),
-            );
+            state.borrow_mut().child_process_prototype = Some(prototype);
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
                     "fork".to_string(),
