@@ -684,11 +684,42 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             .any(|(key, value)| key == "smallestUnit" && !matches!(value, Value::Undefined)),
         _ => false,
     });
+    let zoned_round_relative = relative_option(options).and_then(|value| match &value {
+        Value::String(text) if !text.contains('/') => None,
+        _ => zoned_relative_value(&value),
+    });
     if requested_largest == Some(0)
         && !has_smallest_option
         && duration_field(object, "years") != 0
         && duration_field(object, "months") == 0
         && duration_field(object, "weeks") == 0
+        && zoned_round_relative
+            .clone()
+            .is_some_and(|value| {
+                crate::execute::get_property_result(&value, "timeZoneId")
+                    .ok()
+                    .is_some_and(|timezone| {
+                        let Some(timezone) = crate::conversion::to_string(&timezone).ok() else {
+                            return false;
+                        };
+                        if timezone.starts_with(['+', '-']) {
+                            return false;
+                        }
+                        let Some(Value::BigInt(epoch)) =
+                            crate::execute::get_property_result(&value, "epochNanoseconds").ok()
+                        else {
+                            return true;
+                        };
+                        let Ok(epoch) = epoch.parse::<i128>() else {
+                            return true;
+                        };
+                        super::timezone_offset_nanos(&timezone, epoch)
+                            != super::timezone_offset_nanos(
+                                &timezone,
+                                epoch + 180 * 86_400_000_000_000,
+                            )
+                    })
+            })
     {
         let fields = [
             "years",
@@ -707,8 +738,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         .collect::<Vec<_>>();
         return construct(&fields);
     }
-    if let Some(relative) = relative_option(options).and_then(|value| zoned_relative_value(&value))
-    {
+    if let Some(relative) = zoned_round_relative {
         let fields = [
             "years",
             "months",
@@ -737,7 +767,12 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             return zoned_round_days(object, &duration, &relative, options, index);
         }
         if !has_calendar && largest == 4 && requested_largest == Some(4) {
-            let hours = duration_epoch_delta(&duration, &relative)? as f64 / 3_600_000_000_000.0;
+            let mut hours = duration_epoch_delta(&duration, &relative)? as f64
+                / 3_600_000_000_000.0;
+            if has_smallest_option {
+                let increment = rounding_increment(options, 4)?;
+                hours = round_number(hours / increment, &rounding_mode(options)?) * increment;
+            }
             let mut result = vec![Value::Number(0.0); 10];
             result[4] = Value::Number(hours);
             return construct(&result);
@@ -972,16 +1007,15 @@ fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
     if !crate::value::is_object(value) {
         return Ok(value.clone());
     }
-    if !matches!(
-        crate::execute::get_property_result(value, "timeZone")?,
-        Value::Undefined
-    ) {
-        return crate::temporal::execute(
-            crate::ops::Builtin::TemporalZonedDateTimeFrom,
-            None,
-            std::slice::from_ref(value),
-        )
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
+    if let Value::String(timezone) = crate::execute::get_property_result(value, "timeZone")? {
+        if timezone.contains('/') {
+            return crate::temporal::execute(
+                crate::ops::Builtin::TemporalZonedDateTimeFrom,
+                None,
+                std::slice::from_ref(value),
+            )
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
+        }
     }
     let resolved = crate::locals::resolved_replacement(value.clone());
     if let Value::Object(object) = &resolved {
