@@ -1,7 +1,7 @@
 use chrono::Datelike;
 use icu_calendar::{
     cal::Iso,
-    options::{DateAddOptions, Overflow},
+    options::{DateAddOptions, DateDifferenceOptions, DateDurationUnit, Overflow},
     types::{DateDuration, Month},
     AnyCalendar, AnyCalendarKind, Date,
 };
@@ -599,6 +599,77 @@ fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
     crate::temporal::options::overflow(options)
 }
 
+pub(crate) fn calendar_difference_fields(
+    left: (f64, f64, f64),
+    right: (f64, f64, f64),
+    direction: f64,
+    calendar: &str,
+    largest: &str,
+    left_code: Option<String>,
+    right_code: Option<String>,
+) -> Option<(i64, i64, i64, i64)> {
+    let left = left_code
+        .as_deref()
+        .and_then(|code| calendar_date_for_code(left.0 as i32, code, left.2 as u32, calendar))
+        .or_else(|| calendar_date(left.0 as i32, left.1 as u32, left.2 as u32, calendar))?;
+    let right = right_code
+        .as_deref()
+        .and_then(|code| calendar_date_for_code(right.0 as i32, code, right.2 as u32, calendar))
+        .or_else(|| calendar_date(right.0 as i32, right.1 as u32, right.2 as u32, calendar))?;
+    let largest_unit = match largest {
+        "year" | "years" => DateDurationUnit::Years,
+        "month" | "months" => DateDurationUnit::Months,
+        "week" | "weeks" => DateDurationUnit::Weeks,
+        _ => DateDurationUnit::Days,
+    };
+    let mut options = DateDifferenceOptions::default();
+    options.largest_unit = Some(largest_unit);
+    let duration = left.try_until_with_options(&right, options).ok()?;
+    let nonzero = duration.years != 0
+        || duration.months != 0
+        || duration.weeks != 0
+        || duration.days != 0;
+    let negative = nonzero
+        && if direction < 0.0 {
+            !duration.is_negative
+        } else {
+            duration.is_negative
+        };
+    let sign = if negative { -1 } else { 1 };
+    Some((
+        sign * duration.years as i64,
+        sign * duration.months as i64,
+        sign * duration.weeks as i64,
+        sign * duration.days as i64,
+    ))
+}
+
+fn calendar_difference_exact(
+    left: (f64, f64, f64),
+    right: (f64, f64, f64),
+    direction: f64,
+    calendar: &str,
+    settings: &DifferenceSettings,
+    left_code: Option<String>,
+    right_code: Option<String>,
+) -> Option<Value> {
+    let (years, months, weeks, days) = calendar_difference_fields(
+        left,
+        right,
+        direction,
+        calendar,
+        &settings.largest,
+        left_code,
+        right_code,
+    )?;
+    Some(crate::temporal::duration::construct(&[
+        Value::Number(years as f64),
+        Value::Number(months as f64),
+        Value::Number(weeks as f64),
+        Value::Number(days as f64),
+    ]).ok()?)
+}
+
 fn difference(
     receiver: Option<&Value>,
     other: Option<&Value>,
@@ -608,9 +679,40 @@ fn difference(
     let left = date_parts(receiver)?;
     let right_value = from(other, None)?;
     let right = date_parts(Some(&right_value))?;
+    let calendar = match receiver {
+        Some(Value::Object(object)) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
+    let other_calendar = match &right_value {
+        Value::Object(object) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
+    if calendar != other_calendar {
+        return Err(crate::value::error::throw_range_error("Calendar mismatch"));
+    }
+    let serial = |date: (f64, f64, f64)| {
+        calendar_date_serial(date.0, date.1, date.2, &calendar)
+            .unwrap_or_else(|| date_serial(date.0, date.1, date.2))
+    };
     let settings = difference_settings(options)?;
-    let raw_days =
-        (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2)) as f64;
+    if calendar != "iso8601"
+        && settings.increment == 1.0
+        && settings.mode == "trunc"
+    {
+        if let Some(result) = calendar_difference_exact(
+            left,
+            right,
+            direction,
+            &calendar,
+            &settings,
+            month_code_of(receiver),
+            month_code_of(Some(&right_value)),
+        )
+        {
+            return Ok(result);
+        }
+    }
+    let raw_days = (serial(right) - serial(left)) as f64;
     let signed_days = raw_days * direction;
     let sign = if signed_days == 0.0 {
         1.0
@@ -638,33 +740,32 @@ fn difference(
             let step_f = step as f64;
             let (base, limit) = (left, right);
             let mut years = (limit.0 - base.0) * step_f;
-            let mut cursor = add_calendar_months(base, (years as i64) * 12 * step);
+            let mut cursor = add_calendar_months(base, (years as i64) * 12 * step, &calendar);
             let passed = if step < 0 {
-                date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+                serial(cursor) < serial(limit)
                     || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 < limit.2)
             } else {
-                date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+                serial(cursor) > serial(limit)
                     || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 > limit.2)
             };
             if passed {
                 years -= 1.0;
-                cursor = add_calendar_months(base, (years as i64) * 12 * step);
+                cursor = add_calendar_months(base, (years as i64) * 12 * step, &calendar);
             }
             let mut months = (limit.0 * 12.0 + limit.1 - (cursor.0 * 12.0 + cursor.1)) * step_f;
-            cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step);
+            cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step, &calendar);
             let passed = if step < 0 {
-                date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+                serial(cursor) < serial(limit)
                     || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 < limit.2)
             } else {
-                date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+                serial(cursor) > serial(limit)
                     || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 > limit.2)
             };
             if passed {
                 months -= 1.0;
-                cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step);
+                cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step, &calendar);
             }
-            let days = (date_serial(limit.0, limit.1, limit.2)
-                - date_serial(cursor.0, cursor.1, cursor.2)) as f64;
+            let days = (serial(limit) - serial(cursor)) as f64;
             (years * sign, months * sign, 0.0, days.abs() * sign)
         }
         "months" => {
@@ -672,18 +773,17 @@ fn difference(
             let step_f = step as f64;
             let (base, limit) = (left, right);
             let mut months = (limit.0 * 12.0 + limit.1 - (base.0 * 12.0 + base.1)) * step_f;
-            let mut cursor = add_calendar_months(base, months as i64 * step);
+            let mut cursor = add_calendar_months(base, months as i64 * step, &calendar);
             let passed = if step < 0 {
-                date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+                serial(cursor) < serial(limit)
             } else {
-                date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+                serial(cursor) > serial(limit)
             };
             if passed {
                 months -= 1.0;
-                cursor = add_calendar_months(base, months as i64 * step);
+                cursor = add_calendar_months(base, months as i64 * step, &calendar);
             }
-            let days = (date_serial(limit.0, limit.1, limit.2)
-                - date_serial(cursor.0, cursor.1, cursor.2)) as f64;
+            let days = (serial(limit) - serial(cursor)) as f64;
             (0.0, months * sign, 0.0, days.abs() * sign)
         }
         "weeks" => {
@@ -704,9 +804,8 @@ fn difference(
         let scalar = match smallest.as_str() {
             "years" => {
                 let magnitude = years * sign;
-                let anchor = add_calendar_months(left, (magnitude * raw_sign) as i64 * 12);
-                let remainder = (date_serial(right.0, right.1, right.2)
-                    - date_serial(anchor.0, anchor.1, anchor.2))
+                let anchor = add_calendar_months(left, (magnitude * raw_sign) as i64 * 12, &calendar);
+                let remainder = (serial(right) - serial(anchor))
                 .unsigned_abs() as f64;
                 (magnitude
                     + remainder
@@ -719,14 +818,13 @@ fn difference(
             }
             "months" => {
                 let magnitude = months * sign;
-                let anchor = add_calendar_months(left, (magnitude * raw_sign) as i64);
-                let remainder = (date_serial(right.0, right.1, right.2)
-                    - date_serial(anchor.0, anchor.1, anchor.2))
+                let anchor = add_calendar_months(left, (magnitude * raw_sign) as i64, &calendar);
+                let remainder = (serial(right) - serial(anchor))
                 .unsigned_abs() as f64;
                 let span = if raw_sign > 0.0 {
                     anchor
                 } else {
-                    add_calendar_months(anchor, -1)
+                    add_calendar_months(anchor, -1, &calendar)
                 };
                 (magnitude + remainder / days_in_month(span.0, span.1)) * sign
             }
@@ -1003,11 +1101,42 @@ fn round_difference(value: f64, increment: f64, mode: &str) -> f64 {
     rounded * increment
 }
 
-fn add_calendar_months(date: (f64, f64, f64), months: i64) -> (f64, f64, f64) {
+fn add_calendar_months(date: (f64, f64, f64), months: i64, calendar: &str) -> (f64, f64, f64) {
+    if !matches!(calendar, "iso8601" | "gregory") {
+        if let Some(result) = calendar_add_months(date, months, calendar) {
+            return result;
+        }
+    }
     let index = date.0 as i64 * 12 + date.1 as i64 - 1 + months;
     let year = index.div_euclid(12) as f64;
     let month = (index.rem_euclid(12) + 1) as f64;
-    (year, month, date.2.min(days_in_month(year, month)))
+    let max_day = calendar_days_in_month(year as i32, month as u32, calendar)
+        .map(f64::from)
+        .unwrap_or_else(|| days_in_month(year, month));
+    (year, month, date.2.min(max_day))
+}
+
+fn calendar_add_months(
+    date: (f64, f64, f64),
+    months: i64,
+    calendar: &str,
+) -> Option<(f64, f64, f64)> {
+    let date = calendar_date(date.0 as i32, date.1 as u32, date.2 as u32, calendar)?;
+    let mut duration = DateDuration::default();
+    duration.months = months.unsigned_abs() as u32;
+    duration.is_negative = months < 0;
+    let mut options = DateAddOptions::default();
+    options.overflow = Some(Overflow::Constrain);
+    let result = date.try_added_with_options(duration, options).ok()?;
+    let value = object_from_calendar_date(result, calendar, None);
+    let Value::Object(object) = value else {
+        return None;
+    };
+    Some((
+        number_field(field(&object, "year")),
+        number_field(field(&object, "month")),
+        number_field(field(&object, "day")),
+    ))
 }
 
 fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
@@ -1021,12 +1150,22 @@ fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     let month = number_field(field(object, "month"));
     let day = number_field(field(object, "day"));
     let calendar = calendar_name(object);
+    let month_code = match field(object, "monthCode") {
+        Value::String(code) => Some(code),
+        _ => None,
+    };
+    let max_day = month_code
+        .as_deref()
+        .and_then(|code| calendar_days_in_month_for_code(year as i32, code, &calendar))
+        .or_else(|| calendar_days_in_month(year as i32, month as u32, &calendar))
+        .map(f64::from)
+        .unwrap_or_else(|| days_in_month(year, month));
     if !year.is_finite()
         || !month.is_finite()
         || !day.is_finite()
         || !(-271_821.0..=275_760.0).contains(&year)
         || (!(1.0..=12.0).contains(&month) && !(month == 13.0 && calendar_has_month13(&calendar)))
-        || !(1.0..=days_in_month(year, month)).contains(&day)
+        || !(1.0..=max_day).contains(&day)
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
@@ -1042,6 +1181,24 @@ pub(crate) fn date_serial(year: f64, month: f64, day: f64) -> i64 {
         + (153 * month_index + 2) / 5
         + day as i64
         - 1
+}
+
+pub(crate) fn calendar_date_serial(
+    year: f64,
+    month: f64,
+    day: f64,
+    calendar: &str,
+) -> Option<i64> {
+    if matches!(calendar, "iso8601" | "gregory") {
+        return Some(date_serial(year, month, day));
+    }
+    let date = calendar_date(year as i32, month as u32, day as u32, calendar)?;
+    let iso = date.to_calendar(Iso);
+    Some(date_serial(
+        f64::from(iso.year().extended_year()),
+        f64::from(iso.month().number()),
+        f64::from(iso.day_of_month().0),
+    ))
 }
 
 fn shift_date(
@@ -1668,6 +1825,18 @@ fn calendar_name(object: &crate::value::ObjectData) -> String {
         Some(value) => value,
         None => "iso8601".into(),
     }
+}
+
+fn month_code_of(value: Option<&Value>) -> Option<String> {
+    let Value::Object(object) = value? else {
+        return None;
+    };
+    object.iter().find_map(|(key, value)| {
+        (key == "monthCode").then(|| match value {
+            Value::String(code) => Some(code.clone()),
+            _ => None,
+        })
+    })?
 }
 
 fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
