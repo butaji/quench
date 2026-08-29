@@ -3539,6 +3539,27 @@ mod stubs {
                 1
             };
             let receiver_calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            let other_calendar = crate::conversion::to_string(
+                &crate::execute::get_property_result(&other, "calendarId")?,
+            )?;
+            if super::plain_date::canonical_calendar_id(&receiver_calendar)
+                != super::plain_date::canonical_calendar_id(&other_calendar)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "ZonedDateTime calendars do not match",
+                ));
+            }
+            let receiver_timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let other_timezone = crate::conversion::to_string(
+                &crate::execute::get_property_result(&other, "timeZoneId")?,
+            )?;
+            if super::timezone_primary_name(&receiver_timezone)
+                != super::timezone_primary_name(&other_timezone)
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "ZonedDateTime time zones do not match",
+                ));
+            }
             if receiver_calendar.starts_with("islamic")
                 && (largest.starts_with("year") || largest.starts_with("month"))
             {
