@@ -164,6 +164,22 @@ fn preserve_calendar_month_code(
     let Value::String(code) = code else {
         return result;
     };
+    if crate::temporal::plain_year_month::calendar_edge_month_fields(
+        calendar,
+        year as i32,
+        month as u32,
+        code,
+    ) {
+        if let Value::Object(object) = &mut result {
+            let object = std::rc::Rc::make_mut(object);
+            object.set_property_in_place("monthCode", Value::String(code.to_string()));
+            object.set_property_in_place(
+                "\0temporal-slot:\0monthCode",
+                Value::String(code.to_string()),
+            );
+        }
+        return result;
+    }
     let Some((ordinal, canonical)) = crate::temporal::plain_date::calendar_date_from_code(
         year as i32,
         code,
@@ -319,8 +335,23 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             .clone()
             .ok_or_else(|| crate::value::error::throw_type_error("Missing month"))?
     } else {
-        if let Some(month_code) = &month_code_number {
-            if crate::conversion::to_number(&month)? != crate::conversion::to_number(month_code)? {
+        if let Some(month_code_number) = &month_code_number {
+            let edge_fields = if let (Some(calendar), Value::String(code)) =
+                (calendar_text.as_deref(), &month_code)
+            {
+                crate::temporal::plain_year_month::calendar_edge_month_fields(
+                    calendar,
+                    crate::conversion::to_number(&year)?.trunc() as i32,
+                    crate::conversion::to_number(&month)?.trunc() as u32,
+                    code,
+                )
+            } else {
+                false
+            };
+            if crate::conversion::to_number(&month)?
+                != crate::conversion::to_number(month_code_number)?
+                && !edge_fields
+            {
                 return Err(crate::value::error::throw_range_error("Month mismatch"));
             }
         }
@@ -346,11 +377,19 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         };
         let month_number = month_number.clamp(1.0, max_month);
         let max_day = match &month_code {
-            Value::String(code) => crate::temporal::plain_date::calendar_days_in_month_for_code(
-                year_number as i32,
-                code,
+            Value::String(code) => crate::temporal::plain_year_month::calendar_edge_day(
                 &calendar_name,
-            ),
+                year_number as i32,
+                month_number as u32,
+                code,
+            )
+            .or_else(|| {
+                crate::temporal::plain_date::calendar_days_in_month_for_code(
+                    year_number as i32,
+                    code,
+                    &calendar_name,
+                )
+            }),
             _ if matches!(calendar_name.as_str(), "chinese" | "dangi" | "hebrew") => {
                 let ordinal = crate::temporal::plain_date::calendar_days_in_month(
                     year_number as i32,
@@ -369,11 +408,18 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
                     _ => None,
                 }
             }
-            _ => crate::temporal::plain_date::calendar_days_in_month(
+            _ => crate::temporal::plain_year_month::calendar_edge_day_for_month(
+                &calendar_name,
                 year_number as i32,
                 month_number as u32,
-                &calendar_name,
-            ),
+            )
+            .or_else(|| {
+                crate::temporal::plain_date::calendar_days_in_month(
+                    year_number as i32,
+                    month_number as u32,
+                    &calendar_name,
+                )
+            }),
         }
         .unwrap_or_else(|| days_in_month(year_number, month_number) as u32)
             as f64;
