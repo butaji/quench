@@ -657,11 +657,10 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             let options = value.cloned().unwrap_or(Value::Undefined);
             // Legacy url.parse() exposes `host`/`path`, while WHATWG URL
             // exposes `hostname`/`pathname`/`search`; both are request facts.
-            let host = opt_first(&options, &["host", "hostname"])?
+            let raw_host = opt_first(&options, &["host", "hostname"])?
                 .unwrap_or_else(|| "127.0.0.1".to_string());
-            let port = opt(&options, "port")?
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(80);
+            let explicit_port = opt(&options, "port")?.and_then(|p| p.parse().ok());
+            let (host, port) = split_host_port(&raw_host, explicit_port);
             let method = opt(&options, "method")?.unwrap_or_else(|| "GET".to_string());
             let path = match opt(&options, "path")? {
                 Some(path) => path,
@@ -722,6 +721,28 @@ fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {
         Value::Undefined => Ok(None),
         other => execute::to_js_string(&other).map(Some),
     }
+}
+
+fn split_host_port(raw_host: &str, explicit_port: Option<u16>) -> (String, u16) {
+    if let Some(port) = explicit_port {
+        return (host_without_port(raw_host), port);
+    }
+    if let Some((host, port)) = raw_host.rsplit_once(':') {
+        if let Ok(port) = port.parse::<u16>() {
+            return (host.trim_matches(['[', ']']).to_string(), port);
+        }
+    }
+    (raw_host.trim_matches(['[', ']']).to_string(), 80)
+}
+
+fn host_without_port(raw_host: &str) -> String {
+    raw_host
+        .rsplit_once(':')
+        .filter(|(_, port)| port.parse::<u16>().is_ok())
+        .map(|(host, _)| host)
+        .unwrap_or(raw_host)
+        .trim_matches(['[', ']'])
+        .to_string()
 }
 
 fn opt_first(options: &Value, keys: &[&str]) -> Result<Option<String>, VmError> {
