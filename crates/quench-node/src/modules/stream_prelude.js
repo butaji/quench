@@ -619,7 +619,18 @@
       if (typeof chunk === "string" && chunk.length === 0) return true;
       if (st.ended) st.ended = false;
       if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
-        chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
+        const sourceEncoding = encoding || st.defaultEncoding;
+        // Node stores unshifted strings in the stream's active encoding. If
+        // the supplied encoding already matches it, retain the string as-is;
+        // otherwise convert once and avoid feeding it back through the
+        // decoder, which would merge otherwise distinct unshift events.
+        if (st.encoding) {
+          if (st.encoding !== sourceEncoding) {
+            chunk = Buffer.from(chunk, sourceEncoding).toString(st.encoding);
+          }
+        } else {
+          chunk = Buffer.from(chunk, sourceEncoding);
+        }
       }
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
       st.unshiftedSinceRead = true;
