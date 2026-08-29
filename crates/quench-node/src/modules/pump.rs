@@ -432,6 +432,17 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     result.map(|()| true)
 }
 
+/// Advance timers under the deterministic mock clock. Mock `tick()` is an
+/// explicit host event-loop turn, so it also runs unref'd timers that would
+/// not keep a real process alive on their own.
+pub(crate) fn drain_mock_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    fire_due_timers(state)?;
+    drain_immediates(state)?;
+    drain_ticks(state)?;
+    quench_runtime::drain_promise_jobs();
+    Ok(())
+}
+
 fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let now = super::timers::monotonic_ms();
     let mut due: Vec<(u64, u64)> = state

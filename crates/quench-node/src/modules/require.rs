@@ -596,6 +596,31 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "property".to_string(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY),
                 ),
+                (
+                    "timers".to_string(),
+                    quench_runtime::host_api::object(vec![
+                        (
+                            "enable".to_string(),
+                            crate::host::capability(
+                                crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE,
+                            ),
+                        ),
+                        (
+                            "tick".to_string(),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_TICK),
+                        ),
+                        (
+                            "setTime".to_string(),
+                            crate::host::capability(
+                                crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME,
+                            ),
+                        ),
+                        (
+                            "reset".to_string(),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_RESET),
+                        ),
+                    ]),
+                ),
             ]);
             let _ = attach(&test_fn, "mock", mock);
             let _ = quench_runtime::execute::set_property_in_place(
