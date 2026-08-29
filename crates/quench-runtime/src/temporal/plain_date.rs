@@ -1,4 +1,5 @@
 use chrono::Datelike;
+use icu_calendar::{types::Month, AnyCalendar, AnyCalendarKind, Date};
 
 use crate::{execute::VmError, value::Value};
 
@@ -92,6 +93,64 @@ fn days_in_month(year: f64, month: f64) -> f64 {
         4 | 6 | 9 | 11 => 30.0,
         _ => 31.0,
     }
+}
+
+/// Derive calendar facts from one ICU4X date value shared by all calendars.
+fn calendar_date(year: i32, month: u32, day: u32, calendar: &str) -> Option<Date<AnyCalendar>> {
+    let kind = match calendar {
+        "buddhist" => AnyCalendarKind::Buddhist,
+        "chinese" => AnyCalendarKind::Chinese,
+        "coptic" => AnyCalendarKind::Coptic,
+        "dangi" => AnyCalendarKind::Dangi,
+        "ethiopic" => AnyCalendarKind::Ethiopian,
+        "ethioaa" => AnyCalendarKind::EthiopianAmeteAlem,
+        "gregory" => AnyCalendarKind::Gregorian,
+        "hebrew" => AnyCalendarKind::Hebrew,
+        "indian" => AnyCalendarKind::Indian,
+        "islamic-civil" => AnyCalendarKind::HijriTabularTypeIIFriday,
+        "islamic-tbla" => AnyCalendarKind::HijriTabularTypeIIThursday,
+        "islamic-umalqura" => AnyCalendarKind::HijriUmmAlQura,
+        "japanese" => AnyCalendarKind::Japanese,
+        "persian" => AnyCalendarKind::Persian,
+        "roc" => AnyCalendarKind::Roc,
+        _ => return None,
+    };
+    let calendar = AnyCalendar::new(kind);
+    let input_month = if matches!(
+        calendar,
+        AnyCalendar::Chinese(_) | AnyCalendar::Dangi(_) | AnyCalendar::Hebrew(_)
+    ) {
+        let leap_ordinal = (1..=12).find_map(|base| {
+            Date::try_new(year.into(), Month::leap(base), 1, AnyCalendar::new(kind))
+                .ok()
+                .filter(|date| date.month().leap_status() != icu_calendar::types::LeapStatus::Normal)
+                .map(|date| u32::from(date.month().ordinal))
+        });
+        match leap_ordinal {
+            Some(ordinal) if month == ordinal => Month::leap(month.saturating_sub(1) as u8),
+            Some(ordinal) if month > ordinal => Month::new(month.saturating_sub(1) as u8),
+            _ => Month::new(month as u8),
+        }
+    } else {
+        Month::new(month as u8)
+    };
+    Date::try_new(year.into(), input_month, day as u8, calendar).ok()
+}
+
+fn calendar_days_in_month(year: i32, month: u32, calendar: &str) -> Option<u32> {
+    calendar_date(year, month, 1, calendar).map(|date| u32::from(date.days_in_month()))
+}
+
+fn calendar_days_in_year(year: i32, month: u32, calendar: &str) -> Option<u32> {
+    calendar_date(year, month, 1, calendar).map(|date| u32::from(date.days_in_year()))
+}
+
+fn calendar_months_in_year(year: i32, month: u32, calendar: &str) -> Option<u32> {
+    calendar_date(year, month, 1, calendar).map(|date| u32::from(date.months_in_year()))
+}
+
+fn calendar_is_leap_year(year: i32, month: u32, calendar: &str) -> Option<bool> {
+    calendar_date(year, month, 1, calendar).map(|date| date.is_in_leap_year())
 }
 
 pub(crate) fn calendar_supports_month13(calendar: &str) -> bool {
@@ -1009,7 +1068,10 @@ fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     }
     let year = number_field(field(object, "year"));
     let month = number_field(field(object, "month"));
-    Ok(Value::Number(days_in_month(year, month)))
+    let calendar = calendar_name(object);
+    let value = calendar_days_in_month(year as i32, month as u32, &calendar)
+        .unwrap_or_else(|| days_in_month(year, month) as u32);
+    Ok(Value::Number(value as f64))
 }
 
 fn days_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -1020,11 +1082,11 @@ fn days_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     let year = number_field(field(object, "year")) as i32;
-    Ok(Value::Number(if is_leap_year(year) {
-        366.0
-    } else {
-        365.0
-    }))
+    let month = number_field(field(object, "month")) as u32;
+    let calendar = calendar_name(object);
+    let value = calendar_days_in_year(year, month, &calendar)
+        .unwrap_or_else(|| if is_leap_year(year) { 366 } else { 365 });
+    Ok(Value::Number(value as f64))
 }
 
 fn days_in_week(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -1044,7 +1106,12 @@ fn months_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(Value::Number(12.0))
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let calendar = calendar_name(object);
+    Ok(Value::Number(
+        calendar_months_in_year(year, month, &calendar).unwrap_or(12) as f64,
+    ))
 }
 
 fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -1121,7 +1188,11 @@ fn in_leap_year(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     let year = number_field(field(object, "year")) as i32;
-    Ok(Value::Boolean(is_leap_year(year)))
+    let month = number_field(field(object, "month")) as u32;
+    let calendar = calendar_name(object);
+    Ok(Value::Boolean(
+        calendar_is_leap_year(year, month, &calendar).unwrap_or_else(|| is_leap_year(year)),
+    ))
 }
 
 fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
