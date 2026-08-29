@@ -256,6 +256,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "skip".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CommonSkip)),
                 ),
+                (
+                    "printSkipMessage".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonPrintSkipMessage,
+                    )),
+                ),
                 ("isInsideDirWithUnusualChars".into(), Value::Boolean(false)),
                 (
                     "mustNotMutateObjectDeep".into(),

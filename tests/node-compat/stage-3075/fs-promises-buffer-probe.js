@@ -9,14 +9,16 @@ const { open, readFile } = fs.promises;
 const binding = internalBinding("fs");
 
 tmpdir.refresh();
-const path = tmpdir.resolve("quench-stage-promises-buffer.txt");
+const path = tmpdir.resolve("fs-promises-readfile-buffer-option.txt");
 const content = Buffer.from("Hello promises buffer option\n".repeat(128));
 fs.writeFileSync(path, content);
 let step = "start";
+let fstatCalls = 0;
 
 async function withFstatSizeZero(callback) {
   const original = binding.fstat;
   binding.fstat = function (...args) {
+    fstatCalls++;
     const result = Reflect.apply(original, this, args);
     return Promise.resolve(result).then((stats) => {
       if (stats !== undefined) stats[8] = 0;
@@ -32,13 +34,14 @@ async function withFstatSizeZero(callback) {
 
 (async () => {
   step = "read buffer";
-  const buffer = Buffer.alloc(content.length + 8, 0x78);
+  const buffer = Buffer.alloc(content.length + 16, 0x78);
   const value = await readFile(path, { buffer });
   assert.deepStrictEqual(value, buffer.subarray(0, content.length));
   assert.deepStrictEqual(value, content);
+  assert(buffer.subarray(content.length).every((byte) => byte === 0x78));
 
   step = "read encoding";
-  const encodedBuffer = Buffer.alloc(content.length + 8);
+  const encodedBuffer = Buffer.alloc(content.length + 16);
   assert.strictEqual(
     await readFile(path, { buffer: encodedBuffer, encoding: "utf8" }),
     content.toString("utf8")
@@ -50,7 +53,7 @@ async function withFstatSizeZero(callback) {
   const factoryValue = await readFile(path, {
     buffer(fileSize) {
       size = fileSize;
-      return Buffer.alloc(fileSize + 4);
+      return Buffer.alloc(fileSize + 8);
     }
   });
   assert.strictEqual(size, content.length);
@@ -71,10 +74,12 @@ async function withFstatSizeZero(callback) {
 
   step = "handle";
   const handle = await open(path, "r");
+  let handleBuffer;
   const handleValue = await handle.readFile({
-    buffer: Buffer.alloc(content.length + 8)
+    buffer: (handleBuffer = Buffer.alloc(content.length + 16, 0x78))
   });
   assert.deepStrictEqual(handleValue, content);
+  assert(handleBuffer.subarray(content.length).every((byte) => byte === 0x78));
   await handle.close();
 
   step = "handle factory";
@@ -83,7 +88,7 @@ async function withFstatSizeZero(callback) {
   const factoryHandleValue = await factoryHandle.readFile({
     buffer(fileSize) {
       handleSize = fileSize;
-      return Buffer.alloc(fileSize + 4);
+      return Buffer.alloc(fileSize + 8);
     }
   });
   assert.strictEqual(handleSize, content.length);
@@ -93,10 +98,12 @@ async function withFstatSizeZero(callback) {
   step = "using handle";
   {
     await using usingHandle = await open(path, "r");
+    const usingBuffer = Buffer.alloc(content.length + 16, 0x78);
     const usingValue = await usingHandle.readFile({
-      buffer: Buffer.alloc(content.length + 8)
+      buffer: usingBuffer
     });
     assert.deepStrictEqual(usingValue, content);
+    assert(usingBuffer.subarray(content.length).every((byte) => byte === 0x78));
   }
   step = "handle undersized";
   {
@@ -111,22 +118,27 @@ async function withFstatSizeZero(callback) {
   step = "zero-size fstat";
   await withFstatSizeZero(
     common.mustCall(async () => {
-      const zeroBuffer = Buffer.alloc(content.length + 8, 0x78);
+      const zeroBuffer = Buffer.alloc(content.length + 16, 0x78);
       const zeroValue = await readFile(path, {
         buffer: zeroBuffer
       });
       assert.deepStrictEqual(zeroValue, content);
+      assert(zeroBuffer.subarray(content.length).every((byte) => byte === 0x78));
       const zeroHandle = await open(path, "r");
+      let zeroHandleBuffer;
       const zeroHandleValue = await zeroHandle.readFile({
-        buffer: Buffer.alloc(content.length + 8)
+        buffer: (zeroHandleBuffer = Buffer.alloc(content.length + 16, 0x78))
       });
       assert.deepStrictEqual(zeroHandleValue, content);
+      assert(zeroHandleBuffer.subarray(content.length).every((byte) => byte === 0x78));
       await zeroHandle.close();
       await using zeroUsingHandle = await open(path, "r");
+      const zeroUsingBuffer = Buffer.alloc(content.length + 16, 0x78);
       const zeroUsingValue = await zeroUsingHandle.readFile({
-        buffer: Buffer.alloc(content.length + 8)
+        buffer: zeroUsingBuffer
       });
       assert.deepStrictEqual(zeroUsingValue, content);
+      assert(zeroUsingBuffer.subarray(content.length).every((byte) => byte === 0x78));
       await assert.rejects(
         readFile(path, {
           buffer: Buffer.alloc(content.length - 1)
@@ -142,6 +154,7 @@ async function withFstatSizeZero(callback) {
       );
     })
   );
+  assert(fstatCalls > 0);
 })()
   .then(common.mustCall())
   .catch((error) => {

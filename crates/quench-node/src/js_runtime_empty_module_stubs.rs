@@ -11,6 +11,12 @@ pub(crate) fn require_common_module(name: &str) -> Option<Value> {
             ),
             ("path".into(), Value::String(tmpdir_base().into())),
             (
+                "hasEnoughSpace".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::TmpdirHasEnoughSpace,
+                )),
+            ),
+            (
                 "fileURL".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl)),
             ),
