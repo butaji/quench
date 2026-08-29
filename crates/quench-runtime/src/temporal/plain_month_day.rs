@@ -58,7 +58,13 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
             );
         }
     }
-    let reference_year = if calendar_id == "iso8601" { 1972.0 } else { year };
+    let reference_year = if calendar_id == "iso8601"
+        && !(-271_821.0..=275_760.0).contains(&year)
+    {
+        1972.0
+    } else {
+        year
+    };
     Ok(set_calendar_id(
         construct_with_year(month, day, reference_year)?,
         &calendar_id,
