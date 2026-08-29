@@ -1119,21 +1119,7 @@ fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     let calendar = calendar_name(object);
-    let era = match calendar.as_str() {
-        "buddhist" => Some("be"),
-        "hebrew" => Some("am"),
-        value if value.starts_with("islamic") => Some("ah"),
-        "persian" => Some("ap"),
-        "coptic" | "ethiopic" => Some("am"),
-        "ethioaa" => Some("aa"),
-        "indian" => Some("shaka"),
-        "roc" if number_field(field(object, "year")) >= 1.0 => Some("roc"),
-        "roc" => Some("broc"),
-        "japanese" => japanese_era(number_field(field(object, "year"))),
-        "gregory" if number_field(field(object, "year")) >= 1.0 => Some("ce"),
-        "gregory" => Some("bce"),
-        _ => None,
-    };
+    let era = era_for_calendar(&calendar, number_field(field(object, "year")));
     Ok(era.map_or(Value::Undefined, |value| Value::String(value.into())))
 }
 
@@ -1146,17 +1132,38 @@ fn era_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     }
     let year = number_field(field(object, "year"));
     let calendar = calendar_name(object);
-    let era_year = match calendar.as_str() {
-        "buddhist" => Some(year + 543.0),
-        "hebrew" | "persian" | "coptic" | "ethiopic" | "ethioaa"
-        | "gregory" => Some(year),
+    let era_year = era_year_for_calendar(&calendar, year);
+    Ok(era_year.map_or(Value::Undefined, Value::Number))
+}
+
+pub(crate) fn era_for_calendar(calendar: &str, year: f64) -> Option<&'static str> {
+    match calendar {
+        "buddhist" => Some("be"),
+        "hebrew" => Some("am"),
+        value if value.starts_with("islamic") => Some("ah"),
+        "persian" => Some("ap"),
+        "coptic" | "ethiopic" => Some("am"),
+        "ethioaa" => Some("aa"),
+        "indian" => Some("shaka"),
+        "roc" if year >= 1.0 => Some("roc"),
+        "roc" => Some("broc"),
+        "japanese" => japanese_era(year),
+        "gregory" if year >= 1.0 => Some("ce"),
+        "gregory" => Some("bce"),
+        _ => None,
+    }
+}
+
+pub(crate) fn era_year_for_calendar(calendar: &str, year: f64) -> Option<f64> {
+    match calendar {
+        "buddhist" => Some(year),
+        "hebrew" | "persian" | "coptic" | "ethiopic" | "ethioaa" | "gregory" => Some(year),
         value if value.starts_with("islamic") => Some(year),
-        "indian" => Some(year - 78.0),
-        "roc" => Some(year - 1911.0),
+        "indian" => Some(year),
+        "roc" => Some(year),
         "japanese" => Some(japanese_era_year(year)),
         _ => None,
-    };
-    Ok(era_year.map_or(Value::Undefined, Value::Number))
+    }
 }
 
 fn japanese_era(year: f64) -> Option<&'static str> {
