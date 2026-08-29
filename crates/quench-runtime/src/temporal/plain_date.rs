@@ -1458,12 +1458,16 @@ fn fixed_timezone_offset(value: &str) -> i128 {
 
 fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<Value, VmError> {
     let (year, month, day) = date_parts(receiver)?;
+    let calendar = match receiver {
+        Some(Value::Object(object)) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
     match prototype {
         crate::ops::Builtin::TemporalPlainMonthDayPrototype => {
             crate::temporal::plain_month_day::construct(month, day)
         }
         crate::ops::Builtin::TemporalPlainYearMonthPrototype => {
-            crate::temporal::plain_year_month::construct(year, month)
+            crate::temporal::plain_year_month::construct_with_calendar(year, month, &calendar)
         }
         crate::ops::Builtin::TemporalZonedDateTimePrototype => {
             let epoch = i128::from(date_serial(year, month, day) - date_serial(1970.0, 1.0, 1.0))
