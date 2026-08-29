@@ -310,7 +310,11 @@ pub fn req_destroy(
         .retain(|_, request_id| *request_id != id);
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     if let Some(error) = args.first().cloned() {
-        net::emit(state, &request, "error", vec![error])?;
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((request.clone(), "error".into(), vec![error]));
     } else if response.is_none() {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
@@ -322,7 +326,11 @@ pub fn req_destroy(
             "Error",
         );
         let error = execute::set_property(error, "constructor", error_ctor);
-        net::emit(state, &request, "error", vec![error])?;
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((request.clone(), "error".into(), vec![error]));
     }
     if let Some(response) = response {
         let signal = execute::get_property(&response, "signal");
