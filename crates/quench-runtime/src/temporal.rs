@@ -1132,6 +1132,9 @@ mod stubs {
             {
                 return Err(crate::value::error::throw_range_error("Invalid monthCode"));
             }
+            if month_code.is_some_and(|(month, leap)| leap && calendar == "hebrew" && month != 5) {
+                return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+            }
             let timezone = super::parse_timezone_identifier(&timezone_value)?;
             let offset = validated_offset;
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
