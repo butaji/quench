@@ -3142,13 +3142,6 @@ mod stubs {
                 let target_year = crate::conversion::to_number(&target[0])?;
                 let target_month = crate::conversion::to_number(&target[1])?;
                 let mut target_day = crate::conversion::to_number(&target[2])?;
-                if matches!(calendar.as_str(), "chinese" | "dangi")
-                    && values[1] != 0.0
-                    && target_day > 29.0
-                {
-                    target_day = 29.0;
-                    target[2] = Value::Number(target_day);
-                }
                 let local_epoch = super::plain_date::calendar_date_serial(
                     target_year,
                     target_month,
