@@ -713,7 +713,7 @@ fn with(
         return Err(crate::value::error::throw_type_error("Invalid fields"));
     }
     let month_value = crate::execute::get_property_result(changes, "month")?;
-    let month = match &month_value {
+    let mut month = match &month_value {
         Value::Undefined => month,
         value => crate::conversion::to_number(value)?,
     };
@@ -724,7 +724,7 @@ fn with(
     }
     let month_code = crate::execute::get_property_result(changes, "monthCode")?;
     let mut month_code_text = None;
-    let month_code = if matches!(month_code, Value::Undefined) {
+    let mut month_code = if matches!(month_code, Value::Undefined) {
         None
     } else {
         if !matches!(
@@ -746,6 +746,48 @@ fn with(
         value => crate::conversion::to_number(value)?.trunc(),
     };
     let constrain = overflow_option(options)?;
+    // A leap-month PlainYearMonth retains its month code when only the year
+    // changes. If that leap month does not exist in the target year, reject or
+    // constrain to the corresponding ordinary month as required by Temporal.
+    if month_code.is_none() && matches!(month_value, Value::Undefined) {
+        if let Value::String(receiver_code) = field(Some(receiver), "monthCode")? {
+            if receiver_code.ends_with('L') {
+                if crate::temporal::plain_date::calendar_date_from_code(
+                    year as i32,
+                    &receiver_code,
+                    1,
+                    &receiver_calendar,
+                )
+                .is_some()
+                {
+                    month_code_text = Some(receiver_code.clone());
+                    month_code = Some(parse_month_code(&receiver_code)?);
+                } else if !constrain {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid monthCode",
+                    ));
+                } else {
+                    let ordinary = if receiver_calendar == "hebrew" && receiver_code == "M05L" {
+                        "M06"
+                    } else {
+                        receiver_code.trim_end_matches('L')
+                    };
+                    if let Some((ordinal, _)) =
+                        crate::temporal::plain_date::calendar_date_from_code(
+                            year as i32,
+                            ordinary,
+                            1,
+                            &receiver_calendar,
+                        )
+                    {
+                        month = ordinal as f64;
+                        month_code_text = Some(ordinary.to_string());
+                        month_code = Some(parse_month_code(ordinary)?);
+                    }
+                }
+            }
+        }
+    }
     if matches!(year_value, Value::Undefined)
         && matches!(month_value, Value::Undefined)
         && month_code.is_none()
@@ -787,14 +829,13 @@ fn with(
                 "Conflicting month fields",
             ));
         }
-        let result = construct_with_reference_calendar(
+        let result = construct_with_calendar(
             year,
             if constrain {
                 ordinal.min(13.0)
             } else {
                 ordinal
             },
-            reference_day(receiver),
             &receiver_calendar,
         )?;
         return Ok(match month_code_text {
@@ -802,10 +843,9 @@ fn with(
             None => result,
         });
     }
-    construct_with_reference_calendar(
+    construct_with_calendar(
         year,
         if constrain { month.min(13.0) } else { month },
-        reference_day(receiver),
         &receiver_calendar,
     )
 }
