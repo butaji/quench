@@ -25,7 +25,11 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     let writes = std::mem::take(&mut state.borrow_mut().net.pending_writes);
     for (socket, bytes) in writes {
-        socket_write(state, Some(&socket), &[quench_runtime::host_api::bytes(&bytes)])?;
+        socket_write(
+            state,
+            Some(&socket),
+            &[quench_runtime::host_api::bytes(&bytes)],
+        )?;
     }
     poll_accept(state)?;
     poll_sockets(state)?;
@@ -209,7 +213,7 @@ fn read_available(
     guard: &mut std::cell::RefMut<'_, NetSocket>,
     datas: &mut Vec<(Rc<RefCell<NetSocket>>, Vec<u8>)>,
 ) -> bool {
-    if guard.stream.is_none() {
+    if guard.stream.is_none() || guard.read_eof {
         return false;
     }
     let mut had_eof = false;

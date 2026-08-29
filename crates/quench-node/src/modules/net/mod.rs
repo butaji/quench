@@ -26,10 +26,10 @@ mod pump;
 
 pub use methods::{
     connect, connect_existing, connect_path, create_server, server_address, server_close,
-    server_close_idle, server_listen,
-    server_ref, server_unref, socket_address, socket_construct, socket_destroy, socket_end,
-    socket_pause, socket_ref, socket_resume, socket_set_encoding, socket_set_keep_alive,
-    socket_set_no_delay, socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
+    server_close_idle, server_listen, server_ref, server_unref, socket_address, socket_construct,
+    socket_destroy, socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
+    socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_timeout_fire,
+    socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -115,13 +115,10 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         let server = s.borrow();
         server.listening && server.refed && !server.closed
     }) || !host.net.pending_errors.is_empty()
-        || host
-            .net
-        .sockets
-        .values()
-        .any(|s| {
+        || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
             socket.state != SocketState::Closed
+                && !socket.read_eof
                 && (socket.stream.is_some() || socket.server_id.is_some())
         })
 }
@@ -289,7 +286,10 @@ fn socket_props() -> Vec<(&'static str, Value)> {
             "setKeepAlive",
             cap(crate::registry::SPEC_NET_SOCKET_SET_KEEP_ALIVE),
         ),
-        ("setTimeout", cap(crate::registry::SPEC_NET_SOCKET_SET_TIMEOUT)),
+        (
+            "setTimeout",
+            cap(crate::registry::SPEC_NET_SOCKET_SET_TIMEOUT),
+        ),
         (
             "setEncoding",
             cap(crate::registry::SPEC_NET_SOCKET_SET_ENCODING),
