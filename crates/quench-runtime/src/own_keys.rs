@@ -511,11 +511,7 @@ fn descriptor_enumerable<P: crate::value::PropertyEntries + ?Sized>(
     properties: &P,
     key: &str,
 ) -> bool {
-    let metadata = crate::builtins::descriptor_key(key);
-    let descriptor = properties
-        .entries()
-        .rev()
-        .find_map(|(name, value)| (name == metadata).then_some(value));
+    let descriptor = crate::builtins::descriptor_metadata(properties, key);
     descriptor_enumerable_value(descriptor.as_ref())
 }
 
@@ -709,6 +705,7 @@ fn ordered<P: crate::value::PropertyEntries + ?Sized>(
     properties: &P,
     symbols: bool,
 ) -> Vec<String> {
+    let mut seen_strings = std::collections::HashSet::new();
     let mut indices = Vec::new();
     let mut strings = Vec::new();
     for (key, _) in properties.entries() {
@@ -725,16 +722,17 @@ fn ordered<P: crate::value::PropertyEntries + ?Sized>(
         }
         match array_index(key) {
             Some(index) if !symbols => indices.push((index, key.to_owned())),
-            _ => strings.push(key.to_owned()),
+            _ => {
+                let key = key.to_owned();
+                if seen_strings.insert(key.clone()) {
+                    strings.push(key);
+                }
+            }
         }
     }
     indices.sort_by_key(|(index, _)| *index);
     let mut keys: Vec<String> = indices.into_iter().map(|(_, key)| key).collect();
-    for key in strings {
-        if !keys.contains(&key) {
-            keys.push(key);
-        }
-    }
+    keys.extend(strings);
     keys
 }
 
