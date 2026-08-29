@@ -1456,6 +1456,8 @@
           const next = pending.shift();
           st.pending.unshift(...pending);
           updateBufferedRequestCount(st);
+          st.buffered -= next.chunkLength;
+          updateNeedDrain(st);
           st.writing = false;
           const wasEnded = st.ended;
           st.ended = false;
@@ -1905,6 +1907,27 @@
   };
   DuplexCompat.prototype = Duplex.prototype;
   Object.setPrototypeOf(DuplexCompat, Duplex);
+  const duplexPair = (options = {}) => {
+    const left = new Duplex(options);
+    const right = new Duplex(options);
+    const connect = (source, destination) => {
+      source._write = (chunk, encoding, callback) => {
+        destination.push(chunk, encoding);
+        callback?.();
+      };
+      source._final = (callback) => {
+        const flush = () => {
+          destination.push(null);
+          callback?.();
+        };
+        source._writableState.corked = 0;
+        nextTick(flush);
+      };
+    };
+    connect(left, right);
+    connect(right, left);
+    return [left, right];
+  };
   DuplexCompat.from = (source, options = {}) => {
     const pair = source && source.readable && source.readable.getReader
       ? source
@@ -2015,6 +2038,7 @@
     Transform,
     PassThrough,
     Stream: Readable,
+    duplexPair,
     destroy,
     finished,
     pipeline,
