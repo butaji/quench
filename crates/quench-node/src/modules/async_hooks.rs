@@ -760,6 +760,36 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
     Ok(resource)
 }
 
+/// Attach a fresh async-resource identity to an already-created host object.
+/// Timers use this path because Node exposes the timer handle itself as the
+/// resource delivered to `init`, `before`, `after`, and `destroy`.
+pub fn attach_resource(
+    state: &Rc<RefCell<HostState>>,
+    resource: Value,
+    resource_type: &str,
+) -> Result<Value, VmError> {
+    let parent_id = state.borrow().async_hooks.current_id;
+    let (id, trigger) = state.borrow_mut().async_hooks.allocate(parent_id);
+    execute::set_property_in_place(&resource, ASYNC_ID, Value::Number(id as f64));
+    execute::set_property_in_place(&resource, TRIGGER_ID, Value::Number(trigger as f64));
+    let id_value = Value::Number(id as f64);
+    let trigger_value = Value::Number(trigger as f64);
+    let resource_type = Value::String(resource_type.into());
+    for callback in active_callbacks(state, HookEvent::Init) {
+        let _ = execute::call(
+            &callback,
+            &Value::Undefined,
+            &[
+                id_value.clone(),
+                resource_type.clone(),
+                trigger_value.clone(),
+                resource.clone(),
+            ],
+        );
+    }
+    Ok(resource)
+}
+
 pub fn resource_domain(
     _: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
