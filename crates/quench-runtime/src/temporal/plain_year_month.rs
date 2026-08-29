@@ -218,6 +218,14 @@ pub(crate) fn execute(
 }
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
+        let time_style = crate::execute::get_property_result(options, "timeStyle")?;
+        if !matches!(time_style, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "timeStyle is incompatible with PlainYearMonth",
+            ));
+        }
+    }
     let value = receiver
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?
         .clone();
