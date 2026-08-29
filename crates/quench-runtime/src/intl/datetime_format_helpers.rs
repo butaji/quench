@@ -307,13 +307,21 @@ fn effective_format_slots(slots: &[(String, Value)]) -> Vec<(String, Value)> {
     if slots.iter().any(|(name, _)| {
         matches!(
             name.as_str(),
-            "weekday" | "era" | "year" | "month" | "day" | "hour" | "minute" | "second"
+            "weekday" | "year" | "month" | "day" | "hour" | "minute" | "second"
         )
     }) {
         let mut result = slots.to_vec();
         return result;
     }
     let mut result = slots.to_vec();
+    if slots.iter().any(|(name, _)| name == "era") {
+        result.extend([
+            ("year".into(), Value::String("numeric".into())),
+            ("month".into(), Value::String("numeric".into())),
+            ("day".into(), Value::String("numeric".into())),
+        ]);
+        return result;
+    }
     let date_style = slot_string(slots, "dateStyle");
     let time_style = slot_string(slots, "timeStyle");
     match date_style.as_deref() {
