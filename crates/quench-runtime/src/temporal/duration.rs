@@ -148,7 +148,10 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     let has_calendar = ["years", "months", "weeks"]
         .iter()
         .any(|name| duration_field(object, name) != 0);
-    let needs_relative = has_calendar || unit_index <= 2;
+    let relative_zoned = (!matches!(relative, Value::Undefined))
+        .then(|| zoned_relative_value(&relative))
+        .flatten();
+    let needs_relative = has_calendar || unit_index <= 2 || relative_zoned.is_some();
     if needs_relative && matches!(relative, Value::Undefined) {
         return Err(crate::value::error::throw_range_error(
             "relativeTo required",
@@ -159,6 +162,78 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             return Err(crate::value::error::throw_range_error(
                 "Invalid relativeTo range",
             ));
+        }
+        if unit_index >= 3 {
+            if let Some(relative) = relative_zoned.as_ref() {
+                if unit_index == 3 {
+                    let fields = [
+                        "years",
+                        "months",
+                        "weeks",
+                        "days",
+                        "hours",
+                        "minutes",
+                        "seconds",
+                        "milliseconds",
+                        "microseconds",
+                        "nanoseconds",
+                    ]
+                    .iter()
+                    .map(|name| Value::Number(duration_field(object, name) as f64))
+                    .collect::<Vec<_>>();
+                    let duration = construct(&fields)?;
+                    return Ok(Value::Number(zoned_total_days(&duration, relative)?));
+                }
+                let fields = [
+                    "years",
+                    "months",
+                    "weeks",
+                    "days",
+                    "hours",
+                    "minutes",
+                    "seconds",
+                    "milliseconds",
+                    "microseconds",
+                    "nanoseconds",
+                ]
+                .iter()
+                .map(|name| Value::Number(duration_field(object, name) as f64))
+                .collect::<Vec<_>>();
+                let duration = construct(&fields)?;
+                let delta = duration_epoch_delta(&duration, relative)?;
+                let divisor = [
+                    86_400_000_000_000_i128,
+                    3_600_000_000_000,
+                    60_000_000_000,
+                    1_000_000_000,
+                    1_000_000,
+                    1_000,
+                    1,
+                ][unit_index - 3];
+                return Ok(Value::Number(delta as f64 / divisor as f64));
+            }
+        } else if unit_index <= 1 {
+            if let Some(relative) = relative_zoned.as_ref() {
+                let fields = [
+                    "years",
+                    "months",
+                    "weeks",
+                    "days",
+                    "hours",
+                    "minutes",
+                    "seconds",
+                    "milliseconds",
+                    "microseconds",
+                    "nanoseconds",
+                ]
+                .iter()
+                .map(|name| Value::Number(duration_field(object, name) as f64))
+                .collect::<Vec<_>>();
+                let duration = construct(&fields)?;
+                return Ok(Value::Number(zoned_total_calendar(
+                    &duration, relative, unit_index,
+                )?));
+            }
         }
         return total_calendar(
             object,
