@@ -54,6 +54,28 @@ pub fn res_write_head(
         return Ok(Value::Undefined);
     };
     let status = args.first().and_then(number).unwrap_or(200).clamp(100, 599);
+    if let Some(Value::Array(_)) = args.get(1) {
+        let array = args.get(1).cloned().unwrap_or(Value::Undefined);
+        let mut guard = state.borrow_mut();
+        if let Some(res) = guard.http.res.get_mut(&id) {
+            res.status = status;
+            res.headers.clear();
+            let keys = execute::own_enumerable_keys(&array);
+            for pair in keys.chunks(2) {
+                let (Some(name), Some(value)) = (pair.first(), pair.get(1)) else {
+                    continue;
+                };
+                let Ok(name) = execute::to_js_string(&execute::get_property(&array, name)) else {
+                    continue;
+                };
+                let Ok(value) = execute::to_js_string(&execute::get_property(&array, value)) else {
+                    continue;
+                };
+                res.headers.push((name, value));
+            }
+        }
+        return Ok(Value::Undefined);
+    }
     if let Some(Value::Object(_)) = args.get(1) {
         let object = args.get(1).cloned().unwrap_or(Value::Undefined);
         let mut guard = state.borrow_mut();
