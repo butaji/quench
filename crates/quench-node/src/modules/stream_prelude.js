@@ -444,7 +444,7 @@
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
-        if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+        if (!stream.destroyed && st.buffer.length === 0 && st.ended && !st.endEmitted &&
             st.readableEofPending === 0 && !st.readableEofReadScheduled &&
             (st.flowing || stream.listenerCount("readable") > 0 ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
@@ -657,7 +657,7 @@
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
           if (!this._isTransform && size > 0) st.emittedReadable = true;
           nextTick(() => {
-            if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+            if (!this.destroyed && st.buffer.length === 0 && st.ended && !st.endEmitted &&
                 st.readableEofPending === 0 && !st.readableEofReadScheduled) {
               st.endEmitted = true;
               st.needReadable = false;
