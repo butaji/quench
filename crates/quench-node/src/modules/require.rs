@@ -154,11 +154,18 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             timers
         });
     }
-    if let Some(cached) = state.borrow().module_cache.get(&spec) {
+    // `node:` is a spelling of the same builtin, not a second module
+    // instance. Canonicalize the cache key before resolving so constructors,
+    // prototypes, and mutable module state retain identity across spellings.
+    let cache_key = spec.strip_prefix("node:").unwrap_or(&spec).to_string();
+    if let Some(cached) = state.borrow().module_cache.get(&cache_key) {
         return Ok(cached.clone());
     }
     if let Some(ns) = resolve(state, &spec) {
-        state.borrow_mut().module_cache.insert(spec, ns.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(cache_key, ns.clone());
         return Ok(ns);
     }
     load_file_module(state, &spec)

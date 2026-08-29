@@ -209,6 +209,10 @@ pub fn readdir_sync(
         .map(|(name, mode)| {
             if options.with_file_types {
                 super::fs_stats::dirent(name, *mode)
+            } else if options.encoding.as_deref() == Some("hex") {
+                crate::modules::buffer_enc::decode_str(name.as_bytes(), "hex")
+            } else if options.encoding.as_deref() == Some("buffer") {
+                super::buffer_proto::make_buffer(name.as_bytes())
             } else {
                 Value::String(name.clone())
             }
