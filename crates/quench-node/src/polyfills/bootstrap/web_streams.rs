@@ -73,7 +73,7 @@ const __quenchReadableRead = (stream) => {
 const __quenchReadableCancel = async (stream, reason) => {
   stream._closed = true;
   stream[__quenchWebStreamsState].state = "closed";
-  await stream._cancel?.(reason);
+  if (typeof stream._cancel === "function") await stream._cancel(reason);
   stream._cancelReason = reason;
   while (stream._readWaiters.length) {
     stream._readWaiters.shift()({ value: undefined, done: true });
@@ -227,16 +227,18 @@ class __quenchWritableStream {
     const sink = this._sink;
     const stream = this;
     return {
-      write: (value) => Promise.resolve(sink.write?.(value)),
+      write: (value) => Promise.resolve(
+        typeof sink.write === "function" ? sink.write(value) : undefined
+      ),
       close: async () => {
-        await sink.close?.();
+        if (typeof sink.close === "function") await sink.close();
         stream._closed = true;
         stream._resolveClosed();
         stream[__quenchWebStreamsState].state = "closed";
         while (stream._finishWaiters.length) stream._finishWaiters.shift()();
       },
       abort: async (error) => {
-        await sink.abort?.(error);
+        if (typeof sink.abort === "function") await sink.abort(error);
         stream[__quenchWebStreamsState].state = "errored";
         stream[__quenchWebStreamsState].storedError = error;
         stream._rejectClosed(error);

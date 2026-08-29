@@ -1894,11 +1894,26 @@
     duplex._writableState.objectMode = Boolean(
       writable?.writableObjectMode || writable?._writableState?.objectMode
     );
+    const onError = () => {};
+    onError.__quenchInternal = true;
+    duplex.on("error", onError);
     if (readable) {
-      readable.on("data", (chunk) => duplex.push(chunk));
+      readable.once("error", (error) => {
+        if (writable && typeof writable.destroy === "function") writable.destroy(error);
+        duplex.destroy(error);
+      });
       readable.once("end", () => duplex.push(null));
-      readable.once("error", (error) => duplex.destroy(error));
-      duplex._read = () => readable.resume?.();
+      nextTick(() => {
+        try {
+          readable.on("data", (chunk) => duplex.push(chunk));
+        } catch (error) {
+          if (writable && typeof writable.destroy === "function") writable.destroy(error);
+          duplex.destroy(error);
+        }
+      });
+      duplex._read = () => {
+        if (typeof readable.resume === "function") readable.resume();
+      };
     }
     if (writable) {
       duplex._write = (chunk, encoding, callback) => {
@@ -2263,6 +2278,10 @@
     if (source && typeof source === "object" &&
         (source.readable !== undefined || source.writable !== undefined) &&
         (typeof source.readable === "object" || typeof source.writable === "object")) {
+      if (typeof source.readable?.getReader === "function" ||
+          typeof source.writable?.getWriter === "function") {
+        return DuplexCompat.fromWeb(source, options);
+      }
       return duplexFromPair(source.readable, source.writable, options);
     }
     if (source && (typeof source.read === "function" || typeof source.write === "function")) {
