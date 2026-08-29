@@ -109,6 +109,11 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         quench_node_test::NodeOutcome::Fail { reason } => {
+            if child_mode {
+                let message = reason.strip_prefix("runtime: ").unwrap_or(&reason);
+                eprintln!("{message}");
+                return ExitCode::from(1);
+            }
             if reason.starts_with("read ") {
                 eprintln!("Cannot find module '{}'", path.display());
             } else {

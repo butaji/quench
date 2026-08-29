@@ -126,11 +126,8 @@ fn schedule(
         TimerKind::Immediate => "Immediate",
         TimerKind::Timeout | TimerKind::Interval => "Timeout",
     };
-    let async_resource = crate::modules::async_hooks::attach_resource(
-        state,
-        object.clone(),
-        resource_type,
-    )?;
+    let async_resource =
+        crate::modules::async_hooks::attach_resource(state, object.clone(), resource_type)?;
     // AsyncLocalStorage state is carried by the JS resource object. Capture
     // the current resource's store map when the timer is created so the
     // callback observes the same context after resource_before switches to
@@ -240,11 +237,7 @@ fn clear_matching(
         let timer = state.borrow_mut().timers.timers.remove(&id);
         if let Some(timer) = timer {
             mark_destroyed(&timer);
-            crate::modules::async_hooks::resource_destroy(
-                state,
-                Some(&timer.async_resource),
-                &[],
-            )?;
+            crate::modules::async_hooks::resource_destroy(state, Some(&timer.async_resource), &[])?;
         }
     }
     Ok(Value::Undefined)

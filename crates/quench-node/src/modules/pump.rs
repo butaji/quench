@@ -122,12 +122,18 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         return Ok(());
     };
     loop {
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         if let Some(result) = settled(&data.state.borrow()) {
             return result;
         }
         crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
@@ -157,6 +163,9 @@ pub fn await_promise_with_timeout(
     let deadline =
         std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout_ms / 1000.0);
     loop {
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         if std::time::Instant::now() >= deadline {
             return Ok(true);
         }
@@ -167,6 +176,9 @@ pub fn await_promise_with_timeout(
         crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
@@ -200,10 +212,16 @@ pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 /// mirroring Node's uncaught-exception exit.
 pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         drain_unhandled_rejections(state)?;
+        if let Some(error) = crate::modules::async_hooks::take_fatal_error(state) {
+            return Err(VmError::Thrown(error));
+        }
         fire_due_timers(state)?;
         drain_immediates(state)?;
         // Work created by a timer/immediate belongs to this turn.  Drain its
@@ -529,14 +547,9 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
     // while the callback is running, so retain it with its updated deadline.
     let refreshed = destroy
         && !converted
-        && state
-            .borrow()
-            .timers
-            .timers
-            .get(&id)
-            .is_some_and(|timer| {
-                timer.active && matches!(*timer.destroyed.borrow(), Value::Boolean(false))
-            });
+        && state.borrow().timers.timers.get(&id).is_some_and(|timer| {
+            timer.active && matches!(*timer.destroyed.borrow(), Value::Boolean(false))
+        });
     if destroy && !converted && !refreshed {
         if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
             super::timers::mark_destroyed(&timer);
@@ -559,12 +572,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if let Some(resource) = task.resource.as_ref() {
             crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
         }
-        let result = call_guarded_report(
-            state,
-            &task.callback,
-            &Value::Undefined,
-            &task.args,
-        );
+        let result = call_guarded_report(state, &task.callback, &Value::Undefined, &task.args);
         if task.resource.is_some() {
             crate::modules::async_hooks::resource_after(state, None, &[])?;
         }
