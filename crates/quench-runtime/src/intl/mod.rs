@@ -350,4 +350,22 @@ pub(crate) fn numbering_system(locale: &str) -> Option<&str> {
         .then_some(value)
 }
 
+pub(crate) fn default_numbering_system(locale: &str) -> &'static str {
+    let language = locale.split('-').next().unwrap_or(locale);
+    match language {
+        "ar" => "arab",
+        "fa" => "arabext",
+        "bn" => "beng",
+        "gu" => "gujr",
+        "he" => "latn",
+        "hi" | "mr" | "ne" => "deva",
+        "km" => "khmr",
+        "ko" => "latn",
+        "lo" => "laoo",
+        "my" => "mymr",
+        "th" => "thai",
+        _ => "latn",
+    }
+}
+
 include!("locale_canonicalization.rs");

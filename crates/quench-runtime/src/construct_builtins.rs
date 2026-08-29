@@ -104,7 +104,9 @@ fn construct_builtin_tail(
                     return Err(crate::value::error::throw_type_error("Invalid calendar"));
                 }
                 let calendar = crate::conversion::to_string(calendar)?;
-                if !calendar.eq_ignore_ascii_case("iso8601") {
+                if !calendar.eq_ignore_ascii_case("iso8601")
+                    && !calendar.eq_ignore_ascii_case("gregory")
+                {
                     return Err(crate::value::error::throw_range_error("Invalid calendar"));
                 }
             }
