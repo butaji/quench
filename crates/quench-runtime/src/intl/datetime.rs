@@ -97,23 +97,49 @@ pub(crate) fn construct_with_defaults(
     Ok(options.build_object())
 }
 
+/// Format a Temporal value through the same DateTimeFormat path as user code.
+/// The defaults are supplied by the Temporal type, while locale and options
+/// remain the caller's data.
+pub(crate) fn format_temporal_value(
+    value: &Value,
+    arguments: &[Value],
+    defaults: &[&str],
+) -> Result<Value, VmError> {
+    let formatter = construct_with_defaults(arguments, Some(defaults))?;
+    prototype_method(
+        crate::ops::Builtin::IntlDateTimeFormatFormat,
+        std::slice::from_ref(value),
+        Some(&formatter),
+    )
+}
+
 fn sanitize_locale(locale: &str) -> String {
     let Some((base, extension)) = locale.split_once("-u-") else {
         return locale.to_string();
     };
     let parts: Vec<&str> = extension.split('-').collect();
-    let mut kept = Vec::new();
+    let mut kept: Vec<String> = Vec::new();
     let mut index = 0;
-    while index + 1 < parts.len() {
+    while index < parts.len() {
         let key = parts[index];
-        let value = parts[index + 1];
-        if (key == "ca" && available_calendar(value))
-            || key == "hc"
-            || (key == "nu" && NUMBERING_SYSTEMS.contains(&value))
-        {
-            kept.extend([key, value]);
+        if key == "ca" {
+            let end = (index + 1..parts.len())
+                .find(|candidate| parts[*candidate].len() == 2)
+                .unwrap_or(parts.len());
+            let value = parts[index + 1..end].join("-");
+            let value = super::locale::calendar_alias(&value);
+            if available_calendar(&value) {
+                kept.extend([key.to_string(), value]);
+            }
+            index = end;
+        } else if let Some(value) = parts.get(index + 1).copied() {
+            if key == "hc" || (key == "nu" && NUMBERING_SYSTEMS.contains(&value)) {
+                kept.extend([key.to_string(), value.to_string()]);
+            }
+            index += 2;
+        } else {
+            index += 1;
         }
-        index += 2;
     }
     if kept.is_empty() {
         base.to_string()
