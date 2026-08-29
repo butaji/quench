@@ -1059,6 +1059,8 @@ let __quenchHttpModule;
         }
       });
       response.socket = socket;
+      // IncomingMessage keeps the legacy connection alias alongside socket.
+      response.connection = socket;
       socket._handle = {
         close(callback) {
           if (typeof callback === "function") queueMicrotask(callback);
