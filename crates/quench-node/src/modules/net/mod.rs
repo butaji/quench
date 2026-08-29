@@ -116,9 +116,13 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
     }) || !host.net.pending_errors.is_empty()
         || host
             .net
-            .sockets
-            .values()
-            .any(|s| s.borrow().state != SocketState::Closed)
+        .sockets
+        .values()
+        .any(|s| {
+            let socket = s.borrow();
+            socket.state != SocketState::Closed
+                && (socket.stream.is_some() || socket.server_id.is_some())
+        })
 }
 
 // ---- object builders ----
