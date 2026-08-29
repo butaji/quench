@@ -309,6 +309,34 @@ fn format_month_value_for_slots(
         return format_month_value(style, month);
     }
     let calendar = lookup_slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
+    let month = slots
+        .iter()
+        .find(|(name, _)| name == "\0isoMonth")
+        .and_then(|(_, value)| match value {
+            RuntimeValue::Number(value) => Some(*value as u32),
+            _ => None,
+        })
+        .and_then(|iso_month| {
+            let iso_year = slots
+                .iter()
+                .find(|(name, _)| name == "\0isoYear")
+                .and_then(|(_, value)| match value {
+                    RuntimeValue::Number(value) => Some(*value as i32),
+                    _ => None,
+                })?;
+            let iso_day = slots
+                .iter()
+                .find(|(name, _)| name == "\0isoDay")
+                .and_then(|(_, value)| match value {
+                    RuntimeValue::Number(value) => Some(*value as u32),
+                    _ => None,
+                })?;
+            crate::temporal::plain_date::calendar_fields_from_iso(
+                iso_year, iso_month, iso_day, &calendar,
+            )
+            .map(|fields| fields.month)
+        })
+        .unwrap_or(month);
     let names: &[&str] = match calendar.as_str() {
         "islamic-civil" | "islamic-tbla" | "islamic-umalqura" => &[
             "Muharram", "Safar", "Rabiʻ I", "Rabiʻ II", "Jumada I", "Jumada II",
