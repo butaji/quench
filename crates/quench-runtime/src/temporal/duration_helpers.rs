@@ -536,36 +536,6 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
     if matches!(value, Value::Undefined) {
         return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
     }
-    // Temporal objects carry their ISO date fields in hidden slots. Read those
-    // slots directly so observable accessors installed by user code are never
-    // consulted while converting a branded relativeTo value.
-    let resolved_value = crate::locals::resolved_replacement(value.clone());
-    if let Value::Object(object) = &resolved_value {
-        let branded = object.iter().any(|(key, value)| {
-            key == "\0prototype"
-                && matches!(
-                    value,
-                    Value::Builtin(
-                        crate::ops::Builtin::TemporalPlainDatePrototype
-                            | crate::ops::Builtin::TemporalPlainDateTimePrototype
-                            | crate::ops::Builtin::TemporalZonedDateTimePrototype
-                    )
-                )
-        });
-        if branded {
-            let slot = |name: &str| {
-                object
-                    .iter()
-                    .find(|(key, _)| key == &format!("\0temporal-slot:\0{name}"))
-                    .and_then(|(_, value)| crate::conversion::to_number(&value).ok())
-            };
-            if let (Some(year), Some(month), Some(day)) =
-                (slot("year"), slot("month"), slot("day"))
-            {
-                return Ok((year as i32, month as u32, day as u32));
-            }
-        }
-    }
     if matches!(
         value,
         Value::Null
