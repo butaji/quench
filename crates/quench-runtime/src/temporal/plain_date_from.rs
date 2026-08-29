@@ -754,5 +754,10 @@ fn checked_date_object(year: i32, month: i32, day: i32, calendar: &str) -> Resul
     {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
-    Ok(date_object_with_calendar(year, month, day, calendar))
+    crate::temporal::plain_date::construct_from_iso(&[
+        Value::Number(year),
+        Value::Number(month),
+        Value::Number(day),
+        Value::String(calendar.to_string()),
+    ])
 }
