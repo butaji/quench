@@ -215,7 +215,10 @@ fn connect_with_receiver(
             ])));
         }
         if let Value::String(path) = path {
-            if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
+            let port = execute::get_property(options, "port");
+            if (matches!(port, Value::Undefined | Value::Null)
+                && (path.starts_with('/') || state.borrow().net.paths.contains_key(&path)))
+            {
                 return connect_path(state, &path);
             }
         }
