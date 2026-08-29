@@ -28,9 +28,6 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayCopyWithin => {
             crate::builtins::array_copy_within(receiver, arguments)
         }
-        crate::ops::Builtin::TypedArrayCopyWithin => {
-            crate::builtins::typed_array_copy_within(receiver, arguments)
-        }
         crate::ops::Builtin::ArrayFindLast => crate::builtins::array_find_last(receiver, arguments),
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
@@ -61,14 +58,9 @@ pub(crate) fn try_execute_specialized(
         function.code.code(),
     );
     if is_class_constructor(function) {
-        let error = crate::vm::with_realm(
-            crate::construct::function_realm_id(function),
-            || crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'"),
-        )
-        .unwrap_or_else(|| {
-            crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'")
-        });
-        return Err(error);
+        return Err(crate::value::error::throw_type_error(
+            "Class constructor cannot be invoked without 'new'",
+        ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
     if let Some(result) = execute_forward_construct_call(function, &receiver, arguments) {

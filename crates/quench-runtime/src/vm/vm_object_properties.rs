@@ -49,26 +49,47 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
-    let is_global = realm::id_for_global(properties).is_some()
+    // A global object may be copy-on-write replaced while a callback still
+    // carries its earlier representative. Resolve that identity before
+    // checking virtual host globals; otherwise host-provided bindings vanish
+    // only across async boundaries while ordinary own properties survive.
+    let properties = match crate::locals::resolved_replacement(Value::Object(properties.clone())) {
+        Value::Object(current) => current,
+        _ => properties.clone(),
+    };
+    let is_global = realm::id_for_global(&properties).is_some()
         || GLOBAL_OBJECT.with(|global| {
             global
                 .borrow()
                 .as_ref()
-                .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-        });
+                .is_some_and(|candidate| Rc::ptr_eq(candidate, &properties))
+        })
+        // Global replacements preserve semantic identity while changing the
+        // Rc representative. Async callbacks can retain that representative;
+        // classify it by identity so virtual host globals remain visible.
+        || crate::vm::is_global_object(&Value::Object(properties.clone()));
     if is_global {
         if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
+            if crate::vm::current_context_or_default().host_value_is_persistent(key) {
+                // Persistent virtual bindings are published on first read so
+                // callbacks can observe them after the installing frame.
+                let _ = crate::execute::set_property_in_place(
+                    &Value::Object(properties.clone()),
+                    key,
+                    value.clone(),
+                );
+            }
             return value;
         }
     }
-    if let Some(value) = direct_object_property(properties, key) {
+    if let Some(value) = direct_object_property(&properties, key) {
         return value;
     }
-    let inherited = object_prototype_property(receiver, properties, key);
+    let inherited = object_prototype_property(receiver, &properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
     }
-    object_builtin_property(properties, key)
+    object_builtin_property(&properties, key)
 }
 
 fn object_builtin_property(properties: &crate::value::ObjectData, key: &str) -> Value {

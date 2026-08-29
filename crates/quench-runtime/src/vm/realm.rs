@@ -310,6 +310,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
             })
             .collect(),
         host_values: parent.host_values.clone(),
+        persistent_host_values: Vec::new(),
         can_block: parent.can_block(),
         source_text: parent.source_text.clone(),
     }
