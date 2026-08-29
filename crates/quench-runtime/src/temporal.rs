@@ -2394,6 +2394,7 @@ mod stubs {
             let mut month_provided = false;
             let mut month_code_provided = false;
             let mut offset_provided = false;
+            let mut date_change = false;
             for name in [
                 "day",
                 "hour",
@@ -2410,6 +2411,7 @@ mod stubs {
                 let raw = crate::execute::get_property_result(partial, name)?;
                 if !matches!(raw, Value::Undefined) {
                     has_field = true;
+                    date_change |= matches!(name, "year" | "month" | "monthCode" | "day");
                     month_provided |= name == "month";
                     month_code_provided |= name == "monthCode";
                     offset_provided |= name == "offset";
@@ -2522,11 +2524,7 @@ mod stubs {
             // resolver here gives ZonedDateTime.with the same era, leap-month,
             // and overflow semantics without maintaining a second calendar VM.
             let calendar_id = crate::conversion::to_string(&property("calendarId")?)?;
-            let date_change = has_calendar_date_field
-                || prepared.iter().any(|(name, value)| {
-                    matches!(name.as_str(), "year" | "month" | "monthCode" | "day")
-                        && !matches!(value, Value::Undefined)
-                });
+            let date_change = has_calendar_date_field || date_change;
             if date_change && calendar_id != "iso8601" {
                 let date_receiver =
                     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
