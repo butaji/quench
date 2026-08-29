@@ -1520,6 +1520,16 @@ pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
             .all(|character| character.is_ascii_digit() || "-+:.,".contains(character)))
 }
 
+/// Calendar identifiers are semantic data shared by every Temporal record.
+/// The arithmetic core currently uses the ISO field projection, but retaining
+/// a supported calendar identifier is still observable through `calendarId`
+/// and must not be rejected at construction boundaries.
+pub(crate) fn is_supported_calendar_name(value: &str) -> bool {
+    crate::intl::supported_calendars().iter().any(|calendar| {
+        matches!(calendar, Value::String(name) if name.eq_ignore_ascii_case(value))
+    }) || value.eq_ignore_ascii_case("gregory")
+}
+
 fn field(object: &crate::value::ObjectData, name: &str) -> Value {
     object
         .iter()

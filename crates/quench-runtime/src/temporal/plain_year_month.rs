@@ -174,7 +174,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             }
             if annotation.starts_with("u-ca=")
                 && calendars == 1
-                && !annotation[5..].eq_ignore_ascii_case("iso8601")
+                && !crate::temporal::plain_date::is_supported_calendar_name(&annotation[5..])
             {
                 return Err(crate::value::error::throw_range_error("Invalid calendar"));
             }
@@ -356,7 +356,7 @@ fn validate_property_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
-    if value.eq_ignore_ascii_case("iso8601") || value.eq_ignore_ascii_case("gregory") {
+    if crate::temporal::plain_date::is_supported_calendar_name(value) {
         return true;
     }
     let (base, annotation) = value
