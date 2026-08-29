@@ -1,6 +1,5 @@
-//! `fs.promises` — promise-returning variants. Each op runs the
-//! sync implementation and returns an already-settled promise;
-//! validation and I/O failures surface as rejections.
+//! `fs.promises` — promise-returning variants. Operations reuse the sync
+//! facts and return settled promises; VM promise jobs preserve ordering.
 
 use std::cell::RefCell;
 use std::rc::Rc;
