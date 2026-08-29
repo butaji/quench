@@ -110,7 +110,9 @@ impl DenseElements {
 
     fn resize_numeric(&mut self, length: usize) {
         match self {
-            Self::Numbers(values) => values.borrow_mut().resize_with(length, || std::cell::Cell::new(0.0)),
+            Self::Numbers(values) => values
+                .borrow_mut()
+                .resize_with(length, || std::cell::Cell::new(0.0)),
             Self::Values(values) => values.borrow_mut().resize(length, Value::Number(0.0)),
         }
     }
@@ -221,12 +223,16 @@ impl DenseElements {
                 .collect();
             *self = Self::Values(Rc::new(RefCell::new(values)));
         }
-        let Self::Values(values) = self else { unreachable!() };
+        let Self::Values(values) = self else {
+            unreachable!()
+        };
         if Rc::strong_count(values) > 1 {
             let cloned = values.borrow().clone();
             *self = Self::Values(Rc::new(RefCell::new(cloned)));
         }
-        let Self::Values(values) = self else { unreachable!() };
+        let Self::Values(values) = self else {
+            unreachable!()
+        };
         Rc::get_mut(values).expect("detached values").get_mut()
     }
 
@@ -335,11 +341,11 @@ impl ArrayData {
                 }
             },
             |live| {
-            let live = live.borrow();
-            live.length_override
-                .as_ref()
-                .and_then(argument_length)
-                .unwrap_or(live.length)
+                let live = live.borrow();
+                live.length_override
+                    .as_ref()
+                    .and_then(argument_length)
+                    .unwrap_or(live.length)
             },
         )
     }
@@ -575,10 +581,10 @@ impl ArrayData {
                     .kind_with_holes(&self.deleted, self.length.get())
             })
         } else {
-            self.values.kind_with_holes(&self.deleted, self.length.get())
+            self.values
+                .kind_with_holes(&self.deleted, self.length.get())
         };
-        self.kind
-            .set(monotonic_kind(self.kind.get(), candidate));
+        self.kind.set(monotonic_kind(self.kind.get(), candidate));
     }
 
     /// Grow dense storage geometrically so sequential appends do not
@@ -627,12 +633,15 @@ impl ArrayData {
     pub(crate) fn append_physical(&mut self, values: &[Value]) {
         match &mut self.values {
             DenseElements::Numbers(numbers)
-                if values.iter().all(|value| matches!(value, Value::Number(_))) => {
-                    numbers.borrow_mut().extend(values.iter().map(|value| {
-                        let Value::Number(number) = value else { unreachable!() };
-                        std::cell::Cell::new(*number)
-                    }));
-                }
+                if values.iter().all(|value| matches!(value, Value::Number(_))) =>
+            {
+                numbers.borrow_mut().extend(values.iter().map(|value| {
+                    let Value::Number(number) = value else {
+                        unreachable!()
+                    };
+                    std::cell::Cell::new(*number)
+                }));
+            }
             DenseElements::Numbers(_) => {
                 let mut current = self.values.materialize_values().to_vec();
                 current.extend_from_slice(values);
@@ -807,10 +816,10 @@ impl ArrayData {
             }
         }
         self.properties.clear();
-        self.kind
-            .set(self
-                .values
-                .kind_with_holes(&self.deleted, self.length.get()));
+        self.kind.set(
+            self.values
+                .kind_with_holes(&self.deleted, self.length.get()),
+        );
         self.is_packed_ordinary()
     }
 
@@ -878,8 +887,10 @@ impl ArrayData {
             self.deleted.resize(end, false);
             self.deleted[start..end].fill(false);
             self.length.set(self.length.get().max(end));
-            self.kind
-                .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
+            self.kind.set(
+                self.values
+                    .kind_with_holes(&self.deleted, self.length.get()),
+            );
             return;
         }
         for index in start..end {
@@ -919,8 +930,10 @@ impl ArrayData {
         self.deleted.resize(end, false);
         self.deleted[start..end].fill(false);
         self.length.set(self.length.get().max(end));
-        self.kind
-            .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
+        self.kind.set(
+            self.values
+                .kind_with_holes(&self.deleted, self.length.get()),
+        );
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
@@ -978,9 +991,7 @@ impl ArrayData {
                 .set(monotonic_kind(self.kind.get(), number_kind(number)));
             return true;
         }
-        let rejected = index != self.physical_len()
-            || index >= self.logical_len()
-            || !plain;
+        let rejected = index != self.physical_len() || index >= self.logical_len() || !plain;
         if rejected {
             return false;
         }
@@ -1027,24 +1038,29 @@ impl ArrayData {
     /// this state, so the dense store remains the single source of truth.
     #[inline(always)]
     pub(crate) fn append_shared_numbers(&self, values: &[Value]) -> bool {
-        if !self.is_packed_ordinary() || !values.iter().all(|value| matches!(value, Value::Number(_))) {
+        if !self.is_packed_ordinary()
+            || !values.iter().all(|value| matches!(value, Value::Number(_)))
+        {
             return false;
         }
         let DenseElements::Numbers(numbers) = &self.values else {
             return false;
         };
         numbers.borrow_mut().extend(values.iter().map(|value| {
-            let Value::Number(number) = value else { unreachable!() };
+            let Value::Number(number) = value else {
+                unreachable!()
+            };
             std::cell::Cell::new(*number)
         }));
-        self.kind
-            .set(monotonic_kind(
-                self.kind.get(),
-                values.iter().fold(self.kind.get(), |kind, value| {
-                    let Value::Number(number) = value else { unreachable!() };
-                    monotonic_kind(kind, number_kind(*number))
-                }),
-            ));
+        self.kind.set(monotonic_kind(
+            self.kind.get(),
+            values.iter().fold(self.kind.get(), |kind, value| {
+                let Value::Number(number) = value else {
+                    unreachable!()
+                };
+                monotonic_kind(kind, number_kind(*number))
+            }),
+        ));
         true
     }
 
@@ -1113,7 +1129,10 @@ impl ArrayData {
     pub(crate) fn has_plain_dense_index(&self, index: usize) -> bool {
         !self.arguments
             && self.argument_live.is_none()
-            && self.descriptors.is_empty()
+            // The standard writable `length` descriptor is harmless for an
+            // indexed data write. Only indexed/accessor descriptors make the
+            // direct dense-store path unsafe.
+            && self.indexed_descriptors_plain()
             && index < self.logical_len()
             && index < self.values.len()
             && self.deleted.get(index) != Some(&true)
@@ -1175,7 +1194,10 @@ impl ArrayData {
         if self.deleted.iter().all(|deleted| !*deleted) && self.properties.is_empty() {
             if let DenseElements::Numbers(values) = &self.values {
                 let values = values.borrow();
-                return values.iter().map(|number| Value::Number(number.get())).collect();
+                return values
+                    .iter()
+                    .map(|number| Value::Number(number.get()))
+                    .collect();
             }
         }
         (0..self.logical_len())
