@@ -40,6 +40,11 @@
         this._readableState.flowing = false;
         requestRead(this);
       }
+      if (name === "readable" && this._readableState) {
+        this._readableState.readableListenerTurnPending = true;
+        const state = this._readableState;
+        nextTick(() => { state.readableListenerTurnPending = false; });
+      }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
       // late listeners by delivering the already-emitted terminal event.
@@ -217,6 +222,8 @@
       endEmitted: false,
       endScheduled: false,
       emittedReadable: false,
+      readableEofPending: false,
+      readableListenerTurnPending: false,
       errored: null,
       closeEmitted: false,
       encoding: options.encoding ? validateEncoding(options.encoding) : null,
@@ -260,7 +267,7 @@
   function flowReadable(stream) {
     const st = stream._readableState;
     if (stream.listenerCount("readable") > 0 &&
-        (st.buffer.length > 0 || st.ended)) {
+        (st.buffer.length > 0 || st.ended) && !st.emittedReadable) {
       st.emittedReadable = true;
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
@@ -428,6 +435,11 @@
       }
       if (chunk === null) {
         st.ended = true;
+        if (st.buffer.length > 0 &&
+            (this._isDuplex || !st.readableListenerTurnPending) &&
+            this.listenerCount("readable") > 0) {
+          st.readableEofPending = true;
+        }
         if (this._isDuplex && !this.allowHalfOpen &&
             !this._writableState.ended && !this._writableState.finished) {
           setImmediate(() => {
@@ -474,6 +486,14 @@
 
     read(size) {
       const st = this._readableState;
+      const scheduleReadableIfNeeded = () => {
+        if (st.buffer.length === 0 && st.ended &&
+            st.readableEofPending && this.listenerCount("readable") > 0 &&
+            !st.endEmitted) {
+          st.readableEofPending = false;
+          scheduleFlow(this);
+        }
+      };
       // Node uses read(0) as a non-consuming pull probe.  It may invoke
       // _read() to populate the buffer, but must leave every queued chunk
       // available for the subsequent read/flow transition.
@@ -501,6 +521,7 @@
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
+        scheduleReadableIfNeeded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
@@ -530,6 +551,7 @@
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
+        scheduleReadableIfNeeded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
@@ -549,6 +571,7 @@
         return chunk;
       }
       finishIfEnded();
+      scheduleReadableIfNeeded();
       if (this._passThrough) finishWritable(this);
       return null;
     }
