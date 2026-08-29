@@ -395,6 +395,7 @@
     }
 
     resume() {
+      if (this.destroyed) return this;
       this._readableState.paused = false;
       this._readableState.flowing = true;
       scheduleFlow(this);
