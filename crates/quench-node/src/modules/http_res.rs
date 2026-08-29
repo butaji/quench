@@ -219,12 +219,10 @@ pub fn res_end(
             conn.response_done = true;
         }
     }
-    if keep_alive {
-        // Leave the socket open and let the connection parser reset for the
-        // next request on the same connection.
-    } else {
-        crate::modules::net::socket_end(state, Some(&socket), &[])?;
-    }
+    // The host transport currently has no pooled parser state; close after
+    // each response so a keep-alive header remains an observable hint without
+    // leaving an unbounded live socket in the event loop.
+    crate::modules::net::socket_end(state, Some(&socket), &[])?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
