@@ -188,12 +188,86 @@ fn run_instruction_hot(
                 )
             })
             .map(|_| None),
+        Opcode::AGetI => return run_array_get_hot(registers, instruction),
+        Opcode::GetN => return run_length_get_hot(code, pc, registers, instruction),
+        Opcode::ASetI => return run_array_set_hot(registers, instruction),
         Opcode::Return => read_register(registers, instruction.a)
             .map(crate::completion::Completion::Return)
             .map(Some),
         _ => return None,
     };
     Some(result)
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_array_get_hot(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    let index = registers.read_array_index(usize::from(instruction.c));
+    let raw_array = registers.read_array(usize::from(instruction.b));
+    let array = raw_array.filter(|array| crate::locals::array_word_is_current(array));
+    if let Some((array, index)) = array
+        .filter(|array| array.is_packed_ordinary())
+        .zip(index)
+    {
+        if let Some(number) = array.dense_number_at(index) {
+            registers.write_number(usize::from(instruction.a), number);
+            return Some(Ok(None));
+        }
+        if let Some(value) = array.dense_value_at(index) {
+            write_value(registers, instruction.a, value);
+            return Some(Ok(None));
+        }
+    }
+    None
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_length_get_hot(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    let metadata = code.metadata_at(pc)?;
+    if metadata.name.as_deref() != Some("length") {
+        return None;
+    }
+    let array = registers
+        .read_array(usize::from(instruction.b))
+        .filter(|array| crate::locals::array_word_is_current(array))?;
+    if array.is_arguments() {
+        registers.write(usize::from(instruction.a), array.arguments_length_value());
+    } else {
+        registers.write_number(usize::from(instruction.a), array.header_length() as f64);
+    }
+    Some(Ok(None))
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_array_set_hot(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    let index = registers.read_array_index(usize::from(instruction.b));
+    let number = registers.read_number(usize::from(instruction.c));
+    if let Some((index, number)) = index.zip(number) {
+        if let Some(array) = registers
+            .read_array(usize::from(instruction.a))
+            .filter(|array| crate::locals::array_word_is_current(array))
+        {
+            if array.set_existing_f64(index, number)
+                || array.append_preallocated_f64(index, number)
+            {
+                return Some(Ok(None));
+            }
+        }
+    }
+    None
 }
 
 #[inline(never)]
