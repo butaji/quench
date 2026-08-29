@@ -1482,7 +1482,9 @@ mod stubs {
             }
             let month = if let Some((month_code, _)) = month_code {
                 if let Some(month) = month_number {
-                    if month != i128::from(month_code) {
+                    let leap_ordinal = matches!(calendar_name.as_str(), "chinese" | "dangi" | "hebrew")
+                        && month == i128::from(month_code) + 1;
+                    if month != i128::from(month_code) && !leap_ordinal {
                         return Err(crate::value::error::throw_range_error(
                             "Month and monthCode do not match",
                         ));
@@ -2112,7 +2114,13 @@ mod stubs {
                 }
                 prepared.push((name, value));
             }
-            if !has_field {
+            let has_calendar_date_field = ["era", "eraYear"].iter().any(|name| {
+                !matches!(
+                    crate::execute::get_property_result(partial, name),
+                    Ok(Value::Undefined)
+                )
+            });
+            if !has_field && !has_calendar_date_field {
                 return Err(crate::value::error::throw_type_error(
                     "Insufficient date-time data",
                 ));
@@ -2176,6 +2184,47 @@ mod stubs {
                 fields.push(("monthCode".to_string(), month_code));
             } else {
                 fields.push(("month".to_string(), value_for("month")));
+            }
+            // Calendar date resolution is shared with PlainDate.  Keeping one
+            // resolver here gives ZonedDateTime.with the same era, leap-month,
+            // and overflow semantics without maintaining a second calendar VM.
+            let calendar_id = crate::conversion::to_string(&property("calendarId")?)?;
+            let date_change = ["year", "month", "monthCode", "day", "era", "eraYear"]
+                .iter()
+                .any(|name| {
+                    !matches!(
+                        crate::execute::get_property_result(partial, name),
+                        Ok(Value::Undefined)
+                    )
+                });
+            if date_change && !matches!(calendar_id.as_str(), "iso8601" | "gregory") {
+                let date_receiver = Value::Object(std::rc::Rc::new(
+                    crate::value::ObjectData::new(vec![
+                        (
+                            "\0prototype".into(),
+                            Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
+                        ),
+                        ("year".into(), property("year")?),
+                        ("month".into(), property("month")?),
+                        ("day".into(), property("day")?),
+                        ("monthCode".into(), property("monthCode")?),
+                        ("calendarId".into(), Value::String(calendar_id.clone())),
+                    ]),
+                ));
+                let date_result = super::plain_date::execute(
+                    crate::ops::Builtin::TemporalPlainDateWith,
+                    Some(&date_receiver),
+                    &[partial.clone(), options.unwrap_or(&Value::Undefined).clone()],
+                )
+                .ok_or_else(|| crate::value::error::throw_type_error("Invalid date"))??;
+                for name in ["year", "month", "day", "monthCode"] {
+                    let value = crate::execute::get_property_result(&date_result, name)?;
+                    if let Some((_, target)) = fields.iter_mut().find(|(key, _)| key == name) {
+                        *target = value;
+                    } else if name == "monthCode" {
+                        fields.push((name.to_string(), value));
+                    }
+                }
             }
             let year_number = fields
                 .iter()
@@ -2259,12 +2308,18 @@ mod stubs {
             }
             let field_entries = fields.clone();
             let receiver_days_in_month = property("daysInMonth").ok();
-            let field_value =
+            let mut field_value =
                 Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(fields)));
+            if let Value::Object(object) = &mut field_value {
+                let object = std::rc::Rc::make_mut(object);
+                object.set_property_in_place("calendar", Value::String(calendar_id.clone()));
+            }
             let option_value = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
                 vec![("overflow".to_string(), Value::String(overflow.clone()))],
             )));
-            let result = if matches!(partial_offset, Value::Undefined) {
+            let result = if matches!(partial_offset, Value::Undefined)
+                && matches!(calendar_id.as_str(), "iso8601" | "gregory")
+            {
                 let number = |name: &str| -> Result<i128, VmError> {
                     if name == "year" {
                         return Ok(year_number.trunc() as i128);
@@ -2399,7 +2454,11 @@ mod stubs {
                             } else if month_provided {
                                 Some(Value::String(format!("M{month_number:02}")))
                             } else {
-                                Some(property(name)?)
+                                field_entries
+                                    .iter()
+                                    .find(|(key, _)| key == name)
+                                    .map(|(_, value)| value.clone())
+                                    .or_else(|| property(name).ok())
                             }
                         } else {
                             field_entries
