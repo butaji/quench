@@ -894,14 +894,8 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
-        if !crate::temporal::plain_date::is_iso_calendar_value(calendar)? {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
-        }
     }
-    let calendar = crate::temporal::plain_date::canonical_calendar_id(
-        &crate::conversion::to_string(calendar)?,
-    )
-    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
+    let calendar = crate::temporal::parse_calendar_identifier(calendar)?;
     let values = fields(receiver)?;
     let month_code = format!("M{:02}", values[1] as u32);
     let properties = NAMES
