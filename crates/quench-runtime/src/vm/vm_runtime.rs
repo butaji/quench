@@ -216,10 +216,7 @@ fn run_array_get_hot(
     let index = registers.read_array_index(usize::from(instruction.c));
     let raw_array = registers.read_array(usize::from(instruction.b));
     let array = raw_array.filter(|array| crate::locals::array_word_is_current(array));
-    if let Some((array, index)) = array
-        .filter(|array| array.is_packed_ordinary())
-        .zip(index)
-    {
+    if let Some((array, index)) = array.filter(|array| array.is_plain_dense_access()).zip(index) {
         if let Some(number) = array.dense_number_at(index) {
             registers.write_number(usize::from(instruction.a), number);
             return Some(Ok(None));
@@ -228,6 +225,8 @@ fn run_array_get_hot(
             write_value(registers, instruction.a, value);
             return Some(Ok(None));
         }
+        write_value(registers, instruction.a, crate::value::Value::Undefined);
+        return Some(Ok(None));
     }
     None
 }
@@ -268,7 +267,7 @@ fn run_array_set_hot(
             .read_array(usize::from(instruction.a))
             .filter(|array| crate::locals::array_word_is_current(array))
         {
-            if array.set_existing_f64(index, number)
+            if array.set_plain_existing_f64(index, number)
                 || array.append_preallocated_f64(index, number)
             {
                 return Some(Ok(None));

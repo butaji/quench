@@ -291,6 +291,10 @@ pub(crate) fn intrinsic_override_generation() -> u64 {
     overrides::generation()
 }
 
+pub(crate) fn array_prototype_is_clean() -> bool {
+    overrides::array_prototype_is_clean()
+}
+
 pub(crate) fn intrinsic_override_keys(builtin: Builtin) -> Vec<String> {
     overrides::keys(builtin)
 }
