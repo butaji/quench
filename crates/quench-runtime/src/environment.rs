@@ -44,17 +44,6 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
-    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
-        let copy = unsafe {
-            (&*source.0.get())
-                .iter()
-                .copied()
-                .filter(|slot| usize::from(*slot) < count)
-                .collect()
-        };
-        Rc::new(Self(UnsafeCell::new(copy)))
-    }
-
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -516,18 +505,13 @@ pub struct Environment {
     uninitialized: RefCell<Option<Rc<TdzCells>>>,
     deleted_cells: RefCell<Option<Rc<DeletedCells>>>,
     caller: Option<Rc<Self>>,
+    tdz_parent: Option<Rc<Self>>,
 }
 
 impl Drop for Environment {
     fn drop(&mut self) {
         crate::execution_trace::environment_lifecycle(false);
     }
-}
-
-fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source
-        .as_ref()
-        .map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
@@ -570,6 +554,7 @@ impl Environment {
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
+            tdz_parent: Some(Rc::clone(environment)),
         })
     }
 
@@ -624,6 +609,7 @@ impl Environment {
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: None,
+            tdz_parent: Some(Rc::clone(environment)),
         })
     }
 
@@ -659,11 +645,8 @@ impl Environment {
             uninitialized: RefCell::new(None),
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
+            tdz_parent: Some(Rc::clone(captures)),
         });
-        environment.uninitialized.replace(clone_tdz_prefix(
-            &captures.uninitialized.borrow(),
-            prefix_len,
-        ));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
@@ -1127,10 +1110,17 @@ impl Environment {
     }
 
     pub(crate) fn is_uninitialized(&self, slot: u16) -> bool {
-        self.uninitialized
+        let local = self
+            .uninitialized
             .borrow()
             .as_ref()
-            .is_some_and(|slots| slots.contains(slot))
+            .is_some_and(|slots| slots.contains(slot));
+        local
+            || (usize::from(slot) < self.captured_len()
+                && self
+                    .tdz_parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.is_uninitialized(slot)))
     }
 
     fn named_binding(&self, name: &str) -> Option<BindingRef> {
@@ -1179,6 +1169,11 @@ impl Environment {
     pub(crate) fn initialize(&self, slot: u16) {
         if let Some(slots) = self.uninitialized.borrow().as_ref() {
             slots.remove(slot);
+        }
+        if usize::from(slot) < self.captured_len() {
+            if let Some(parent) = self.tdz_parent.as_ref() {
+                parent.initialize(slot);
+            }
         }
     }
     fn shared_tdz(&self) -> Rc<TdzCells> {
