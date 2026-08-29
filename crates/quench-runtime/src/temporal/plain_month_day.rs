@@ -484,16 +484,28 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
     }
     if !year_number.is_finite()
-        && matches!(month_code, Value::Undefined)
         && calendar_id != "iso8601"
+        && month_number.is_some()
     {
-        return Err(crate::value::error::throw_type_error("Missing monthCode"));
+        return Err(crate::value::error::throw_type_error("Missing year"));
     }
     let reject = overflow_reject(options)?;
     let month = if let Some(month_code) = month_code_text.as_deref() {
         let parsed = parse_month_code(month_code)?;
         if let Some(month_number) = month_number {
-            if month_number.trunc() != parsed {
+            let expected = if calendar_id != "iso8601" && year_number.is_finite() {
+                crate::temporal::plain_date::calendar_date_from_code(
+                    year as i32,
+                    month_code,
+                    day as u32,
+                    &calendar_id,
+                )
+                .map(|(ordinal, _)| ordinal as f64)
+                .unwrap_or(parsed)
+            } else {
+                parsed
+            };
+            if month_number.trunc() != expected {
                 return Err(crate::value::error::throw_range_error(
                     "Conflicting month fields",
                 ));
