@@ -342,9 +342,75 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
                 "setEncoding".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
             ),
+            (
+                "destroy".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_DESTROY),
+            ),
         ],
     )?;
     Ok((req, content_length, keep_alive))
+}
+
+/// `req.destroy([error])` — abort the server-side request without tearing
+/// down the response socket. The error/close pair is queued so listeners
+/// attached immediately after the call observe Node's asynchronous ordering.
+pub fn request_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some((_, req)) = state.borrow().http.conns.iter().find_map(|(socket_id, conn)| {
+        conn.req
+            .as_ref()
+            .filter(|req| execute::same_identity(req, receiver))
+            .map(|req| (*socket_id, req.clone()))
+    }) else {
+        return Ok(receiver.clone());
+    };
+    if matches!(execute::get_property(&req, "destroyed"), Value::Boolean(true)) {
+        return Ok(receiver.clone());
+    }
+    execute::set_property_in_place(&req, "destroyed", Value::Boolean(true));
+    execute::set_property_in_place(&req, "aborted", Value::Boolean(true));
+    execute::set_property_in_place(&req, "readable", Value::Boolean(false));
+    let body_complete = state
+        .borrow()
+        .http
+        .conns
+        .values()
+        .find(|conn| conn.req.as_ref().is_some_and(|value| execute::same_identity(value, &req)))
+        .map(|conn| conn.body_done)
+        .unwrap_or(true);
+    if let Some(conn) = state
+        .borrow_mut()
+        .http
+        .conns
+        .values_mut()
+        .find(|conn| conn.req.as_ref().is_some_and(|value| execute::same_identity(value, &req)))
+    {
+        conn.body_done = true;
+    }
+    let error = if body_complete {
+        None
+    } else {
+        Some(args.first().cloned().unwrap_or_else(|| {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("The operation was aborted".into())],
+            );
+            execute::set_property(error, "name", Value::String("AbortError".into()))
+        }))
+    };
+    let mut pending = Vec::with_capacity(2);
+    if let Some(error) = error {
+        pending.push((req.clone(), "error".into(), vec![error]));
+    }
+    pending.push((req, "close".into(), Vec::new()));
+    state.borrow_mut().net.pending_events.extend(pending);
+    Ok(receiver.clone())
 }
 
 /// Register a fresh response for the socket.
