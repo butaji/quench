@@ -122,7 +122,15 @@ fn schedule(
     let fire_at = monotonic_ms().saturating_add(delay);
     let destroyed = quench_runtime::value::BindingCell::new(Value::Boolean(false));
     let object = timer_object(id, &destroyed, &kind)?;
-    let async_resource = async_resource(state, &kind)?;
+    let resource_type = match kind {
+        TimerKind::Immediate => "Immediate",
+        TimerKind::Timeout | TimerKind::Interval => "Timeout",
+    };
+    let async_resource = crate::modules::async_hooks::attach_resource(
+        state,
+        object.clone(),
+        resource_type,
+    )?;
     // AsyncLocalStorage state is carried by the JS resource object. Capture
     // the current resource's store map when the timer is created so the
     // callback observes the same context after resource_before switches to
@@ -152,17 +160,6 @@ fn schedule(
         },
     );
     Ok(object)
-}
-
-fn async_resource(state: &Rc<RefCell<HostState>>, kind: &TimerKind) -> Result<Value, VmError> {
-    let name = match kind {
-        TimerKind::Immediate => "Immediate",
-        TimerKind::Timeout | TimerKind::Interval => "Timeout",
-    };
-    crate::modules::async_hooks::new_resource(
-        state,
-        &[Value::Undefined, Value::String(name.to_string())],
-    )
 }
 
 /// Build the JS Timeout/Immediate object: hidden id plus the
@@ -240,8 +237,14 @@ fn clear_matching(
         .get(&id)
         .is_some_and(|t| matches!(t.kind, TimerKind::Immediate) == immediate);
     if matches {
-        if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
+        let timer = state.borrow_mut().timers.timers.remove(&id);
+        if let Some(timer) = timer {
             mark_destroyed(&timer);
+            crate::modules::async_hooks::resource_destroy(
+                state,
+                Some(&timer.async_resource),
+                &[],
+            )?;
         }
     }
     Ok(Value::Undefined)
