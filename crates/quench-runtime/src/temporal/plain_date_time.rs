@@ -1908,7 +1908,7 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let mut normalized_smallest_unit = None;
     let mut rounding_mode = "trunc".to_string();
     let mut digits = usize::MAX;
-    if let Some(options) = options {
+    if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
         if !crate::value::is_object(options) {
             return Err(crate::value::error::throw_type_error(
                 "Invalid string options",
