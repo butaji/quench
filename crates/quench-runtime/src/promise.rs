@@ -362,16 +362,10 @@ fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
         );
         return;
     }
-    match next.state.borrow().clone() {
-        PromiseState::Fulfilled(value) => resolve_promise(result, value),
-        PromiseState::Rejected(reason) => reject_promise(result, reason),
-        PromiseState::Pending => {
-            let next_value = Value::Promise(Rc::clone(next));
-            let resolve = bound_settler(Builtin::PromiseResolve, result, 1.0);
-            let reject = bound_settler(Builtin::PromiseReject, result, 1.0);
-            let _ = promise_then(Some(&next_value), &[resolve, reject]);
-        }
-    }
+    let next_value = Value::Promise(Rc::clone(next));
+    let resolve = bound_settler(Builtin::PromiseResolve, result, 1.0);
+    let reject = bound_settler(Builtin::PromiseReject, result, 1.0);
+    let _ = promise_then(Some(&next_value), &[resolve, reject]);
 }
 
 /// Create a new pending Promise.
@@ -414,12 +408,14 @@ pub(crate) fn from_async_function_completion(
 /// result as their trigger, matching Node's async-resource ordering.
 pub(crate) fn start_async_function(generator: Rc<crate::value::GeneratorData>) -> Value {
     let promise = PromiseData::allocate(PromiseState::Pending);
+    promise_phase(&promise, "before");
     let completion = with_promise_trigger(&promise, || {
         crate::generator::resume(
             &generator,
             crate::generator::Resume::Next(crate::value::Value::Undefined),
         )
     });
+    promise_phase(&promise, "after");
     settle_async_generator_completion(completion, generator, Rc::clone(&promise), true);
     Value::Promise(promise)
 }
