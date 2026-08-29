@@ -3715,6 +3715,17 @@ mod stubs {
                     number(start, "month")? as f64,
                     number(start, "day")? as f64,
                 );
+                let same_clock = ["hour", "minute", "second", "millisecond", "microsecond", "nanosecond"]
+                    .iter()
+                    .all(|name| {
+                        crate::execute::get_property_result(start, name).ok()
+                            == crate::execute::get_property_result(end, name).ok()
+                    });
+                if same_clock && days != 0 {
+                    let mut fields = vec![Value::Number(0.0); 10];
+                    fields[3] = Value::Number(days as f64);
+                    return crate::temporal::duration::construct(&fields);
+                }
                 let epoch = |value: &Value| -> Result<i128, VmError> {
                     match crate::execute::get_property_result(value, "epochNanoseconds")? {
                         Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
@@ -3871,8 +3882,35 @@ mod stubs {
                         )),
                     }
                 };
-                let mut residual = (epoch(end)? - epoch(start)?).abs()
-                    - (epoch(&anchor)? - epoch(start)?).abs();
+                let start_epoch = epoch(start)?;
+                let end_epoch = epoch(end)?;
+                let anchor_epoch = epoch(&anchor)?;
+                let target_sign = (end_epoch - start_epoch).signum();
+                if months != 0 && (anchor_epoch - end_epoch) * target_sign > 0 {
+                    let mut fields = vec![Value::Number(0.0); 10];
+                    let signed = (end_epoch - start_epoch) * result_sign as i128;
+                    let sign = signed.signum();
+                    let mut residual = signed.abs();
+                    fields[3] = Value::Number((residual / 86_400_000_000_000) as f64 * sign as f64);
+                    residual %= 86_400_000_000_000;
+                    for (index, scale) in [
+                        3_600_000_000_000_i128,
+                        60_000_000_000,
+                        1_000_000_000,
+                        1_000_000,
+                        1_000,
+                        1,
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        fields[index + 4] = Value::Number((residual / scale) as f64 * sign as f64);
+                        residual %= scale;
+                    }
+                    return crate::temporal::duration::construct(&fields);
+                }
+                let mut residual = (end_epoch - start_epoch).abs()
+                    - (anchor_epoch - start_epoch).abs();
                 if number(&anchor, "hour")? != number(start, "hour")? {
                     residual += 3_600_000_000_000;
                 }
@@ -4302,13 +4340,30 @@ mod stubs {
                         Value::BigInt(value) => value.parse::<i128>().ok(),
                         _ => None,
                     });
+                let mut dst_repeat_adjusted = false;
                 if let (Some(start_epoch), Some(end_epoch)) = (start_epoch, end_epoch) {
                     let offset_delta = super::timezone_offset_nanos(&receiver_timezone, end_epoch)
                         - super::timezone_offset_nanos(&receiver_timezone, start_epoch);
                     time_remainder += offset_delta;
+                    if time_remainder.abs() == 23 * 3_600_000_000_000
+                        && (super::timezone_offset_nanos(
+                            &receiver_timezone,
+                            end_epoch - 86_400_000_000_000,
+                        ) != super::timezone_offset_nanos(&receiver_timezone, end_epoch)
+                            || super::timezone_offset_nanos(
+                                &receiver_timezone,
+                                start_epoch - 86_400_000_000_000,
+                            ) != super::timezone_offset_nanos(&receiver_timezone, start_epoch))
+                    {
+                        time_remainder += time_remainder.signum() * 3_600_000_000_000;
+                        dst_repeat_adjusted = true;
+                    }
                 }
                 let mut days = days;
-                if time_remainder < 0 {
+                if dst_repeat_adjusted {
+                    // Keep the repeated wall-clock hour as a 24-hour field;
+                    // balancing it into a day would lose the calendar anchor.
+                } else if time_remainder < 0 {
                     days -= 1;
                     time_remainder += 86_400_000_000_000;
                 } else if time_remainder >= 86_400_000_000_000 {
