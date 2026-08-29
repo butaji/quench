@@ -177,10 +177,7 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
-    if let Some(calendar) = arguments
-        .get(3)
-        .filter(|value| !matches!(value, Value::Undefined))
-    {
+    if let Some(calendar) = arguments.get(3).filter(|value| !matches!(value, Value::Undefined)) {
         if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
@@ -252,7 +249,6 @@ fn calendar_date(year: i32, month: u32, day: u32, calendar: &str) -> Option<Date
 
 fn calendar_kind(calendar: &str) -> Option<AnyCalendarKind> {
     Some(match calendar {
-        "iso8601" => AnyCalendarKind::Gregorian,
         "buddhist" => AnyCalendarKind::Buddhist,
         "chinese" => AnyCalendarKind::Chinese,
         "coptic" => AnyCalendarKind::Coptic,
@@ -497,11 +493,7 @@ pub(crate) fn calendar_extreme_serial_for_fields(
         let endpoint_day = fields.day == day || fields.day.saturating_add(1) == day;
         let ordinal_match = fields.month == month || fields.month == month.saturating_add(1);
         if fields.year == year && ordinal_match && endpoint_day && fields.month_code == code {
-            return Some(date_serial(
-                iso_year as f64,
-                iso_month as f64,
-                iso_day as f64,
-            ));
+            return Some(date_serial(iso_year as f64, iso_month as f64, iso_day as f64));
         }
     }
     None
@@ -2391,7 +2383,8 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
                     && crate::conversion::to_string(&value)
                         .ok()
                         .is_some_and(|id| id == "iso8601")
-            }) || value.iter().any(|(key, value)| {
+            })
+            || value.iter().any(|(key, value)| {
                 matches!(
                     (key.as_str(), value),
                     ("\0temporal-plain-date", Value::Boolean(true))
@@ -2641,9 +2634,7 @@ fn with(
         explicit_month
     } else {
         if receiver_calendar == "iso8601"
-            && month_code_text
-                .as_deref()
-                .is_some_and(|code| code.ends_with('L'))
+            && month_code_text.as_deref().is_some_and(|code| code.ends_with('L'))
         {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
@@ -2663,7 +2654,8 @@ fn with(
         } else {
             month
         };
-        if explicit_month != month && month_was_provided {
+        if explicit_month != month && month_was_provided
+        {
             return Err(crate::value::error::throw_range_error(
                 "month and monthCode conflict",
             ));
