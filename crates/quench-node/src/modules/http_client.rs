@@ -424,7 +424,13 @@ pub fn req_destroy(
         if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
             req.response_closed = true;
         }
-        net::emit(state, &response, "close", Vec::new())?;
+        let close_pending = matches!(
+            execute::get_property(&response, crate::modules::http::INCOMING_CLOSE_PENDING_PROP),
+            Value::Boolean(true)
+        );
+        if !close_pending {
+            net::emit(state, &response, "close", Vec::new())?;
+        }
     }
     if let Some(socket) = socket {
         net::socket_destroy(state, Some(&socket), &[])?;
@@ -1293,6 +1299,7 @@ pub fn res_end_handler(
         if should_close {
             let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
+            set_response_property(&res, "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
             let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
             crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
