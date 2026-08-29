@@ -296,6 +296,14 @@ fn parse_calendar_key(locale: &mut Locale, parts: &[&str], j: usize) {
         && parts.get(j + 3) == Some(&"alem")
     {
         "ethiopic-amete-alem"
+    } else if item == "islamic"
+        && matches!(parts.get(j + 2), Some(&"civil" | &"tbla" | &"umalqura"))
+    {
+        match parts[j + 2] {
+            "civil" => "islamic-civil",
+            "tbla" => "islamic-tbla",
+            _ => "islamic-umalqura",
+        }
     } else {
         item
     };
