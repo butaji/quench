@@ -127,3 +127,171 @@ fn heap_subtype(got: HeapKind, want: HeapKind) -> bool {
                 )
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::match_import;
+    use crate::hir::{FuncSig, HeapKind, HirMemory, HirTable, ImportKind, Kind, RefType, Ty};
+    use crate::instance::{Func, Global, Memory, ResolvedImport, Table};
+    use crate::native::{Native, RefVal};
+    use crate::slot::Slot;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn sig(params: &[Kind], results: &[Kind]) -> FuncSig {
+        FuncSig {
+            params: params.to_vec().into_boxed_slice(),
+            results: results.to_vec().into_boxed_slice(),
+            rec_len: 1,
+            rec_index: 0,
+            has_super: false,
+            is_final: true,
+            sub_depth: 0,
+            chain: Box::new([]),
+        }
+    }
+
+    fn memory(initial: u64, maximum: Option<u64>) -> Rc<RefCell<Memory>> {
+        Rc::new(RefCell::new(Memory {
+            data: vec![0; initial as usize * 65_536],
+            min: initial,
+            max: maximum,
+            page: 65_536,
+            memory64: false,
+            shared: false,
+        }))
+    }
+
+    fn table(initial: u64, maximum: Option<u64>) -> Rc<RefCell<Table>> {
+        Rc::new(RefCell::new(Table {
+            elems: vec![RefVal::Null; initial as usize],
+            min: initial,
+            max: maximum,
+            table64: false,
+            refty: RefType {
+                nullable: true,
+                heap: HeapKind::Func,
+            },
+        }))
+    }
+
+    #[test]
+    fn imported_limits_are_subtype_checked() {
+        let want = ImportKind::Memory(HirMemory {
+            memory64: false,
+            shared: false,
+            initial: 1,
+            maximum: Some(3),
+            page_size_log2: 16,
+        });
+        let types = [];
+        assert!(match_import(
+            &want,
+            &types,
+            ResolvedImport::Memory(memory(2, Some(3)))
+        )
+        .is_ok());
+        assert!(match_import(
+            &want,
+            &types,
+            ResolvedImport::Memory(memory(1, Some(4)))
+        )
+        .is_err());
+        assert!(match_import(
+            &want,
+            &types,
+            ResolvedImport::Memory(memory(1, None))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn imported_table_limits_and_reference_type_must_match() {
+        let want = ImportKind::Table(HirTable {
+            table64: false,
+            initial: 1,
+            maximum: Some(4),
+            refty: RefType {
+                nullable: true,
+                heap: HeapKind::Func,
+            },
+            init: None,
+        });
+        let types = [];
+        assert!(match_import(
+            &want,
+            &types,
+            ResolvedImport::Table(table(2, Some(4)))
+        )
+        .is_ok());
+        let wrong_ref = Rc::new(RefCell::new(Table {
+            elems: vec![RefVal::Null],
+            min: 1,
+            max: Some(4),
+            table64: false,
+            refty: RefType {
+                nullable: true,
+                heap: HeapKind::Extern,
+            },
+        }));
+        assert!(match_import(&want, &types, ResolvedImport::Table(wrong_ref)).is_err());
+    }
+
+    #[test]
+    fn mutable_reference_globals_require_invariant_types() {
+        let ty = Ty::native(Kind::Ref);
+        let want = ImportKind::Global {
+            ty,
+            refty: Some(RefType {
+                nullable: false,
+                heap: HeapKind::Func,
+            }),
+            mutable: true,
+        };
+        let types = [];
+        let matching = Rc::new(RefCell::new(Global {
+            value: Slot::Native(Native::Ref(RefVal::Null)),
+            mutable: true,
+            ty,
+            refty: Some(RefType {
+                nullable: false,
+                heap: HeapKind::Func,
+            }),
+        }));
+        assert!(match_import(
+            &want,
+            &types,
+            ResolvedImport::Global(matching)
+        )
+        .is_ok());
+        let nullable = Rc::new(RefCell::new(Global {
+            value: Slot::Native(Native::Ref(RefVal::Null)),
+            mutable: true,
+            ty,
+            refty: Some(RefType {
+                nullable: true,
+                heap: HeapKind::Func,
+            }),
+        }));
+        assert!(match_import(&want, &types, ResolvedImport::Global(nullable)).is_err());
+    }
+
+    #[test]
+    fn function_imports_use_exact_signature_for_exact_types() {
+        let want = sig(&[Kind::I32], &[Kind::I32]);
+        let got = sig(&[Kind::I32], &[Kind::I32]);
+        let types = [want.clone()];
+        let result = match_import(
+            &ImportKind::Func {
+                type_idx: 0,
+                exact: true,
+            },
+            &types,
+            ResolvedImport::Func {
+                func: Func::Host(got.clone()),
+                sig: got,
+            },
+        );
+        assert!(result.is_ok());
+    }
+}
