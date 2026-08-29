@@ -108,7 +108,27 @@ fn score_directive(
         } => score_invalid(line, module, message, features),
         WastDirective::Module(module) => score_valid_module(line, module, features, store, true),
         WastDirective::ModuleDefinition(module) => {
-            score_valid_module(line, module, features, store, false)
+            let r = score_valid_module(line, module, features, store, false);
+            if r.passed {
+                store.define_quote(module, features);
+            }
+            r
+        }
+        WastDirective::ModuleInstance {
+            instance, module, ..
+        } => {
+            store.instantiate_def(
+                instance.map(|id| id.name()),
+                module.map(|id| id.name()),
+                features,
+            );
+            DirectiveResult {
+                line,
+                kind: "module_instance".to_string(),
+                passed: true,
+                expected: "instance".to_string(),
+                got: "ok".to_string(),
+            }
         }
         WastDirective::AssertReturn { exec, results, .. } => {
             wast_exec::score_return(line, exec, results, store, features)

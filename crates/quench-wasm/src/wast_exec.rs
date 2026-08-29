@@ -15,6 +15,7 @@ use crate::wast_script::DirectiveResult;
 pub struct Store {
     current: Option<Instance>,
     named: HashMap<String, Instance>,
+    defs: HashMap<String, Vec<u8>>,
     spectest: Instance,
 }
 
@@ -23,6 +24,7 @@ impl Store {
         Self {
             current: None,
             named: HashMap::new(),
+            defs: HashMap::new(),
             spectest: Instance::spectest(),
         }
     }
@@ -39,6 +41,23 @@ impl Store {
             }
             Err(_) => self.current = Some(Instance::unsupported()),
         }
+    }
+
+    pub fn define_quote(&mut self, module: &mut QuoteWat<'_>, features: WasmFeatures) {
+        if let (Some(name), Ok(bytes)) = (module.name().map(|id| id.name().to_string()), module.encode()) {
+            self.defs.insert(name, bytes);
+        }
+        let _ = features;
+    }
+
+    pub fn instantiate_def(&mut self, instance: Option<&str>, module: Option<&str>, features: WasmFeatures) {
+        let Some(module) = module else { return };
+        let Some(bytes) = self.defs.get(module).cloned() else { return };
+        let built = self.build(&bytes, features);
+        if let Some(name) = instance {
+            self.named.insert(name.to_string(), built.clone());
+        }
+        self.current = Some(built);
     }
 
     pub fn register(&mut self, name: &str, module: Option<&str>) {
@@ -394,6 +413,19 @@ fn compare_rets(
 }
 
 fn ret_matches(want: &WastRet<'_>, got: &Slot) -> bool {
+    if let WastRet::Core(WastRetCore::Either(opts)) = want {
+        return opts.iter().any(|opt| match (opt, got) {
+            (
+                WastRetCore::V128(pattern),
+                Slot::Native(quench_runtime::native::Native::V128(bits)),
+            ) => v128_matches(pattern, *bits),
+            (
+                WastRetCore::I32(v),
+                Slot::Native(quench_runtime::native::Native::I32(g)),
+            ) => v == g,
+            _ => false,
+        });
+    }
     match (want, got) {
         (
             WastRet::Core(WastRetCore::I32(v)),
