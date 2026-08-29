@@ -49,6 +49,9 @@ pub struct ClientReq {
     pub aborted: bool,
     pub response_ended: bool,
     pub response_closed: bool,
+    /// Raw body bytes received after the response head.
+    pub response_received: usize,
+    pub response_chunked_done: bool,
 }
 
 pub fn agent_call(
@@ -143,6 +146,8 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             aborted: false,
             response_ended: false,
             response_closed: false,
+            response_received: 0,
+            response_chunked_done: false,
         },
     );
     drop(guard);
@@ -688,6 +693,12 @@ pub fn req_close(
         .clientreqs
         .get(&client_id)
         .map(|req| req.req.clone());
+    let response = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .and_then(|req| req.res.clone());
     state
         .borrow_mut()
         .http
@@ -701,6 +712,41 @@ pub fn req_close(
             return Ok(Value::Undefined);
         }
         net::emit(state, &request, "close", Vec::new())?;
+    }
+    // A peer closing before the response completed is an aborted response,
+    // not a normal end. Keep the response identity and signal as the single
+    // state transition, then report ECONNRESET only when an error listener is
+    // present (Node does not crash for an unobserved response error).
+    if let Some(response) = response {
+        let complete = matches!(
+            execute::get_property(&response, "complete"),
+            Value::Boolean(true)
+        );
+        if !complete
+            && !matches!(
+                execute::get_property(&response, "aborted"),
+                Value::Boolean(true)
+            )
+        {
+            execute::set_property_in_place(&response, "aborted", Value::Boolean(true));
+            let signal = execute::get_property(&response, "signal");
+            if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+                crate::modules::http::abort_http_signal(state, &signal)?;
+            }
+            net::emit(state, &response, "aborted", Vec::new())?;
+            let has_error_listener = crate::modules::emitter::emitter_id(&response)
+                .and_then(|id| state.borrow().emitters.get(id))
+                .is_some_and(|emitter| !emitter.borrow().listeners_of("error").is_empty());
+            if has_error_listener {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("socket hang up".into())],
+                );
+                let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+                net::emit(state, &response, "error", vec![error])?;
+            }
+            net::emit(state, &response, "close", Vec::new())?;
+        }
     }
     Ok(Value::Undefined)
 }
@@ -730,6 +776,12 @@ pub fn data_handler(
             flush_body(state, client_id)
         }
         None if head_parsed => {
+            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                req.response_received = req.response_received.saturating_add(bytes.len());
+                if bytes.windows(5).any(|window| window == b"0\r\n\r\n") {
+                    req.response_chunked_done = true;
+                }
+            }
             if let Some(res) = client_value(state, client_id, false) {
                 let body = response_body_bytes(&res, &bytes);
                 if !body.is_empty() {
@@ -793,6 +845,10 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
         let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
             return Ok(());
         };
+        req.response_received = req.response_received.saturating_add(req.buffer.len());
+        if req.buffer.windows(5).any(|window| window == b"0\r\n\r\n") {
+            req.response_chunked_done = true;
+        }
         (req.res.clone(), std::mem::take(&mut req.buffer))
     };
     if let Some(res) = res {
@@ -865,7 +921,7 @@ pub fn res_end_handler(
     let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
-    let res = {
+    let (res, received, chunked_done) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
             return Ok(Value::Undefined);
@@ -874,11 +930,29 @@ pub fn res_end_handler(
             return Ok(Value::Undefined);
         }
         req.response_ended = true;
-        req.res.clone()
+        (req.res.clone(), req.response_received, req.response_chunked_done)
     };
     if let Some(res) = res {
         if matches!(execute::get_property(&res, "complete"), Value::Boolean(true)) {
             return Ok(Value::Undefined);
+        }
+        let expected = match execute::get_property(&res, "headers") {
+            headers @ (Value::Object(_) | Value::ObjectAlias(_)) => {
+                execute::to_js_string(&execute::get_property(&headers, "content-length")).ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+            }
+            _ => None,
+        };
+        let chunked = match execute::get_property(&res, "headers") {
+            headers @ (Value::Object(_) | Value::ObjectAlias(_)) => execute::to_js_string(
+                &execute::get_property(&headers, "transfer-encoding"),
+            )
+            .ok()
+            .is_some_and(|value| value.eq_ignore_ascii_case("chunked")),
+            _ => false,
+        };
+        if expected.is_some_and(|expected| expected != received) || (chunked && !chunked_done) {
+            return abort_incomplete_response(state, client_id, &res);
         }
         set_response_property(&res, "complete", Value::Boolean(true));
         set_response_property(&res, "readable", Value::Boolean(false));
@@ -901,6 +975,35 @@ pub fn res_end_handler(
             net::emit(state, &res, "close", Vec::new())?;
         }
     }
+    Ok(Value::Undefined)
+}
+
+fn abort_incomplete_response(
+    state: &Rc<RefCell<HostState>>,
+    client_id: u64,
+    response: &Value,
+) -> Result<Value, VmError> {
+    set_response_property(response, "aborted", Value::Boolean(true));
+    let signal = execute::get_property(response, "signal");
+    if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+        crate::modules::http::abort_http_signal(state, &signal)?;
+    }
+    net::emit(state, response, "aborted", Vec::new())?;
+    let has_error_listener = crate::modules::emitter::emitter_id(response)
+        .and_then(|id| state.borrow().emitters.get(id))
+        .is_some_and(|emitter| !emitter.borrow().listeners_of("error").is_empty());
+    if has_error_listener {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("socket hang up".into())],
+        );
+        let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+        net::emit(state, response, "error", vec![error])?;
+    }
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+        req.response_closed = true;
+    }
+    net::emit(state, response, "close", Vec::new())?;
     Ok(Value::Undefined)
 }
 
