@@ -4010,9 +4010,7 @@ mod stubs {
                 let end_day = number(end, "day")?;
                 let start_epoch = if forward { left_epoch } else { right_epoch };
                 let end_epoch = if forward { right_epoch } else { left_epoch };
-                if receiver_timezone.starts_with(['+', '-'])
-                    && (end_year - start_year) * 12 + end_month - start_month <= 500
-                {
+                if receiver_timezone.starts_with(['+', '-']) {
                     if let Some((years, months, weeks, days)) =
                         super::plain_date::calendar_difference_fields(
                             (start_year as f64, start_month as f64, start_day as f64),
@@ -4028,10 +4026,7 @@ mod stubs {
                             None,
                         )
                     {
-                        let output_days = if start_month == 2
-                            && ((end_month > start_month && days > 2)
-                                || (end_month == start_month && start_day > end_day))
-                        {
+                        let output_days = if start_month == 2 {
                             days - 2
                         } else if start_month == end_month && start_day > end_day {
                             end_day as i64
