@@ -3,6 +3,7 @@
 use crate::hir::{HirFunc, Inst, LoadOp, StoreOp, WideOp};
 use crate::instance::{self, Func, Instance, MAX_CALL_DEPTH};
 use crate::native::{Bits, ConvOp, Native, RefVal};
+use crate::fast::Fast;
 use crate::slot::Slot;
 use crate::unwind::{Failure, Trap};
 
@@ -718,6 +719,10 @@ fn bits_of(slot: &Slot) -> Result<Bits, Failure> {
         Slot::Native(Native::I64(v)) => Ok(Bits::I64(*v)),
         Slot::Native(Native::F32(v)) => Ok(Bits::F32(*v)),
         Slot::Native(Native::F64(v)) => Ok(Bits::F64(*v)),
+        // A successful Guard is already a semantic proof.  Consume the
+        // guarded payload at the native boundary without boxing it again.
+        Slot::Fast(Fast::I32(v)) => Ok(Bits::I32(*v)),
+        Slot::Fast(Fast::Number(v)) => Ok(Bits::F64(v.to_bits())),
         _ => Err(Failure::Trap(Trap::Unimplemented)),
     }
 }
@@ -1175,6 +1180,12 @@ fn step_memory_grow(
 fn read_i32(regs: &[Slot], reg: u16) -> Result<i32, Failure> {
     match regs[reg as usize] {
         Slot::Native(Native::I32(v)) => Ok(v),
+        Slot::Fast(Fast::I32(v)) => Ok(v),
+        Slot::Fast(Fast::Number(v))
+            if v.is_finite()
+                && v >= i32::MIN as f64
+                && v <= i32::MAX as f64
+                && (v as i32 as f64) == v => Ok(v as i32),
         _ => Err(Failure::Trap(Trap::Unimplemented)),
     }
 }
@@ -1196,6 +1207,8 @@ fn read_f32(regs: &[Slot], reg: u16) -> Result<u32, Failure> {
 fn read_f64(regs: &[Slot], reg: u16) -> Result<u64, Failure> {
     match regs[reg as usize] {
         Slot::Native(Native::F64(v)) => Ok(v),
+        Slot::Fast(Fast::I32(v)) => Ok((v as f64).to_bits()),
+        Slot::Fast(Fast::Number(v)) => Ok(v.to_bits()),
         _ => Err(Failure::Trap(Trap::Unimplemented)),
     }
 }
@@ -1228,5 +1241,25 @@ fn read_ref(regs: &[Slot], reg: u16) -> Result<RefVal, Failure> {
     match regs[reg as usize] {
         Slot::Native(Native::Ref(v)) => Ok(v),
         _ => Err(Failure::Trap(Trap::Unimplemented)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_f64, read_i32, Fast, Slot};
+
+    #[test]
+    fn guarded_dynamic_numbers_reach_native_consumers() {
+        let dynamic_i32 = Slot::Dynamic(crate::dynamic::Dynamic::from_number(7.0));
+        let dynamic_number = Slot::Dynamic(crate::dynamic::Dynamic::from_number(1.5));
+        let regs = vec![
+            dynamic_i32.guard(crate::layer::GuardKind::I32).expect("i32 guard"),
+            dynamic_number
+                .guard(crate::layer::GuardKind::Number)
+                .expect("number guard"),
+        ];
+        assert!(matches!(regs[0], Slot::Fast(Fast::I32(7))));
+        assert_eq!(read_i32(&regs, 0).expect("native i32 read"), 7);
+        assert_eq!(read_f64(&regs, 1).expect("native f64 read"), 1.5f64.to_bits());
     }
 }

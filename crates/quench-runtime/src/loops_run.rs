@@ -619,6 +619,10 @@ fn run_counted_for(
     crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     let environment = crate::locals::current();
     let context = crate::vm::current_context_or_default();
+    #[cfg(not(feature = "execution-trace"))]
+    if let Some(completion) = run_dense_array_copy(fact, body, dst, registers, &environment) {
+        return Ok(Some(completion));
+    }
     let word_body = proven_word_move_body(&environment, body);
     let word_calls = proven_word_call_body(&environment, body, dst, registers);
     let word_call_chain = word_calls
@@ -738,6 +742,137 @@ fn run_counted_for(
             };
         }
     }
+}
+
+/// Execute the closed array-copy loop emitted for a reverse numeric walk.
+///
+/// This is admitted from the instruction shape, never from source text.  A
+/// preflight proves every read is numeric and every write targets an existing
+/// plain dense slot before mutating anything; otherwise the caller keeps the
+/// ordinary interpreter path, preserving partial-write and prototype
+/// semantics for all uncertain cases.
+#[cfg(not(feature = "execution-trace"))]
+#[inline]
+fn run_dense_array_copy(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    registers: &mut crate::register_file::RegisterFile,
+    environment: &crate::environment::Environment,
+) -> Option<crate::completion::Completion> {
+    if fact.timing != CountedStepTiming::AfterBody
+        || fact.step != -1.0
+        || fact.comparison != crate::ops::BinaryOp::GreaterEqual
+        || !matches!(fact.bound, CountedBound::Constant(0.0))
+        || body.len() != 12
+    {
+        return None;
+    }
+    let matches = |pc, opcode| {
+        body.instruction(pc).is_some_and(|item| item.opcode == opcode && item.flags == 0)
+    };
+    use crate::ir::Opcode;
+    if !(matches(0, Opcode::LoadLocal)
+        && matches(1, Opcode::Move)
+        && matches(2, Opcode::LoadLocal)
+        && matches(3, Opcode::LoadLocal)
+        && matches(4, Opcode::Add)
+        && matches(5, Opcode::Move)
+        && matches(6, Opcode::LoadLocal)
+        && matches(7, Opcode::Slow)
+        && matches(8, Opcode::LoadLocal)
+        && matches(9, Opcode::AGetI)
+        && matches(10, Opcode::ASetI)
+        && matches(11, Opcode::Move))
+    {
+        return None;
+    }
+    let i0 = body.instruction(0)?;
+    let i1 = body.instruction(1)?;
+    let i2 = body.instruction(2)?;
+    let i3 = body.instruction(3)?;
+    let i4 = body.instruction(4)?;
+    let i5 = body.instruction(5)?;
+    let i6 = body.instruction(6)?;
+    let i7 = body.instruction(7)?;
+    let i8 = body.instruction(8)?;
+    let i9 = body.instruction(9)?;
+    let i10 = body.instruction(10)?;
+    let i11 = body.instruction(11)?;
+    if i0.b != i1.b
+        || i1.b != i0.a
+        || i5.b != i1.a
+        || i2.b != fact.slot
+        || i4.b != i2.a
+        || i4.c != i3.a
+        || i6.b == fact.slot
+        || i8.b != fact.slot
+        || i9.b != i6.a
+        || i9.c != i8.a
+        || i10.a != i5.a
+        || i10.b != i4.a
+        || i10.c != i9.a
+        || i11.a != dst
+        || i11.b != i9.a
+    {
+        return None;
+    }
+    let Some(crate::ops::Op::RequireObjectCoercible { src }) = body.cold(i7) else {
+        return None;
+    };
+    if *src != i6.a {
+        return None;
+    }
+    let source = match environment.get(i6.b) {
+        crate::value::Value::Array(array) => array,
+        _ => return None,
+    };
+    let target = match environment.get(i0.b) {
+        crate::value::Value::Array(array) => array,
+        _ => return None,
+    };
+    if !source.is_plain_dense_access() || !target.is_plain_dense_access() {
+        return None;
+    }
+    let offset = environment.get_number(i3.b)?;
+    if !offset.is_finite() || offset.fract() != 0.0 {
+        return None;
+    }
+    let mut index = environment.get_number(fact.slot)?;
+    if !index.is_finite() || index.fract() != 0.0 || index < 0.0 {
+        return None;
+    }
+
+    // Preflight all iterations.  This makes the fast path atomic with respect
+    // to the fallback: no array write occurs until every indexed read/write is
+    // known to be an ordinary numeric operation.
+    let mut count = 0usize;
+    while index >= 0.0 {
+        let source_index = usize::try_from(index as u128).ok()?;
+        let target_number = index + offset;
+        if !target_number.is_finite() || target_number.fract() != 0.0 || target_number < 0.0 {
+            return None;
+        }
+        let target_index = usize::try_from(target_number as u128).ok()?;
+        source.dense_number_at(source_index)?;
+        if target.dense_number_at(target_index).is_none() {
+            return None;
+        }
+        count = count.checked_add(1)?;
+        index -= 1.0;
+    }
+
+    index = environment.get_number(fact.slot)?;
+    for _ in 0..count {
+        let source_index = index as usize;
+        let target_index = (index + offset) as usize;
+        let number = source.dense_number_at(source_index)?;
+        debug_assert!(target.set_plain_existing_f64(target_index, number));
+        registers.write_number(usize::from(dst), number);
+        index -= 1.0;
+    }
+    environment.set(fact.slot, crate::value::Value::Number(index));
+    Some(crate::completion::Completion::Normal)
 }
 
 /// Counted-loop admission must not turn an arbitrary compact instruction
