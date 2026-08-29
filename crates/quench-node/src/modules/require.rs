@@ -546,7 +546,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
+            crate::host::capability(crate::registry::SPEC_SEA_IS_SEA),
         )])),
         // `node:test` exports the callable `test` function itself, with
         // `test`, `describe`, and `it` aliases plus `.skip` variants.
