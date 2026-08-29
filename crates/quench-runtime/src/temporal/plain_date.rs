@@ -12,6 +12,18 @@ use crate::{execute::VmError, value::Value};
 mod plain_date_tail;
 use plain_date_tail::{date_object, date_object_with_calendar, number};
 
+/// ICU exposes these calendars, but Temporal has not adopted them yet.
+const NOT_YET_SUPPORTED_CALENDARS: &[&str] = &[
+    "bangla",
+    "gujarati",
+    "kannada",
+    "marathi",
+    "odia",
+    "tamil",
+    "telugu",
+    "vikram",
+];
+
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
@@ -142,6 +154,14 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(calendar) = arguments
+        .get(3)
+        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+    {
+        if !is_iso_calendar_value(calendar)? {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
     if let Some(calendar) = arguments
         .get(3)
         .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
@@ -2438,6 +2458,12 @@ fn has_date_fields(object: &crate::value::ObjectData) -> bool {
 
 pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
     let text = crate::conversion::to_string(value)?;
+    if NOT_YET_SUPPORTED_CALENDARS
+        .iter()
+        .any(|name| text.eq_ignore_ascii_case(name))
+    {
+        return Ok(false);
+    }
     if is_supported_calendar_name(&text) {
         return Ok(true);
     }
@@ -2493,6 +2519,12 @@ pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
 /// a supported calendar identifier is still observable through `calendarId`
 /// and must not be rejected at construction boundaries.
 pub(crate) fn is_supported_calendar_name(value: &str) -> bool {
+    if NOT_YET_SUPPORTED_CALENDARS
+        .iter()
+        .any(|name| value.eq_ignore_ascii_case(name))
+    {
+        return false;
+    }
     matches!(
         value.to_ascii_lowercase().as_str(),
         "islamicc" | "ethiopic-amete-alem"
