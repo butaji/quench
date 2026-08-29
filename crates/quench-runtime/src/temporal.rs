@@ -7,6 +7,8 @@ pub(crate) mod plain_date_time;
 pub(crate) mod plain_month_day;
 pub(crate) mod plain_time;
 pub(crate) mod plain_year_month;
+#[path = "temporal_options.rs"]
+pub(crate) mod options;
 
 const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 

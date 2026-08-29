@@ -11,7 +11,10 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
-    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
+    let normalized = normalize_legacy_identity_escapes(
+        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
+        flags,
+    );
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
@@ -39,7 +42,10 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
     let reg_flags: Flags = flags.into();
-    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
+    let normalized = normalize_legacy_identity_escapes(
+        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
+        flags,
+    );
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&normalized, reg_flags)
     }))
@@ -117,6 +123,106 @@ fn normalize_named_group_escapes(pattern: &str) -> String {
         index += 1;
     }
     output
+}
+
+fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
+    if flags.contains('u') || flags.contains('v') {
+        return pattern.to_string();
+    }
+    let chars: Vec<char> = pattern.chars().collect();
+    let has_named_group = pattern.as_bytes().windows(3).any(|window| window == b"(?<");
+    let capture_count = pattern_capture_count(&chars);
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    let mut in_class = false;
+    while index < chars.len() {
+        if chars[index] == '[' {
+            in_class = true;
+            output.push('[');
+            index += 1;
+            continue;
+        }
+        if chars[index] == ']' {
+            in_class = false;
+            output.push(']');
+            index += 1;
+            continue;
+        }
+        if chars[index] != '\\' || index + 1 == chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let next = chars[index + 1];
+        if in_class && next == 'c' {
+            if let Some(control) = chars
+                .get(index + 2)
+                .copied()
+                .filter(|ch| ch.is_ascii_digit() || *ch == '_')
+            {
+                output.push_str(&format!(r"\x{:02x}", (control as u32) % 32));
+                index += 3;
+                continue;
+            }
+        }
+        if next >= '4'
+            && next < '8'
+            && (next as usize - '0' as usize) > capture_count
+        {
+            let mut end = index + 2;
+            if end < chars.len() && chars[end] >= '0' && chars[end] < '8' {
+                end += 1;
+            }
+            let digits: String = chars[index + 1..end].iter().collect();
+            let value = u32::from_str_radix(&digits, 8).unwrap_or(0);
+            output.push_str(&format!(r"\x{:02x}", value));
+            index = end;
+            continue;
+        }
+        let malformed_k = next == 'k'
+            && (index + 2 == chars.len()
+                || chars[index + 2] != '<'
+                || !chars[index + 3..].contains(&'>')
+                || !has_named_group);
+        if legacy_identity_target(next) || malformed_k {
+            output.push(next);
+        } else {
+            output.push('\\');
+            output.push(next);
+        }
+        index += 2;
+    }
+    output
+}
+
+fn pattern_capture_count(chars: &[char]) -> usize {
+    let mut count = 0;
+    let mut in_class = false;
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => index += 2,
+            '[' => {
+                in_class = true;
+                index += 1;
+            }
+            ']' => {
+                in_class = false;
+                index += 1;
+            }
+            '(' if !in_class && chars.get(index + 1) != Some(&'?') => {
+                count += 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    count
+}
+
+fn legacy_identity_target(ch: char) -> bool {
+    ch.is_ascii_alphabetic()
+        && !matches!(ch, 'b' | 'B' | 'c' | 'd' | 'D' | 'f' | 'k' | 'n' | 'p' | 'P' | 'r' | 's' | 'S' | 't' | 'u' | 'v' | 'w' | 'W' | 'x')
 }
 
 fn append_decoded_group_name(output: &mut String, name: &[char]) {
@@ -197,7 +303,10 @@ pub(crate) fn compile_method_for_vm(
             "RegExp.prototype.compile requires RegExp",
         ));
     };
-    if !has_regexp_internal_slot(receiver) {
+    if !has_regexp_internal_slot(receiver)
+        || !is_current_realm(receiver)
+        || !is_intrinsic_regexp_instance(receiver)
+    {
         return Err(crate::value::error::throw_type_error(
             "RegExp.prototype.compile requires RegExp",
         ));
@@ -205,6 +314,23 @@ pub(crate) fn compile_method_for_vm(
     let (pattern, flags) = compile_arguments(arguments)?;
     compile(&pattern, &flags).map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     update_compiled_receiver(receiver, &pattern, &flags)
+}
+
+fn is_intrinsic_regexp_instance(value: &Value) -> bool {
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    match properties
+        .iter()
+        .rev()
+        .find_map(|(key, value)| (key == "\0prototype").then_some(value))
+    {
+        Some(Value::Builtin(crate::ops::Builtin::RegExpPrototype)) => true,
+        Some(Value::BoundFunction(bound)) => {
+            bound.target == Value::Builtin(crate::ops::Builtin::RegExpPrototype)
+        }
+        _ => false,
+    }
 }
 
 fn compile_arguments(arguments: &[Value]) -> Result<(String, String), VmError> {
@@ -271,6 +397,7 @@ fn update_compiled_receiver(
             "RegExp.prototype.compile requires RegExp",
         ));
     };
+    let mut updates = Vec::new();
     for (key, value) in properties.iter() {
         let next = match key.as_str() {
             "source" => Some(Value::String(pattern.to_string())),
@@ -279,9 +406,22 @@ fn update_compiled_receiver(
             "\0regexp_flags" => Some(Value::String(flags.to_string())),
             _ => None,
         };
-        if let (Some(next), Value::BindingCell(cell)) = (next, value) {
-            cell.replace(next);
+        if let Some(next) = next {
+            if let Value::BindingCell(cell) = value {
+                cell.replace(next);
+            } else {
+                updates.push((key.clone(), next));
+            }
         }
+    }
+    let mut current = receiver.clone();
+    for (key, value) in updates {
+        let Value::Object(object) = crate::locals::resolved_replacement(current.clone()) else {
+            break;
+        };
+        let updated = crate::builtins::object_alias::set(object, &key, value);
+        crate::locals::replace_value(&current, &updated);
+        current = updated;
     }
     crate::properties::assign_set_property(receiver, "lastIndex", Value::Number(0.0))?;
     Ok(receiver.clone())

@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "compact_global_traffic": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l2.top_compact",
+          "key": "opcode",
+          "value": "GetN",
+          "field": "count"
+        }
+      },
+      "min": 100000
+    },
+    "slow_resolve_name": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l3.top_slow",
+          "key": "op",
+          "value": "ResolveName",
+          "field": "count"
+        }
+      },
+      "max": 2
+    },
+    "owned_reads_per_getn": {
+      "numerator": "lanes.l0.owned_word_read_by_site.getn",
+      "denominator": {
+        "top": {
+          "path": "lanes.l2.top_compact",
+          "key": "opcode",
+          "value": "GetN",
+          "field": "count"
+        }
+      },
+      "min_traffic": 100000,
+      "max": 2
+    }
+  }
+}
