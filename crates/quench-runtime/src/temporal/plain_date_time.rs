@@ -999,9 +999,9 @@ fn normalize_time_zone_identifier(text: &str) -> Result<String, VmError> {
 }
 
 fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
-    let mut values = fields(
-        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
-    )?;
+    let receiver = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let mut values = fields(receiver)?;
     if let Some(time) = time.filter(|value| !matches!(value, Value::Undefined)) {
         let time = crate::temporal::plain_time::execute(
             crate::ops::Builtin::TemporalPlainTimeFrom,
@@ -1025,7 +1025,11 @@ fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Val
     } else {
         values[3..].fill(0.0);
     }
-    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+    let calendar = crate::execute::get_property_result(receiver, "calendarId")?;
+    let month_code = crate::execute::get_property_result(receiver, "monthCode")?;
+    let mut arguments = values.into_iter().map(Value::Number).collect::<Vec<_>>();
+    arguments.extend([calendar, month_code]);
+    construct(&arguments)
 }
 
 fn calendar_getter(
