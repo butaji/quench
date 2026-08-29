@@ -611,7 +611,9 @@ fn load_checked_in(
         )));
     }
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
-    environment.load_into(registers, dst, slot);
+    if !environment.load_existing_proven_into(registers, dst, slot) {
+        environment.load_into(registers, dst, slot);
+    }
     Ok(())
 }
 
