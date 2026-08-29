@@ -30,7 +30,13 @@ fn main() -> ExitCode {
         .position(|arg| arg == "--one")
         .and_then(|index| args.get(index + 1))
     {
-        return run_one(PathBuf::from(path));
+        let timeout = args
+            .iter()
+            .position(|arg| arg == "--timeout-secs")
+            .and_then(|index| args.get(index + 1))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        return run_one(PathBuf::from(path), timeout);
     }
     if let Some(path) = args
         .iter()
@@ -96,18 +102,19 @@ fn print_help() {
     println!("  --results PATH      write machine-readable results and inventory hash");
 }
 
-fn run_one(path: PathBuf) -> ExitCode {
-    match quench_node_test::NodeTestRunner::new().run_file(&path) {
-        quench_node_test::NodeOutcome::Pass => {
+fn run_one(path: PathBuf, timeout_secs: u64) -> ExitCode {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
+    match triage_one(&exe, &path, timeout_secs) {
+        RunResult::Pass => {
             println!("PASS {}", path.display());
             ExitCode::SUCCESS
         }
-        quench_node_test::NodeOutcome::Skip { reason } => {
-            println!("SKIP {}: {reason}", path.display());
+        RunResult::Skip => {
+            println!("SKIP {}", path.display());
             ExitCode::SUCCESS
         }
-        quench_node_test::NodeOutcome::Fail { reason } => {
-            println!("FAIL {}: {reason}", path.display());
+        result => {
+            println!("{} {}", result.label().to_uppercase(), path.display());
             ExitCode::from(1)
         }
     }
