@@ -550,15 +550,16 @@ fn era_getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<
         ));
     }
     let year = crate::conversion::to_number(&field(Some(receiver), "year")?)?;
+    let month = crate::conversion::to_number(&field(Some(receiver), "month")?)?;
     let calendar = crate::conversion::to_string(&field(Some(receiver), "calendarId")?)?;
     if builtin == crate::ops::Builtin::TemporalPlainYearMonthEraGetter {
         return Ok(
-            crate::temporal::plain_date::era_for_calendar(&calendar, year)
+            crate::temporal::plain_date::era_for_calendar_date(&calendar, year, month, 1.0)
                 .map_or(Value::Undefined, |era| Value::String(era.into())),
         );
     }
     Ok(
-        crate::temporal::plain_date::era_year_for_calendar(&calendar, year)
+        crate::temporal::plain_date::era_year_for_calendar_date(&calendar, year, month, 1.0)
             .map_or(Value::Undefined, Value::Number),
     )
 }
@@ -885,8 +886,10 @@ fn add(
             crate::conversion::to_number(&crate::execute::get_property_result(&result, "year")?)?;
         let month =
             crate::conversion::to_number(&crate::execute::get_property_result(&result, "month")?)?;
-        let result =
-            construct_with_reference_calendar(year, month, reference_day(receiver), &calendar)?;
+        // Derive the reference ISO day from the resulting calendar month;
+        // carrying the receiver's day is incorrect when month starts move
+        // between ISO dates (e.g. Chinese 2018-M02 versus 2019-M02).
+        let result = construct_with_calendar(year, month, &calendar)?;
         let code = crate::execute::get_property_result(&result, "monthCode")?;
         return Ok(match code {
             Value::String(code) => preserve_month_code(result, year, &code, &calendar),
@@ -903,10 +906,9 @@ fn add(
             .and_then(|v| crate::conversion::to_number(&v).ok())
             .unwrap_or(0.0);
     let total = year * 12.0 + month - 1.0 + months * direction;
-    construct_with_reference_calendar(
+    construct_with_calendar(
         (total / 12.0).floor(),
         total.rem_euclid(12.0) + 1.0,
-        reference_day(receiver),
         &calendar,
     )
 }
