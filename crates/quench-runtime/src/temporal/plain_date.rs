@@ -87,6 +87,54 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(result)
 }
 
+/// Construct from ISO fields, converting the visible fields into the target
+/// calendar. Internal calendar arithmetic continues to use `construct` with
+/// already-calendarized fields.
+pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> {
+    let year = number(arguments.first())?;
+    let month = number(arguments.get(1))?;
+    let day = number(arguments.get(2))?;
+    let calendar = arguments
+        .get(3)
+        .and_then(|value| match value {
+            Value::String(value) => canonical_calendar_id(value),
+            Value::StringUnits(_) => None,
+            _ => None,
+        })
+        .unwrap_or_else(|| "iso8601".into());
+    if calendar == "iso8601" || calendar == "gregory" {
+        return construct(&[
+            Value::Number(year),
+            Value::Number(month),
+            Value::Number(day),
+            Value::String(calendar),
+        ]);
+    }
+    construct(&[
+        Value::Number(year),
+        Value::Number(month),
+        Value::Number(day),
+        Value::String("iso8601".into()),
+    ])?;
+    let fields = calendar_fields_from_iso(year as i32, month as u32, day as u32, &calendar)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    let mut result = date_object_with_calendar(
+        f64::from(fields.year),
+        f64::from(fields.month),
+        f64::from(fields.day),
+        &calendar,
+    );
+    if let Value::Object(object) = &mut result {
+        let object = std::rc::Rc::make_mut(object);
+        object.set_property_in_place("monthCode", Value::String(fields.month_code.clone()));
+        object.set_property_in_place(
+            "\0temporal-slot:\0monthCode",
+            Value::String(fields.month_code),
+        );
+    }
+    Ok(result)
+}
+
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(calendar) = arguments
         .get(3)
@@ -106,7 +154,7 @@ pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, V
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
-    construct(arguments)
+    construct_from_iso(arguments)
 }
 
 fn days_in_month(year: f64, month: f64) -> f64 {
@@ -405,7 +453,9 @@ pub(crate) fn execute(
             arguments.get(1),
             -1.0,
         )),
-        crate::ops::Builtin::TemporalPlainDateToLocaleString => Some(to_string(receiver, None)),
+        crate::ops::Builtin::TemporalPlainDateToLocaleString => {
+            Some(to_locale_string(receiver, arguments))
+        }
         crate::ops::Builtin::TemporalPlainDateToPlainDateTime => {
             Some(to_plain_date_time(receiver, arguments.first()))
         }
@@ -449,6 +499,21 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateMonthGetter => Some(month(receiver)),
         _ => None,
     }
+}
+
+fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
+        let time_style = crate::execute::get_property_result(options, "timeStyle")?;
+        if !matches!(time_style, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "timeStyle is incompatible with PlainDate",
+            ));
+        }
+    }
+    let value = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainDate"))?
+        .clone();
+    crate::intl::datetime::format_temporal_value(&value, arguments, &["year", "month", "day"])
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {

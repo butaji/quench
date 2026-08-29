@@ -101,6 +101,15 @@ fn temporal_slots(
     slots: &[(String, Value)],
     fields: &TemporalFields,
 ) -> Result<Vec<(String, Value)>, VmError> {
+    let formatter_calendar = slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
+    if fields.calendar != "iso8601"
+        && fields.calendar != "gregory"
+        && fields.calendar != formatter_calendar
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Temporal calendar does not match formatter calendar",
+        ));
+    }
     let has_date_style = slots.iter().any(|(name, _)| name == "dateStyle");
     let has_time_style = slots.iter().any(|(name, _)| name == "timeStyle");
     if has_date_style && !has_time_style && fields.kind == TemporalKind::PlainTime {
@@ -215,7 +224,6 @@ fn temporal_slots(
             ("hour".into(), Value::String("numeric".into())),
             ("minute".into(), Value::String("numeric".into())),
             ("second".into(), Value::String("numeric".into())),
-            ("hour12".into(), Value::Boolean(true)),
         ]);
     } else if !has_time
         && !has_date_style
@@ -226,10 +234,21 @@ fn temporal_slots(
             ("hour".into(), Value::String("numeric".into())),
             ("minute".into(), Value::String("numeric".into())),
             ("second".into(), Value::String("numeric".into())),
-            ("hour12".into(), Value::Boolean(true)),
         ]);
     }
     let mut resolved = temporal_default_slots(&filtered, fields);
+    if resolved.iter().any(|(name, _)| name == "hour")
+        && !resolved.iter().any(|(name, _)| name == "hour12")
+    {
+        let hour12 = slot_string(&resolved, "hourCycle")
+            .map(|cycle| matches!(cycle.as_str(), "h11" | "h12"))
+            .or_else(|| {
+                slot_string(&resolved, "locale")
+                    .map(|locale| locale.starts_with("en") || locale.starts_with("ja"))
+            })
+            .unwrap_or(false);
+        resolved.push(("hour12".into(), Value::Boolean(hour12)));
+    }
     if fields.kind != TemporalKind::ZonedDateTime {
         resolved.retain(|(name, _)| name != "timeZoneName");
     }
@@ -587,7 +606,8 @@ fn parts_for_fields(
         ));
         date.push(literal_part(", "));
     }
-    let month_value = slot_string(slots, "month").map(|style| format_month_value(&style, month));
+    let month_value = slot_string(slots, "month")
+        .map(|style| format_month_value_for_slots(slots, &style, month));
     let day_value = slot_string(slots, "day").map(|style| format_day_value(&style, day));
     let display_year = slot_string(slots, "calendar")
         .filter(|calendar| calendar == "japanese")
@@ -846,7 +866,12 @@ fn time_parts_for_values(
         .unwrap_or(false);
     let mut parts = vec![typed_part(
         "hour",
-        format_hour_value(&hour_style, hour, hour12),
+        format_hour_value(
+            &hour_style,
+            hour,
+            hour12,
+            slot_string(slots, "hourCycle").as_deref() == Some("h11"),
+        ),
     )];
     if slot_string(slots, "minute").is_some() {
         parts.push(literal_part(":"));
@@ -898,7 +923,12 @@ fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
         .unwrap_or(false);
     let mut parts = vec![typed_part(
         "hour",
-        format_hour_value(&hour_style, hour, hour12),
+        format_hour_value(
+            &hour_style,
+            hour,
+            hour12,
+            slot_string(slots, "hourCycle").as_deref() == Some("h11"),
+        ),
     )];
     if slot_string(slots, "minute").is_some() {
         parts.push(literal_part(":"));
