@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-const STAGE_SPEC: &str = include_str!("../../../docs/STAGES.md");
+const STAGE_SPEC: &str = include_str!("../../../docs/TEST262-STAGES.md");
 const STAGE_PREFIX: &str = "- Stage ";
 
 /// One conformance stage.

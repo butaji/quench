@@ -71,10 +71,10 @@ fn select_stages(stages: &[ResolvedStage], args: &Args) -> Result<Vec<ResolvedSt
         ));
     }
     let start = find_stage_index(stages, args.from)
-        .ok_or_else(|| format!("stage {} not found in docs/STAGES.md", args.from))?;
+        .ok_or_else(|| format!("stage {} not found in docs/TEST262-STAGES.md", args.from))?;
     let end = if let Some(to_stage_id) = args.to {
         let end = find_stage_index(stages, to_stage_id)
-            .ok_or_else(|| format!("stage {} not found in docs/STAGES.md", to_stage_id))?;
+            .ok_or_else(|| format!("stage {} not found in docs/TEST262-STAGES.md", to_stage_id))?;
         if end < start {
             return Err(format!(
                 "invalid stage range {}..={} (from greater than to)",
