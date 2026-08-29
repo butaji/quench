@@ -24,6 +24,8 @@ const NOT_YET_SUPPORTED_CALENDARS: &[&str] = &[
     "vikram",
 ];
 
+const JAPANESE_MEIJI_ERA_START: (i32, u32, u32) = (1873, 1, 1);
+
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
@@ -130,8 +132,13 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
     ])?;
     let fields = calendar_fields_from_iso(year as i32, month as u32, day as u32, &calendar)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    let visible_year = if calendar == "japanese" {
+        f64::from(year)
+    } else {
+        f64::from(fields.year)
+    };
     let mut result = date_object_with_calendar(
-        f64::from(fields.year),
+        visible_year,
         f64::from(fields.month),
         f64::from(fields.day),
         &calendar,
@@ -1944,7 +1951,7 @@ fn japanese_era(year: f64) -> Option<&'static str> {
         Some("showa")
     } else if year >= 1912.0 {
         Some("taisho")
-    } else if year >= 1868.0 {
+    } else if year >= f64::from(JAPANESE_MEIJI_ERA_START.0) {
         Some("meiji")
     } else if year >= 1.0 {
         Some("ce")
@@ -1959,7 +1966,7 @@ fn japanese_era_date(year: i32, month: u32, day: u32) -> &'static str {
         (year, month, day) if (year, month, day) >= (1989, 1, 8) => "heisei",
         (year, month, day) if (year, month, day) >= (1926, 12, 25) => "showa",
         (year, month, day) if (year, month, day) >= (1912, 7, 30) => "taisho",
-        (year, month, day) if (year, month, day) >= (1868, 9, 8) => "meiji",
+        (year, month, day) if (year, month, day) >= JAPANESE_MEIJI_ERA_START => "meiji",
         (year, ..) if year >= 1 => "ce",
         _ => "bce",
     }
@@ -1986,7 +1993,7 @@ fn japanese_era_year(year: f64) -> f64 {
         year - 1925.0
     } else if year >= 1912.0 {
         year - 1911.0
-    } else if year >= 1868.0 {
+    } else if year >= f64::from(JAPANESE_MEIJI_ERA_START.0) {
         year - 1867.0
     } else if year >= 1.0 {
         year
