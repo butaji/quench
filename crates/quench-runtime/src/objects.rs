@@ -15,12 +15,67 @@ pub(crate) fn reduce(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let object_register = take_register(next_register);
+
+    // A plain object literal has no observable object reference available
+    // while its property values are evaluated: computed keys, spreads,
+    // accessors, and the legacy `__proto__` initializer are the cases that
+    // can observe or alter construction itself.  Evaluate the values first
+    // and construct the final property table in one allocation for this
+    // common subset.  This avoids the general DefineOwnProperty/COW path for
+    // literals such as `{x: i}` while retaining the complete fallback below.
+    if plain_data_literal(object) {
+        let mut properties = Vec::with_capacity(object.properties.len());
+        for property in &object.properties {
+            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                unreachable!("plain_data_literal excludes spread properties")
+            };
+            let key = property_key(&property.key)?;
+            let value = crate::reduce::reduce_expression(
+                &property.value,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )?;
+            // Anonymous function expressions still receive the specified
+            // inferred name before the object is published.
+            // The key register is only read for computed properties, which
+            // this fused subset excludes.
+            set_property_name(property, 0, value, ops)?;
+            if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == &key) {
+                // Duplicate literal keys update the existing slot; the
+                // creation order remains that of the first occurrence.
+                *current = value;
+            } else {
+                properties.push((key.into(), value));
+            }
+        }
+        ops.push(Op::MakeObject {
+            dst: object_register,
+            properties,
+        });
+        return Some(object_register);
+    }
+
     ops.push(Op::MakeObject {
         dst: object_register,
         properties: Vec::new(),
     });
     reduce_properties(object, object_register, ops, facts, next_register, locals)?;
     Some(object_register)
+}
+
+fn plain_data_literal(object: &ObjectExpression<'_>) -> bool {
+    object.properties.iter().all(|property| {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return false;
+        };
+        property.kind == PropertyKind::Init
+            && !property.method
+            && !property.computed
+            && !is_proto_initializer(property)
+            && property_key(&property.key).is_some()
+    })
 }
 
 fn reduce_properties(

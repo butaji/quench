@@ -1166,6 +1166,13 @@ impl ObjectData {
         Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
     }
 
+    pub(crate) fn new_property_names(properties: Vec<(PropertyName, Value)>) -> Self {
+        Self::with_shared_properties(
+            properties.into_iter().collect(),
+            Rc::new(RefCell::new(Vec::new())),
+        )
+    }
+
     pub(crate) fn with_private_slots(
         properties: Vec<(String, Value)>,
         private_slots: PrivateSlots,
