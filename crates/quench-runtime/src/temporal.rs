@@ -46,8 +46,12 @@ pub(crate) fn zoned_construct(
             let calendar = parse_calendar_identifier(value)?;
             if let crate::value::Value::String(_) | crate::value::Value::StringUnits(_) = value {
                 let text = crate::conversion::to_string(value)?;
-                let date_like = text.chars().filter(|ch| *ch == '-').count() >= 2
-                    || (text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit()));
+                let date_like = text
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-'))
+                    && (text.chars().filter(|ch| *ch == '-').count() >= 2
+                        || (text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit())));
                 if date_like && !text.eq_ignore_ascii_case("iso8601") {
                     return Err(crate::value::error::throw_range_error("Invalid calendar"));
                 }
