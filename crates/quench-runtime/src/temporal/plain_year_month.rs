@@ -356,20 +356,26 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     let year = crate::conversion::to_number(&year_value)?.trunc();
     let constrain = overflow_option(options)?;
-    if month_code.is_some_and(|month| !(1.0..=12.0).contains(&month)) {
+    let leap_month = month_code.is_some_and(|month| month >= 1_000.0);
+    let month_code_number = month_code.map(|month| if leap_month { month - 1_000.0 } else { month });
+    if month_code_number.is_some_and(|month| !(1.0..=12.0).contains(&month))
+        || (leap_month
+            && (!matches!(calendar_name.as_str(), "chinese" | "dangi" | "hebrew")
+                || (calendar_name == "hebrew" && month_code_number != Some(5.0))))
+    {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
     if matches!(month_value, Value::Undefined) && matches!(month_code_value, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing month"));
     }
     if let (Some(month), Some(code)) = (month_number, month_code) {
-        if month.trunc() != code {
+        if month.trunc() != month_code_number.unwrap_or(code) {
             return Err(crate::value::error::throw_range_error(
                 "Conflicting month fields",
             ));
         }
     }
-    let month = month_number.or(month_code).unwrap_or(0.0);
+    let month = month_number.or(month_code_number).unwrap_or(0.0);
     let month = if month <= 0.0 || !month.is_finite() {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
