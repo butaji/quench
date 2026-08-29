@@ -105,7 +105,6 @@ pub(crate) fn runtime_error(message: &str) -> VmError {
 
 /// Return the internal slot map of an Intl object as an owned vector.
 pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    eprintln!("DEBUG intl_slots receiver {:?}", receiver);
     let Some(receiver) = receiver else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
