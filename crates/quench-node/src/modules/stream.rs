@@ -19,6 +19,7 @@ use crate::registry::{
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
+const CONSUMERS: &str = include_str!("stream_consumers.js");
 
 pub fn new_readable(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     Ok(stream_object("Readable"))
@@ -91,5 +92,21 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
         }
     };
     state.borrow_mut().stream_module = Some(module.clone());
+    Ok(module)
+}
+
+/// Build the stream-consumer namespace from one shared consumption reducer.
+pub fn build_consumers(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    if let Some(cached) = state.borrow().stream_consumers_module.clone() {
+        return Ok(cached);
+    }
+    let program = quench_runtime::reduce::reduce_global_script_source(CONSUMERS)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    let module = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
+    })?;
+    state.borrow_mut().stream_consumers_module = Some(module.clone());
     Ok(module)
 }
