@@ -4735,8 +4735,9 @@ mod stubs {
             _ => format!("[{timezone}]"),
         };
         let calendar_suffix = match calendar_mode.as_str() {
-            "always" => "[u-ca=iso8601]".to_string(),
-            "critical" => "[!u-ca=iso8601]".to_string(),
+            "always" => format!("[u-ca={calendar_text}]"),
+            "critical" => format!("[!u-ca={calendar_text}]"),
+            "auto" if calendar_text != "iso8601" => format!("[u-ca={calendar_text}]"),
             _ => String::new(),
         };
         let clock = match smallest.as_deref() {
