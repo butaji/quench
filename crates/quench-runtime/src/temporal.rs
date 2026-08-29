@@ -519,6 +519,15 @@ fn timezone_primary_name(text: &str) -> &str {
     }
 }
 
+fn timezone_equivalent(left: &str, right: &str) -> bool {
+    if timezone_primary_name(left) == timezone_primary_name(right) {
+        return true;
+    }
+    let left_is_fixed = left.starts_with(['+', '-']) || left.eq_ignore_ascii_case("utc");
+    let right_is_fixed = right.starts_with(['+', '-']) || right.eq_ignore_ascii_case("utc");
+    left_is_fixed && right_is_fixed
+}
+
 fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
     if !date.contains('-') {
         let (year_text, month_text, day_text) = match date.len() {
@@ -3701,9 +3710,7 @@ mod stubs {
             let other_timezone = crate::conversion::to_string(
                 &crate::execute::get_property_result(&other, "timeZoneId")?,
             )?;
-            if super::timezone_primary_name(&receiver_timezone)
-                != super::timezone_primary_name(&other_timezone)
-            {
+            if !super::timezone_equivalent(&receiver_timezone, &other_timezone) {
                 return Err(crate::value::error::throw_range_error(
                     "ZonedDateTime time zones do not match",
                 ));
