@@ -6,7 +6,7 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
                     "Temporal.ZonedDateTime is not supported",
                 ));
             }
-            let effective_slots = temporal_default_slots(slots, &fields);
+            let effective_slots = temporal_slots(slots, &fields)?;
             if let Some(text) = temporal_date_format_result(
                 &effective_slots,
                 fields.year,
@@ -28,38 +28,187 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
             }
         }
     }
+    let format_slots = effective_format_slots(slots);
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
-    let has_era = slot_string(slots, "era").is_some();
-    let has_date = slot_string(slots, "year").is_some()
-        || slot_string(slots, "month").is_some()
-        || slot_string(slots, "day").is_some()
-        || slot_string(slots, "weekday").is_some();
-    let has_time = slot_string(slots, "hour").is_some()
-        || slot_string(slots, "minute").is_some()
-        || slot_string(slots, "second").is_some();
+    let has_era = slot_string(&format_slots, "era").is_some();
+    let has_date = slot_string(&format_slots, "year").is_some()
+        || slot_string(&format_slots, "month").is_some()
+        || slot_string(&format_slots, "day").is_some()
+        || slot_string(&format_slots, "weekday").is_some();
+    let has_time = slot_string(&format_slots, "hour").is_some()
+        || slot_string(&format_slots, "minute").is_some()
+        || slot_string(&format_slots, "second").is_some();
     let text = if has_date && !has_era {
-        date_format_result(slots, number)
+        date_format_result(&format_slots, number)
     } else {
         None
     }
-    .or_else(|| hour_day_period_format(slots, number))
-    .or_else(|| day_period_format(slots, number))
+    .or_else(|| hour_day_period_format(&format_slots, number))
+    .or_else(|| day_period_format(&format_slots, number))
     .or_else(|| {
         if has_time && !has_era {
-            date_format_result(slots, number)
+            date_format_result(&format_slots, number)
         } else {
             None
         }
     })
-    .or_else(|| proleptic_year_format(slots, number))
-    .or_else(|| fractional_format(slots, number))
+    .or_else(|| proleptic_year_format(&format_slots, number))
+    .or_else(|| fractional_format(&format_slots, number))
     .unwrap_or_else(|| range_text(number));
-    let numbering = slot_string(slots, "numberingSystem").unwrap_or_else(|| "latn".to_string());
+    let numbering = slot_string(&format_slots, "numberingSystem")
+        .unwrap_or_else(|| "latn".to_string());
     let mut localized = crate::intl::number::localize_digits(text, &numbering);
     if numbering == "arab" {
         localized = localized.replace('.', "٫");
     }
     Ok(Value::String(localized))
+}
+
+fn temporal_slots(
+    slots: &[(String, Value)],
+    fields: &TemporalFields,
+) -> Result<Vec<(String, Value)>, VmError> {
+    let has_date_style = slots.iter().any(|(name, _)| name == "dateStyle");
+    let has_time_style = slots.iter().any(|(name, _)| name == "timeStyle");
+    if has_date_style && fields.kind == TemporalKind::PlainTime {
+        return Err(crate::value::error::throw_type_error(
+            "dateStyle is incompatible with Temporal.PlainTime",
+        ));
+    }
+    if has_time_style
+        && matches!(
+            fields.kind,
+            TemporalKind::PlainDate | TemporalKind::PlainMonthDay | TemporalKind::PlainYearMonth
+        )
+    {
+        return Err(crate::value::error::throw_type_error(
+            "timeStyle is incompatible with this Temporal value",
+        ));
+    }
+    if fields.kind == TemporalKind::PlainMonthDay
+        && slots.iter().any(|(name, _)| name == "year")
+        && !has_date_style
+    {
+        return Err(crate::value::error::throw_type_error(
+            "year is incompatible with Temporal.PlainMonthDay",
+        ));
+    }
+    if fields.kind == TemporalKind::PlainYearMonth
+        && slots.iter().any(|(name, _)| name == "day")
+    {
+        return Err(crate::value::error::throw_type_error(
+            "day is incompatible with Temporal.PlainYearMonth",
+        ));
+    }
+    if fields.kind == TemporalKind::PlainTime
+        && slots.iter().any(|(name, _)| {
+            matches!(name.as_str(), "year" | "month" | "day" | "weekday" | "era")
+        })
+    {
+        return Err(crate::value::error::throw_type_error(
+            "date fields are incompatible with Temporal.PlainTime",
+        ));
+    }
+    let mut filtered = slots
+        .iter()
+        .filter(|(name, _)| match fields.kind {
+            TemporalKind::PlainDate => {
+                !matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod")
+            }
+            TemporalKind::PlainYearMonth => {
+                !matches!(name.as_str(), "day" | "hour" | "minute" | "second" | "dayPeriod")
+            }
+            TemporalKind::PlainMonthDay => {
+                !matches!(name.as_str(), "year" | "hour" | "minute" | "second" | "dayPeriod")
+            }
+            TemporalKind::PlainTime => {
+                !matches!(name.as_str(), "year" | "month" | "day" | "weekday" | "era")
+            }
+            TemporalKind::PlainDateTime | TemporalKind::ZonedDateTime => true,
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(temporal_default_slots(&filtered, fields))
+}
+
+fn effective_format_slots(slots: &[(String, Value)]) -> Vec<(String, Value)> {
+    if slots.iter().any(|(name, _)| {
+        matches!(
+            name.as_str(),
+            "weekday" | "era" | "year" | "month" | "day" | "hour" | "minute" | "second"
+        )
+    }) {
+        return slots.to_vec();
+    }
+    let mut result = slots.to_vec();
+    let date_style = slot_string(slots, "dateStyle");
+    let time_style = slot_string(slots, "timeStyle");
+    match date_style.as_deref() {
+        Some("full") => result.extend([
+            ("weekday".into(), Value::String("long".into())),
+            ("month".into(), Value::String("long".into())),
+            ("day".into(), Value::String("numeric".into())),
+            ("year".into(), Value::String("numeric".into())),
+        ]),
+        Some("long") => result.extend([
+            ("month".into(), Value::String("long".into())),
+            ("day".into(), Value::String("numeric".into())),
+            ("year".into(), Value::String("numeric".into())),
+        ]),
+        Some("medium") => result.extend([
+            ("month".into(), Value::String("short".into())),
+            ("day".into(), Value::String("numeric".into())),
+            ("year".into(), Value::String("numeric".into())),
+        ]),
+        Some("short") => result.extend([
+            ("month".into(), Value::String("numeric".into())),
+            ("day".into(), Value::String("numeric".into())),
+            ("year".into(), Value::String("2-digit".into())),
+        ]),
+        _ => {}
+    }
+    match time_style.as_deref() {
+        Some("short") => result.extend([
+            ("hour".into(), Value::String("numeric".into())),
+            ("minute".into(), Value::String("numeric".into())),
+        ]),
+        Some("medium" | "long" | "full") => result.extend([
+            ("hour".into(), Value::String("numeric".into())),
+            ("minute".into(), Value::String("numeric".into())),
+            ("second".into(), Value::String("numeric".into())),
+        ]),
+        _ => {}
+    }
+    if let Some(style) = time_style.as_deref() {
+        if style == "long" {
+            result.push(("timeZoneName".into(), Value::String("short".into())));
+        } else if style == "full" {
+            result.push(("timeZoneName".into(), Value::String("long".into())));
+        }
+    }
+    if result.iter().any(|(name, _)| name == "hour")
+        && !result.iter().any(|(name, _)| name == "hour12")
+    {
+        let locale = slot_string(slots, "locale").unwrap_or_default();
+        let from_extension = locale
+            .split_once("-u-")
+            .and_then(|(_, extension)| {
+                let parts: Vec<_> = extension.split('-').collect();
+                let index = parts.iter().position(|part| *part == "hc")? + 1;
+                match parts.get(index).copied()? {
+                    "h11" | "h12" => Some(true),
+                    "h23" | "h24" => Some(false),
+                    _ => None,
+                }
+            });
+        result.push((
+            "hour12".into(),
+            Value::Boolean(
+                from_extension.unwrap_or_else(|| locale.starts_with("en") || locale.starts_with("ja")),
+            ),
+        ));
+    }
+    result
 }
 
 fn temporal_default_slots(
@@ -74,7 +223,7 @@ fn temporal_default_slots(
     }) {
         return slots.to_vec();
     }
-    let mut result = slots.to_vec();
+    let mut result = effective_format_slots(slots);
     let has_date_style = slots.iter().any(|(name, _)| name == "dateStyle");
     let has_time_style = slots.iter().any(|(name, _)| name == "timeStyle");
     if has_date_style {
@@ -178,18 +327,61 @@ fn temporal_fields(value: &Value) -> Option<TemporalFields> {
 }
 
 fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value, VmError> {
+    let slots = effective_format_slots(slots);
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
-    if let Some(value) = hour_day_period_parts(slots, number) {
+    if let Some(parts) = time_parts(&slots, number) {
+        return Ok(make_array(parts));
+    }
+    if let Some(value) = hour_day_period_parts(&slots, number) {
         return Ok(make_array(value));
     }
-    if let Some(value) = day_period_parts(slots, number) {
+    if let Some(value) = day_period_parts(&slots, number) {
         return Ok(make_array(value));
     }
-    if let Some(value) = fractional_parts(slots, number) {
+    if let Some(value) = fractional_parts(&slots, number) {
         return Ok(make_array(value));
     }
     let value = range_text(number);
     Ok(make_array(vec![literal_part(&value)]))
+}
+
+fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let hour_style = slot_string(slots, "hour")?;
+    let (_, _, _, hour, minute, second, millis) = format_components(slots, number)?;
+    let hour12 = slots
+        .iter()
+        .find_map(|(name, value)| {
+            (name == "hour12").then_some(matches!(value, Value::Boolean(true)))
+        })
+        .unwrap_or(false);
+    let mut parts = vec![typed_part("hour", format_hour_value(&hour_style, hour, hour12))];
+    if slot_string(slots, "minute").is_some() {
+        parts.push(literal_part(":"));
+        parts.push(typed_part("minute", format!("{minute:02}")));
+    }
+    if slot_string(slots, "second").is_some() {
+        parts.push(literal_part(":"));
+        parts.push(typed_part("second", format!("{second:02}")));
+    }
+    if let Some(digits) = slot_number(slots, "fractionalSecondDigits") {
+        let digits = digits as u32;
+        if digits > 0 {
+            let fraction = millis / 10_u32.pow(3 - digits);
+            parts.push(literal_part("."));
+            parts.push(typed_part(
+                "fractionalSecond",
+                format!("{fraction:0width$}", width = digits as usize),
+            ));
+        }
+    }
+    if hour12 {
+        parts.push(literal_part(" "));
+        parts.push(typed_part(
+            "dayPeriod",
+            if hour < 12 { "AM" } else { "PM" }.into(),
+        ));
+    }
+    Some(parts)
 }
 
 fn fractional_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
@@ -302,6 +494,48 @@ fn range_values(
     arguments: &[Value],
     slots: &[(String, Value)],
 ) -> Result<(String, String), VmError> {
+    let start_temporal = arguments.first().and_then(temporal_fields);
+    let end_temporal = arguments.get(1).and_then(temporal_fields);
+    if start_temporal.is_some() || end_temporal.is_some() {
+        let (Some(start_temporal), Some(end_temporal)) = (start_temporal, end_temporal) else {
+            return Err(crate::value::error::throw_type_error(
+                "formatRange requires matching date kinds",
+            ));
+        };
+        if start_temporal.kind != end_temporal.kind
+            || start_temporal.kind == TemporalKind::ZonedDateTime
+        {
+            return Err(crate::value::error::throw_type_error(
+                "formatRange requires matching date kinds",
+            ));
+        }
+        let start_slots = temporal_slots(slots, &start_temporal)?;
+        let end_slots = temporal_slots(slots, &end_temporal)?;
+        let start = temporal_date_format_result(
+            &start_slots,
+            start_temporal.year,
+            start_temporal.month,
+            start_temporal.day,
+            start_temporal.hour,
+            start_temporal.minute,
+            start_temporal.second,
+            start_temporal.millisecond,
+        )
+        .unwrap_or_default();
+        let end = temporal_date_format_result(
+            &end_slots,
+            end_temporal.year,
+            end_temporal.month,
+            end_temporal.day,
+            end_temporal.hour,
+            end_temporal.minute,
+            end_temporal.second,
+            end_temporal.millisecond,
+        )
+        .unwrap_or_default();
+        return Ok((start, end));
+    }
+    let slots = effective_format_slots(slots);
     let Some(start_value) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "date value is undefined",
@@ -319,28 +553,28 @@ fn range_values(
     }
     let start = range_number(start_value)?;
     let end = range_number(end_value)?;
-    let start_str = if let Some(v) = date_format_result(slots, start) {
+    let start_str = if let Some(v) = date_format_result(&slots, start) {
         v
-    } else if let Some(v) = hour_day_period_format(slots, start) {
+    } else if let Some(v) = hour_day_period_format(&slots, start) {
         v
-    } else if let Some(v) = day_period_format(slots, start) {
+    } else if let Some(v) = day_period_format(&slots, start) {
         v
-    } else if let Some(v) = proleptic_year_format(slots, start) {
+    } else if let Some(v) = proleptic_year_format(&slots, start) {
         v
-    } else if let Some(v) = fractional_format(slots, start) {
+    } else if let Some(v) = fractional_format(&slots, start) {
         v
     } else {
         range_text(start)
     };
-    let end_str = if let Some(v) = date_format_result(slots, end) {
+    let end_str = if let Some(v) = date_format_result(&slots, end) {
         v
-    } else if let Some(v) = hour_day_period_format(slots, end) {
+    } else if let Some(v) = hour_day_period_format(&slots, end) {
         v
-    } else if let Some(v) = day_period_format(slots, end) {
+    } else if let Some(v) = day_period_format(&slots, end) {
         v
-    } else if let Some(v) = proleptic_year_format(slots, end) {
+    } else if let Some(v) = proleptic_year_format(&slots, end) {
         v
-    } else if let Some(v) = fractional_format(slots, end) {
+    } else if let Some(v) = fractional_format(&slots, end) {
         v
     } else {
         range_text(end)
