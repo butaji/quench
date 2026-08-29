@@ -112,6 +112,14 @@ impl ConstantPool {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CatchRange {
+    pub start: u16,
+    pub end: u16,
+    pub handler: u16,
+    pub catch_slot: Option<u16>,
+}
+
 #[derive(Debug, Default)]
 pub struct CodeArena {
     instructions: Vec<crate::ir::Instruction>,
@@ -121,6 +129,8 @@ pub struct CodeArena {
     constants: Vec<ConstantPool>,
     metadata: Vec<Vec<InstructionMeta>>,
     operand_windows: Vec<Vec<Rc<[u16]>>>,
+    catch_ranges: Vec<Vec<CatchRange>>,
+    pending_catches: Vec<CatchRange>,
 }
 
 fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
@@ -141,6 +151,7 @@ fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
         | Op::LoadBinding { name, .. }
         | Op::LoadResolvedBinding { name, .. }
         | Op::ResolveStrictName { key: name, .. }
+        | Op::ResolveName { key: name, .. }
         | Op::GetProperty { key: name, .. }
         | Op::SetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
         _ => None,
@@ -347,14 +358,9 @@ impl CodeArena {
         self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
         let start = self.instructions.len() as u32;
-        let constants = ConstantPool::new(
-            body.iter()
-                .filter_map(|op| match op {
-                    Op::Const { value, .. } => Some(value.clone()),
-                    _ => None,
-                })
-                .collect(),
-        );
+        let mut const_values = Vec::new();
+        collect_op_constants(body, &mut const_values);
+        let constants = ConstantPool::new(const_values);
         let mut parameter_end = None;
         let mut metadata = Vec::with_capacity(body.len());
         let mut operand_windows = Vec::new();
@@ -419,6 +425,19 @@ impl CodeArena {
                 cursor += 5;
                 continue;
             }
+            if let Some(next) = self.try_encode_control(
+                body,
+                cursor,
+                start,
+                &constants,
+                &mut metadata,
+                &mut operand_windows,
+                source,
+                None,
+            ) {
+                cursor = next;
+                continue;
+            }
             let op = &body[cursor];
             let mut meta = metadata_for(op, source);
             let instruction = match op {
@@ -455,11 +474,473 @@ impl CodeArena {
         }
         self.metadata.push(metadata);
         self.operand_windows.push(operand_windows);
+        self.catch_ranges
+            .push(std::mem::take(&mut self.pending_catches));
         let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
         self.parameter_ends.push(parameter_end);
         self.constants.push(constants);
         CodeRange { code, start, end }
+    }
+
+    fn emit_conditional(
+        &mut self,
+        dst: Option<u16>,
+        condition: u16,
+        then_ops: &[Op],
+        else_ops: &[Op],
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+    ) {
+        let jif = self.instructions.len();
+        self.instructions
+            .push(crate::ir::Instruction::jump_if_false(condition, 0));
+        metadata.push(InstructionMeta::empty());
+        self.encode_linear(
+            then_ops,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+            dst,
+        );
+        let jump = self.instructions.len();
+        self.instructions.push(crate::ir::Instruction::jump(0));
+        metadata.push(InstructionMeta::empty());
+        let else_pc = u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+        self.instructions[jif].b = else_pc;
+        self.encode_linear(
+            else_ops,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+            dst,
+        );
+        let end_pc = u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+        self.instructions[jump].a = end_pc;
+    }
+
+    fn encode_linear(
+        &mut self,
+        body: &[Op],
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+        ternary_dst: Option<u16>,
+    ) {
+        let mut cursor = 0;
+        while cursor < body.len() {
+            if let Some(next) = self.try_encode_control(
+                body,
+                cursor,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+                ternary_dst,
+            ) {
+                cursor = next;
+                continue;
+            }
+            if let (Some(dst), Op::Return { src }) = (ternary_dst, &body[cursor]) {
+                self.instructions
+                    .push(crate::ir::Instruction::move_(dst, *src));
+                metadata.push(InstructionMeta::empty());
+                cursor += 1;
+                continue;
+            }
+            if let Some(instruction) = lower_named_call(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor], source));
+                cursor += 2;
+                continue;
+            }
+            let op = &body[cursor];
+            let mut meta = metadata_for(op, source);
+            let instruction = match op {
+                Op::Const { dst, value } => crate::ir::Instruction::load_const(
+                    *dst,
+                    constants.id(value).expect("constant was collected"),
+                ),
+                Op::CallMethod {
+                    dst,
+                    object,
+                    callee: Some(callee),
+                    args,
+                    spreads,
+                    ..
+                } if args.len() == 6 && spreads.iter().all(|spread| !spread) => {
+                    meta.operand_window = operand_windows.len() as u32;
+                    operand_windows.push(Rc::from(args.as_slice()));
+                    crate::ir::Instruction::call_registered_window(
+                        *dst,
+                        *object,
+                        *callee,
+                        args.len() as u8,
+                    )
+                }
+                _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
+                    let index = self.cold.len() as u32;
+                    self.cold.push(op.clone());
+                    crate::ir::Instruction::slow_at(index)
+                }),
+            };
+            self.instructions.push(instruction);
+            metadata.push(meta);
+            cursor += 1;
+        }
+    }
+
+    fn relative_pc(&self, range_start: u32) -> u16 {
+        u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX)
+    }
+
+    fn try_encode_control(
+        &mut self,
+        body: &[Op],
+        cursor: usize,
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+        ternary_dst: Option<u16>,
+    ) -> Option<usize> {
+        match &body[cursor] {
+            Op::Conditional {
+                dst,
+                condition,
+                consequent,
+                alternate,
+            } => {
+                let then_ops = consequent.source_ops()?;
+                let else_ops = alternate.source_ops()?;
+                self.emit_conditional(
+                    Some(*dst),
+                    *condition,
+                    then_ops,
+                    else_ops,
+                    range_start,
+                    constants,
+                    metadata,
+                    operand_windows,
+                    source,
+                );
+                Some(cursor + 1)
+            }
+            Op::Branch {
+                condition,
+                then_ops,
+                else_ops,
+            } => {
+                let then_ops = then_ops.source_ops()?;
+                let else_ops = else_ops.source_ops()?;
+                self.emit_conditional(
+                    None,
+                    *condition,
+                    then_ops,
+                    else_ops,
+                    range_start,
+                    constants,
+                    metadata,
+                    operand_windows,
+                    source,
+                );
+                Some(cursor + 1)
+            }
+            Op::Loop {
+                init,
+                test,
+                body: loop_body,
+                update,
+                post_test,
+                label,
+                per_iteration,
+                ..
+            } if label.is_none() && per_iteration.is_empty() => {
+                let init = init.source_ops()?;
+                let test = test.source_ops()?;
+                let loop_body = loop_body.source_ops()?;
+                let update = update.source_ops()?;
+                if update.is_empty() && init.is_empty() {
+                    return None;
+                }
+                if !(ops_contain_call(init)
+                    || ops_contain_call(test)
+                    || ops_contain_call(loop_body)
+                    || ops_contain_call(update))
+                    || ops_contain_short_circuit(test)
+                    || test_always_true(test)
+                    || ops_use_arguments(init)
+                    || ops_use_arguments(test)
+                    || ops_use_arguments(loop_body)
+                    || ops_use_arguments(update)
+                {
+                    return None;
+                }
+                self.emit_loop(
+                    init,
+                    test,
+                    loop_body,
+                    update,
+                    *post_test,
+                    range_start,
+                    constants,
+                    metadata,
+                    operand_windows,
+                    source,
+                );
+                Some(cursor + 1)
+            }
+            _ => None,
+        }
+    }
+
+    fn emit_loop(
+        &mut self,
+        init: &[Op],
+        test: &[Op],
+        body: &[Op],
+        update: &[Op],
+        post_test: bool,
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+    ) {
+        self.encode_fragment(
+            init,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+        );
+        if test_always_true(test) {
+            let body_pc = self.relative_pc(range_start);
+            self.encode_linear(
+                body,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+                None,
+            );
+            self.encode_fragment(
+                update,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+            );
+            self.instructions
+                .push(crate::ir::Instruction::jump(body_pc));
+            metadata.push(InstructionMeta::empty());
+            return;
+        }
+        if post_test {
+            let body_pc = self.relative_pc(range_start);
+            self.encode_linear(
+                body,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+                None,
+            );
+            self.encode_fragment(
+                update,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+            );
+            if let Some(condition) = self.encode_test(
+                test,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+            ) {
+                let jif = self.instructions.len();
+                self.instructions
+                    .push(crate::ir::Instruction::jump_if_false(condition, 0));
+                metadata.push(InstructionMeta::empty());
+                self.instructions
+                    .push(crate::ir::Instruction::jump(body_pc));
+                metadata.push(InstructionMeta::empty());
+                let end = self.relative_pc(range_start);
+                self.instructions[jif].b = end;
+            } else {
+                self.instructions
+                    .push(crate::ir::Instruction::jump(body_pc));
+                metadata.push(InstructionMeta::empty());
+            }
+            return;
+        }
+        let test_pc = self.relative_pc(range_start);
+        let jif = if let Some(condition) = self.encode_test(
+            test,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+        ) {
+            let jif = self.instructions.len();
+            self.instructions
+                .push(crate::ir::Instruction::jump_if_false(condition, 0));
+            metadata.push(InstructionMeta::empty());
+            Some(jif)
+        } else {
+            None
+        };
+        self.encode_linear(
+            body,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+            None,
+        );
+        self.encode_fragment(
+            update,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+        );
+        self.instructions
+            .push(crate::ir::Instruction::jump(test_pc));
+        metadata.push(InstructionMeta::empty());
+        if let Some(jif) = jif {
+            let end = self.relative_pc(range_start);
+            self.instructions[jif].b = end;
+        }
+    }
+
+    fn emit_try(
+        &mut self,
+        body: &[Op],
+        handler: Option<&[Op]>,
+        finalizer: Option<&[Op]>,
+        catch_slot: Option<u16>,
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+        ternary_dst: Option<u16>,
+    ) {
+        let start = self.relative_pc(range_start);
+        self.encode_linear(
+            body,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+            ternary_dst,
+        );
+        let jump = self.instructions.len();
+        self.instructions.push(crate::ir::Instruction::jump(0));
+        metadata.push(InstructionMeta::empty());
+        let handler_pc = self.relative_pc(range_start);
+        self.pending_catches.push(CatchRange {
+            start,
+            end: handler_pc,
+            handler: handler_pc,
+            catch_slot,
+        });
+        if let Some(handler) = handler {
+            self.encode_linear(
+                handler,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+                ternary_dst,
+            );
+        }
+        let after = self.relative_pc(range_start);
+        self.instructions[jump].a = after;
+        if let Some(finalizer) = finalizer {
+            self.encode_linear(
+                finalizer,
+                range_start,
+                constants,
+                metadata,
+                operand_windows,
+                source,
+                ternary_dst,
+            );
+        }
+    }
+
+    fn encode_fragment(
+        &mut self,
+        body: &[Op],
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+    ) {
+        let body = match body.last() {
+            Some(Op::Return { .. }) => &body[..body.len() - 1],
+            _ => body,
+        };
+        self.encode_linear(
+            body,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+            None,
+        );
+    }
+
+    fn encode_test(
+        &mut self,
+        body: &[Op],
+        range_start: u32,
+        constants: &ConstantPool,
+        metadata: &mut Vec<InstructionMeta>,
+        operand_windows: &mut Vec<Rc<[u16]>>,
+        source: Option<u32>,
+    ) -> Option<u16> {
+        let condition = match body.last() {
+            Some(Op::Return { src }) => Some(*src),
+            _ => None,
+        };
+        self.encode_fragment(
+            body,
+            range_start,
+            constants,
+            metadata,
+            operand_windows,
+            source,
+        );
+        condition
     }
 
     pub fn append(&mut self, body: Vec<Op>) -> CodeRange {
@@ -495,6 +976,7 @@ impl CodeArena {
             constants: self.constants.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
             operand_windows: self.operand_windows.into_boxed_slice().into(),
+            catch_ranges: self.catch_ranges.into_boxed_slice().into(),
         })
     }
 }
@@ -669,6 +1151,7 @@ pub struct CodeStore {
     constants: Rc<[ConstantPool]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
     operand_windows: Rc<[Vec<Rc<[u16]>>]>,
+    catch_ranges: Rc<[Vec<CatchRange>]>,
 }
 
 impl CodeStore {
@@ -713,6 +1196,15 @@ impl<'a> CodeView<'a> {
 
     pub fn is_empty(self) -> bool {
         self.range.start == self.range.end
+    }
+
+    pub(crate) fn catch_at(self, pc: usize) -> Option<(usize, Option<u16>)> {
+        let pc = u16::try_from(pc).ok()?;
+        let ranges = self.store.catch_ranges.get(self.range.code.0 as usize)?;
+        ranges.iter().rev().find_map(|range| {
+            (pc >= range.start && pc < range.end)
+                .then_some((usize::from(range.handler), range.catch_slot))
+        })
     }
 
     pub fn parameter_end(self) -> Option<usize> {
@@ -965,6 +1457,157 @@ impl FunctionCode {
         let Some(body) = body else { return };
         self.range = arena.append_tree(body, store);
         self.store = store.clone();
+    }
+
+    pub(crate) fn rehome_contents(
+        &mut self,
+        arena: &mut CodeArena,
+        store: &Rc<OnceLock<Rc<CodeStore>>>,
+    ) {
+        let Some(body) = self.source.take() else {
+            return;
+        };
+        let mut body = body.to_vec();
+        for op in &mut body {
+            op.rehome_bodies(arena, store);
+        }
+        self.source = Some(body.into_boxed_slice().into());
+        self.store = store.clone();
+    }
+}
+
+pub(crate) fn test_always_true(ops: &[Op]) -> bool {
+    let mut saw_true = false;
+    for op in ops {
+        match op {
+            Op::Const {
+                value: crate::ops::Constant::Boolean(true),
+                ..
+            } => saw_true = true,
+            Op::Const {
+                value: crate::ops::Constant::Number(value),
+                ..
+            } if *value != 0.0 && !value.is_nan() => saw_true = true,
+            Op::Return { .. } | Op::Move { .. } => {}
+            _ => return false,
+        }
+    }
+    saw_true
+}
+
+pub(crate) fn ops_use_arguments(ops: &[Op]) -> bool {
+    ops.iter().any(|op| match op {
+        Op::ResolveName { key, .. } | Op::SetName { key, .. } if key == "arguments" => true,
+        Op::LoadBinding { name, .. } if name == "arguments" => true,
+        _ => false,
+    })
+}
+
+pub(crate) fn ops_contain_short_circuit(ops: &[Op]) -> bool {
+    ops.iter().any(|op| match op {
+        Op::Conditional { .. } | Op::Branch { .. } => true,
+        Op::Loop { test, .. } => test.source_ops().is_some_and(ops_contain_short_circuit),
+        _ => false,
+    })
+}
+
+pub(crate) fn ops_contain_call(ops: &[Op]) -> bool {
+    ops.iter().any(|op| match op {
+        Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } => true,
+        Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }
+        | Op::Branch {
+            then_ops: consequent,
+            else_ops: alternate,
+            ..
+        } => {
+            consequent.source_ops().is_some_and(ops_contain_call)
+                || alternate.source_ops().is_some_and(ops_contain_call)
+        }
+        Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            ..
+        } => [init, test, body, update]
+            .into_iter()
+            .any(|part| part.source_ops().is_some_and(ops_contain_call)),
+        Op::Try {
+            body,
+            handler,
+            finalizer,
+            ..
+        } => {
+            body.source_ops().is_some_and(ops_contain_call)
+                || handler
+                    .as_ref()
+                    .and_then(FunctionCode::source_ops)
+                    .is_some_and(ops_contain_call)
+                || finalizer
+                    .as_ref()
+                    .and_then(FunctionCode::source_ops)
+                    .is_some_and(ops_contain_call)
+        }
+        _ => false,
+    })
+}
+
+fn collect_op_constants(ops: &[Op], out: &mut Vec<crate::ops::Constant>) {
+    for op in ops {
+        match op {
+            Op::Const { value, .. } => out.push(value.clone()),
+            Op::Conditional {
+                consequent,
+                alternate,
+                ..
+            }
+            | Op::Branch {
+                then_ops: consequent,
+                else_ops: alternate,
+                ..
+            } => {
+                if let Some(body) = consequent.source_ops() {
+                    collect_op_constants(body, out);
+                }
+                if let Some(body) = alternate.source_ops() {
+                    collect_op_constants(body, out);
+                }
+            }
+            Op::Loop {
+                init,
+                test,
+                body,
+                update,
+                ..
+            } => {
+                for part in [init, test, body, update] {
+                    if let Some(body) = part.source_ops() {
+                        collect_op_constants(body, out);
+                    }
+                }
+            }
+            Op::Try {
+                body,
+                handler,
+                finalizer,
+                ..
+            } => {
+                if let Some(body) = body.source_ops() {
+                    collect_op_constants(body, out);
+                }
+                if let Some(handler) = handler.as_ref().and_then(FunctionCode::source_ops) {
+                    collect_op_constants(handler, out);
+                }
+                if let Some(finalizer) = finalizer.as_ref().and_then(FunctionCode::source_ops) {
+                    collect_op_constants(finalizer, out);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

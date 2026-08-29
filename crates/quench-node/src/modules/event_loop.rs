@@ -16,8 +16,10 @@ pub struct EventLoop {
 pub struct Microtask {
     pub callback: Value,
     pub args: Vec<Value>,
+    pub receiver: Option<Value>,
     pub resource: Option<Value>,
     pub domain: Option<Value>,
+    pub domain_stack: Option<Vec<Value>>,
 }
 
 impl Default for EventLoop {
@@ -47,8 +49,24 @@ impl EventLoop {
         self.microtasks.borrow_mut().push(Microtask {
             callback: cb,
             args,
+            receiver: None,
             resource,
             domain: None,
+            domain_stack: None,
+        });
+    }
+
+    /// Queue a callback with an explicit JavaScript receiver. Most jobs use
+    /// the normal `undefined` receiver; host-originated events retain the
+    /// emitter identity here instead of emulating it through another object.
+    pub fn queue_microtask_with_receiver(&self, cb: Value, args: Vec<Value>, receiver: Value) {
+        self.microtasks.borrow_mut().push(Microtask {
+            callback: cb,
+            args,
+            receiver: Some(receiver),
+            resource: None,
+            domain: None,
+            domain_stack: None,
         });
     }
 
@@ -62,8 +80,27 @@ impl EventLoop {
         self.microtasks.borrow_mut().push(Microtask {
             callback: cb,
             args,
+            receiver: None,
             resource,
             domain,
+            domain_stack: None,
+        });
+    }
+
+    pub fn queue_microtask_with_domain_stack(
+        &self,
+        cb: Value,
+        args: Vec<Value>,
+        resource: Option<Value>,
+        stack: Vec<Value>,
+    ) {
+        self.microtasks.borrow_mut().push(Microtask {
+            callback: cb,
+            args,
+            receiver: None,
+            resource,
+            domain: stack.last().cloned(),
+            domain_stack: Some(stack),
         });
     }
 

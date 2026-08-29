@@ -1177,15 +1177,10 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         if quench_runtime::is_callable(&value) {
             value
         } else {
-            let constructor = crate::host::capability(crate::registry::NodeSpec::new(
-                "url:URLPattern",
-                2281,
-            ));
-            let _ = execute::set_callable_property(
-                &constructor,
-                "prototype",
-                url_pattern_prototype(),
-            );
+            let constructor =
+                crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern", 2281));
+            let _ =
+                execute::set_callable_property(&constructor, "prototype", url_pattern_prototype());
             constructor
         }
     };
@@ -1279,10 +1274,7 @@ fn url_pattern_prototype() -> Value {
             name,
             host_api::object(vec![(
                 "get".into(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "url:URLPattern:get",
-                    2286,
-                )),
+                crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:get", 2286)),
             )]),
         ) {
             Ok(next) => next,

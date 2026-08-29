@@ -18,6 +18,7 @@ icu_provider = "2.3"
 icu_properties = { version = "2.3", features = ["compiled_data"] }
 num-bigint = "0.4"
 oxc = { version = "0.47", features = ["semantic"] }
+regress = { version = "0.12", features = ["utf16"] }
 stacker = "0.1"
 serde_json = "1"
 unicode-normalization = "0.1"
