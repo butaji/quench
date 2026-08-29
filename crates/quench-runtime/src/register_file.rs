@@ -870,6 +870,17 @@ impl RegisterFile {
             .then(|| number as usize)
     }
 
+    /// Return the complete nullish fact without decoding a heap-backed value.
+    /// `RequireObjectCoercible` only distinguishes `null`/`undefined`; all
+    /// other tagged values are known to pass that check.
+    #[inline(always)]
+    pub(crate) fn word_is_non_nullish(&self, index: usize) -> Option<bool> {
+        match self.words.get(index)?.decode() {
+            DecodedValue::Null | DecodedValue::Undefined => Some(false),
+            _ => Some(true),
+        }
+    }
+
     #[inline(always)]
     pub fn read_number(&self, index: usize) -> Option<f64> {
         match self.words.get(index)?.decode() {
