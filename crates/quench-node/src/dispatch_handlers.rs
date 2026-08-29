@@ -2766,7 +2766,6 @@ pub fn cp_spawn(
     // `spawn()` returns a ChildProcess instance.  Keep the host-created
     // object (and its event identity) while linking it to the one public
     // constructor prototype used by `instanceof` in Node code.
-    let global = quench_runtime::vm::current_global_object();
     let prototype = state
         .borrow()
         .module_cache
@@ -2775,11 +2774,10 @@ pub fn cp_spawn(
             execute::get_property(&execute::get_property(module, "ChildProcess"), "prototype")
         })
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
-        .unwrap_or_else(|| execute::get_property(&global, "__nodeChildProcessPrototype"));
-    let child = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
-        execute::set_prototype_of(&child, &prototype).unwrap_or(child)
-    } else {
-        child
+        .or_else(|| state.borrow().child_process_prototype.clone());
+    let child = match prototype {
+        Some(prototype) => execute::set_prototype_of(&child, &prototype).unwrap_or(child),
+        None => child,
     };
     state.borrow_mut().identity_roots.push(child.clone());
     if let Ok(signal) = execute::get_property_result(&options, "signal") {

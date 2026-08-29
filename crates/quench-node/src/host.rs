@@ -82,6 +82,8 @@ pub struct HostState {
     pub abort_composites: std::collections::HashMap<u64, Vec<Value>>,
     /// Strong roots for host-created identity-bearing objects exposed as aliases.
     pub identity_roots: Vec<Value>,
+    /// Canonical child-process prototype kept out of the JavaScript global.
+    pub child_process_prototype: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -124,6 +126,7 @@ impl NodeHost {
             cares_binding: None,
             abort_composites: std::collections::HashMap::new(),
             identity_roots: Vec::new(),
+            child_process_prototype: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
