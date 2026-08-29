@@ -53,6 +53,7 @@ test-stream-duplexpair.js
 test-stream-duplex-writable-finished.js
 test-stream-pipe-cleanup.js
 test-stream-pipe-error-handling.js
+test-stream-pipe-error-unhandled.js
 test-stream-readable-setEncoding-existing-buffers.js
 test-stream-backpressure.js
 test-stream2-readable-empty-buffer-no-eof.js
