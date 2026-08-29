@@ -62,7 +62,15 @@ pub fn agent_construct(
     state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::events::new_emitter_object(state)
+    let mut object = crate::modules::events::new_emitter_object(state)?;
+    object = install_methods(
+        object,
+        vec![(
+            "destroy".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
+        )],
+    )?;
+    Ok(object)
 }
 
 pub fn res_set_encoding(
@@ -435,7 +443,20 @@ pub fn req_end(
             execute::set_property(req.req.clone(), "_header", Value::String(head.clone()));
         execute::replace_value(&req.req, &updated);
     }
-    let socket = match agent.as_ref().and_then(custom_connection) {
+    let custom = agent.as_ref().and_then(custom_connection).filter(|_| {
+        let Some(agent) = agent.as_ref() else { return false; };
+        let key = target_key(&target);
+        let mut guard = state.borrow_mut();
+        if guard.http.agent_connections.iter().any(|(known, known_key)| {
+            known_key == &key && execute::same_identity(known, agent)
+        }) {
+            false
+        } else {
+            guard.http.agent_connections.push((agent.clone(), key));
+            true
+        }
+    });
+    let socket = match custom {
         Some(connection) => {
             let mut option_props = vec![
                 ("host".into(), Value::String(host.clone())),
@@ -516,6 +537,13 @@ fn target_host(target: &RequestTarget) -> String {
     match target {
         RequestTarget::Tcp { host, .. } => host.clone(),
         RequestTarget::Unix { .. } => "localhost".into(),
+    }
+}
+
+fn target_key(target: &RequestTarget) -> String {
+    match target {
+        RequestTarget::Tcp { host, port } => format!("tcp:{host}:{port}"),
+        RequestTarget::Unix { path } => format!("unix:{path}"),
     }
 }
 
