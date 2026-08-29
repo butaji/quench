@@ -200,6 +200,11 @@ fn preserve_calendar_month_code(
 
 fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined | Value::String(_) | Value::StringUnits(_))
+        && !crate::temporal::plain_date::is_temporal_date_like(&calendar)
+    {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
     let calendar_text = match &calendar {
         Value::String(value) => Some(value.to_ascii_lowercase()),
         Value::StringUnits(_) => {

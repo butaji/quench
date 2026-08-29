@@ -21,6 +21,9 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
     let calendar_id = if matches!(calendar, Value::Undefined) {
         "iso8601".to_string()
     } else {
+        if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
         let text = crate::conversion::to_string(calendar)?;
         if !crate::temporal::plain_date::is_supported_calendar_name(&text) {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
@@ -28,11 +31,6 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
         crate::temporal::plain_date::canonical_calendar_id(&text)
             .unwrap_or_else(|| "iso8601".into())
     };
-    if !matches!(calendar, Value::Undefined) {
-        if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
-            return Err(crate::value::error::throw_type_error("Invalid calendar"));
-        }
-    }
     let default_year = Value::Number(1972.0);
     let year_arg = arguments.get(3).unwrap_or(&default_year);
     let year = if matches!(year_arg, Value::Undefined) {
@@ -202,6 +200,15 @@ pub(crate) fn execute(
 }
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let value = receiver
+        .filter(|value| {
+            matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+                (key == "\0temporal-plain-month-day" && value == Value::Boolean(true))
+                    || (key == "\0prototype" && value == Value::Builtin(crate::ops::Builtin::TemporalPlainMonthDayPrototype))
+            }))
+        })
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?
+        .clone();
     if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
         let time_style = crate::execute::get_property_result(options, "timeStyle")?;
         if !matches!(time_style, Value::Undefined) {
@@ -210,9 +217,6 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
             ));
         }
     }
-    let value = receiver
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?
-        .clone();
     crate::intl::datetime::format_temporal_value(&value, arguments, &["month", "day"])
 }
 
@@ -282,6 +286,25 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
         }
         let base = text.split('[').next().unwrap_or(&text);
+        let has_time = base.contains(['T', 't', ' ']);
+        // A UTC offset is only permitted when a time component is present.
+        // Date separators alone are not offsets, so count signs beyond the
+        // one or two expected date hyphens.
+        let hyphens = base.matches('-').count();
+        let expected_hyphens = if base.starts_with("--") {
+            3
+        } else if hyphens > 1 {
+            2
+        } else {
+            1
+        };
+        if !has_time && (base.contains('+') || hyphens > expected_hyphens)
+        {
+            return Err(crate::value::error::throw_range_error("Invalid PlainMonthDay"));
+        }
+        if calendar_id != "iso8601" && text.contains("[u-ca=") {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
         let date = if let Some((date, time)) = base.split_once(['T', 't', ' ']) {
             let clock = time.find(['+', '-']).map_or(time, |offset| &time[..offset]);
             let parts = clock.split(':').collect::<Vec<_>>();
@@ -741,6 +764,9 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
     if matches!(value, Value::Object(object) if object.iter().any(|(key, value)| key == "\0prototype" && matches!(value, Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype | crate::ops::Builtin::TemporalPlainDateTimePrototype | crate::ops::Builtin::TemporalPlainMonthDayPrototype | crate::ops::Builtin::TemporalPlainYearMonthPrototype | crate::ops::Builtin::TemporalZonedDateTimePrototype))))
     {
         return Ok(());
+    }
+    if !matches!(value, Value::String(_) | Value::StringUnits(_) | Value::Object(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
     if let Ok(calendar_id) = crate::execute::get_property_result(value, "calendarId") {
         if matches!(calendar_id, Value::String(ref id) if crate::temporal::plain_date::is_supported_calendar_name(id)) {
