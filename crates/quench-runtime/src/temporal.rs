@@ -3788,6 +3788,29 @@ mod stubs {
                 }
             }
             let mut delta = (right_epoch - left_epoch) * direction;
+            if matches!(largest.as_str(), "year" | "month" | "week" | "day") {
+                let same_date = ["year", "month", "day"].iter().all(|name| {
+                    crate::execute::get_property_result(receiver, name).ok()
+                        == crate::execute::get_property_result(&other, name).ok()
+                });
+                if same_date && smallest != "year" && smallest != "month" {
+                    let mut fields = vec![Value::Number(0.0); 10];
+                    let sign = delta.signum() as f64;
+                    let mut remainder = delta.abs();
+                    for (index, scale) in [
+                        (4, 3_600_000_000_000_i128),
+                        (5, 60_000_000_000),
+                        (6, 1_000_000_000),
+                        (7, 1_000_000),
+                        (8, 1_000),
+                        (9, 1),
+                    ] {
+                        fields[index] = Value::Number((remainder / scale) as f64 * sign);
+                        remainder %= scale;
+                    }
+                    return crate::temporal::duration::construct(&fields);
+                }
+            }
             let unit_rank = |unit: &str| match unit {
                 "year" => 0,
                 "month" => 1,
