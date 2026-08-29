@@ -271,7 +271,12 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
         use std::os::unix::process::CommandExt;
         unsafe {
             command.pre_exec(|| {
-                if libc::setpgid(0, 0) != 0 {
+                // Keep each fixture in a disposable process group and detach
+                // it from the runner's controlling terminal.  Otherwise a
+                // gate launched from a TTY makes optional `/dev/tty` branches
+                // observable only in manifest mode (the host cannot provide
+                // a real Node TTY), producing environment-dependent results.
+                if libc::setsid() == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
