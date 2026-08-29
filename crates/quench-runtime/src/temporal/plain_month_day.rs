@@ -91,8 +91,11 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainMonthDayMonthCodeGetter => field(receiver, "monthCode"),
         crate::ops::Builtin::TemporalPlainMonthDayEquals => equals(receiver, arguments.first()),
         crate::ops::Builtin::TemporalPlainMonthDayToString
-        | crate::ops::Builtin::TemporalPlainMonthDayToLocaleString => {
+        => {
             to_string(receiver, arguments.first())
+        }
+        crate::ops::Builtin::TemporalPlainMonthDayToLocaleString => {
+            to_locale_string(receiver, arguments)
         }
         crate::ops::Builtin::TemporalPlainMonthDayToJSON => to_string(receiver, None),
         crate::ops::Builtin::TemporalPlainMonthDayToPlainDate => {
@@ -106,6 +109,13 @@ pub(crate) fn execute(
         ),
         _ => return None,
     })
+}
+
+fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let value = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?
+        .clone();
+    crate::intl::datetime::format_temporal_value(&value, arguments, &["month", "day"])
 }
 
 fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
