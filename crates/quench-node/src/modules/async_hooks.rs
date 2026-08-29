@@ -44,7 +44,8 @@ use crate::registry::{
     SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_SNAPSHOT,
     SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER,
     SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_DOMAIN,
-    SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER,
+    SPEC_ASYNC_RESOURCE_BIND, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
+    SPEC_ASYNC_RESOURCE_STATIC_BIND, SPEC_ASYNC_RESOURCE_TRIGGER,
     SPEC_ASYNC_TRIGGER_ID,
 };
 
@@ -129,10 +130,16 @@ pub fn build() -> Value {
             crate::host::capability(SPEC_ASYNC_LOCAL_SNAPSHOT),
         );
     }
+    let constructor = crate::host::capability(SPEC_ASYNC_RESOURCE);
+    let _ = execute::set_property_in_place(
+        &constructor,
+        "bind",
+        crate::host::capability(SPEC_ASYNC_RESOURCE_STATIC_BIND),
+    );
     crate::host::namespace_object(vec![
         (
             "AsyncResource",
-            crate::host::capability(SPEC_ASYNC_RESOURCE),
+            constructor,
         ),
         (
             "executionAsyncId",
@@ -658,6 +665,10 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             crate::host::capability(SPEC_ASYNC_RESOURCE_RUN),
         ),
         (
+            "bind".to_string(),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_BIND),
+        ),
+        (
             "emitBefore".to_string(),
             crate::host::capability(SPEC_ASYNC_RESOURCE_BEFORE),
         ),
@@ -911,6 +922,76 @@ pub fn resource_run(
         .transpose()?;
     resource_after(state, Some(&resource), &[])?;
     Ok(result.unwrap_or(Value::Undefined))
+}
+
+fn bind_factory(
+    resource: Value,
+    callback: Value,
+    this_arg: Value,
+    has_this_arg: bool,
+) -> Result<Value, VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let factory = execute::get_property(&global, "__nodeAsyncResourceBind");
+    if !quench_runtime::is_callable(&factory) {
+        return Err(VmError::EvalError(
+            "async resource bind factory is unavailable".into(),
+        ));
+    }
+    execute::call(
+        &factory,
+        &Value::Undefined,
+        &[
+            resource,
+            callback,
+            this_arg,
+            Value::Boolean(has_this_arg),
+        ],
+    )
+}
+
+pub fn resource_bind(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let resource = receiver.cloned().ok_or_else(|| invalid_callback("this"))?;
+    let callback = args
+        .first()
+        .filter(|value| quench_runtime::is_callable(value))
+        .cloned()
+        .ok_or_else(|| invalid_callback("fn"))?;
+    bind_factory(
+        resource,
+        callback,
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+        args.len() > 1,
+    )
+}
+
+pub fn resource_static_bind(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args
+        .first()
+        .filter(|value| quench_runtime::is_callable(value))
+        .cloned()
+        .ok_or_else(|| invalid_callback("fn"))?;
+    let resource_type = match args.get(1) {
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Undefined) | None => "bound-anonymous-fn".into(),
+        _ => return Err(invalid_callback("type")),
+    };
+    let resource = new_resource(state, &[Value::String(resource_type)])?;
+    bind_factory(
+        resource,
+        callback,
+        args.get(2)
+            .cloned()
+            .unwrap_or(Value::Undefined),
+        args.len() > 2,
+    )
 }
 
 pub fn create_hook(

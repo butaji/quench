@@ -13,5 +13,6 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "dgram" => dgram,
     "dgram-tail" => dgram_tail,
     "membership" => membership,
+    "async-resource" => async_resource,
     "web-streams" => web_streams,
 );
