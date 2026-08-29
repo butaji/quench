@@ -409,6 +409,16 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
         }
     }
     let (slot, value) = own?;
+    if key == "format"
+        && matches!(
+            value,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        return None;
+    }
     if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
@@ -595,6 +605,17 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
         }
     }
     let own = own?;
+    if key == "format"
+        && matches!(
+            own,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        // Reading Intl's format accessor must capture the formatter receiver.
+        return None;
+    }
     if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
@@ -624,10 +645,21 @@ pub(crate) fn proven_own_word<'a>(
             metadata = object.hot_properties().slot_value(slot);
         }
     }
+    let own = own?;
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
         return None;
     }
-    own
+    if key == "format"
+        && matches!(
+            own.load(),
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        return None;
+    }
+    Some(own)
 }
 
 fn accessor_descriptor(value: &Value) -> bool {

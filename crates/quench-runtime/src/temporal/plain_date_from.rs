@@ -48,6 +48,11 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         Some(Value::StringUnits(_)) => crate::conversion::to_string(value.unwrap())?,
         _ => return Err(crate::value::error::throw_type_error("Invalid PlainDate")),
     };
+    let calendar_hint = text
+        .split_once("[u-ca=")
+        .and_then(|(_, rest)| rest.split(']').next())
+        .and_then(canonical_calendar_id)
+        .unwrap_or_else(|| "iso8601".into());
     if text.starts_with("-000000") || text.contains('−') || has_empty_time_designator(&text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
@@ -98,7 +103,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         let day = date[6..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let result = checked_date_object(year, month, day)?;
+        let result = checked_date_object(year, month, day, &calendar_hint)?;
         let _ = overflow_value(options)?;
         return Ok(result);
     }
@@ -117,18 +122,23 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         let day = date[9..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let result = checked_date_object(year, month, day)?;
+        let result = checked_date_object(year, month, day, &calendar_hint)?;
         let _ = overflow_value(options)?;
         return Ok(result);
     }
     let (year, month, day) = parse_date_parts(&parts)?;
-    let result = checked_date_object(year, month, day)?;
+    let result = checked_date_object(year, month, day, &calendar_hint)?;
     let _ = overflow_value(options)?;
     Ok(result)
 }
 
 fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
+    let calendar_text = match &calendar {
+        Value::String(value) => Some(value.to_ascii_lowercase()),
+        Value::StringUnits(_) => Some(crate::conversion::to_string(&calendar)?.to_ascii_lowercase()),
+        _ => None,
+    };
     let day = crate::execute::get_property_result(value, "day")?;
     let day = if matches!(day, Value::Undefined) {
         day
@@ -147,12 +157,11 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     } else {
         Value::String(month_code_text(&month_code)?)
     };
-    let year = crate::execute::get_property_result(value, "year")?;
+    let mut year = crate::execute::get_property_result(value, "year")?;
+    let era = crate::execute::get_property_result(value, "era")?;
+    let era_year = crate::execute::get_property_result(value, "eraYear")?;
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
-    }
-    if matches!(year, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error("Missing year"));
     }
     if matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing month"));
@@ -166,6 +175,34 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
     }
+    let calendar_name = calendar_text.as_deref().unwrap_or("iso8601");
+    let era_name = if matches!(era, Value::Undefined) {
+        None
+    } else if matches!(calendar_name, "chinese" | "dangi") {
+        None
+    } else {
+        let text = crate::conversion::to_string(&era)?.to_ascii_lowercase();
+        let canonical = canonical_era_name(calendar_name, &text)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+        Some(canonical)
+    };
+    if matches!(year, Value::Undefined) {
+        let era_year = if matches!(era_year, Value::Undefined) {
+            None
+        } else {
+            let value = crate::conversion::to_number(&era_year)?.trunc();
+            if !value.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+            }
+            Some(value)
+        };
+        year = match (era_name, era_year) {
+            (Some(era), Some(value)) => derive_year_from_era(calendar_name, era, value)
+                .map(Value::Number)
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing year"))?,
+            _ => return Err(crate::value::error::throw_type_error("Missing year")),
+        };
+    }
     let year = Value::Number(crate::conversion::to_number(&year)?.trunc());
     let overflow = overflow_value(options)?;
     let month_code_number = if matches!(month_code, Value::Undefined) {
@@ -174,10 +211,25 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         Some(month_from_code(month_code.clone())?)
     };
     if let Some(month_number) = &month_code_number {
-        if !(1.0..=12.0).contains(&crate::conversion::to_number(month_number)?) {
+        let month_number = crate::conversion::to_number(month_number)?;
+        let supports_month13 = calendar_text
+            .as_deref()
+            .is_some_and(crate::temporal::plain_date::calendar_supports_month13);
+        if !(1.0..=12.0).contains(&month_number)
+            && !(supports_month13 && month_number == 13.0)
+        {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
-        if matches!(&month_code, Value::String(value) if value.ends_with('L')) {
+        if matches!(&month_code, Value::String(value) if value.ends_with('L'))
+            && !calendar_text.as_deref().is_some_and(|value| {
+                matches!(value, "chinese" | "dangi" | "hebrew")
+            })
+        {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+        if matches!((&month_code, calendar_text.as_deref()),
+            (Value::String(value), Some("hebrew")) if value.ends_with('L') && month_number != 5.0)
+        {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
     }
@@ -188,7 +240,10 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             if !is_iso_calendar_string(&text) {
                 return Err(crate::value::error::throw_range_error("Invalid calendar"));
             }
-            Value::String("iso8601".into())
+            Value::String(
+                crate::temporal::plain_date::canonical_calendar_id(&text)
+                    .unwrap_or_else(|| "iso8601".into()),
+            )
         }
         value if crate::temporal::plain_date::is_temporal_date_like(&value) => {
             Value::String("iso8601".into())
@@ -215,7 +270,17 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
     if overflow == "constrain" {
-        let month_number = month_number.clamp(1.0, 12.0);
+        let calendar_name = match &calendar {
+            Value::String(name) => crate::temporal::plain_date::canonical_calendar_id(name)
+                .unwrap_or_else(|| name.clone()),
+            _ => "iso8601".to_string(),
+        };
+        let max_month = if crate::temporal::plain_date::calendar_supports_month13(&calendar_name) {
+            13.0
+        } else {
+            12.0
+        };
+        let month_number = month_number.clamp(1.0, max_month);
         day = day.clamp(1.0, days_in_month(year_number, month_number));
         return construct(&[
             year,
@@ -225,6 +290,56 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         ]);
     }
     construct(&[year, month, Value::Number(day), calendar])
+}
+
+pub(crate) fn canonical_era_name(calendar: &str, era: &str) -> Option<&'static str> {
+    match calendar {
+        "gregory" | "japanese" => match era {
+            "ad" | "ce" => Some("ce"),
+            "bc" | "bce" => Some("bce"),
+            "be" => Some("be"),
+            "heisei" => Some("heisei"),
+            "reiwa" => Some("reiwa"),
+            "showa" => Some("showa"),
+            "taisho" => Some("taisho"),
+            "meiji" => Some("meiji"),
+            _ => None,
+        },
+        "buddhist" if era == "be" => Some("be"),
+        "hebrew" if era == "am" => Some("am"),
+        value if value.starts_with("islamic") && era == "ah" => Some("ah"),
+        value if value.starts_with("islamic") && era == "bh" => Some("bh"),
+        "persian" if era == "ap" => Some("ap"),
+        "coptic" if era == "am" => Some("am"),
+        "ethiopic" if era == "am" => Some("am"),
+        "ethiopic" if era == "aa" => Some("aa"),
+        "ethioaa" if era == "aa" => Some("aa"),
+        "indian" if era == "shaka" => Some("shaka"),
+        "roc" if era == "roc" => Some("roc"),
+        "roc" if era == "broc" => Some("broc"),
+        _ => None,
+    }
+}
+
+pub(crate) fn derive_year_from_era(calendar: &str, era: &str, era_year: f64) -> Option<f64> {
+    if !era_year.is_finite() {
+        return None;
+    }
+    match (calendar, era) {
+        ("gregory" | "japanese", "bce") => Some(1.0 - era_year),
+        ("gregory" | "japanese", "ce") => Some(era_year),
+        ("japanese", "reiwa") => Some(era_year + 2018.0),
+        ("japanese", "heisei") => Some(era_year + 1988.0),
+        ("japanese", "showa") => Some(era_year + 1925.0),
+        ("japanese", "taisho") => Some(era_year + 1911.0),
+        ("japanese", "meiji") => Some(era_year + 1867.0),
+        ("ethiopic", "aa") => Some(era_year - 5500.0),
+        ("roc", "broc") => Some(1.0 - era_year),
+        ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "bh") => {
+            Some(1.0 - era_year)
+        }
+        _ => Some(era_year),
+    }
 }
 
 fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
@@ -251,6 +366,9 @@ fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
+    if crate::temporal::plain_date::is_supported_calendar_name(value) {
+        return true;
+    }
     if crate::intl::supported_calendars()
         .iter()
         .any(|calendar| matches!(calendar, Value::String(name) if name.eq_ignore_ascii_case(value)))
@@ -336,7 +454,7 @@ fn has_invalid_calendar_annotation(text: &str) -> bool {
             continue;
         }
         seen = true;
-        return !value.eq_ignore_ascii_case("iso8601");
+        return !crate::temporal::plain_date::is_supported_calendar_name(value);
     }
     false
 }
@@ -538,7 +656,7 @@ fn parse_date_parts(parts: &[&str]) -> Result<(i32, i32, i32), VmError> {
     ))
 }
 
-fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
+fn checked_date_object(year: i32, month: i32, day: i32, calendar: &str) -> Result<Value, VmError> {
     let year = f64::from(year);
     let month = f64::from(month);
     let day = f64::from(day);
@@ -553,5 +671,5 @@ fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError
     {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
-    Ok(date_object(year, month, day))
+    Ok(date_object_with_calendar(year, month, day, calendar))
 }
