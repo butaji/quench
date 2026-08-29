@@ -1393,7 +1393,14 @@ mod stubs {
                 }
             }
             if offset_start.is_none() && !has_z {
-                epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                epoch = if !has_time_separator {
+                    let guess = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+                    super::timezone_start_of_day_epoch(&timezone, guess).unwrap_or_else(|| {
+                        super::timezone_local_epoch(&timezone, local_epoch, &disambiguation)
+                    })
+                } else {
+                    super::timezone_local_epoch(&timezone, local_epoch, &disambiguation)
+                };
                 if epoch == i128::MIN {
                     return Err(crate::value::error::throw_range_error(
                         "Invalid ZonedDateTime",
@@ -2926,7 +2933,8 @@ mod stubs {
                 .zip(scale.iter())
                 .map(|((new, old), scale)| ((*new - *old) as i128) * scale)
                 .sum::<i128>();
-            let epoch = match property("epochNanoseconds")? {
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let current_epoch = match property("epochNanoseconds")? {
                 Value::BigInt(value) => {
                     let epoch = value.parse::<i128>().unwrap_or(0);
                     if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
@@ -2934,7 +2942,15 @@ mod stubs {
                             "Invalid epochNanoseconds",
                         ));
                     }
-                    epoch + delta
+                    if arguments
+                        .first()
+                        .map_or(true, |value| matches!(value, Value::Undefined))
+                    {
+                        super::timezone_start_of_day_epoch(&timezone, epoch)
+                            .unwrap_or(epoch + delta)
+                    } else {
+                        epoch
+                    }
                 }
                 _ => {
                     return Err(crate::value::error::throw_type_error(
@@ -2942,12 +2958,31 @@ mod stubs {
                     ))
                 }
             };
+            let epoch = if arguments
+                .first()
+                .map_or(true, |value| matches!(value, Value::Undefined))
+            {
+                current_epoch
+            } else {
+                let year = crate::conversion::to_number(&property("year")?)? as i32;
+                let month = crate::conversion::to_number(&property("month")?)? as u32;
+                let day = crate::conversion::to_number(&property("day")?)? as u32;
+                let local_days = super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                    - super::plain_date::date_serial(1970.0, 1.0, 1.0);
+                let local_epoch = i128::from(local_days) * 86_400_000_000_000
+                    + units[0] as i128 * 3_600_000_000_000
+                    + units[1] as i128 * 60_000_000_000
+                    + units[2] as i128 * 1_000_000_000
+                    + units[3] as i128 * 1_000_000
+                    + units[4] as i128 * 1_000
+                    + units[5] as i128;
+                super::timezone_local_epoch(&timezone, local_epoch, "compatible")
+            };
             if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid epochNanoseconds",
                 ));
             }
-            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
