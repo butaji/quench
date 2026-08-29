@@ -636,6 +636,9 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
     // consulted while converting a branded relativeTo value.
     let resolved_value = crate::locals::resolved_replacement(value.clone());
     if let Value::Object(object) = &resolved_value {
+        let iso_calendar = object.iter().any(|(key, value)| {
+            key == "calendarId" && matches!(value, Value::String(id) if id == "iso8601")
+        });
         let branded = object.iter().any(|(key, value)| {
             key == "\0prototype"
                 && matches!(
@@ -647,7 +650,7 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
                     )
                 )
         });
-        if branded {
+        if iso_calendar && branded {
             let slot = |name: &str| {
                 object
                     .iter()
