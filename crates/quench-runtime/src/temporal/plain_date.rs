@@ -12,6 +12,18 @@ use crate::{execute::VmError, value::Value};
 mod plain_date_tail;
 use plain_date_tail::{date_object, date_object_with_calendar, number};
 
+/// ICU exposes these calendars, but Temporal has not adopted them yet.
+const NOT_YET_SUPPORTED_CALENDARS: &[&str] = &[
+    "bangla",
+    "gujarati",
+    "kannada",
+    "marathi",
+    "odia",
+    "tamil",
+    "telugu",
+    "vikram",
+];
+
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
@@ -142,6 +154,14 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(calendar) = arguments
+        .get(3)
+        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+    {
+        if !is_iso_calendar_value(calendar)? {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
     if let Some(calendar) = arguments
         .get(3)
         .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
@@ -2116,7 +2136,12 @@ fn with(
     if let Value::Object(object) = changes {
         let has_date_field = object
             .iter()
-            .any(|(key, _)| matches!(key.as_str(), "year" | "month" | "monthCode" | "day"));
+            .any(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "year" | "month" | "monthCode" | "day" | "era" | "eraYear"
+                )
+            });
         if !has_date_field {
             return Err(crate::value::error::throw_type_error("Invalid fields"));
         }
@@ -2134,7 +2159,33 @@ fn with(
     } else {
         Some(month_code_text(&month_code)?)
     };
-    let year = number_or_field(changes, "year", year)?;
+    let year_value = crate::execute::get_property_result(changes, "year")?;
+    let era_value = crate::execute::get_property_result(changes, "era")?;
+    let era_year_value = crate::execute::get_property_result(changes, "eraYear")?;
+    let year_provided = !matches!(year_value, Value::Undefined);
+    let era_provided = !matches!(era_value, Value::Undefined);
+    let era_year_provided = !matches!(era_year_value, Value::Undefined);
+    if !year_provided && era_provided != era_year_provided {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
+    let mut year = number_or_field(changes, "year", year)?;
+    if !year_provided && era_provided {
+        let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        let era = canonical_era_name(&receiver_calendar, &era)
+            .ok_or_else(|| crate::value::error::throw_type_error("Calendar does not use eras"))?;
+        let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+        year = derive_year_from_era(
+            &receiver_calendar,
+            era,
+            era_year,
+        )
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
+    }
     let primitive_options = options
         .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value));
     let overflow = if let Some(value) = options.filter(|value| !primitive_options) {
@@ -2438,6 +2489,12 @@ fn has_date_fields(object: &crate::value::ObjectData) -> bool {
 
 pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
     let text = crate::conversion::to_string(value)?;
+    if NOT_YET_SUPPORTED_CALENDARS
+        .iter()
+        .any(|name| text.eq_ignore_ascii_case(name))
+    {
+        return Ok(false);
+    }
     if is_supported_calendar_name(&text) {
         return Ok(true);
     }
@@ -2493,6 +2550,12 @@ pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
 /// a supported calendar identifier is still observable through `calendarId`
 /// and must not be rejected at construction boundaries.
 pub(crate) fn is_supported_calendar_name(value: &str) -> bool {
+    if NOT_YET_SUPPORTED_CALENDARS
+        .iter()
+        .any(|name| value.eq_ignore_ascii_case(name))
+    {
+        return false;
+    }
     matches!(
         value.to_ascii_lowercase().as_str(),
         "islamicc" | "ethiopic-amete-alem"
