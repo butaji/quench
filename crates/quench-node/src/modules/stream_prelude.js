@@ -174,6 +174,12 @@
     return options.objectMode ? 16 : 16384;
   }
 
+  function readableBufferLength(state) {
+    if (state.objectMode) return state.buffer.length;
+    return state.buffer.reduce((total, chunk) =>
+      total + (typeof chunk === "string" ? chunk.length : chunk?.byteLength ?? 1), 0);
+  }
+
   function validateEncoding(encoding) {
     const name = String(encoding).toLowerCase();
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
@@ -227,7 +233,7 @@
 
   function initReadable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
-    stream._readableState = {
+    const state = {
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
       buffer: [],
@@ -251,6 +257,12 @@
       autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
+    Object.defineProperty(state, "length", {
+      configurable: true,
+      enumerable: true,
+      get() { return readableBufferLength(state); }
+    });
+    stream._readableState = state;
     stream.readable = options.readable !== false;
     stream.destroyed = false;
     stream.closed = false;
