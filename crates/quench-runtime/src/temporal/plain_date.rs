@@ -810,7 +810,12 @@ fn to_zoned_date_time(
         + i128::from(minute) * 60_000_000_000
         + i128::from(second) * 1_000_000_000
         + i128::from(nanos);
-    let epoch = day_delta * 86_400_000_000_000 + time_nanos - fixed_timezone_offset(&timezone);
+    let mut epoch = day_delta * 86_400_000_000_000 + time_nanos - fixed_timezone_offset(&timezone);
+    if time_nanos == 0 {
+        if let Some(start) = crate::temporal::timezone_start_of_day_epoch(&timezone, epoch) {
+            epoch = start;
+        }
+    }
     if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
