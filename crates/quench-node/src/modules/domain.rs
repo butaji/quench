@@ -32,6 +32,7 @@ pub struct DomainState {
     stack: Vec<u64>,
     domains: HashMap<u64, DomainData>,
     module: Option<Value>,
+    process: Option<Value>,
 }
 
 impl DomainState {
@@ -41,6 +42,7 @@ impl DomainState {
             stack: Vec::new(),
             domains: HashMap::new(),
             module: None,
+            process: None,
         }
     }
 }
@@ -55,7 +57,12 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ("createDomain", crate::host::capability(SPEC_DOMAIN_CREATE)),
     ])
     .unwrap_or(Value::Undefined);
-    state.borrow_mut().domain.module = Some(module.clone());
+    let process = execute::get_property(&quench_runtime::vm::current_global_object(), "process");
+    let mut host = state.borrow_mut();
+    host.domain.module = Some(module.clone());
+    if matches!(process, Value::Object(_) | Value::ObjectAlias(_)) {
+        host.domain.process = Some(process);
+    }
     module
 }
 
@@ -168,10 +175,11 @@ fn with_domain<'a>(
         .map_err(|_| type_error("domain"))
 }
 fn refresh(state: &Rc<RefCell<HostState>>) {
-    let (module, stack, active) = {
+    let (module, process, stack, active) = {
         let host = state.borrow();
         (
             host.domain.module.clone(),
+            host.domain.process.clone(),
             host.domain.stack.clone(),
             host.domain.stack.last().copied(),
         )
@@ -200,8 +208,10 @@ fn refresh(state: &Rc<RefCell<HostState>>) {
             })
             .unwrap_or(Value::Null);
         let _ = execute::set_property_in_place(&module, "active", active.clone());
+        let process = process.unwrap_or_else(|| {
+            execute::get_property(&quench_runtime::vm::current_global_object(), "process")
+        });
         let global = quench_runtime::vm::current_global_object();
-        let process = execute::get_property(&global, "process");
         let process_domain = if matches!(active, Value::Null) {
             Value::Undefined
         } else {
