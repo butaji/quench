@@ -41,7 +41,7 @@ const __quenchReadableController = (stream) => ({
 });
 const __quenchStartReadable = (stream, source) => {
   try {
-    const started = source.start?.(stream._controller);
+    const started = source.start ? source.start(stream._controller) : undefined;
     if (started?.then) started.catch((error) => stream._errorStream(error));
   } catch (error) {
     stream._errorStream(error);
@@ -51,17 +51,17 @@ const __quenchValidateCompressionFormat = (format) => {
   if (["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) return;
   throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
 };
-const __quenchReadableRead = async (stream) => {
-  if (stream._error) throw stream._error;
+const __quenchReadableRead = (stream) => {
+  if (stream._error) return Promise.reject(stream._error);
   if (stream._queue.length) {
     const item = stream._queue.shift();
     stream._queueSize -= item.size;
     if (stream._closed && !stream._queue.length) {
       while (stream._finishWaiters.length) stream._finishWaiters.shift()();
     }
-    return { value: item.value, done: false };
+    return Promise.resolve({ value: item.value, done: false });
   }
-  if (stream._closed) return { value: undefined, done: true };
+  if (stream._closed) return Promise.resolve({ value: undefined, done: true });
   if (stream._pull && !stream._pulling) {
     stream._pulling = true;
     Promise.resolve(stream._pull(stream._controller)).finally(() => {
@@ -267,7 +267,7 @@ class __quenchTransformStream {
           ? transform.transform(value, this._controller)
           : this._controller.enqueue(value),
       close: async () => {
-        await transform.flush?.(this._controller);
+        if (transform.flush) await transform.flush(this._controller);
         this.readable._close();
       }
     });
