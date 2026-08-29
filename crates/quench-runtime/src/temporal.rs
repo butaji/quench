@@ -201,6 +201,19 @@ fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
         .unwrap_or(0)
 }
 
+fn canonical_timezone_name(text: &str) -> Option<String> {
+    if text.eq_ignore_ascii_case("utc") {
+        return Some("UTC".into());
+    }
+    if let Ok(zone) = text.parse::<chrono_tz::Tz>() {
+        return Some(zone.to_string());
+    }
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|zone| zone.to_string().eq_ignore_ascii_case(text))
+        .map(ToString::to_string)
+}
+
 fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
     if !date.contains('-') {
         let (year_text, month_text, day_text) = match date.len() {
@@ -306,7 +319,8 @@ pub(crate) fn parse_timezone_identifier(
             return normalize_offset_identifier(identifier)
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"));
         }
-        return Ok(identifier.to_string());
+        return canonical_timezone_name(identifier)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"));
     }
     if text
         .chars()
@@ -314,11 +328,8 @@ pub(crate) fn parse_timezone_identifier(
     {
         return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
-    if text.parse::<chrono_tz::Tz>().is_ok() {
-        Ok(text)
-    } else {
-        Err(crate::value::error::throw_range_error("Invalid time zone"))
-    }
+    canonical_timezone_name(&text)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"))
 }
 
 fn normalize_offset_identifier(text: &str) -> Option<String> {
@@ -422,6 +433,9 @@ fn parse_calendar_identifier(
             .split_once("[u-ca=")
             .and_then(|(_, rest)| rest.split(']').next())
             .unwrap_or(&text);
+        if let Some(canonical) = crate::temporal::plain_date::canonical_calendar_id(calendar) {
+            return Ok(canonical);
+        }
         if text.contains("-000000-") {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
@@ -486,11 +500,9 @@ fn parse_iso_annotations(text: &str) -> Result<(Option<String>, Option<String>),
                     return Err(crate::value::error::throw_range_error("Unknown critical annotation"));
                 }
             } else {
-                if !value.eq_ignore_ascii_case("iso8601") {
-                    if critical || calendar.is_none() {
-                        return Err(crate::value::error::throw_range_error("Invalid calendar"));
-                    }
-                } else if calendar.is_some() {
+                let canonical = crate::temporal::plain_date::canonical_calendar_id(value)
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
+                if calendar.is_some() {
                     if critical || calendar_critical {
                         return Err(crate::value::error::throw_range_error("Invalid calendar"));
                     }
@@ -498,7 +510,7 @@ fn parse_iso_annotations(text: &str) -> Result<(Option<String>, Option<String>),
                     rest = &after[end + 1..];
                     continue;
                 }
-                calendar = Some("iso8601".into());
+                calendar = Some(canonical);
                 calendar_critical |= critical;
             }
         } else {
