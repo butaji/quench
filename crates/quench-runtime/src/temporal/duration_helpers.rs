@@ -316,6 +316,28 @@ fn duration_difference_zoned(
     Ok(left_delta - right_delta)
 }
 
+fn zoned_day_length_hours(relative: &Value) -> Option<f64> {
+    let timezone = crate::conversion::to_string(
+        &crate::execute::get_property_result(relative, "timeZoneId").ok()?,
+    )
+    .ok()?;
+    let epoch = match crate::execute::get_property_result(relative, "epochNanoseconds").ok()? {
+        Value::BigInt(value) => value.parse::<i128>().ok()?,
+        _ => return None,
+    };
+    let start = crate::temporal::timezone_start_of_day_epoch(&timezone, epoch)?;
+    let mut probe = start + 86_400_000_000_000;
+    for _ in 0..4 {
+        if let Some(next) = crate::temporal::timezone_start_of_day_epoch(&timezone, probe) {
+            if next > start {
+                return Some((next - start) as f64 / 3_600_000_000_000.0);
+            }
+        }
+        probe += 86_400_000_000_000;
+    }
+    None
+}
+
 fn zoned_total_days(duration: &Value, relative: &Value) -> Result<f64, VmError> {
     let actual = duration_epoch_delta(duration, relative)?;
     if actual == 0 {
