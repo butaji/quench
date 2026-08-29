@@ -1865,6 +1865,9 @@ fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
+    if calendar_name(object) != "iso8601" {
+        return Ok(Value::Undefined);
+    }
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
@@ -1879,6 +1882,9 @@ fn year_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
     };
     if !has_date_fields(object) {
         return Err(invalid_receiver());
+    }
+    if calendar_name(object) != "iso8601" {
+        return Ok(Value::Undefined);
     }
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
