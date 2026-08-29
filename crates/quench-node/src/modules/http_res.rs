@@ -128,9 +128,31 @@ pub fn res_write(
             .ok_or_else(|| execute::type_error("chunk required"))?;
         chunk_bytes(Some(value))
     };
-    let mut guard = state.borrow_mut();
-    if let Some(res) = guard.http.res.get_mut(&id) {
+    let (status, text, headers, socket, keep_alive, first_write) = {
+        let mut guard = state.borrow_mut();
+        let Some(res) = guard.http.res.get_mut(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
         res.body.extend_from_slice(&bytes);
+        let first_write = !res.headers_sent;
+        res.headers_sent = true;
+        res.sent_body = res.body.len();
+        (
+            res.status,
+            res.text.clone(),
+            res.headers.clone(),
+            res.socket.clone(),
+            res.keep_alive,
+            first_write,
+        )
+    };
+    let payload = if first_write {
+        compose(status, &text, &headers, &bytes, keep_alive)
+    } else {
+        bytes
+    };
+    if !payload.is_empty() {
+        net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -150,7 +172,7 @@ pub fn res_end(
             res_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (status, text, headers, body, socket, keep_alive) = {
+    let (status, text, headers, body, socket, keep_alive, headers_sent) = {
         let guard = state.borrow();
         let Some(res) = guard.http.res.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -162,11 +184,14 @@ pub fn res_end(
             res.body.clone(),
             res.socket.clone(),
             res.keep_alive,
+            res.headers_sent,
         )
     };
     let status = status_code(receiver, status);
-    let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
-    crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
+    if !headers_sent {
+        let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
+        crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
+    }
     if let Some(socket_id) = net::net_id(&socket) {
         if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
             conn.response_done = true;
