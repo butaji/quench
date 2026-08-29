@@ -45,16 +45,77 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
             "Invalid PlainMonthDay",
         ));
     }
-    Ok(set_calendar_id(
-        construct_with_year(month, day, year)?,
-        &calendar_id,
-    ))
+    if !matches!(calendar_id.as_str(), "iso8601" | "gregory") {
+        if let Some(fields) = crate::temporal::plain_date::calendar_fields_from_iso(
+            year as i32,
+            month as u32,
+            day as u32,
+            &calendar_id,
+        ) {
+            return construct_calendar_month_day(
+                &fields.month_code,
+                f64::from(fields.day),
+                year,
+                &calendar_id,
+            );
+        }
+    }
+    Ok(set_calendar_id(construct_with_year(month, day, year)?, &calendar_id))
 }
 
 fn set_calendar_id(mut value: Value, calendar: &str) -> Value {
     if let Value::Object(object) = &mut value {
         std::rc::Rc::make_mut(object)
             .set_property_in_place("calendarId", Value::String(calendar.to_string()));
+    }
+    value
+}
+
+fn construct_calendar_month_day(
+    code: &str,
+    day: f64,
+    reference_year: f64,
+    calendar: &str,
+) -> Result<Value, VmError> {
+    let month = code
+        .trim_start_matches('M')
+        .trim_end_matches('L')
+        .parse::<f64>()
+        .unwrap_or(0.0);
+    if !(1.0..=13.0).contains(&month)
+        || (month == 13.0 && !crate::temporal::plain_date::calendar_supports_month13(calendar))
+        || !day.is_finite()
+        || !(1.0..=31.0).contains(&day)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid PlainMonthDay"));
+    }
+    if month > 12.0 {
+        return Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![
+                ("monthCode".into(), Value::String(code.to_string())),
+                ("day".into(), Value::Number(day.trunc())),
+                ("calendarId".into(), Value::String(calendar.to_string())),
+                ("referenceISODay".into(), Value::Number(reference_year)),
+                ("\0temporal-plain-month-day".into(), Value::Boolean(true)),
+                (
+                    "\0prototype".into(),
+                    Value::Builtin(crate::ops::Builtin::TemporalPlainMonthDayPrototype),
+                ),
+            ]),
+        )));
+    }
+    let value = construct_with_year(month, day, reference_year)?;
+    Ok(set_month_code(set_calendar_id(value, calendar), code))
+}
+
+fn set_month_code(mut value: Value, code: &str) -> Value {
+    if let Value::Object(object) = &mut value {
+        let object = std::rc::Rc::make_mut(object);
+        object.set_property_in_place("monthCode", Value::String(code.to_string()));
+        object.set_property_in_place(
+            "\0temporal-slot:\0monthCode",
+            Value::String(code.to_string()),
+        );
     }
     value
 }
@@ -235,6 +296,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         } else {
             base
         };
+        let input_iso_year = date
+            .strip_prefix("--")
+            .unwrap_or(date)
+            .split('-')
+            .next()
+            .filter(|value| value.len() >= 4)
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(1972);
         let date = date.strip_prefix("--").unwrap_or(date);
         let (month, day) = if !date.contains('-') {
             let digits = date.strip_prefix('+').unwrap_or(date);
@@ -276,6 +345,28 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             ));
         }
         let _ = overflow_reject(options)?;
+        if !matches!(calendar_id.as_str(), "iso8601" | "gregory") {
+            if let Some(fields) = crate::temporal::plain_date::calendar_fields_from_iso(
+                input_iso_year,
+                month as u32,
+                day as u32,
+                &calendar_id,
+            ) {
+                return construct_calendar_month_day(
+                    &fields.month_code,
+                    f64::from(fields.day),
+                    f64::from(
+                        crate::temporal::plain_date::calendar_reference_iso_year_for_code(
+                            &fields.month_code,
+                            fields.day,
+                            &calendar_id,
+                        )
+                        .unwrap_or(1972),
+                    ),
+                    &calendar_id,
+                );
+            }
+        }
         return Ok(set_calendar_id(construct(month, day)?, &calendar_id));
     }
     if !crate::value::is_object(value) {
@@ -372,8 +463,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         month.clamp(1.0, 12.0)
     };
     let day = apply_overflow(year, month, day, reject)?;
-    // A property bag's ISO year only participates in overflow handling; it is
-    // not retained as the PlainMonthDay reference year.
     Ok(set_calendar_id(construct(month, day)?, &calendar_id))
 }
 
@@ -474,6 +563,10 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
         .ok()
         .and_then(|value| crate::conversion::to_string(&value).ok())
         .unwrap_or_else(|| "iso8601".into());
+    let receiver_calendar = crate::temporal::plain_date::canonical_calendar_id(&receiver_calendar)
+        .unwrap_or(receiver_calendar);
+    let other_calendar = crate::temporal::plain_date::canonical_calendar_id(&other_calendar)
+        .unwrap_or(other_calendar);
     Ok(Value::Boolean(
         fields(receiver)? == fields(&other)?
             && reference_year(receiver) == reference_year(&other)
@@ -529,6 +622,7 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         .ok()
         .and_then(|value| crate::conversion::to_string(&value).ok())
         .unwrap_or_else(|| "iso8601".into());
+    let month_code = month.clone();
     let month = month.trim_start_matches('M');
     let year = crate::execute::get_property_result(receiver, "referenceISODay")
         .ok()
@@ -544,7 +638,20 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     } else {
         format!("{year:04}")
     };
-    let date = format!("{year_text}-{month}-{day:02}");
+    let (display_month, display_day) = if !matches!(calendar.as_str(), "iso8601" | "gregory") {
+        crate::temporal::plain_date::calendar_iso_date_for_code(
+            year,
+            &month_code,
+            day as u32,
+            &calendar,
+        )
+        .map_or((month.parse::<u32>().unwrap_or(1), day as u32), |(month, day)| {
+            (month, day)
+        })
+    } else {
+        (month.parse::<u32>().unwrap_or(1), day as u32)
+    };
+    let date = format!("{year_text}-{display_month:02}-{display_day:02}");
     let suffix = match name.as_str() {
         "never" => "".to_string(),
         "critical" => format!("[!u-ca={calendar}]"),
