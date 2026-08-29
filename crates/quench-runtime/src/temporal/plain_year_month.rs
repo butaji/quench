@@ -491,14 +491,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if annotation.starts_with("u-ca=") {
                 calendars += 1;
             }
-            if annotation.starts_with("u-ca=")
-                && calendars == 1
-                && !crate::temporal::plain_date::is_supported_calendar_name(&annotation[5..])
-            {
-                return Err(crate::value::error::throw_range_error("Invalid calendar"));
-            }
             if annotation.starts_with("u-ca=") {
-                calendar_id = crate::temporal::plain_date::canonical_calendar_id(&annotation[5..]);
+                if calendars == 1 {
+                    if !crate::temporal::plain_date::is_supported_calendar_name(&annotation[5..]) {
+                        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+                    }
+                    calendar_id = crate::temporal::plain_date::canonical_calendar_id(&annotation[5..]);
+                }
             }
             if critical && annotation.contains('=') && !annotation.starts_with("u-ca=") {
                 return Err(crate::value::error::throw_range_error("Invalid annotation"));
