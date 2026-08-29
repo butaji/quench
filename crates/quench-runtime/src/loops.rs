@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 mod counted_for;
-include!("loops_for_of.rs");
+include!("loops/for_of.rs");
 
 use oxc::ast::ast::{DoWhileStatement, ForInStatement, ForOfStatement, WhileStatement};
 
@@ -732,11 +732,11 @@ fn execute_loop_body_with_context(
     ))
 }
 
-include!("loops_run.rs");
-include!("loops_pair_walk.rs");
-include!("loops_regexp_exec.rs");
-include!("loops_body.rs");
-include!("loops_while.rs");
+include!("loops/run.rs");
+include!("loops/pair_walk.rs");
+include!("loops/regexp_exec.rs");
+include!("loops/body.rs");
+include!("loops/while.rs");
 
 #[cfg(test)]
 mod tests {

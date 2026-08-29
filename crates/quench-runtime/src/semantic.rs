@@ -75,7 +75,7 @@ fn analyze_with_context(
     program: &oxc::ast::ast::Program<'_>,
     context: EvalGrammarContext,
 ) -> Result<Analysis, Vec<String>> {
-    crate::semantic_early::validate(program)?;
+    crate::semantic::early::validate(program)?;
     for statement in &program.body {
         if matches!(
             statement,
@@ -261,3 +261,5 @@ mod tests {
         assert_eq!(ids(source, true), ids(source, false));
     }
 }
+pub(crate) mod catch;
+pub(crate) mod early;

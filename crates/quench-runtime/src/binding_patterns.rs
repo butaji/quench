@@ -131,7 +131,7 @@ fn assign_array(
     Some(())
 }
 
-include!("binding_pattern_rest.rs");
+include!("binding_pattern/rest.rs");
 
 fn assign_prepared(
     target: &AssignmentTargetMaybeDefault<'_>,
@@ -336,7 +336,7 @@ fn store_identifier(
     Some(())
 }
 
-include!("binding_pattern_names.rs");
+include!("binding_pattern/names.rs");
 
 fn bind_array(
     pattern: &oxc::ast::ast::ArrayPattern<'_>,
@@ -366,7 +366,7 @@ fn bind_array(
     Some(())
 }
 
-include!("binding_pattern_iterator_ops.rs");
+include!("binding_pattern/iterator_ops.rs");
 
 fn bind_object(
     pattern: &oxc::ast::ast::ObjectPattern<'_>,
@@ -497,4 +497,4 @@ fn get_property(key: ReducedKey, object: u16, ops: &mut Vec<Op>, next: &mut u16)
     }
     dst
 }
-include!("binding_pattern_helpers.rs");
+include!("binding_pattern/helpers.rs");

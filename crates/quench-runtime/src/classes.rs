@@ -12,10 +12,10 @@ use crate::{
     },
 };
 
-include!("classes_private_scope.rs");
-include!("classes_name.rs");
-include!("classes_method_name.rs");
-include!("classes_static.rs");
+include!("classes/private_scope.rs");
+include!("classes/name.rs");
+include!("classes/method_name.rs");
+include!("classes/static.rs");
 
 fn reduce_heritage(
     class: &Class<'_>,
@@ -111,7 +111,7 @@ fn is_constructor(value: &crate::value::Value) -> bool {
         _ => false,
     }
 }
-include!("classes_instance_fields.rs");
+include!("classes/instance_fields.rs");
 
 fn reduce_constructor(
     class: &Class<'_>,
@@ -540,4 +540,4 @@ fn reduce_method_key(
     Some(emit_string(ops, next, key))
 }
 
-include!("classes_helpers.rs");
+include!("classes/helpers.rs");

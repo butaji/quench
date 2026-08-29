@@ -14,11 +14,11 @@ fn early_dispatch(
                 Ok(Value::Boolean(
                     arguments
                         .first()
-                        .is_some_and(crate::typed_array_ops::is_view),
+                        .is_some_and(crate::typed_array::ops::is_view),
                 ))
             })
         })
-        .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
+        .or_else(|| crate::typed_array::ops::execute(builtin, receiver, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
         .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))

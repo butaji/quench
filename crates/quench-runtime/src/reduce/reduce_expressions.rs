@@ -225,7 +225,7 @@ pub fn reduce_declaration(
     for declarator in &declaration.declarations {
         allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals, facts);
         if declaration.kind != VariableDeclarationKind::Var {
-            crate::using_scope::mark_binding_tdz(&declarator.id, ops, locals);
+            crate::using::scope::mark_binding_tdz(&declarator.id, ops, locals);
         }
         if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
             continue;
@@ -299,14 +299,14 @@ pub fn reduce_declaration(
             )
             .ok_or_else(|| vec!["Unsupported binding pattern".to_string()])?;
         }
-        crate::using_scope::register_resource(
+        crate::using::scope::register_resource(
             declaration.kind,
             register,
             ops,
             next_register,
             locals,
         );
-        crate::using_scope::mark_binding_immutable(declaration.kind, &declarator.id, ops, locals);
+        crate::using::scope::mark_binding_immutable(declaration.kind, &declarator.id, ops, locals);
         if declaration.kind != VariableDeclarationKind::Var {
             for name in crate::binding_patterns::names(&declarator.id) {
                 locals.remove(&format!("\0lexical-predeclared:{name}"));

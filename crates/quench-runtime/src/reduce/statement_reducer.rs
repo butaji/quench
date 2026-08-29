@@ -66,7 +66,7 @@ impl StatementReducer {
         let barrier_len = facts.eval_var_barrier.len();
         facts
             .eval_var_barrier
-            .extend(crate::semantic_early::lexically_declared_names_in(
+            .extend(crate::semantic::early::lexically_declared_names_in(
                 statements,
             ));
         let result = self.append_scoped(statements, facts, program_scope);
@@ -144,11 +144,11 @@ impl StatementReducer {
         self.next_register = self
             .next_register
             .max(crate::reduce_support::register_base(&self.locals));
-        let stack = crate::using_scope::reserve(statements, &mut self.locals, &mut self.next_slot);
-        crate::using_scope::emit_tdz(statements, &mut self.ops, &self.locals);
-        let await_using = crate::using_scope::has_await_using(statements);
+        let stack = crate::using::scope::reserve(statements, &mut self.locals, &mut self.next_slot);
+        crate::using::scope::emit_tdz(statements, &mut self.ops, &self.locals);
+        let await_using = crate::using::scope::has_await_using(statements);
         if let Some(stack) = stack {
-            crate::using_scope::emit_create(
+            crate::using::scope::emit_create(
                 &mut self.ops,
                 stack,
                 await_using,
@@ -172,7 +172,7 @@ fn wrap_program_using(
         return Ok(());
     };
     let body = state.ops.split_off(body_start);
-    state.ops.extend(crate::using_scope::wrap(
+    state.ops.extend(crate::using::scope::wrap(
         body,
         stack,
         await_using,

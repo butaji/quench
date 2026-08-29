@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-#[path = "promise_constructor.rs"]
+#[path = "promise/constructor.rs"]
 mod promise_constructor;
 
 struct CapabilityState {
@@ -130,12 +130,12 @@ pub(crate) fn new_promise_capability(
     Ok((result, resolve, reject))
 }
 
-include!("promise_combinators.rs");
-include!("promise_finally.rs");
-include!("promise_drain.rs");
-include!("promise_settlement.rs");
-include!("promise_with_resolvers.rs");
-include!("promise_try.rs");
+include!("promise/combinators.rs");
+include!("promise/finally.rs");
+include!("promise/drain.rs");
+include!("promise/settlement.rs");
+include!("promise/with_resolvers.rs");
+include!("promise/try.rs");
 
 fn process_promise(promise: &Rc<PromiseData>) {
     let context = Rc::clone(&promise.context.0);
@@ -812,7 +812,7 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     Ok(result)
 }
 
-include!("promise_methods.rs");
+include!("promise/methods.rs");
 /// Dispatch Promise builtins.
 pub fn execute_builtin(
     builtin: Builtin,
@@ -860,5 +860,5 @@ pub fn execute_builtin(
     };
     Some(result)
 }
-include!("promise_exports.rs");
-include!("promise_tests.rs");
+include!("promise/exports.rs");
+include!("promise/tests.rs");

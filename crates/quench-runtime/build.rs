@@ -22,7 +22,7 @@ fn main() {
 }
 
 fn generate_op_names() {
-    let source = fs::read_to_string("src/ops_op.rs").expect("read canonical Op declaration");
+    let source = fs::read_to_string("src/ops/op.rs").expect("read canonical Op declaration");
     let variants = extract_op_variants(&source);
     assert!(variants.len() >= 90, "incomplete Op variant extraction");
     let arms = variants
@@ -35,7 +35,7 @@ fn generate_op_names() {
     );
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     fs::write(output.join("op_variant_name.rs"), generated).expect("write Op names");
-    println!("cargo:rerun-if-changed=src/ops_op.rs");
+    println!("cargo:rerun-if-changed=src/ops/op.rs");
 }
 
 fn extract_op_variants(source: &str) -> Vec<(&str, &str, Option<&str>)> {
