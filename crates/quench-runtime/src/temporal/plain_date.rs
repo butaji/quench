@@ -1501,6 +1501,12 @@ fn day_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
+    let calendar = calendar_name(object);
+    if let Value::String(code) = field(object, "monthCode") {
+        if let Some(value) = calendar_day_of_year_for_code(year, &code, day, &calendar) {
+            return Ok(Value::Number(f64::from(value)));
+        }
+    }
     Ok(Value::Number(f64::from(ordinal_day(year, month, day))))
 }
 
