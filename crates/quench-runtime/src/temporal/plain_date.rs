@@ -131,6 +131,12 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
             "\0temporal-slot:\0monthCode",
             Value::String(fields.month_code),
         );
+        if calendar == "japanese" {
+            object.set_property_in_place(
+                "\0temporal-related-iso-year",
+                Value::Number(year),
+            );
+        }
     }
     Ok(result)
 }
@@ -289,7 +295,18 @@ pub(crate) fn calendar_fields_from_iso(
         .ok()?
         .to_calendar(AnyCalendar::new(kind));
     let (year, related_year) = match date.year() {
-        icu_calendar::types::YearInfo::Era(value) => (value.year, None),
+        icu_calendar::types::YearInfo::Era(value) => {
+            let year = if calendar == "ethiopic" && value.year > 5000 {
+                value.year - 5500
+            } else if calendar.starts_with("islamic") && year < 622 {
+                1 - value.year
+            } else if calendar == "roc" && year < 1912 {
+                1 - value.year
+            } else {
+                value.year
+            };
+            (year, None)
+        }
         icu_calendar::types::YearInfo::Cyclic(value) => {
             (value.related_iso, Some(value.related_iso))
         }
