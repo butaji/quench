@@ -1199,7 +1199,25 @@ mod stubs {
             ));
         }
         if super::is_zoned_receiver(value, 0) {
-            return Ok(value.clone());
+            if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+                if !crate::value::is_object(options) {
+                    return Err(crate::value::error::throw_type_error("Invalid options"));
+                }
+            }
+            let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
+            let epoch = match epoch {
+                Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?,
+                _ => return Err(crate::value::error::throw_type_error("Invalid ZonedDateTime")),
+            };
+            let timezone = crate::conversion::to_string(
+                &crate::execute::get_property_result(value, "timeZoneId")?,
+            )?;
+            let calendar = crate::conversion::to_string(
+                &crate::execute::get_property_result(value, "calendarId")?,
+            )?;
+            return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
         let option_string =
             |name: &str, allowed: &[&str], default: &str| -> Result<String, VmError> {
