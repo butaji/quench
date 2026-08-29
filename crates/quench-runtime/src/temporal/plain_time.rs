@@ -457,19 +457,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
 }
 
 fn overflow_reject(options: Option<&Value>) -> Result<bool, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(false);
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    let value = crate::execute::get_property_result(options, "overflow")?;
-    let text = option_text(&value)?.unwrap_or_else(|| "constrain".into());
-    match text.as_str() {
-        "constrain" => Ok(false),
-        "reject" => Ok(true),
-        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
-    }
+    crate::temporal::options::reject_overflow(options)
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
