@@ -1875,6 +1875,108 @@
     }
   }
 
+  // Duplex.from is a projection of existing readable/writable capabilities;
+  // the adapter owns no alternate stream semantics.
+  function duplexFromPair(readable, writable, options = {}) {
+    if (!readable && !writable) {
+      throw new TypeError('The "body" argument must be a stream or iterable');
+    }
+    const duplex = new Duplex(Object.assign({}, options, {
+      readable: Boolean(readable),
+      writable: Boolean(writable),
+      objectMode: Boolean(
+        readable?.readableObjectMode || readable?._readableState?.objectMode
+      )
+    }));
+    duplex._readableState.objectMode = Boolean(
+      readable?.readableObjectMode || readable?._readableState?.objectMode
+    );
+    duplex._writableState.objectMode = Boolean(
+      writable?.writableObjectMode || writable?._writableState?.objectMode
+    );
+    if (readable) {
+      readable.on("data", (chunk) => duplex.push(chunk));
+      readable.once("end", () => duplex.push(null));
+      readable.once("error", (error) => duplex.destroy(error));
+      duplex._read = () => readable.resume?.();
+    }
+    if (writable) {
+      duplex._write = (chunk, encoding, callback) => {
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          callback(error);
+        };
+        const accepted = writable.write(chunk, encoding, finish);
+        if (accepted !== false && !settled) finish();
+      };
+      duplex._final = (callback) => writable.end(undefined, undefined, callback);
+      writable.once("error", (error) => duplex.destroy(error));
+    }
+    return duplex;
+  }
+
+  function duplexFromPromise(source, options = {}) {
+    const duplex = new Duplex(Object.assign({}, options, {
+      readable: true,
+      writable: false,
+      objectMode: true
+    }));
+    const onError = () => {};
+    onError.__quenchInternal = true;
+    duplex.on("error", onError);
+    Promise.resolve(source).then(
+      (value) => {
+        if (value !== undefined && value !== null) duplex.push(value);
+        duplex.push(null);
+      },
+      (error) => duplex.destroy(error)
+    );
+    return duplex;
+  }
+
+  function duplexFromGenerator(factory, options = {}) {
+    const queue = [];
+    const waiters = [];
+    let ended = false;
+    const source = {
+      [Symbol.asyncIterator]() { return this; },
+      next() {
+        if (queue.length) return Promise.resolve(queue.shift());
+        if (ended) return Promise.resolve({ done: true });
+        return new Promise((resolve) => waiters.push(resolve));
+      }
+    };
+    const duplex = new Duplex(Object.assign({}, options, {
+      readable: true,
+      writable: true
+    }));
+    const onError = () => {};
+    onError.__quenchInternal = true;
+    duplex.on("error", onError);
+    duplex._write = (chunk, _encoding, callback) => {
+      const resolve = waiters.shift();
+      if (resolve) resolve({ value: chunk, done: false });
+      else queue.push({ value: chunk, done: false });
+      callback();
+    };
+    duplex._final = (callback) => {
+      ended = true;
+      for (const resolve of waiters.splice(0)) resolve({ done: true });
+      callback();
+    };
+    Promise.resolve().then(async () => {
+      try {
+        for await (const value of factory(source)) duplex.push(value);
+        duplex.push(null);
+      } catch (error) {
+        duplex.destroy(error);
+      }
+    });
+    return duplex;
+  }
+
   function finished(stream, options, callback) {
     if (!stream || typeof stream.on !== "function") {
       const error = new TypeError("The \"stream\" argument must be an instance of Stream");
@@ -1924,7 +2026,37 @@
   function pipeline(...args) {
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
-    const streams = args;
+    const streams = [];
+    for (let index = 0; index < args.length; index += 1) {
+      const stage = args[index];
+      if (typeof stage === "function") {
+        if (index > 0 && stage.constructor?.name === "GeneratorFunction") {
+          const error = new TypeError("The function must return an async iterable or stream");
+          error.code = "ERR_INVALID_RETURN_VALUE";
+          throw error;
+        }
+        if (stage.constructor?.name === "AsyncGeneratorFunction") {
+          streams.push(DuplexCompat.from(stage));
+          continue;
+        }
+        const result = stage(streams[index - 1]);
+        if (result === undefined) {
+          const error = new TypeError("The function must return a stream or iterable");
+          error.code = "ERR_INVALID_RETURN_VALUE";
+          throw error;
+        }
+        streams.push(DuplexCompat.from(result));
+        continue;
+      }
+      if (index === 0 && !stage?.pipe &&
+          (typeof stage === "string" ||
+           typeof stage?.[Symbol.iterator] === "function" ||
+           typeof stage?.[Symbol.asyncIterator] === "function")) {
+        streams.push(Readable.from(stage));
+      } else {
+        streams.push(stage);
+      }
+    }
     if (streams.length < 2) {
       throw new TypeError("The streams argument must be an array or at least two streams");
     }
@@ -2114,6 +2246,42 @@
     return [left, right];
   };
   DuplexCompat.from = (source, options = {}) => {
+    if (typeof source === "function") {
+      const kind = source.constructor?.name;
+      if (kind === "AsyncGeneratorFunction" || kind === "GeneratorFunction") {
+        return duplexFromGenerator(source, options);
+      }
+      const result = source();
+      if (result === undefined) {
+        throw Object.assign(new TypeError("The function must return a stream or iterable"), {
+          code: "ERR_INVALID_RETURN_VALUE"
+        });
+      }
+      return DuplexCompat.from(result, options);
+    }
+    if (source && source._isDuplex) return source;
+    if (source && typeof source === "object" &&
+        (source.readable !== undefined || source.writable !== undefined) &&
+        (typeof source.readable === "object" || typeof source.writable === "object")) {
+      return duplexFromPair(source.readable, source.writable, options);
+    }
+    if (source && (typeof source.read === "function" || typeof source.write === "function")) {
+      return duplexFromPair(
+        typeof source.read === "function" ? source : null,
+        typeof source.write === "function" ? source : null,
+        options
+      );
+    }
+    if (source && typeof source.then === "function") {
+      return duplexFromPromise(source, options);
+    }
+    if (source && typeof source.stream === "function") {
+      return DuplexCompat.fromWeb({ readable: source.stream() }, options);
+    }
+    if (source && (typeof source[Symbol.asyncIterator] === "function" ||
+                   typeof source[Symbol.iterator] === "function")) {
+      return duplexFromPair(Readable.from(source, options), null, options);
+    }
     const pair = source && source.readable && source.readable.getReader
       ? source
       : source && source.getReader
@@ -2125,8 +2293,10 @@
   DuplexCompat.fromWeb = (pair, options = {}) => {
     const readable = pair?.readable;
     const writable = pair?.writable;
-    const reader = readable?.getReader?.();
-    const writer = writable?.getWriter?.();
+    const reader = readable && typeof readable.getReader === "function"
+      ? readable.getReader() : null;
+    const writer = writable && typeof writable.getWriter === "function"
+      ? writable.getWriter() : null;
     if (!reader && !writer) return pair;
     let reading = false;
     return new Duplex({
