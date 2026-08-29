@@ -114,16 +114,17 @@ fn construct_builtin_tail(
                     .filter(|value| !matches!(value, Value::Undefined))
                 {
                     let reference_day = crate::conversion::to_number(reference_day)?;
-                    return crate::temporal::plain_year_month::construct_with_reference_calendar(
+                    return crate::temporal::plain_year_month::construct_from_constructor(
                         year,
                         month,
-                        reference_day,
+                        Some(reference_day),
                         &calendar,
                     );
                 }
-                return crate::temporal::plain_year_month::construct_with_calendar(
+                return crate::temporal::plain_year_month::construct_from_constructor(
                     year,
                     month,
+                    None,
                     &calendar,
                 );
             }
