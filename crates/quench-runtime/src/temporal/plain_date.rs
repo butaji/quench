@@ -220,22 +220,7 @@ fn add(
 }
 
 fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("constrain".into());
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    let value = crate::execute::get_property_result(options, "overflow")?;
-    if matches!(value, Value::Undefined) {
-        return Ok("constrain".into());
-    }
-    let value = option_string(&value)?;
-    if matches!(value.as_str(), "constrain" | "reject") {
-        Ok(value)
-    } else {
-        Err(crate::value::error::throw_range_error("Invalid overflow"))
-    }
+    crate::temporal::options::overflow(options)
 }
 
 fn difference(

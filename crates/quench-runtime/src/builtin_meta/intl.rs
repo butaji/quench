@@ -213,7 +213,8 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRulesSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlSegmenterSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlListFormatSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
+        Builtin::IntlRelativeTimeFormatSupportedLocalesOf
+        | Builtin::IntlDurationFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         _ => intl_short_name_formats(b),
     }
 }
