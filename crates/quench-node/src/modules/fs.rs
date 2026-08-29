@@ -15,12 +15,12 @@ use crate::host::HostState;
 
 pub struct FsState {
     next_fd: i32,
-    descriptors: HashMap<i32, FileDescriptor>,
+    pub(crate) descriptors: HashMap<i32, FileDescriptor>,
 }
 
-struct FileDescriptor {
-    file: std::fs::File,
-    path: String,
+pub(crate) struct FileDescriptor {
+    pub(crate) file: std::fs::File,
+    pub(crate) path: String,
 }
 
 impl Default for FsState {
@@ -82,7 +82,7 @@ pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
     )))
 }
 
-fn descriptor_arg(value: Option<&Value>) -> Result<i32, VmError> {
+pub(crate) fn descriptor_arg(value: Option<&Value>) -> Result<i32, VmError> {
     match value {
         Some(Value::Number(fd)) if fd.is_finite() && *fd >= 0.0 && fd.fract() == 0.0 => {
             Ok(*fd as i32)
