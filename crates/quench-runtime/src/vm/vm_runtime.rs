@@ -107,7 +107,7 @@ fn run_code_completion_step_from(
     completion_step_after_transition(registers, crate::completion::Completion::Normal, code.len())
 }
 
-#[inline(never)]
+#[inline(always)]
 fn run_instruction(
     code: crate::machine::CodeView<'_>,
     pc: usize,
