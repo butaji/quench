@@ -23,7 +23,7 @@ pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmE
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
         let calendar = crate::conversion::to_string(calendar)?;
-        if !calendar.eq_ignore_ascii_case("iso8601") && !calendar.eq_ignore_ascii_case("gregory") {
+        if !crate::temporal::plain_date::is_supported_calendar_name(&calendar) {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
@@ -142,7 +142,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if annotation.starts_with("u-ca=") {
                 calendars += 1;
                 critical_calendar |= critical;
-                if calendars == 1 && !annotation[5..].eq_ignore_ascii_case("iso8601") {
+                if calendars == 1
+                    && !crate::temporal::plain_date::is_supported_calendar_name(&annotation[5..])
+                {
                     return Err(crate::value::error::throw_range_error(
                         "Invalid calendar annotation",
                     ));
@@ -364,7 +366,7 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
         return Ok(());
     }
     if let Ok(calendar_id) = crate::execute::get_property_result(value, "calendarId") {
-        if matches!(calendar_id, Value::String(ref id) if id.eq_ignore_ascii_case("iso8601")) {
+        if matches!(calendar_id, Value::String(ref id) if crate::temporal::plain_date::is_supported_calendar_name(id)) {
             return Ok(());
         }
     }

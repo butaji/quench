@@ -562,7 +562,14 @@ fn parts_for_fields(
     let month_value = slot_string(slots, "month")
         .map(|style| format_month_value(&style, month));
     let day_value = slot_string(slots, "day").map(|style| format_day_value(&style, day));
-    let year_value = slot_string(slots, "year").map(|style| format_year_value(&style, year));
+    let display_year = slot_string(slots, "calendar")
+        .filter(|calendar| calendar == "japanese")
+        .and_then(|_| {
+            crate::temporal::plain_date::era_year_for_calendar("japanese", f64::from(year))
+                .map(|value| value as i32)
+        })
+        .unwrap_or(year);
+    let year_value = slot_string(slots, "year").map(|style| format_year_value(&style, display_year));
     if has_month
         && month_value
             .as_deref()
