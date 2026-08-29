@@ -1930,7 +1930,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
                 continue;
             }
             if key == "u-ca" {
-                if value.is_empty() || !value.eq_ignore_ascii_case("iso8601") {
+                if value.is_empty()
+                    || !crate::temporal::plain_date::is_supported_calendar_name(value)
+                {
                     return Err(crate::value::error::throw_range_error("Invalid annotation"));
                 }
                 calendar_annotation = true;
