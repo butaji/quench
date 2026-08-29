@@ -610,6 +610,20 @@ pub fn server_close(
         server.listening = false;
         server.closed = true;
     }
+    let sockets: Vec<Value> = state
+        .borrow()
+        .net
+        .sockets
+        .values()
+        .filter_map(|socket| {
+            let socket = socket.borrow();
+            (socket.server_id == Some(id) && socket.state != SocketState::Closed)
+                .then(|| socket.js.clone())
+        })
+        .collect();
+    for socket in sockets {
+        socket_destroy(state, Some(&socket), &[])?;
+    }
     super::set_server_listening(&receiver, false)?;
     add_listener_cb(state, &receiver, args.first(), "close")?;
     Ok(receiver)

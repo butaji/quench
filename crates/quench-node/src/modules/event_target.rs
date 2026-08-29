@@ -1110,6 +1110,16 @@ pub fn dispatch_event(
             break;
         }
     }
+    if event_type == "abort" {
+        let handler = execute::get_property(receiver, "onabort");
+        if quench_runtime::is_callable(&handler) {
+            let result = execute::call(&handler, receiver, std::slice::from_ref(event));
+            if let Err(error) = result {
+                crate::modules::pump::handle_uncaught(state, error)?;
+                crate::modules::pump::run_uncaught(state)?;
+            }
+        }
+    }
     let prevented = execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
     execute::set_property_in_place(event, "eventPhase", Value::Number(0.0));
     execute::set_property_in_place(event, "currentTarget", Value::Null);
