@@ -39,6 +39,9 @@ Thumbs.db
 /pull-zlib-*/
 /stage-*.txt
 /stage-????-*/
+
+# quench-node bun build artifacts (large binary fixtures)
+crates/quench-node/.*.bun-build
 # tests/node-compat/stage-N runs may write runtime fixtures next to the .js test
 /tests/node-compat/stage-*/access.txt
 /tests/node-compat/stage-*/read-only

@@ -30,7 +30,7 @@ const artifactGitCommit = option("--artifact-git-commit");
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
 const runnerArgs = [
-  path.join(root, "quench-bench", "run-quench-runtime.mjs"),
+  path.join(root, "crates/quench-bench", "run-quench-runtime.mjs"),
   "--quench", binary, "--runs", runs, "--timeout-ms", timeout, "--out", raw,
 ];
 if (only) runnerArgs.push("--only", only);

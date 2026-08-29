@@ -7,10 +7,6 @@
 [submodule "tests/node"]
 	path = tests/node
 	url = https://github.com/nodejs/node.git
-[submodule "quench-runtime"]
-	path = quench-runtime
-	url = https://github.com/butaji/quench.git
-	branch = qjs
 [submodule "crates/quench-wasm-test/testsuite"]
 	path = crates/quench-wasm-test/testsuite
 	url = https://github.com/WebAssembly/testsuite.git

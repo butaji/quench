@@ -22,7 +22,7 @@ const missing = violations({ score: 5000, ratios: {}, lanes: { l3: { handlers: 0
 assert.equal(missing[0].reason, "missing numeric measurement");
 
 const declared = JSON.parse(fs.readFileSync(
-  path.join(__dirname, "../quench-bench/profile-contracts.json"), "utf8"));
+  path.join(__dirname, "../crates/quench-bench/profile-contracts.json"), "utf8"));
 assert.deepEqual(Object.keys(declared.benchmarks).sort(), [
   "crypto", "deltablue", "earley-boyer", "navier-stokes",
   "raytrace", "regexp", "richards", "splay",
