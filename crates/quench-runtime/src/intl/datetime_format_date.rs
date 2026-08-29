@@ -418,8 +418,8 @@ fn compose_time_string(
         })
         .unwrap_or(false);
     let has_hour = hour_style.is_some();
-    let has_minute = minute_style.is_some();
-    let has_second = second_style.is_some();
+    let has_minute = minute_style.is_some() || (day_period_style.is_some() && has_hour);
+    let has_second = second_style.is_some() || (day_period_style.is_some() && has_hour);
     let display_hour = if lookup_slot_string(slots, "hourCycle").as_deref() == Some("h24")
         && hour == 0
     {
@@ -437,12 +437,14 @@ fn compose_time_string(
                 lookup_slot_string(slots, "hourCycle").as_deref() == Some("h11"),
             )
         });
-    let minute_str = minute_style
-        .as_deref()
-        .map(|s| format_minute_value(s, minute, has_hour || has_second));
-    let second_str = second_style
-        .as_deref()
-        .map(|s| format_second_value(s, second, has_hour || has_minute));
+    let minute_str = minute_style.as_deref().map_or_else(
+        || has_minute.then(|| format_minute_value("numeric", minute, has_hour || has_second)),
+        |s| Some(format_minute_value(s, minute, has_hour || has_second)),
+    );
+    let second_str = second_style.as_deref().map_or_else(
+        || has_second.then(|| format_second_value("numeric", second, has_hour || has_minute)),
+        |s| Some(format_second_value(s, second, has_hour || has_minute)),
+    );
     let mut parts: Vec<String> = Vec::new();
     if has_hour {
         if let Some(h) = hour_str {
