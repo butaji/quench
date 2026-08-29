@@ -365,6 +365,22 @@ pub(crate) fn calendar_iso_reference_day(year: i32, month: u32, calendar: &str) 
         .map(|date| u32::from(date.to_calendar(Iso).day_of_month().0))
 }
 
+/// Project a calendar date back to its ISO civil date for string serialization.
+pub(crate) fn calendar_iso_date(
+    year: i32,
+    month: u32,
+    day: u32,
+    calendar: &str,
+) -> Option<(i32, u32, u32)> {
+    let date = calendar_date(year, month, day, calendar)?;
+    let iso = date.to_calendar(Iso);
+    Some((
+        iso.year().extended_year(),
+        u32::from(iso.month().ordinal),
+        u32::from(iso.day_of_month().0),
+    ))
+}
+
 pub(crate) fn calendar_is_leap_year(year: i32, month: u32, calendar: &str) -> Option<bool> {
     calendar_date(year, month, 1, calendar).map(|date| date.is_in_leap_year())
 }
@@ -1644,11 +1660,20 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    let year = number_field(field(object, "year")) as i32;
-    let month = number_field(field(object, "month")) as u32;
-    let day = number_field(field(object, "day")) as u32;
+    let mut year = number_field(field(object, "year")) as i32;
+    let mut month = number_field(field(object, "month")) as u32;
+    let mut day = number_field(field(object, "day")) as u32;
     let calendar_name_option_value = calendar_name_option(options)?;
     let calendar_id = calendar_name(object);
+    if calendar_id != "iso8601" {
+        if let Some((iso_year, iso_month, iso_day)) =
+            calendar_iso_date(year, month, day, &calendar_id)
+        {
+            year = iso_year;
+            month = iso_month;
+            day = iso_day;
+        }
+    }
     let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
     match calendar_name_option_value.as_str() {
         "always" => result.push_str(&format!("[u-ca={calendar_id}]")),
