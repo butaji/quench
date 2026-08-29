@@ -2013,7 +2013,7 @@ impl Value {
 
     /// Compiler-output contract: these tag-only operations are always inlined
     /// at optimized call sites; the error constructors above remain cold and
-    /// out of line. `tools/audit-value-assembly.sh` checks the emitted `.s`.
+    /// out of line. `tools/audit/audit-value-assembly.sh` checks the emitted `.s`.
     ///
     /// Values represented without a heap reference or payload allocation.
     #[inline(always)]
