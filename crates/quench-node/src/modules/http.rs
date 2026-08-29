@@ -214,18 +214,24 @@ pub(crate) fn abort_server_signal(
     let Some(socket_id) = net::net_id(socket) else {
         return Ok(());
     };
-    let signal = {
+    let request = {
         let guard = state.borrow();
         guard.http.conns.get(&socket_id).and_then(|conn| {
             (!conn.response_done).then(|| {
                 conn.req
-                    .as_ref()
-                    .map(|req| execute::get_property(req, "signal"))
+                    .clone()
             })
         }).flatten()
     };
-    if let Some(signal) = signal.filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
-        abort_http_signal(state, &signal)?;
+    if let Some(request) = request {
+        if !matches!(execute::get_property(&request, "aborted"), Value::Boolean(true)) {
+            execute::set_property_in_place(&request, "aborted", Value::Boolean(true));
+            let signal = execute::get_property(&request, "signal");
+            if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+                abort_http_signal(state, &signal)?;
+            }
+            net::emit(state, &request, "aborted", Vec::new())?;
+        }
     }
     Ok(())
 }
