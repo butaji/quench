@@ -167,17 +167,67 @@ pub fn res_end(
     let status = status_code(receiver, status);
     let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
     crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
+    if let Some(socket_id) = net::net_id(&socket) {
+        if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
+            conn.response_done = true;
+        }
+    }
     if keep_alive {
         // Leave the socket open and let the connection parser reset for the
         // next request on the same connection.
-        if let Some(socket_id) = net::net_id(&socket) {
-            if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
-                conn.response_done = true;
-            }
-        }
     } else {
         crate::modules::net::socket_end(state, Some(&socket), &[])?;
     }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `res.destroy([error])` — close the response socket. The normal net close
+/// transition notifies any in-flight request signal through `http::req_close`.
+pub fn res_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let socket = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .map(|res| res.socket.clone());
+    if let Some(socket) = socket {
+        net::socket_destroy(state, Some(&socket), &[])?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `res.flushHeaders()` — send the current response head while leaving the
+/// connection open for a later body or destroy transition.
+pub fn res_flush_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let (status, text, headers, socket, keep_alive) = {
+        let guard = state.borrow();
+        let Some(res) = guard.http.res.get(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
+        (
+            status_code(receiver, res.status),
+            res.text.clone(),
+            res.headers.clone(),
+            res.socket.clone(),
+            res.keep_alive,
+        )
+    };
+    let payload = host_api::bytes(&compose(status, &text, &headers, &[], keep_alive));
+    net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
