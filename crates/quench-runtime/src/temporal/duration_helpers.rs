@@ -504,15 +504,29 @@ fn validate_date_limits(text: &str, date: &Value) -> Result<(), VmError> {
 }
 
 fn validate_property_bag_fields(value: &Value) -> Result<(), VmError> {
-    for name in ["year", "day"] {
-        let field = crate::execute::get_property_result(value, name)?;
-        if matches!(field, Value::Undefined) {
-            return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+    let year = crate::execute::get_property_result(value, "year")?;
+    let era = crate::execute::get_property_result(value, "era")?;
+    let era_year = crate::execute::get_property_result(value, "eraYear")?;
+    if matches!(year, Value::Undefined)
+        && (matches!(era, Value::Undefined) || matches!(era_year, Value::Undefined))
+    {
+        return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+    }
+    for field in [year, era_year] {
+        if !matches!(field, Value::Undefined) {
+            let number = crate::conversion::to_number(&field)?;
+            if !number.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
+            }
         }
-        let number = crate::conversion::to_number(&field)?;
-        if !number.is_finite() {
-            return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
-        }
+    }
+    let day = crate::execute::get_property_result(value, "day")?;
+    if matches!(day, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+    }
+    let number = crate::conversion::to_number(&day)?;
+    if !number.is_finite() {
+        return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
     }
     let month = crate::execute::get_property_result(value, "month")?;
     let month_code = crate::execute::get_property_result(value, "monthCode")?;
