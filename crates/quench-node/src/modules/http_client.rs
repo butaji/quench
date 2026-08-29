@@ -18,12 +18,22 @@ const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
 /// `(host, port, method, path, headers)` for one outbound request.
-type RequestOptions = (String, u16, String, String, Vec<(String, String)>);
+#[derive(Clone)]
+pub(crate) enum RequestTarget {
+    Tcp { host: String, port: u16 },
+    Unix { path: String },
+}
+
+struct RequestOptions {
+    target: RequestTarget,
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+}
 
 /// One outbound HTTP request, keyed by `CLIENT_ID_PROP`.
 pub struct ClientReq {
-    pub host: String,
-    pub port: u16,
+    pub target: RequestTarget,
     pub method: String,
     pub path: String,
     pub headers: Vec<(String, String)>,
@@ -109,11 +119,10 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     guard.http.clientreqs.insert(
         id,
         ClientReq {
-            host: opts.0,
-            port: opts.1,
-            method: opts.2,
-            path: opts.3,
-            headers: opts.4,
+            target: opts.target,
+            method: opts.method,
+            path: opts.path,
+            headers: opts.headers,
             body: Vec::new(),
             req: req.clone(),
             agent,
@@ -214,7 +223,7 @@ pub fn req_abort(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let (request, socket) = {
+    let (request, socket, target) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -223,13 +232,34 @@ pub fn req_abort(
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
         req.aborted = true;
-        (req.req.clone(), req.socket.clone())
+        (req.req.clone(), req.socket.clone(), req.target.clone())
     };
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
     if let Some(socket) = socket {
         net::socket_destroy(state, Some(&socket), &[])?;
+    }
+    if let RequestTarget::Unix { path } = target {
+        let active = state
+            .borrow()
+            .http
+            .clientreqs
+            .values()
+            .filter(|req| !req.aborted)
+            .count();
+        if active == 0 {
+            let server = state
+                .borrow()
+                .net
+                .servers
+                .values()
+                .find(|server| server.borrow().path.as_deref() == Some(path.as_str()))
+                .map(|server| server.borrow().js.clone());
+            if let Some(server) = server {
+                crate::modules::net::server_close(state, Some(&server), &[])?;
+            }
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -377,7 +407,7 @@ pub fn req_end(
             req_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (host, port, method, path, headers, body, agent, omit_host) = {
+    let (target, method, path, headers, body, agent, omit_host) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -386,8 +416,7 @@ pub fn req_end(
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
         (
-            req.host.clone(),
-            req.port,
+            req.target.clone(),
             req.method.clone(),
             req.path.clone(),
             req.headers.clone(),
@@ -399,6 +428,7 @@ pub fn req_end(
     if let Some(req_value) = receiver {
         set_request_property(Some(req_value), "finished", Value::Boolean(true));
     }
+    let host = target_host(&target);
     let head = request_head(&host, &method, &path, &headers, body.len(), omit_host);
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         let updated =
@@ -407,20 +437,31 @@ pub fn req_end(
     }
     let socket = match agent.as_ref().and_then(custom_connection) {
         Some(connection) => {
-            let options = host_api::object(vec![
+            let mut option_props = vec![
                 ("host".into(), Value::String(host.clone())),
                 ("hostname".into(), Value::String(host.clone())),
-                ("port".into(), Value::Number(port as f64)),
                 ("path".into(), Value::String(path.clone())),
-            ]);
+            ];
+            if let RequestTarget::Tcp { port, .. } = &target {
+                option_props.push(("port".into(), Value::Number(*port as f64)));
+            }
+            if let RequestTarget::Unix { path } = &target {
+                option_props.push(("socketPath".into(), Value::String(path.clone())));
+                option_props.push(("port".into(), Value::String(path.clone())));
+            }
+            let options = host_api::object(option_props);
             let callback = host_api::object(Vec::new());
             let socket = execute::call(&connection, agent.as_ref().unwrap(), &[options, callback])?;
             let mut bytes = request_head(&host, &method, &path, &headers, body.len(), omit_host).into_bytes();
             bytes.extend_from_slice(&body);
-            let payload = host_api::bytes(&bytes);
-            let write = execute::get_property(&socket, "write");
-            if quench_runtime::is_callable(&write) {
-                execute::call(&write, &socket, &[payload])?;
+            if matches!(target, RequestTarget::Unix { .. }) {
+                state.borrow_mut().net.pending_writes.push((socket.clone(), bytes));
+            } else {
+                let payload = host_api::bytes(&bytes);
+                let write = execute::get_property(&socket, "write");
+                if quench_runtime::is_callable(&write) {
+                    execute::call(&write, &socket, &[payload])?;
+                }
             }
             let resume = execute::get_property(&socket, "resume");
             if quench_runtime::is_callable(&resume) {
@@ -428,7 +469,7 @@ pub fn req_end(
             }
             socket
         }
-        None => send_request(state, &host, port, &method, &path, &headers, &body, omit_host)?,
+        None => send_request(state, &target, &method, &path, &headers, &body, omit_host)?,
     };
     let socket_id = net::net_id(&socket);
     let mut guard = state.borrow_mut();
@@ -445,24 +486,37 @@ pub fn req_end(
 
 fn send_request(
     state: &Rc<RefCell<HostState>>,
-    host: &str,
-    port: u16,
+    target: &RequestTarget,
     method: &str,
     path: &str,
     headers: &[(String, String)],
     body: &[u8],
     omit_host: bool,
 ) -> Result<Value, VmError> {
-    let socket = net::connect(
-        state,
-        &[Value::Number(port as f64), Value::String(host.to_string())],
-    )?;
-    let head = request_head(host, method, path, headers, body.len(), omit_host);
+    let host = target_host(target);
+    let socket = match target {
+        RequestTarget::Tcp { host, port } => net::connect(
+            state,
+            &[Value::Number(*port as f64), Value::String(host.clone())],
+        )?,
+        RequestTarget::Unix { path } => net::connect_path(state, path)?,
+    };
+    let head = request_head(&host, method, path, headers, body.len(), omit_host);
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
-    let payload = host_api::bytes(&payload);
-    net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
+    if matches!(target, RequestTarget::Unix { .. }) {
+        state.borrow_mut().net.pending_writes.push((socket.clone(), payload));
+    } else {
+        net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
+    }
     Ok(socket)
+}
+
+fn target_host(target: &RequestTarget) -> String {
+    match target {
+        RequestTarget::Tcp { host, .. } => host.clone(),
+        RequestTarget::Unix { .. } => "localhost".into(),
+    }
 }
 
 fn request_head(
@@ -941,12 +995,13 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
 fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
     match value {
         Some(Value::String(url)) => http_url(url),
-        Some(Value::Object(_)) => {
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => {
             let options = value.cloned().unwrap_or(Value::Undefined);
             // Legacy url.parse() exposes `host`/`path`, while WHATWG URL
             // exposes `hostname`/`pathname`/`search`; both are request facts.
             let raw_host = opt_first(&options, &["host", "hostname"])?
                 .unwrap_or_else(|| "127.0.0.1".to_string());
+            let socket_path = opt(&options, "socketPath")?;
             let explicit_port = opt(&options, "port")?.and_then(|p| p.parse().ok());
             let (host, port) = split_host_port(&raw_host, explicit_port);
             let method = opt(&options, "method")?.unwrap_or_else(|| "GET".to_string());
@@ -1007,7 +1062,10 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                     }
                 }
             }
-            Ok((host, port, method, path, headers))
+            let target = socket_path
+                .filter(|path| !path.is_empty())
+                .map_or(RequestTarget::Tcp { host, port }, |path| RequestTarget::Unix { path });
+            Ok(RequestOptions { target, method, path, headers })
         }
         _ => Err(execute::type_error("options must be a string or object")),
     }
@@ -1098,5 +1156,10 @@ fn http_url(value: &str) -> Result<RequestOptions, VmError> {
         Some((h, p)) if p.parse::<u16>().is_ok() => (h.to_string(), p.parse().unwrap()),
         _ => (authority.to_string(), 80),
     };
-    Ok((host, port, "GET".to_string(), path.to_string(), Vec::new()))
+    Ok(RequestOptions {
+        target: RequestTarget::Tcp { host, port },
+        method: "GET".to_string(),
+        path: path.to_string(),
+        headers: Vec::new(),
+    })
 }
