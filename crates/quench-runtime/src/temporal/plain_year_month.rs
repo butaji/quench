@@ -1,5 +1,19 @@
 use crate::{execute::VmError, value::Value};
 
+const CALENDAR_MIN_MONTHS: &[(&str, i32, u32)] = &[
+    ("buddhist", -271_278, 3),
+    ("ethioaa", -266_323, 3),
+    ("hebrew", -268_058, 10),
+];
+
+const CALENDAR_MAX_MONTHS: &[(&str, i32, u32)] = &[
+    ("coptic", 275_471, 7),
+    ("ethiopic", 275_747, 7),
+    ("indian", 275_682, 8),
+    ("persian", 275_139, 8),
+    ("roc", 273_849, 10),
+];
+
 pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
     construct_inner(year, month, None, "iso8601")
 }
@@ -80,6 +94,33 @@ fn construct_inner(
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
         ));
+    }
+    if !matches!(calendar, "iso8601" | "gregory") {
+        if let Some((iso_year, iso_month, iso_day)) =
+            crate::temporal::plain_date::calendar_iso_date(year as i32, month as u32, 1, calendar)
+        {
+            let before_min = (iso_year, iso_month, iso_day) <= (-271_821, 4, 19);
+            let after_max = (iso_year, iso_month, iso_day) > (275_760, 9, 13);
+            if before_min || after_max {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainYearMonth",
+                ));
+            }
+        }
+        if CALENDAR_MIN_MONTHS.iter().any(|(name, min_year, min_month)| {
+            calendar == *name && year == f64::from(*min_year) && month <= f64::from(*min_month)
+        }) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
+        if CALENDAR_MAX_MONTHS.iter().any(|(name, max_year, max_month)| {
+            calendar == *name && year == f64::from(*max_year) && month >= f64::from(*max_month)
+        }) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
     }
     if let Some(day) = reference_iso_day {
         if !day.is_finite() || !(1.0..=31.0).contains(&day) {
