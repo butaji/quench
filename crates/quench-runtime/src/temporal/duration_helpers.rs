@@ -226,20 +226,17 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         .map(|value| relative_date(value))
         .transpose()?;
     let zoned_relative = relative_to.as_ref().and_then(zoned_relative_value);
-    let day_units = number_property(&left, "days") != 0.0
-        || number_property(&right, "days") != 0.0;
-    let difference = if date_units(&left)
-        || date_units(&right)
-        || day_units && zoned_relative.is_some()
-    {
-        if let Some(relative) = zoned_relative.as_ref() {
-            duration_difference_zoned(&left, &right, relative)?
+    let day_units = number_property(&left, "days") != 0.0 || number_property(&right, "days") != 0.0;
+    let difference =
+        if date_units(&left) || date_units(&right) || day_units && zoned_relative.is_some() {
+            if let Some(relative) = zoned_relative.as_ref() {
+                duration_difference_zoned(&left, &right, relative)?
+            } else {
+                duration_difference(&left, &right, date)?
+            }
         } else {
-            duration_difference(&left, &right, date)?
-        }
-    } else {
-        exact_time_difference(&left, &right)
-    };
+            exact_time_difference(&left, &right)
+        };
     if difference == 0 {
         return Ok(Value::Number(0.0));
     }
@@ -294,13 +291,18 @@ fn epoch_of(value: &Value) -> Result<i128, VmError> {
     }
 }
 
-fn duration_epoch_delta(duration: &Value, relative: &Value) -> Result<i128, VmError> {
+fn zoned_target(duration: &Value, relative: &Value) -> Result<Value, VmError> {
     let result = crate::temporal::execute(
         crate::ops::Builtin::TemporalZonedDateTimeAdd,
         Some(relative),
         std::slice::from_ref(duration),
     )
     .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))??;
+    Ok(result)
+}
+
+fn duration_epoch_delta(duration: &Value, relative: &Value) -> Result<i128, VmError> {
+    let result = zoned_target(duration, relative)?;
     Ok(epoch_of(&result)? - epoch_of(relative)?)
 }
 
@@ -312,6 +314,137 @@ fn duration_difference_zoned(
     let left_delta = duration_epoch_delta(left, relative)?;
     let right_delta = duration_epoch_delta(right, relative)?;
     Ok(left_delta - right_delta)
+}
+
+fn zoned_total_days(duration: &Value, relative: &Value) -> Result<f64, VmError> {
+    let actual = duration_epoch_delta(duration, relative)?;
+    if actual == 0 {
+        return Ok(0.0);
+    }
+    let target = zoned_target(duration, relative)?;
+    let start_date = (
+        crate::conversion::to_number(&crate::execute::get_property_result(relative, "year")?)?
+            as i32,
+        crate::conversion::to_number(&crate::execute::get_property_result(relative, "month")?)?
+            as u32,
+        crate::conversion::to_number(&crate::execute::get_property_result(relative, "day")?)?
+            as u32,
+    );
+    let end_date = (
+        crate::conversion::to_number(&crate::execute::get_property_result(&target, "year")?)?
+            as i32,
+        crate::conversion::to_number(&crate::execute::get_property_result(&target, "month")?)?
+            as u32,
+        crate::conversion::to_number(&crate::execute::get_property_result(&target, "day")?)? as u32,
+    );
+    let mut day_delta = crate::temporal::plain_date::date_serial(
+        end_date.0 as f64,
+        end_date.1 as f64,
+        end_date.2 as f64,
+    ) - crate::temporal::plain_date::date_serial(
+        start_date.0 as f64,
+        start_date.1 as f64,
+        start_date.2 as f64,
+    );
+    let day_duration = |days: f64| {
+        construct(&[
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(days),
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(0.0),
+        ])
+    };
+    // A skipped or repeated local midnight means the ISO date difference can
+    // be off by one from the number of whole Temporal days. Adjust against
+    // the actual epoch delta before computing the fractional day.
+    for _ in 0..4 {
+        let candidate = day_duration(day_delta as f64)?;
+        let candidate_delta = duration_epoch_delta(&candidate, relative)?;
+        if (actual >= 0 && candidate_delta > actual) || (actual < 0 && candidate_delta < actual) {
+            day_delta += if actual < 0 { 1 } else { -1 };
+        } else {
+            break;
+        }
+    }
+    let anchor = day_duration(day_delta as f64)?;
+    let anchor_delta = duration_epoch_delta(&anchor, relative)?;
+    let direction = if actual < 0 { -1.0 } else { 1.0 };
+    let next = day_duration(day_delta as f64 + direction)?;
+    let day_length = (duration_epoch_delta(&next, relative)? - anchor_delta) as f64;
+    Ok(day_delta as f64 + (actual - anchor_delta) as f64 / day_length.abs())
+}
+
+fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Result<f64, VmError> {
+    // Calendar totals use the explicit calendar portion as the whole-unit
+    // anchor. The residual is measured in local calendar dates, so a DST
+    // disambiguation in the time portion cannot perturb an exact half-month.
+    let target = zoned_target(duration, relative)?;
+    let field = |value: &Value, name: &str| {
+        crate::conversion::to_number(&crate::execute::get_property_result(value, name)?)
+    };
+    let start = (
+        field(relative, "year")? as f64,
+        field(relative, "month")? as f64,
+        field(relative, "day")? as f64,
+    );
+    let end = (
+        field(&target, "year")? as f64,
+        field(&target, "month")? as f64,
+        field(&target, "day")? as f64,
+    );
+    let whole = if unit == 0 {
+        field(duration, "years")?
+    } else {
+        field(duration, "years")? * 12.0 + field(duration, "months")?
+    };
+    let anchor = construct(&[
+        Value::Number(if unit == 0 {
+            whole
+        } else {
+            field(duration, "years")?
+        }),
+        Value::Number(if unit == 0 {
+            0.0
+        } else {
+            field(duration, "months")?
+        }),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+    ])?;
+    let anchor = zoned_target(&anchor, relative)?;
+    let anchor_date = (
+        field(&anchor, "year")? as f64,
+        field(&anchor, "month")? as f64,
+        field(&anchor, "day")? as f64,
+    );
+    let residual_days = (crate::temporal::plain_date::date_serial(end.0, end.1, end.2)
+        - crate::temporal::plain_date::date_serial(anchor_date.0, anchor_date.1, anchor_date.2))
+        as f64;
+    let span =
+        crate::temporal::plain_date::days_in_month_for_record(end.0 as i32, end.1 as u32) as f64;
+    if unit == 0 {
+        let year = end.0 as i32;
+        let year_span = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            366.0
+        } else {
+            365.0
+        };
+        Ok(whole + residual_days / year_span)
+    } else {
+        Ok(whole + residual_days / span)
+    }
 }
 
 fn relative_to_option(value: &Value) -> Result<Value, VmError> {
@@ -690,7 +823,8 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
             let offset = &base[sign..];
             let supplied_seconds = offset_seconds(offset);
             let clock = &base[..sign];
-            if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(clock, "%Y-%m-%dT%H:%M:%S") {
+            if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(clock, "%Y-%m-%dT%H:%M:%S")
+            {
                 let epoch = date_time.and_utc().timestamp();
                 {
                     if let Ok(zone) = annotation.parse::<chrono_tz::Tz>() {
@@ -723,9 +857,18 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
 fn offset_seconds(value: &str) -> i32 {
     let sign = if value.starts_with('-') { -1 } else { 1 };
     let digits = value[1..].replace(':', "");
-    let hour = digits.get(0..2).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-    let minute = digits.get(2..4).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-    let second = digits.get(4..6).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    let hour = digits
+        .get(0..2)
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(0);
+    let minute = digits
+        .get(2..4)
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(0);
+    let second = digits
+        .get(4..6)
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(0);
     sign * (hour * 3600 + minute * 60 + second)
 }
 
