@@ -883,11 +883,21 @@ impl RegisterFile {
 
     #[inline(always)]
     pub fn read_number(&self, index: usize) -> Option<f64> {
-        match self.words.get(index)?.decode() {
-            DecodedValue::Number(value) => Some(value),
-            DecodedValue::I31(value) => Some(f64::from(value)),
-            _ => None,
-        }
+        decoded_number(self.words.get(index)?.decode())
+    }
+
+    /// Decode two numeric words as one guarded Fast read. Keeping the pair
+    /// operation beside `read_number` makes the Dynamic→Fast fact canonical
+    /// while avoiding two separate `Option::zip` chains in binary ops.
+    #[inline(always)]
+    pub(crate) fn read_number_pair(
+        &self,
+        left: usize,
+        right: usize,
+    ) -> Option<(f64, f64)> {
+        let left = decoded_number(self.words.get(left)?.decode())?;
+        let right = decoded_number(self.words.get(right)?.decode())?;
+        Some((left, right))
     }
 
     /// Decide ToBoolean directly when the execute word contains the complete
@@ -1070,6 +1080,15 @@ impl RegisterFile {
     }
 }
 
+#[inline(always)]
+fn decoded_number(value: DecodedValue) -> Option<f64> {
+    match value {
+        DecodedValue::Number(value) => Some(value),
+        DecodedValue::I31(value) => Some(f64::from(value)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod truthiness_tests {
     use super::RegisterFile;
@@ -1173,6 +1192,13 @@ mod tests {
         assert!(destination.copy_from(0, &source, 0));
         assert_eq!(destination.read_number(0), Some(42.0));
         assert_eq!(source.read_number(0), Some(42.0));
+    }
+
+    #[test]
+    fn numeric_pair_decode_keeps_number_fast_facts() {
+        let registers = RegisterFile::from_values(vec![Value::Number(42.0), Value::Number(1.5)]);
+        assert_eq!(registers.read_number_pair(0, 1), Some((42.0, 1.5)));
+        assert_eq!(registers.read_number_pair(0, 4), None);
     }
 
     #[test]
