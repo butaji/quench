@@ -457,6 +457,19 @@ impl ArrayData {
             && self.argument_live.is_none()
     }
 
+    /// Prove that indexed reads/writes have no prototype, descriptor, or
+    /// side-property interception. Unlike `is_packed_data`, this also admits
+    /// a holey dense store: a missing dense slot simply observes `undefined`.
+    #[inline]
+    pub(crate) fn is_plain_dense_access(&self) -> bool {
+        !self.is_sparse()
+            && self.properties.is_empty()
+            && self.indexed_descriptors_plain()
+            && self.has_default_array_prototype()
+            && !self.arguments
+            && self.argument_live.is_none()
+    }
+
     /// Prove that indexed writes cannot be intercepted by array metadata.
     /// Holes are allowed because fill materializes every slot in its range.
     #[inline]
@@ -960,6 +973,19 @@ impl ArrayData {
         stored
     }
 
+    #[inline(always)]
+    pub(crate) fn set_plain_existing_f64(&self, index: usize, number: f64) -> bool {
+        let stored = self.is_plain_dense_access()
+            && index < self.logical_len()
+            && self.deleted.get(index) != Some(&true)
+            && self.values.set_existing_number(index, number);
+        if stored {
+            self.kind
+                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+        }
+        stored
+    }
+
     /// Extend a pre-sized holey array in index order without cloning its
     /// identity. Structural uncertainty remains slow; this accepts only the
     /// next missing slot of the canonical numeric prefix.
@@ -1007,12 +1033,13 @@ impl ArrayData {
 
     #[inline]
     fn has_default_array_prototype(&self) -> bool {
-        self.prototype.borrow().as_ref().is_none_or(|prototype| {
-            matches!(
-                prototype,
-                Value::Builtin(crate::ops::Builtin::ArrayPrototype)
-            )
-        })
+        crate::builtins::array_prototype_is_clean()
+            && self.prototype.borrow().as_ref().is_none_or(|prototype| {
+                matches!(
+                    prototype,
+                    Value::Builtin(crate::ops::Builtin::ArrayPrototype)
+                )
+            })
     }
 
     /// Array length is a mandatory non-enumerable descriptor. It must not
