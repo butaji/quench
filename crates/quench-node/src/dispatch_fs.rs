@@ -73,6 +73,7 @@ const CAP_FSP_OPEN: u16 = 0x116A;
 const CAP_FS_HANDLE_READ: u16 = 0x116B;
 const CAP_FS_HANDLE_CLOSE: u16 = 0x116C;
 const CAP_FS_CLOSE: u16 = 0x116E;
+const CAP_FS_HANDLE_READFILE: u16 = 0x116F;
 const CAP_FSP_READFILE: u16 = 0x1140;
 const CAP_FSP_WRITEFILE: u16 = 0x1141;
 const CAP_FSP_APPENDFILE: u16 = 0x1142;
@@ -130,6 +131,7 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_HANDLE_READ => crate::modules::fs::file_handle_read,
         CAP_FS_HANDLE_CLOSE => crate::modules::fs::file_handle_close,
         CAP_FS_CLOSE => crate::modules::fs::close,
+        CAP_FS_HANDLE_READFILE => crate::modules::fs::file_handle_read_file,
         _ => return fs_dispatch_more(cap),
     })
 }
