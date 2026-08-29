@@ -5,11 +5,12 @@
 //! no second JavaScript object model is introduced.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
+use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef};
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
@@ -18,6 +19,12 @@ const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 const HOOK_ID: &str = "\0quench:async_hooks:hook";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
+const LOCAL_DEFAULT: &str = "\0quench:async_hooks:local:default";
+const SCOPE_ID: &str = "\0quench:async_hooks:scope:id";
+const SCOPE_RESOURCE: &str = "\0quench:async_hooks:scope:resource";
+const SCOPE_PREVIOUS: &str = "\0quench:async_hooks:scope:previous";
+const SCOPE_HAD_PREVIOUS: &str = "\0quench:async_hooks:scope:had_previous";
+const SCOPE_ACTIVE: &str = "\0quench:async_hooks:scope:active";
 
 #[derive(Clone, Debug, Default)]
 struct Hook {
@@ -32,9 +39,11 @@ struct Hook {
 
 use crate::registry::{
     SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID, SPEC_ASYNC_EXECUTION_RESOURCE,
-    SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE, SPEC_ASYNC_LOCAL_DISABLE,
-    SPEC_ASYNC_LOCAL_ENTER, SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_RESOURCE,
-    SPEC_ASYNC_RESOURCE_AFTER, SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY,
+    SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE, SPEC_ASYNC_LOCAL_BIND,
+    SPEC_ASYNC_LOCAL_BIND_CALL, SPEC_ASYNC_LOCAL_DISABLE, SPEC_ASYNC_LOCAL_ENTER,
+    SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_SNAPSHOT,
+    SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER,
+    SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_DOMAIN,
     SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER,
     SPEC_ASYNC_TRIGGER_ID,
 };
@@ -54,6 +63,8 @@ pub struct AsyncHooksState {
     next_local_id: u64,
     pub(crate) current_local_store: Option<Value>,
     resource_stack: Vec<(u64, Option<Value>)>,
+    destroyed_resources: HashSet<u64>,
+    tracked_resources: HashMap<u64, (Value, bool)>,
 }
 
 impl AsyncHooksState {
@@ -72,6 +83,8 @@ impl AsyncHooksState {
             next_local_id: 1,
             current_local_store: None,
             resource_stack: Vec::new(),
+            destroyed_resources: HashSet::new(),
+            tracked_resources: HashMap::new(),
         }
     }
 
@@ -87,6 +100,35 @@ impl AsyncHooksState {
 }
 
 pub fn build() -> Value {
+    let async_local_storage = {
+        let global = quench_runtime::vm::current_global_object();
+        let canonical = execute::get_property(&global, "__nodeAsyncLocalStorage");
+        if quench_runtime::is_callable(&canonical) {
+            canonical
+        } else {
+            crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE)
+        }
+    };
+    if matches!(
+        execute::get_own_property_descriptor(&async_local_storage, "bind"),
+        Ok(Value::Undefined) | Err(_)
+    ) {
+        let _ = execute::set_property_in_place(
+            &async_local_storage,
+            "bind",
+            crate::host::capability(SPEC_ASYNC_LOCAL_BIND),
+        );
+    }
+    if matches!(
+        execute::get_own_property_descriptor(&async_local_storage, "snapshot"),
+        Ok(Value::Undefined) | Err(_)
+    ) {
+        let _ = execute::set_property_in_place(
+            &async_local_storage,
+            "snapshot",
+            crate::host::capability(SPEC_ASYNC_LOCAL_SNAPSHOT),
+        );
+    }
     crate::host::namespace_object(vec![
         (
             "AsyncResource",
@@ -108,10 +150,7 @@ pub fn build() -> Value {
             "createHook",
             crate::host::capability(SPEC_ASYNC_CREATE_HOOK),
         ),
-        (
-            "AsyncLocalStorage",
-            crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE),
-        ),
+        ("AsyncLocalStorage", async_local_storage),
         (
             "__quenchWorkerResource",
             crate::host::capability(crate::registry::SPEC_ASYNC_WORKER_RESOURCE),
@@ -144,10 +183,14 @@ pub fn new_async_local_storage(
     let mut host = state.borrow_mut();
     let id = host.async_hooks.next_local_id;
     host.async_hooks.next_local_id += 1;
-    let object = crate::host::namespace_object_from_pairs(vec![(
-        LOCAL_ID.to_string(),
-        Value::Number(id as f64),
-    )]);
+    let default = args
+        .first()
+        .and_then(|options| id_property(options, "defaultValue"))
+        .unwrap_or(Value::Undefined);
+    let object = crate::host::namespace_object_from_pairs(vec![
+        (LOCAL_ID.to_string(), Value::Number(id as f64)),
+        (LOCAL_DEFAULT.to_string(), default),
+    ]);
     let object = execute::set_property(
         object,
         "getStore",
@@ -159,6 +202,16 @@ pub fn new_async_local_storage(
         object,
         "enterWith",
         crate::host::capability(SPEC_ASYNC_LOCAL_ENTER),
+    );
+    let object = execute::set_property(
+        object,
+        "exit",
+        crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_EXIT),
+    );
+    let object = execute::set_property(
+        object,
+        "withScope",
+        crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_SCOPE),
     );
     Ok(execute::set_property(
         object,
@@ -181,13 +234,18 @@ pub fn local_get_store(
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
     let resource_id = state.borrow().async_hooks.current_id;
-    Ok(state
+    let store = state
         .borrow()
         .async_hooks
         .local_stores
         .get(&(resource_id, id))
         .cloned()
-        .unwrap_or(Value::Undefined))
+        .unwrap_or_else(|| {
+            receiver
+                .map(|value| execute::get_property(value, LOCAL_DEFAULT))
+                .unwrap_or(Value::Undefined)
+        });
+    Ok(store)
 }
 
 pub fn local_enter_with(
@@ -217,6 +275,242 @@ pub fn local_disable(
             .retain(|(_, local_id), _| *local_id != id);
     }
     Ok(Value::Undefined)
+}
+
+pub fn local_exit(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::NotCallable);
+    }
+    let id = local_id(receiver).unwrap_or_default();
+    let resource_id = state.borrow().async_hooks.current_id;
+    let previous = state
+        .borrow_mut()
+        .async_hooks
+        .local_stores
+        .remove(&(resource_id, id));
+    let result = execute::call(callback, receiver.unwrap_or(&Value::Undefined), &args[1..]);
+    if let Some(value) = previous {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .insert((resource_id, id), value);
+    }
+    result
+}
+
+pub fn local_scope(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let id = local_id(receiver).unwrap_or_default();
+    let resource = state.borrow().async_hooks.current_id;
+    let previous = state.borrow_mut().async_hooks.local_stores.insert(
+        (resource, id),
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
+    let dispose = crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_SCOPE_DISPOSE);
+    Ok(host_api::object(vec![
+        (SCOPE_ID.into(), Value::Number(id as f64)),
+        (SCOPE_RESOURCE.into(), Value::Number(resource as f64)),
+        (
+            SCOPE_PREVIOUS.into(),
+            previous.clone().unwrap_or(Value::Undefined),
+        ),
+        (
+            SCOPE_HAD_PREVIOUS.into(),
+            Value::Boolean(previous.is_some()),
+        ),
+        (SCOPE_ACTIVE.into(), Value::Boolean(true)),
+        ("dispose".into(), dispose.clone()),
+        ("Symbol.dispose".into(), dispose),
+    ]))
+}
+
+pub fn local_scope_dispose(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let Some(scope) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    if !matches!(
+        execute::get_property(scope, SCOPE_ACTIVE),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
+    let resource = number(execute::get_property(scope, SCOPE_RESOURCE)).unwrap_or(1);
+    let id = number(execute::get_property(scope, SCOPE_ID)).unwrap_or_default();
+    let previous = execute::get_property(scope, SCOPE_PREVIOUS);
+    let had_previous = matches!(
+        execute::get_property(scope, SCOPE_HAD_PREVIOUS),
+        Value::Boolean(true)
+    );
+    if had_previous {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .insert((resource, id), previous);
+    } else {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .remove(&(resource, id));
+    }
+    let _ = execute::set_property_in_place(scope, SCOPE_ACTIVE, Value::Boolean(false));
+    Ok(Value::Undefined)
+}
+
+pub fn local_bind(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or_else(|| invalid_callback("fn"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(invalid_callback("fn"));
+    }
+    let context = capture_local_context(state);
+    Ok(host_api::bound_capability_with_arguments(
+        local_capability(SPEC_ASYNC_LOCAL_BIND_CALL),
+        vec![callback.clone(), context],
+    ))
+}
+
+pub fn local_bind_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or(VmError::NotCallable)?;
+    let context = args.get(1).cloned().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::NotCallable);
+    }
+    let result = with_local_context(state, &context, || {
+        execute::call(
+            callback,
+            receiver.unwrap_or(&Value::Undefined),
+            args.get(2..).unwrap_or(&[]),
+        )
+    });
+    result
+}
+
+pub fn local_snapshot(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let context = capture_local_context(state);
+    Ok(host_api::bound_capability_with_arguments(
+        local_capability(SPEC_ASYNC_LOCAL_SNAPSHOT_CALL),
+        vec![context],
+    ))
+}
+
+pub fn local_snapshot_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let context = args.first().cloned().ok_or(VmError::NotCallable)?;
+    let callback = args.get(1).ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::NotCallable);
+    }
+    with_local_context(state, &context, || {
+        execute::call(
+            callback,
+            receiver.unwrap_or(&Value::Undefined),
+            args.get(2..).unwrap_or(&[]),
+        )
+    })
+}
+
+fn capture_local_context(state: &Rc<RefCell<HostState>>) -> Value {
+    let host = state.borrow();
+    let resource = host.async_hooks.current_id;
+    let values = host
+        .async_hooks
+        .local_stores
+        .iter()
+        .filter(|((resource_id, _), _)| *resource_id == resource)
+        .flat_map(|((_, local_id), value)| [Value::Number(*local_id as f64), value.clone()])
+        .collect();
+    host_api::array(values)
+}
+
+fn with_local_context<T>(
+    state: &Rc<RefCell<HostState>>,
+    context: &Value,
+    callback: impl FnOnce() -> Result<T, VmError>,
+) -> Result<T, VmError> {
+    let resource = state.borrow().async_hooks.current_id;
+    let captured = match context {
+        Value::Array(values) => values.to_vec(),
+        _ => Vec::new(),
+    };
+    let previous = {
+        let mut host = state.borrow_mut();
+        let previous = host
+            .async_hooks
+            .local_stores
+            .iter()
+            .filter(|((resource_id, _), _)| *resource_id == resource)
+            .map(|((_, local_id), value)| (*local_id, value.clone()))
+            .collect::<Vec<_>>();
+        host.async_hooks
+            .local_stores
+            .retain(|(resource_id, _), _| *resource_id != resource);
+        for pair in captured.chunks_exact(2) {
+            if let Value::Number(local_id) = pair[0] {
+                host.async_hooks
+                    .local_stores
+                    .insert((resource, local_id as u64), pair[1].clone());
+            }
+        }
+        previous
+    };
+    let result = callback();
+    let mut host = state.borrow_mut();
+    host.async_hooks
+        .local_stores
+        .retain(|(resource_id, _), _| *resource_id != resource);
+    for (local_id, value) in previous {
+        host.async_hooks
+            .local_stores
+            .insert((resource, local_id), value);
+    }
+    result
+}
+
+fn invalid_callback(name: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(format!("The \"{name}\" argument must be of type function")),
+        ),
+    ]))
+}
+
+fn local_capability(spec: crate::registry::NodeSpec) -> HostCapabilityRef {
+    HostCapabilityRef {
+        realm: quench_runtime::vm::current_context().realm(),
+        kind: HostCapabilityKind::Custom(spec.cap),
+    }
 }
 
 pub fn local_run(
@@ -289,10 +583,56 @@ pub fn execution_resource(
 
 pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let parent_id = state.borrow().async_hooks.current_id;
-    let trigger = args
-        .first()
-        .and_then(|value| trigger_id_of(state, value))
-        .unwrap_or(state.borrow().async_hooks.current_id);
+    let public_constructor = matches!(args.first(), Some(Value::String(_)));
+    if args.is_empty() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"type\" argument must be specified".into()),
+            ),
+        ])));
+    }
+    if matches!(args.first(), Some(Value::String(value)) if value.is_empty()) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_ASYNC_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("Invalid asyncId type".into()),
+            ),
+        ])));
+    }
+    if let Some(Value::Number(id)) = args.get(1) {
+        if !id.is_finite() || *id < 0.0 || id.fract() != 0.0 {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("RangeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ASYNC_ID".into())),
+                ("message".into(), Value::String("Invalid asyncId".into())),
+            ])));
+        }
+    }
+    let trigger = if public_constructor {
+        args.get(1)
+            .and_then(|options| id_property(options, "triggerAsyncId"))
+            .and_then(|value| match value {
+                Value::Number(id) if id.is_finite() && id >= 0.0 => Some(id as u64),
+                _ => None,
+            })
+            .unwrap_or(parent_id)
+    } else {
+        args.first()
+            .and_then(|value| trigger_id_of(state, value))
+            .unwrap_or(parent_id)
+    };
+    let inheritance_parent = if public_constructor {
+        parent_id
+    } else {
+        args.first()
+            .and_then(|value| trigger_id_of(state, value))
+            .unwrap_or(parent_id)
+    };
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let inherited: Vec<(u64, Value)> = state
         .borrow()
@@ -300,7 +640,7 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         .local_stores
         .iter()
         .filter_map(|((resource_id, local_id), value)| {
-            (*resource_id == parent_id).then(|| (*local_id, value.clone()))
+            (*resource_id == inheritance_parent).then(|| (*local_id, value.clone()))
         })
         .collect();
     for (local_id, value) in inherited {
@@ -338,11 +678,42 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             crate::host::capability(SPEC_ASYNC_RESOURCE_TRIGGER),
         ),
     ]);
+    let resource = execute::define_property(
+        resource,
+        "domain",
+        host_api::object(vec![
+            ("configurable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            (
+                "get".into(),
+                crate::host::capability(SPEC_ASYNC_RESOURCE_DOMAIN),
+            ),
+        ]),
+    )?;
+    let require_manual_destroy = public_constructor
+        && args.get(1).is_some_and(|options| {
+            matches!(
+                id_property(options, "requireManualDestroy"),
+                Some(Value::Boolean(true))
+            )
+        });
+    if public_constructor {
+        state
+            .borrow_mut()
+            .async_hooks
+            .tracked_resources
+            .insert(id, (resource.clone(), require_manual_destroy));
+    }
     let callbacks = active_callbacks(state, HookEvent::Init);
-    let resource_type = args
-        .get(1)
-        .cloned()
-        .unwrap_or(Value::String("AsyncResource".into()));
+    let resource_type = if public_constructor {
+        args.first()
+            .cloned()
+            .unwrap_or(Value::String("AsyncResource".into()))
+    } else {
+        args.get(1)
+            .cloned()
+            .unwrap_or(Value::String("AsyncResource".into()))
+    };
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
     for callback in callbacks {
@@ -358,6 +729,27 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         );
     }
     Ok(resource)
+}
+
+pub fn resource_domain(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        (
+            "code".into(),
+            Value::String("ERR_ASYNC_RESOURCE_DOMAIN_REMOVED".into()),
+        ),
+        (
+            "message".into(),
+            Value::String(
+                "The domain property on AsyncResource has been removed. Use AsyncLocalStorage instead."
+                    .into(),
+            ),
+        ),
+    ])))
 }
 
 /// Register an externally-created worker object with the canonical hook state.
@@ -454,11 +846,52 @@ pub fn resource_after(
 }
 
 pub fn resource_destroy(
-    _: &Rc<RefCell<HostState>>,
-    _: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
+    let Some(resource) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    let id = id_property(resource, ASYNC_ID)
+        .and_then(number)
+        .unwrap_or(0);
+    let callbacks = {
+        let mut host = state.borrow_mut();
+        host.async_hooks.tracked_resources.remove(&id);
+        if !host.async_hooks.destroyed_resources.insert(id) {
+            return Ok(Value::Undefined);
+        }
+        active_callbacks_from(&host.async_hooks, HookEvent::Destroy)
+    };
+    for callback in callbacks {
+        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+    }
     Ok(Value::Undefined)
+}
+
+/// Deliver the explicit `gc()` boundary for user-created resources. The
+/// runtime's object collector remains independent; this host state machine
+/// only drains resources whose Node contract permits automatic destruction.
+pub fn collect_garbage(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let mut pending = Vec::new();
+    {
+        let mut host = state.borrow_mut();
+        host.async_hooks
+            .tracked_resources
+            .retain(|_, (resource, manual)| {
+                if *manual {
+                    true
+                } else {
+                    pending.push(resource.clone());
+                    false
+                }
+            });
+    }
+    for resource in pending {
+        resource_destroy(state, Some(&resource), &[])?;
+    }
+    Ok(())
 }
 pub fn resource_run(
     state: &Rc<RefCell<HostState>>,

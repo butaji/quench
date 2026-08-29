@@ -2,78 +2,7 @@
 
 use crate::dispatch_handlers::CallHandler;
 use crate::modules::{fs_async, fs_promises, fs_stats, fs_sync};
-
-const CAP_FS_READFILE: u16 = 0x1100;
-const CAP_FS_WRITEFILE: u16 = 0x1101;
-const CAP_FS_STAT: u16 = 0x1102;
-const CAP_FS_READDIR: u16 = 0x1103;
-const CAP_FS_EXISTS: u16 = 0x1104;
-const CAP_FS_MKDIR: u16 = 0x1105;
-const CAP_FS_UNLINK: u16 = 0x1106;
-const CAP_FS_READFILESYNC: u16 = 0x1107;
-const CAP_FS_WRITEFILESYNC: u16 = 0x1108;
-const CAP_FS_STATSYNC: u16 = 0x1109;
-const CAP_FS_READDIRSYNC: u16 = 0x110A;
-const CAP_FS_EXISTSSYNC: u16 = 0x110B;
-const CAP_FS_REALSYNC: u16 = 0x110C;
-const CAP_FS_LSTAT: u16 = 0x110D;
-const CAP_FS_ACCESS: u16 = 0x110E;
-const CAP_FS_RMDIR: u16 = 0x110F;
-const CAP_FS_RM: u16 = 0x1110;
-const CAP_FS_RENAME: u16 = 0x1111;
-const CAP_FS_APPENDFILE: u16 = 0x1112;
-const CAP_FS_COPYFILE: u16 = 0x1113;
-const CAP_FS_MKDTEMP: u16 = 0x1114;
-const CAP_FS_READLINK: u16 = 0x1115;
-const CAP_FS_CHMOD: u16 = 0x1116;
-const CAP_FS_TRUNCATE: u16 = 0x1117;
-const CAP_FS_LSTATSYNC: u16 = 0x1118;
-const CAP_FS_ACCESSSYNC: u16 = 0x1119;
-const CAP_FS_RMDIRSYNC: u16 = 0x111A;
-const CAP_FS_RMSYNC: u16 = 0x111B;
-const CAP_FS_RENAMESYNC: u16 = 0x111C;
-const CAP_FS_APPENDFILESYNC: u16 = 0x111D;
-const CAP_FS_COPYFILESYNC: u16 = 0x111E;
-const CAP_FS_MKDTEMPSYNC: u16 = 0x111F;
-const CAP_FS_READLINKSYNC: u16 = 0x1120;
-const CAP_FS_CHMODSYNC: u16 = 0x1121;
-const CAP_FS_TRUNCATESYNC: u16 = 0x1122;
-const CAP_FS_MKDIRSYNC: u16 = 0x1123;
-const CAP_FS_UNLINKSYNC: u16 = 0x1124;
-const CAP_FS_SYMLINKSYNC: u16 = 0x1125;
-const CAP_FS_STAT_ISFILE: u16 = 0x1130;
-const CAP_FS_STAT_ISDIR: u16 = 0x1131;
-const CAP_FS_STAT_ISSYMLINK: u16 = 0x1132;
-const CAP_FS_STAT_ISBLOCK: u16 = 0x1133;
-const CAP_FS_STAT_ISCHAR: u16 = 0x1134;
-const CAP_FS_STAT_ISFIFO: u16 = 0x1135;
-const CAP_FS_STAT_ISSOCKET: u16 = 0x1136;
-
-const CAP_FS_REALPATH: u16 = 0x1137;
-const CAP_FS_WATCH: u16 = 0x1152;
-const CAP_FS_WATCH_CLOSE: u16 = 0x1157;
-const CAP_FS_READSTREAM: u16 = 0x1153;
-const CAP_FS_WRITESTREAM: u16 = 0x1154;
-const CAP_FS_OPENDIR: u16 = 0x1155;
-const CAP_FS_OPENDIRSYNC: u16 = 0x1156;
-const CAP_FSP_READFILE: u16 = 0x1140;
-const CAP_FSP_WRITEFILE: u16 = 0x1141;
-const CAP_FSP_APPENDFILE: u16 = 0x1142;
-const CAP_FSP_STAT: u16 = 0x1143;
-const CAP_FSP_LSTAT: u16 = 0x1144;
-const CAP_FSP_READDIR: u16 = 0x1145;
-const CAP_FSP_MKDIR: u16 = 0x1146;
-const CAP_FSP_UNLINK: u16 = 0x1147;
-const CAP_FSP_RMDIR: u16 = 0x1148;
-const CAP_FSP_RM: u16 = 0x1149;
-const CAP_FSP_RENAME: u16 = 0x114A;
-const CAP_FSP_COPYFILE: u16 = 0x114B;
-const CAP_FSP_ACCESS: u16 = 0x114C;
-const CAP_FSP_MKDTEMP: u16 = 0x114D;
-const CAP_FSP_READLINK: u16 = 0x114E;
-const CAP_FSP_CHMOD: u16 = 0x114F;
-const CAP_FSP_TRUNCATE: u16 = 0x1150;
-const CAP_FSP_REALPATH: u16 = 0x1151;
+use crate::registry::*;
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
@@ -94,8 +23,26 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_WATCH_CLOSE => crate::modules::fs::close_watch,
         CAP_FS_READSTREAM => crate::modules::fs::validate_stream_options,
         CAP_FS_WRITESTREAM => crate::modules::fs::validate_stream_options,
+        CAP_FS_CREATE_READSTREAM => crate::modules::fs::create_read_stream,
+        CAP_FS_READSTREAM_OPEN => crate::modules::fs::read_stream_open,
+        CAP_FS_OPEN => crate::modules::fs::open,
         CAP_FS_OPENDIR => crate::modules::fs::validate_directory_options,
         CAP_FS_OPENDIRSYNC => crate::modules::fs::validate_directory_options,
+        CAP_FS_OPENSYNC => crate::modules::fs::open_sync,
+        CAP_FS_CLOSESYNC => crate::modules::fs::close_sync,
+        CAP_FS_READSYNC => crate::modules::fs::read_sync,
+        CAP_FS_WRITESYNC => crate::modules::fs::write_sync,
+        CAP_FS_READ => crate::modules::fs::read,
+        CAP_FS_WRITE => crate::modules::fs::write,
+        CAP_FS_FSTAT_SYNC => crate::modules::fs::fstat_sync,
+        CAP_FS_FTRUNCATE_SYNC => crate::modules::fs::ftruncate_sync,
+        CAP_FS_FSYNC_SYNC => crate::modules::fs::fsync_sync,
+        CAP_FS_FDATASYNC_SYNC => crate::modules::fs::fsync_sync,
+        CAP_FSP_OPEN => crate::modules::fs::promises_open,
+        CAP_FS_HANDLE_READ => crate::modules::fs::file_handle_read,
+        CAP_FS_HANDLE_CLOSE => crate::modules::fs::file_handle_close,
+        CAP_FS_CLOSE => crate::modules::fs::close,
+        CAP_FS_HANDLE_READFILE => crate::modules::fs::file_handle_read_file,
         _ => return fs_dispatch_more(cap),
     })
 }

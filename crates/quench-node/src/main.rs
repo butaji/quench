@@ -36,7 +36,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let mode_index = args
         .iter()
         .position(|arg| {
-            !arg.starts_with("--experimental-")
+                !arg.starts_with("--experimental-")
                 && !arg.starts_with("--network-family-autoselection")
                 && !arg.starts_with("--title=")
         })
