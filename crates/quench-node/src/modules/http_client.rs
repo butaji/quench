@@ -33,6 +33,7 @@ pub struct ClientReq {
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
     pub head_parsed: bool,
+    pub aborted: bool,
 }
 
 pub fn agent_call(
@@ -90,6 +91,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             buffer: Vec::new(),
             res: None,
             head_parsed: false,
+            aborted: false,
         },
     );
     drop(guard);
@@ -103,6 +105,88 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         }
     }
     Ok(req)
+}
+
+/// `req.abort()` — transition the request to its terminal aborted state and
+/// notify listeners once. The socket is closed through the normal net path so
+/// its close event remains the source of the request's final close event.
+pub fn req_abort(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = client_id(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let (request, socket) = {
+        let mut guard = state.borrow_mut();
+        let Some(req) = guard.http.clientreqs.get_mut(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
+        if req.aborted {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        }
+        req.aborted = true;
+        (req.req.clone(), req.socket.clone())
+    };
+    execute::set_property_in_place(&request, "aborted", Value::Boolean(true));
+    execute::set_property_in_place(&request, "destroyed", Value::Boolean(true));
+    net::emit(state, &request, "abort", Vec::new())?;
+    if let Some(socket) = socket {
+        net::socket_destroy(state, Some(&socket), &[])?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `req.destroy([error])` — terminally destroy a client request. An error is
+/// observable only while no response has been delivered; once a response is
+/// flowing, destroying the request closes that response without a synthetic
+/// request error.
+pub fn req_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = client_id(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let (request, socket, response, already_destroyed) = {
+        let mut guard = state.borrow_mut();
+        let Some(req) = guard.http.clientreqs.get_mut(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
+        let already_destroyed = matches!(
+            execute::get_property(&req.req, "destroyed"),
+            Value::Boolean(true)
+        );
+        (
+            req.req.clone(),
+            req.socket.clone(),
+            req.res.clone(),
+            already_destroyed,
+        )
+    };
+    if already_destroyed {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    execute::set_property_in_place(&request, "destroyed", Value::Boolean(true));
+    if let Some(error) = args.first().cloned() {
+        net::emit(state, &request, "error", vec![error])?;
+    } else if response.is_none() {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("socket hang up".into())],
+        );
+        let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+        net::emit(state, &request, "error", vec![error])?;
+    }
+    if let Some(response) = response {
+        net::emit(state, &response, "close", Vec::new())?;
+    }
+    if let Some(socket) = socket {
+        net::socket_destroy(state, Some(&socket), &[])?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// `http.get(options[, cb])` — `request` with method GET, auto-ended.
@@ -185,6 +269,9 @@ pub fn req_end(
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
+        if req.aborted {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        }
         (
             req.host.clone(),
             req.port,
@@ -194,6 +281,9 @@ pub fn req_end(
             req.body.clone(),
         )
     };
+    if let Some(req_value) = receiver {
+        execute::set_property_in_place(req_value, "finished", Value::Boolean(true));
+    }
     let head = request_head(&host, &method, &path, &headers, body.len());
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         let updated =
@@ -246,14 +336,21 @@ fn request_head(
     for (key, value) in headers {
         head.push_str(&format!("{key}: {value}\r\n"));
     }
-    if !headers
+    // Node's implicit zero-length framing is method-dependent: bodyless
+    // methods omit `content-length`, while methods that conventionally carry
+    // an entity advertise an empty body as `content-length: 0`.
+    let has_content_length = headers
         .iter()
-        .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
-    {
+        .any(|(key, _)| key.eq_ignore_ascii_case("content-length"));
+    if !has_content_length && (body_len > 0 || default_empty_body(method)) {
         head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }
     head.push_str("Connection: close\r\n\r\n");
     head
+}
+
+fn default_empty_body(method: &str) -> bool {
+    matches!(method.to_ascii_uppercase().as_str(), "POST" | "PUT")
 }
 
 fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<(), VmError> {
@@ -448,8 +545,19 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
                 "setHeader".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_HEADER),
             ),
+            (
+                "abort".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_ABORT),
+            ),
+            (
+                "destroy".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_CLIENT_DESTROY),
+            ),
             (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
             ("_header".to_string(), Value::String(String::new())),
+            ("aborted".to_string(), Value::Boolean(false)),
+            ("destroyed".to_string(), Value::Boolean(false)),
+            ("finished".to_string(), Value::Boolean(false)),
         ],
     )?;
     Ok((object, id))
