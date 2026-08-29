@@ -603,7 +603,32 @@ fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<()
     subscribe_event(state, socket, "end", end_cap)?;
     let close_cap = crate::host::capability(crate::registry::SPEC_HTTP_REQCLOSE);
     subscribe_event(state, socket, "close", close_cap)?;
+    let error_cap = crate::host::capability(crate::registry::SPEC_HTTP_REQ_ERROR);
+    subscribe_event(state, socket, "error", error_cap)?;
     Ok(())
+}
+
+pub fn req_error(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(socket) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some(client_id) = client_id_for_socket(state, socket) else {
+        return Ok(Value::Undefined);
+    };
+    let request = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| req.req.clone());
+    if let (Some(request), Some(error)) = (request, args.first().cloned()) {
+        net::emit(state, &request, "error", vec![error])?;
+    }
+    Ok(Value::Undefined)
 }
 
 fn subscribe_event(

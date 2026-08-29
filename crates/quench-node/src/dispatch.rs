@@ -398,6 +398,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
         CAP_HTTP_REQCLOSE => crate::modules::http_client::req_close,
+        CAP_HTTP_REQ_ERROR => crate::modules::http_client::req_error,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_LOOKUP_CALLBACK => handlers::net_lookup_callback,
         CAP_VM_MODULE_LINK => handlers::vm_module_link,
