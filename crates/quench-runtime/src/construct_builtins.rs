@@ -104,7 +104,9 @@ fn construct_builtin_tail(
                     return Err(crate::value::error::throw_type_error("Invalid calendar"));
                 }
                 let calendar = crate::conversion::to_string(calendar)?;
-                if !calendar.eq_ignore_ascii_case("iso8601") {
+                if !calendar.eq_ignore_ascii_case("iso8601")
+                    && !calendar.eq_ignore_ascii_case("gregory")
+                {
                     return Err(crate::value::error::throw_range_error("Invalid calendar"));
                 }
             }
@@ -157,7 +159,6 @@ fn construct_weak_ref(arguments: &[Value]) -> Result<Value, crate::execute::VmEr
     };
     let weak = Value::Object(Rc::new(ObjectData::new(vec![
         ("\0weakref".to_string(), target.clone()),
-        ("deref".to_string(), Value::Builtin(crate::ops::Builtin::WeakRefDeref)),
         (
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::WeakRefPrototype),
@@ -270,7 +271,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ("\0regexp_flags".to_string(), Value::String(flags.clone())),
         (
             "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::RegExpPrototype),
+            crate::vm::realm_intrinsic(crate::ops::Builtin::RegExpPrototype),
         ),
         ("lastIndex".to_string(), last_index),
         (

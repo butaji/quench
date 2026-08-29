@@ -1,9 +1,9 @@
 fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@split")?;
     let mut input = to_string_argument(arguments)?;
-    let limit = split_limit(arguments)?;
     let flags = match_all_flags(&receiver)?;
     let matcher = split_matcher(&receiver, &flags)?;
+    let limit = split_limit(arguments)?;
     if dynamic_splitter(&matcher) {
         return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
@@ -138,11 +138,6 @@ fn split_limit(arguments: &[Value]) -> Result<usize, VmError> {
 fn split_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     let flags = if flags.contains('y') { flags.to_string() } else { format!("{flags}y") };
     let constructor = regexp_species_constructor(receiver)?;
-    if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp))
-        && crate::regexp::has_regexp_internal_slot(receiver)
-    {
-        return Ok(receiver.clone());
-    }
     crate::construct::construct_value(&constructor, &[receiver.clone(), Value::String(flags)])
 }
 

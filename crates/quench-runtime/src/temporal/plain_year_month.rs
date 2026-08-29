@@ -356,7 +356,7 @@ fn validate_property_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
-    if value.eq_ignore_ascii_case("iso8601") {
+    if value.eq_ignore_ascii_case("iso8601") || value.eq_ignore_ascii_case("gregory") {
         return true;
     }
     let (base, annotation) = value
@@ -414,21 +414,7 @@ fn parse_month_code(value: &str) -> Result<f64, VmError> {
 }
 
 fn overflow_option(options: Option<&Value>) -> Result<bool, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(true);
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    let value = crate::execute::get_property_result(options, "overflow")?;
-    if matches!(value, Value::Undefined) {
-        return Ok(true);
-    }
-    match crate::conversion::to_string(&value)?.as_str() {
-        "constrain" => Ok(true),
-        "reject" => Ok(false),
-        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
-    }
+    crate::temporal::options::constrain_overflow(options)
 }
 
 fn field(receiver: Option<&Value>, name: &str) -> Result<Value, VmError> {

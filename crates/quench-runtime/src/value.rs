@@ -1076,6 +1076,23 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        let deleted = crate::builtins::deleted_key(key);
+        let cell = self
+            .properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == &deleted).then_some(value))
+            .and_then(|value| match value {
+                Value::BindingCell(cell) => Some(cell),
+                _ => None,
+            });
+        self.properties.retain(|(name, _)| name != &deleted);
+        let value = if let Some(cell) = cell {
+            cell.store(value);
+            Value::BindingCell(cell)
+        } else {
+            value
+        };
         if let Some(index) = crate::arrays::array_index(key) {
             let append = self.properties.iter().next_back().is_some_and(|(name, _)| {
                 crate::arrays::array_index(name.as_str()).is_some_and(|last| last < index)

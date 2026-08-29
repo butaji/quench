@@ -97,7 +97,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                     crate::ops::Builtin::IntlDateTimeFormatFormat
                         | crate::ops::Builtin::IntlNumberFormatFormat,
                 )
-            )
+        )
         {
             return Some(crate::vm::bind_receiver_property(
                 value.clone(),

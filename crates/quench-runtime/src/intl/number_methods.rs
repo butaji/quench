@@ -239,7 +239,7 @@ impl NumberOptions {
         let separator = if self.locale.starts_with("pt") && self.style == "currency" {
             " - "
         } else if self.style == "currency" {
-            "–"
+            " – "
         } else {
             " – "
         };
