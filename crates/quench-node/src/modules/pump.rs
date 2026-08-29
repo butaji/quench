@@ -627,6 +627,13 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
 }
 
 fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
+    // Network handles are externally driven.  A future timer must not make
+    // the pump sleep past readable/closed socket state: polling at a short
+    // cadence lets FINs and close transitions settle before the next timer.
+    if crate::modules::net::has_work(state) {
+        std::thread::sleep(std::time::Duration::from_millis(4));
+        return;
+    }
     let guard = state.borrow();
     let next = guard
         .timers
@@ -641,10 +648,5 @@ fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
             std::thread::sleep(std::time::Duration::from_millis(next - now));
         }
         return;
-    }
-    // No timers, but net I/O may keep the loop alive: poll at a small
-    // fixed cadence instead of busy-spinning.
-    if crate::modules::net::has_work(state) {
-        std::thread::sleep(std::time::Duration::from_millis(4));
     }
 }
