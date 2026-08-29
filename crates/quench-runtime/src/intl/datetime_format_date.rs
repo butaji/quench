@@ -228,7 +228,13 @@ fn compose_date_string_with_weekday(
             out.push_str(&day);
         }
         if let Some(year) = year_str {
-            out.push_str(", ");
+            // en-US separates a year with a comma only when a day is
+            // present (`Jan 1, 1970`); month/year-only patterns are `Jan 70`.
+            if day_style.is_some() {
+                out.push_str(", ");
+            } else {
+                out.push(' ');
+            }
             out.push_str(&year);
         }
         return out;
