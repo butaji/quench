@@ -110,10 +110,15 @@ fn temporal_slots(
     fields: &TemporalFields,
 ) -> Result<Vec<(String, Value)>, VmError> {
     let formatter_calendar = slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
-    if fields.calendar != "iso8601"
-        && fields.calendar != "gregory"
-        && fields.calendar != formatter_calendar
-    {
+    let calendar_matches = match fields.kind {
+        TemporalKind::PlainMonthDay | TemporalKind::PlainYearMonth => {
+            fields.calendar == formatter_calendar
+        }
+        _ => fields.calendar == "iso8601"
+            || fields.calendar == "gregory"
+            || fields.calendar == formatter_calendar,
+    };
+    if !calendar_matches {
         return Err(crate::value::error::throw_range_error(
             "Temporal calendar does not match formatter calendar",
         ));
