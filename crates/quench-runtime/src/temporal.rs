@@ -232,6 +232,139 @@ fn canonical_timezone_name(text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn timezone_primary_name(text: &str) -> &str {
+    match text {
+        "Europe/Nicosia" => "Asia/Nicosia",
+        "America/Atka" => "America/Adak",
+        "America/Knox_IN" => "America/Indiana/Knox",
+        "Asia/Ashkhabad" => "Asia/Ashgabat",
+        "Asia/Calcutta" => "Asia/Kolkata",
+        "Asia/Choibalsan" => "Asia/Ulaanbaatar",
+        "Asia/Chongqing" | "Asia/Chungking" | "Asia/Harbin" => "Asia/Shanghai",
+        "Asia/Dacca" => "Asia/Dhaka",
+        "Asia/Istanbul" => "Europe/Istanbul",
+        "Asia/Kashgar" => "Asia/Urumqi",
+        "Asia/Katmandu" => "Asia/Kathmandu",
+        "Asia/Macao" => "Asia/Macau",
+        "Asia/Rangoon" => "Asia/Yangon",
+        "Asia/Saigon" => "Asia/Ho_Chi_Minh",
+        "Asia/Tel_Aviv" => "Asia/Jerusalem",
+        "Asia/Thimbu" => "Asia/Thimphu",
+        "Asia/Ujung_Pandang" => "Asia/Makassar",
+        "Asia/Ulan_Bator" => "Asia/Ulaanbaatar",
+        "Africa/Asmera" => "Africa/Asmara",
+        "Africa/Timbuktu" => "Africa/Bamako",
+        "Antarctica/South_Pole" => "Antarctica/McMurdo",
+        "Australia/ACT" | "Australia/Canberra" | "Australia/NSW" => "Australia/Sydney",
+        "Australia/Currie" | "Australia/Tasmania" => "Australia/Hobart",
+        "Australia/LHI" => "Australia/Lord_Howe",
+        "Australia/North" => "Australia/Darwin",
+        "Australia/Queensland" => "Australia/Brisbane",
+        "Australia/South" => "Australia/Adelaide",
+        "Australia/Victoria" => "Australia/Melbourne",
+        "Australia/West" => "Australia/Perth",
+        "Australia/Yancowinna" => "Australia/Broken_Hill",
+        "Pacific/Enderbury" => "Pacific/Kanton",
+        "Pacific/Johnston" => "Pacific/Honolulu",
+        "Pacific/Ponape" => "Pacific/Pohnpei",
+        "Pacific/Samoa" => "Pacific/Pago_Pago",
+        "Pacific/Truk" | "Pacific/Yap" => "Pacific/Chuuk",
+        "Europe/Belfast" => "Europe/London",
+        "Europe/Kiev" | "Europe/Uzhgorod" | "Europe/Zaporozhye" => "Europe/Kyiv",
+        "Europe/Tiraspol" => "Europe/Chisinau",
+        "America/Argentina/ComodRivadavia" => "America/Argentina/Catamarca",
+        "America/Buenos_Aires" => "America/Argentina/Buenos_Aires",
+        "America/Catamarca" => "America/Argentina/Catamarca",
+        "America/Coral_Harbour" => "America/Atikokan",
+        "America/Cordoba" => "America/Argentina/Cordoba",
+        "America/Ensenada" => "America/Tijuana",
+        "America/Fort_Wayne" | "America/Indianapolis" => "America/Indiana/Indianapolis",
+        "America/Godthab" => "America/Nuuk",
+        "America/Jujuy" => "America/Argentina/Jujuy",
+        "America/Louisville" => "America/Kentucky/Louisville",
+        "America/Mendoza" => "America/Argentina/Mendoza",
+        "America/Montreal" | "America/Nipigon" => "America/Toronto",
+        "America/Pangnirtung" => "America/Iqaluit",
+        "America/Porto_Acre" => "America/Rio_Branco",
+        "America/Rainy_River" => "America/Winnipeg",
+        "America/Rosario" => "America/Argentina/Cordoba",
+        "America/Santa_Isabel" => "America/Tijuana",
+        "America/Shiprock" => "America/Denver",
+        "America/Thunder_Bay" => "America/Toronto",
+        "America/Virgin" => "America/St_Thomas",
+        "America/Yellowknife" => "America/Edmonton",
+        "US/Alaska" => "America/Anchorage",
+        "US/Aleutian" => "America/Adak",
+        "US/Arizona" => "America/Phoenix",
+        "US/Central" => "America/Chicago",
+        "US/East-Indiana" => "America/Indiana/Indianapolis",
+        "US/Eastern" => "America/New_York",
+        "US/Hawaii" => "Pacific/Honolulu",
+        "US/Indiana-Starke" => "America/Indiana/Knox",
+        "US/Michigan" => "America/Detroit",
+        "US/Mountain" => "America/Denver",
+        "US/Pacific" => "America/Los_Angeles",
+        "US/Samoa" => "Pacific/Pago_Pago",
+        "Atlantic/Faeroe" => "Atlantic/Faroe",
+        "Atlantic/Jan_Mayen" => "Arctic/Longyearbyen",
+        "Brazil/Acre" => "America/Rio_Branco",
+        "Brazil/DeNoronha" => "America/Noronha",
+        "Brazil/East" => "America/Sao_Paulo",
+        "Brazil/West" => "America/Manaus",
+        "CET" => "Europe/Brussels",
+        "CST6CDT" => "America/Chicago",
+        "Canada/Atlantic" => "America/Halifax",
+        "Canada/Central" => "America/Winnipeg",
+        "Canada/Eastern" => "America/Toronto",
+        "Canada/Mountain" => "America/Edmonton",
+        "Canada/Newfoundland" => "America/St_Johns",
+        "Canada/Pacific" => "America/Vancouver",
+        "Canada/Saskatchewan" => "America/Regina",
+        "Canada/Yukon" => "America/Whitehorse",
+        "Chile/Continental" => "America/Santiago",
+        "Chile/EasterIsland" => "Pacific/Easter",
+        "Cuba" => "America/Havana",
+        "EET" => "Europe/Athens",
+        "EST" => "America/Panama",
+        "EST5EDT" => "America/New_York",
+        "Egypt" => "Africa/Cairo",
+        "Eire" => "Europe/Dublin",
+        "Etc/GMT+0" | "Etc/GMT-0" | "Etc/GMT0" | "Etc/Greenwich"
+        | "Etc/UCT" | "Etc/UTC" | "Etc/Universal" | "Etc/Zulu"
+        | "GMT+0" | "GMT-0" | "GMT0" | "Greenwich" | "UCT" | "Universal" | "Zulu"
+        | "Etc/GMT" | "GMT" => "UTC",
+        "GB" | "GB-Eire" => "Europe/London",
+        "HST" => "Pacific/Honolulu",
+        "Hongkong" => "Asia/Hong_Kong",
+        "Iceland" => "Atlantic/Reykjavik",
+        "Iran" => "Asia/Tehran",
+        "Israel" => "Asia/Jerusalem",
+        "Jamaica" => "America/Jamaica",
+        "Japan" => "Asia/Tokyo",
+        "Kwajalein" => "Pacific/Kwajalein",
+        "Libya" => "Africa/Tripoli",
+        "MET" => "Europe/Brussels",
+        "MST" => "America/Phoenix",
+        "MST7MDT" => "America/Denver",
+        "Mexico/BajaNorte" => "America/Tijuana",
+        "Mexico/BajaSur" => "America/Mazatlan",
+        "Mexico/General" => "America/Mexico_City",
+        "NZ" => "Pacific/Auckland",
+        "NZ-CHAT" => "Pacific/Chatham",
+        "Navajo" => "America/Denver",
+        "PRC" => "Asia/Shanghai",
+        "Poland" => "Europe/Warsaw",
+        "Portugal" | "WET" => "Europe/Lisbon",
+        "PST8PDT" => "America/Los_Angeles",
+        "ROC" => "Asia/Taipei",
+        "ROK" => "Asia/Seoul",
+        "Singapore" => "Asia/Singapore",
+        "Turkey" => "Europe/Istanbul",
+        "W-SU" => "Europe/Moscow",
+        value => value,
+    }
+}
+
 fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
     if !date.contains('-') {
         let (year_text, month_text, day_text) = match date.len() {
@@ -1437,13 +1570,21 @@ mod stubs {
                 .first()
                 .ok_or_else(|| crate::value::error::throw_type_error("Missing value"))?;
             let other = zoned_from(Some(other), None)?;
+            let timezone_equal = match (
+                property("timeZoneId")?,
+                crate::execute::get_property_result(&other, "timeZoneId")?,
+            ) {
+                (Value::String(left), Value::String(right)) => {
+                    super::timezone_primary_name(&left) == super::timezone_primary_name(&right)
+                }
+                _ => false,
+            };
             return Ok(Value::Boolean(
-                ["epochNanoseconds", "timeZoneId", "calendarId"]
-                    .iter()
-                    .all(|name| {
-                        property(name).ok()
-                            == crate::execute::get_property_result(&other, name).ok()
-                    }),
+                timezone_equal
+                    && property("epochNanoseconds").ok()
+                        == crate::execute::get_property_result(&other, "epochNanoseconds").ok()
+                    && property("calendarId").ok()
+                        == crate::execute::get_property_result(&other, "calendarId").ok(),
             ));
         }
         if matches!(
