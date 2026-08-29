@@ -655,6 +655,15 @@ fn object_inherited_property_result(
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
     }
+    if key == "format"
+        && matches!(
+            prototype,
+            Value::Builtin(Builtin::IntlDateTimeFormatPrototype)
+        )
+    {
+        let getter = Value::Builtin(Builtin::IntlDateTimeFormatFormatGetter);
+        return Some(invoke_accessor(&getter, receiver));
+    }
     Some(get_property_with_receiver(&prototype, key, receiver))
 }
 
@@ -1021,6 +1030,12 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         }
     }
     let property = get_property(value, key);
+    if matches!(
+        property,
+        Value::Builtin(Builtin::IntlDateTimeFormatFormatGetter)
+    ) {
+        return invoke_accessor(&property, receiver).unwrap_or(Value::Undefined);
+    }
     if let Value::BoundFunction(bound) = &property {
         if matches!(
             bound.target,
@@ -1055,6 +1070,9 @@ fn should_preserve_receiver_property(
     property: &Value,
     receiver: &Value,
 ) -> bool {
+    if matches!(property, Value::Builtin(Builtin::IntlDateTimeFormatFormat)) {
+        return false;
+    }
     if object_has_property(value, key) {
         return true;
     }

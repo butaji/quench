@@ -300,10 +300,6 @@ impl DateTimeOptions {
     fn build_object(&self) -> Value {
         let properties = vec![
             (
-                "format".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormat),
-            ),
-            (
                 "formatToParts".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatToParts),
             ),
