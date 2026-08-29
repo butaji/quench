@@ -41,6 +41,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     };
     if !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
+            && !(month == 13.0
+                && calendar_hint.is_some_and(calendar_supports_month13))
         || !(1.0..=max_day).contains(&day)
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
@@ -90,6 +92,10 @@ fn days_in_month(year: f64, month: f64) -> f64 {
         4 | 6 | 9 | 11 => 30.0,
         _ => 31.0,
     }
+}
+
+pub(crate) fn calendar_supports_month13(calendar: &str) -> bool {
+    matches!(calendar, "coptic" | "ethiopic" | "ethioaa")
 }
 
 pub(crate) fn days_in_month_for_record(year: i32, month: u32) -> u32 {
@@ -659,11 +665,13 @@ fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     let year = number_field(field(object, "year"));
     let month = number_field(field(object, "month"));
     let day = number_field(field(object, "day"));
+    let calendar = calendar_name(object);
     if !year.is_finite()
         || !month.is_finite()
         || !day.is_finite()
         || !(-271_821.0..=275_760.0).contains(&year)
-        || !(1.0..=12.0).contains(&month)
+        || (!(1.0..=12.0).contains(&month)
+            && !(month == 13.0 && calendar_supports_month13(&calendar)))
         || !(1.0..=days_in_month(year, month)).contains(&day)
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
@@ -1354,6 +1362,10 @@ fn with(
         ));
     }
     let (year, month, day) = date_parts(receiver)?;
+    let receiver_calendar = match receiver {
+        Some(Value::Object(object)) => calendar_name(object),
+        _ => "iso8601".to_string(),
+    };
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
@@ -1405,7 +1417,10 @@ fn with(
     let month = if month_code_text.is_none() {
         explicit_month
     } else {
-        let month = month_code_number_text(month_code_text.as_deref().unwrap_or_default())?;
+        let month = month_code_number_text(
+            month_code_text.as_deref().unwrap_or_default(),
+            calendar_supports_month13(&receiver_calendar),
+        )?;
         if explicit_month != month
             && !matches!(
                 crate::execute::get_property_result(changes, "month")?,
@@ -1425,7 +1440,9 @@ fn with(
         || !month.is_finite()
         || !day.is_finite()
         || month < 1.0
-        || (month > 12.0 && overflow == "reject")
+        || (month > 12.0
+            && !(month == 13.0 && calendar_supports_month13(&receiver_calendar))
+            && overflow == "reject")
         || day < 1.0
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
@@ -1433,7 +1450,11 @@ fn with(
     if primitive_options {
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
-    let month = month.min(12.0);
+    let month = if calendar_supports_month13(&receiver_calendar) {
+        month.min(13.0)
+    } else {
+        month.min(12.0)
+    };
     let max_day = days_in_month(year, month);
     if day > max_day {
         if overflow == "constrain" {
@@ -1446,6 +1467,7 @@ fn with(
         Value::Number(year),
         Value::Number(month),
         Value::Number(day),
+        Value::String(receiver_calendar),
     ])
 }
 
@@ -1488,7 +1510,7 @@ fn option_string(value: &Value) -> Result<String, VmError> {
 
 fn month_code_number(value: &Value) -> Result<f64, VmError> {
     let code = month_code_text(value)?;
-    month_code_number_text(&code)
+    month_code_number_text(&code, false)
 }
 
 fn month_code_text(value: &Value) -> Result<String, VmError> {
@@ -1499,10 +1521,10 @@ fn month_code_text(value: &Value) -> Result<String, VmError> {
     crate::conversion::to_string(&primitive)
 }
 
-fn month_code_number_text(code: &str) -> Result<f64, VmError> {
+fn month_code_number_text(code: &str, allow_month13: bool) -> Result<f64, VmError> {
     code.strip_prefix('M')
         .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| (1.0..=12.0).contains(value))
+        .filter(|value| (1.0..=12.0).contains(value) || (allow_month13 && *value == 13.0))
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
 }
 
