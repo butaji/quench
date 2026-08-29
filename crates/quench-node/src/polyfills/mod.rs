@@ -183,6 +183,32 @@ mod tests {
     use super::{Ability, Phase, Registry};
 
     #[test]
+    fn live_tables_contain_only_runtime_fragments_in_order() {
+        let bootstrap = super::bootstrap::ABILITIES
+            .iter()
+            .map(|ability| ability.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bootstrap,
+            vec![
+                "globals-extra",
+                "support",
+                "dns",
+                "dgram-head",
+                "dgram",
+                "dgram-tail",
+                "membership",
+                "web-streams",
+            ]
+        );
+        let post_bootstrap = super::post_bootstrap::ABILITIES
+            .iter()
+            .map(|ability| ability.name)
+            .collect::<Vec<_>>();
+        assert_eq!(post_bootstrap, vec!["module-surface-06"]);
+    }
+
+    #[test]
     fn bootstrap_source_preserves_order_and_separates_fragments() {
         let registry = Registry::new()
             .add(Ability {
