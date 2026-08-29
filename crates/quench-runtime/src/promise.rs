@@ -398,6 +398,21 @@ pub(crate) fn from_async_function_completion(
     Value::Promise(promise)
 }
 
+/// Start an async function with its result promise established before the
+/// body runs. Promise allocations performed by `await` then inherit this
+/// result as their trigger, matching Node's async-resource ordering.
+pub(crate) fn start_async_function(generator: Rc<crate::value::GeneratorData>) -> Value {
+    let promise = PromiseData::allocate(PromiseState::Pending);
+    let completion = with_promise_trigger(&promise, || {
+        crate::generator::resume(
+            &generator,
+            crate::generator::Resume::Next(crate::value::Value::Undefined),
+        )
+    });
+    settle_async_generator_completion(completion, generator, Rc::clone(&promise), true);
+    Value::Promise(promise)
+}
+
 pub(crate) fn settle_async_generator_completion(
     completion: Result<Value, VmError>,
     generator: Rc<crate::value::GeneratorData>,
@@ -430,6 +445,13 @@ pub(crate) fn register_async_generator(
         .push(if *generator.pending_yield.borrow() {
             PromiseContinuation::AsyncGeneratorYield { generator, result }
         } else {
+            // An await installs a reaction promise before the async function
+            // returns its result. Keep that lifecycle edge visible to hosts;
+            // it is the resource that links the awaited promise to the
+            // continuation (and therefore preserves Node's trigger chain).
+            let _reaction = with_promise_trigger(awaited, || {
+                PromiseData::allocate(PromiseState::Pending)
+            });
             PromiseContinuation::AsyncGenerator {
                 generator,
                 result,
