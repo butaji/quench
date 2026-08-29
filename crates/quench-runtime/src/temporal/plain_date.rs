@@ -224,12 +224,12 @@ fn calendar_date(year: i32, month: u32, day: u32, calendar: &str) -> Option<Date
         AnyCalendar::Chinese(_) | AnyCalendar::Dangi(_) | AnyCalendar::Hebrew(_)
     ) {
         let leap_ordinal = (1..=12).find_map(|base| {
-            Date::try_new(year.into(), Month::leap(base), 1, AnyCalendar::new(kind))
-                .ok()
-                .filter(|date| {
-                    date.month().leap_status() != icu_calendar::types::LeapStatus::Normal
-                })
-                .map(|date| u32::from(date.month().ordinal))
+            let date =
+                Date::try_new(year.into(), Month::leap(base), 1, AnyCalendar::new(kind)).ok();
+            date.filter(|date| {
+                date.month().leap_status() != icu_calendar::types::LeapStatus::Normal
+            })
+            .map(|date| u32::from(date.month().ordinal))
         });
         match leap_ordinal {
             Some(ordinal) if month == ordinal => Month::leap(month.saturating_sub(1) as u8),
@@ -464,10 +464,10 @@ fn calendar_extreme_fields(
                             -266_323.0
                         } else {
                             f64::from(*year)
-                },
+                        },
                     ),
-        },
-    )
+                },
+            )
         })
 }
 
@@ -670,12 +670,39 @@ pub(crate) fn add_with_calendar(
     } else {
         Overflow::Constrain
     });
-    let result = date
-        .try_added_with_options(duration, options)
-        .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?;
     let preferred_day = (number_property(source, "days") == 0.0
         && number_property(source, "weeks") == 0.0)
         .then_some(day);
+    let result = if preferred_day.is_some() && (duration.years != 0 || duration.months != 0) {
+        let anchor =
+            calendar_date_for_code(year, date.month().to_input().code().0.as_ref(), 1, calendar);
+        match anchor {
+            Some(anchor) => anchor
+                .try_added_with_options(duration, options)
+                .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?,
+            None => date
+                .try_added_with_options(duration, options)
+                .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?,
+        }
+    } else {
+        date.try_added_with_options(duration, options)
+            .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?
+    };
+    let result = if let Some(preferred) = preferred_day {
+        if preferred <= u32::from(result.day_of_month().0) {
+            result
+        } else {
+            let year = result.year().extended_year();
+            let code = result.month().to_input().code().0.to_string();
+            let max = calendar_days_in_month_for_code(year, &code, calendar).unwrap_or(31);
+            if max < preferred && matches!(options.overflow, Some(Overflow::Reject)) {
+                return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+            }
+            calendar_date_for_code(year, &code, preferred.min(max), calendar).unwrap_or(result)
+        }
+    } else {
+        result
+    };
     Ok(object_from_calendar_date(result, calendar, preferred_day))
 }
 
@@ -947,10 +974,10 @@ fn calendar_difference_exact(
     )?;
     Some(
         crate::temporal::duration::construct(&[
-        Value::Number(years as f64),
-        Value::Number(months as f64),
-        Value::Number(weeks as f64),
-        Value::Number(days as f64),
+            Value::Number(years as f64),
+            Value::Number(months as f64),
+            Value::Number(weeks as f64),
+            Value::Number(days as f64),
         ])
         .ok()?,
     )
@@ -1732,17 +1759,17 @@ fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<V
                 let code = crate::conversion::to_string(&code)?;
                 let (code, reference_year) =
                     match calendar_reference_iso_year_for_code(&code, day as u32, &calendar) {
-                    Some(year) => (code, year),
-                    None if code.ends_with('L') => {
-                        let regular = code.trim_end_matches('L').to_string();
-                        let year = calendar_reference_iso_year_for_code(
+                        Some(year) => (code, year),
+                        None if code.ends_with('L') => {
+                            let regular = code.trim_end_matches('L').to_string();
+                            let year = calendar_reference_iso_year_for_code(
                                 &regular, day as u32, &calendar,
-                        )
-                        .unwrap_or(1972);
-                        (regular, year)
-                    }
-                    None => (code, 1972),
-                };
+                            )
+                            .unwrap_or(1972);
+                            (regular, year)
+                        }
+                        None => (code, 1972),
+                    };
                 crate::temporal::plain_month_day::construct_calendar_month_day(
                     &code,
                     day,
@@ -1866,8 +1893,8 @@ fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
         Value::String(code) => calendar_days_in_month_for_code(year as i32, &code, &calendar),
         _ => None,
     }
-        .or_else(|| calendar_days_in_month(year as i32, month as u32, &calendar))
-        .unwrap_or_else(|| days_in_month(year, month) as u32);
+    .or_else(|| calendar_days_in_month(year as i32, month as u32, &calendar))
+    .unwrap_or_else(|| days_in_month(year, month) as u32);
     Ok(Value::Number(value as f64))
 }
 
@@ -2434,11 +2461,11 @@ fn with(
     }
     if let Value::Object(object) = changes {
         let has_date_field = object.iter().any(|(key, _)| {
-                matches!(
-                    key.as_str(),
-                    "year" | "month" | "monthCode" | "day" | "era" | "eraYear"
-                )
-            });
+            matches!(
+                key.as_str(),
+                "year" | "month" | "monthCode" | "day" | "era" | "eraYear"
+            )
+        });
         if !has_date_field {
             return Err(crate::value::error::throw_type_error("Invalid fields"));
         }
@@ -2477,7 +2504,7 @@ fn with(
             return Err(crate::value::error::throw_range_error("Invalid eraYear"));
         }
         year = derive_year_from_era(&receiver_calendar, era, era_year)
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
+            .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
     }
     let primitive_options = options
         .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value));
