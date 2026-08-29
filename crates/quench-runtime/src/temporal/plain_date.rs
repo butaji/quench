@@ -1,5 +1,9 @@
 use chrono::Datelike;
-use icu_calendar::{types::Month, AnyCalendar, AnyCalendarKind, Date};
+use icu_calendar::{
+    options::{DateAddOptions, Overflow},
+    types::{DateDuration, Month},
+    AnyCalendar, AnyCalendarKind, Date,
+};
 
 use crate::{execute::VmError, value::Value};
 
@@ -153,6 +157,70 @@ fn calendar_is_leap_year(year: i32, month: u32, calendar: &str) -> Option<bool> 
     calendar_date(year, month, 1, calendar).map(|date| date.is_in_leap_year())
 }
 
+fn object_from_calendar_date(date: Date<AnyCalendar>, calendar: &str) -> Value {
+    let year = date.year().extended_year();
+    let month = u32::from(date.month().ordinal);
+    let day = u32::from(date.day_of_month().0);
+    let month_code = date.month().to_input().code().0.to_string();
+    let mut result = date_object_with_calendar(
+        f64::from(year),
+        f64::from(month),
+        f64::from(day),
+        calendar,
+    );
+    if let Value::Object(object) = &mut result {
+        let object = std::rc::Rc::make_mut(object);
+        object.set_property_in_place("monthCode", Value::String(month_code.clone()));
+        object.set_property_in_place("\0temporal-slot:\0monthCode", Value::String(month_code));
+    }
+    result
+}
+
+fn add_with_calendar(
+    date: &crate::value::ObjectData,
+    source: &crate::value::ObjectData,
+    calendar: &str,
+    direction: f64,
+    overflow: &str,
+) -> Result<Value, VmError> {
+    let year = number_field(field(date, "year")) as i32;
+    let month = number_field(field(date, "month")) as u32;
+    let day = number_field(field(date, "day")) as u32;
+    let date = calendar_date(year, month, day, calendar)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    let source_sign = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+    ]
+    .into_iter()
+    .map(|unit| number_property(source, unit))
+    .find(|value| *value != 0.0)
+    .unwrap_or(1.0)
+    .signum();
+    let scale = direction.signum() * source_sign;
+    let mut duration = DateDuration::default();
+    duration.is_negative = scale < 0.0;
+    duration.years = number_property(source, "years").abs() as u32;
+    duration.months = number_property(source, "months").abs() as u32;
+    duration.days = (number_property(source, "days").abs()
+        + number_property(source, "weeks").abs() * 7.0) as u32;
+    let mut options = DateAddOptions::default();
+    options.overflow = Some(if overflow == "reject" {
+        Overflow::Reject
+    } else {
+        Overflow::Constrain
+    });
+    let result = date
+        .try_added_with_options(duration, options)
+        .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(object_from_calendar_date(result, calendar))
+}
+
 pub(crate) fn calendar_supports_month13(calendar: &str) -> bool {
     matches!(calendar, "coptic" | "ethiopic" | "ethioaa")
 }
@@ -273,6 +341,9 @@ fn add(
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
     let overflow = overflow_option(options)?;
+    if calendar != "iso8601" && calendar != "gregory" {
+        return add_with_calendar(&date, &duration, &calendar, direction, &overflow);
+    }
     let years =
         number_field(field(&date, "year")) + number_property(&duration, "years") * direction;
     let months = number_field(field(&date, "month")) - 1.0
