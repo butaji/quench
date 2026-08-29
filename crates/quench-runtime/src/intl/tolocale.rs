@@ -500,28 +500,15 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     let left = crate::conversion::to_string(receiver)?;
     let right =
         crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
-    let normalized_left =
-        unicode_normalization::UnicodeNormalization::nfd(left.chars()).collect::<String>();
-    let normalized_right =
-        unicode_normalization::UnicodeNormalization::nfd(right.chars()).collect::<String>();
-    if normalized_left == normalized_right {
-        return Ok(Value::Number(0.0));
-    }
     let collator_arguments = arguments
         .get(1..)
         .map_or_else(Vec::new, |values| values.to_vec());
-    crate::intl::collator::construct(&collator_arguments)?;
-    let result = match left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()) {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => match (left == right, left.cmp(&right)) {
-            (true, _) => 0.0,
-            (false, std::cmp::Ordering::Less) => 1.0,
-            (false, std::cmp::Ordering::Greater) => -1.0,
-            (false, std::cmp::Ordering::Equal) => 0.0,
-        },
-        std::cmp::Ordering::Greater => 1.0,
-    };
-    Ok(Value::Number(result))
+    let collator = crate::intl::collator::construct(&collator_arguments)?;
+    crate::intl::collator::prototype_method(
+        Builtin::IntlCollatorCompare,
+        &[Value::String(left), Value::String(right)],
+        Some(&collator),
+    )
 }
 
 fn element_to_locale_string(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
