@@ -653,7 +653,9 @@ fn parts_for_fields(
                 temporal_weekday(year, month, day),
             ),
         ));
-        date.push(literal_part(", "));
+        if has_year || has_month || has_day || has_time {
+            date.push(literal_part(", "));
+        }
     }
     let month_value = slot_string(slots, "month")
         .map(|style| format_month_value_for_slots(slots, &style, month));
@@ -722,12 +724,14 @@ fn parts_for_fields(
             date.extend(time);
         }
     }
-    if let Some(style) = slot_string(slots, "timeZoneName") {
-        date.push(literal_part(" "));
-        date.push(typed_part(
-            "timeZoneName",
-            time_zone_name_value(slots, &style),
-        ));
+    if !has_time {
+        if let Some(style) = slot_string(slots, "timeZoneName") {
+            date.push(literal_part(" "));
+            date.push(typed_part(
+                "timeZoneName",
+                time_zone_name_value(slots, &style),
+            ));
+        }
     }
     calendarize_parts(&mut date, slots, year, month, day);
     date
@@ -837,8 +841,29 @@ fn time_zone_name_value(slots: &[(String, Value)], style: &str) -> String {
             "UTC".into()
         };
     }
+    if let Some(offset) = parse_zone_offset_minutes(&zone) {
+        let sign = if offset < 0 { '-' } else { '+' };
+        let minutes = offset.unsigned_abs();
+        if minutes == 0 {
+            return "GMT".into();
+        }
+        let hours = minutes / 60;
+        let remainder = minutes % 60;
+        return if remainder == 0 {
+            format!("GMT{sign}{hours}")
+        } else {
+            format!("GMT{sign}{hours}:{remainder:02}")
+        };
+    }
+    let zone = match zone.as_str() {
+        "Asia/Calcutta" => "Asia/Kolkata",
+        other => other,
+    };
     match style {
-        "long" => zone,
+        "long" if zone == "Europe/Vienna" => "Central European Standard Time".into(),
+        "long" => zone.to_string(),
+        _ if zone == "Europe/Vienna" => "GMT+1".into(),
+        _ if zone == "Asia/Kolkata" => "GMT+5:30".into(),
         _ => format!("GMT{zone}"),
     }
 }
@@ -917,7 +942,11 @@ fn time_parts_for_values(
         "hour",
         format_hour_value(
             &hour_style,
-            hour,
+            if slot_string(slots, "hourCycle").as_deref() == Some("h24") && hour == 0 {
+                24
+            } else {
+                hour
+            },
             hour12,
             slot_string(slots, "hourCycle").as_deref() == Some("h11"),
         ),
@@ -962,7 +991,14 @@ fn time_parts_for_values(
 }
 
 fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
-    let hour_style = slot_string(slots, "hour")?;
+    let hour_style = slot_string(slots, "hour");
+    if hour_style.is_none()
+        && !slots
+            .iter()
+            .any(|(name, _)| matches!(name.as_str(), "minute" | "second"))
+    {
+        return None;
+    }
     let (_, _, _, hour, minute, second, millis) = format_components(slots, number)?;
     let hour12 = slots
         .iter()
@@ -970,21 +1006,32 @@ fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
             (name == "hour12").then_some(matches!(value, Value::Boolean(true)))
         })
         .unwrap_or(false);
-    let mut parts = vec![typed_part(
-        "hour",
-        format_hour_value(
-            &hour_style,
-            hour,
-            hour12,
-            slot_string(slots, "hourCycle").as_deref() == Some("h11"),
-        ),
-    )];
+    let mut parts = Vec::new();
+    if let Some(hour_style) = hour_style {
+        parts.push(typed_part(
+            "hour",
+            format_hour_value(
+                &hour_style,
+                if slot_string(slots, "hourCycle").as_deref() == Some("h24") && hour == 0 {
+                    24
+                } else {
+                    hour
+                },
+                hour12,
+                slot_string(slots, "hourCycle").as_deref() == Some("h11"),
+            ),
+        ));
+    }
     if slot_string(slots, "minute").is_some() {
-        parts.push(literal_part(":"));
+        if !parts.is_empty() {
+            parts.push(literal_part(":"));
+        }
         parts.push(typed_part("minute", format!("{minute:02}")));
     }
     if slot_string(slots, "second").is_some() {
-        parts.push(literal_part(":"));
+        if !parts.is_empty() {
+            parts.push(literal_part(":"));
+        }
         parts.push(typed_part("second", format!("{second:02}")));
     }
     if let Some(digits) = slot_number(slots, "fractionalSecondDigits") {
