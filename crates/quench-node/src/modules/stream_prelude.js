@@ -939,6 +939,11 @@
   };
 
   function operatorConcurrency(options) {
+    if (options !== undefined && (options === null || typeof options !== "object")) {
+      const error = new TypeError("The \"options\" argument must be of type object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const value = options?.concurrency ?? 1;
     const number = Number(value);
     if (!Number.isInteger(number) || number < 1) {
@@ -949,9 +954,21 @@
     return number;
   }
 
+  function operatorSignal(options) {
+    const signal = options?.signal;
+    if (signal !== undefined &&
+        (signal === null || typeof signal !== "object" ||
+         typeof signal.addEventListener !== "function")) {
+      const error = new TypeError("The \"options.signal\" property must be an instance of AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return signal;
+  }
+
   function readableOperator(stream, mapper, filtering, options) {
     const concurrency = operatorConcurrency(options);
-    const signal = options?.signal;
+    const signal = operatorSignal(options);
     const source = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
     const output = new ReadableClass({ objectMode: true });
     const state = {
