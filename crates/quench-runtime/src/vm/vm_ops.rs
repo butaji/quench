@@ -102,11 +102,16 @@ fn execute_call_continuation_inner(
         environment: std::rc::Rc<crate::environment::Environment>,
         pc: usize,
     }
+    enum StartedCall {
+        Active(ActiveCall),
+        Fallback(crate::completion::CallContinuation),
+        Error(VmError, crate::completion::CallContinuation),
+    }
     fn start(
         continuation: crate::completion::CallContinuation,
-    ) -> Result<Option<ActiveCall>, VmError> {
+    ) -> StartedCall {
         let Value::Function(function) = &continuation.callee else {
-            return Ok(None);
+            return StartedCall::Fallback(continuation);
         };
         if crate::functions::is_class_constructor(function) {
             let error =
@@ -120,41 +125,41 @@ fn execute_call_continuation_inner(
                         "Class constructor cannot be invoked without 'new'",
                     )
                 });
-            return Err(error);
+            return StartedCall::Error(error, continuation);
         }
         // Async and generator functions must go through the ordinary invocation
         // path: it creates the Promise/generator wrapper and performs the
         // corresponding completion setup. Inlining their raw ops would return
         // the body value directly and skip that observable protocol.
         if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
-            return Ok(None);
+            return StartedCall::Fallback(continuation);
         }
         // Functions created inside a `with` scope carry a dynamic object
         // environment. The optimized continuation path has no per-frame
         // scope guard, so use the ordinary invocation path for these
         // closures to restore the captured object lookup semantics.
         if !function.with_captures.is_empty() {
-            return Ok(None);
+            return StartedCall::Fallback(continuation);
         }
         // The packed continuation has no lexical private-environment guard.
         // Class-scoped functions therefore use the ordinary invocation path,
         // which installs the captured private-name map before executing code.
         if function.private_environment.has_names() {
-            return Ok(None);
+            return StartedCall::Fallback(continuation);
         }
         if crate::with_scope::is_active() {
-            return Ok(None);
+            return StartedCall::Fallback(continuation);
         }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
-        Ok(Some(ActiveCall {
+        StartedCall::Active(ActiveCall {
             code: function.code.clone(),
             continuation,
             registers: callee_registers,
             environment,
             pc: 0,
-        }))
+        })
     }
     if let Value::Function(function) = &continuation.callee {
         if let Some(value) = crate::functions::try_execute_specialized(
@@ -168,9 +173,9 @@ fn execute_call_continuation_inner(
         }
     }
     let mut stack: Vec<ActiveCall> = Vec::new();
-    let mut current = match start(continuation.clone())? {
-        Some(active) => active,
-        None => {
+    let mut current = match start(continuation) {
+        StartedCall::Active(active) => active,
+        StartedCall::Fallback(continuation) => {
             let value = invoke_with_receiver(
                 &continuation.callee,
                 &continuation.receiver,
@@ -179,6 +184,10 @@ fn execute_call_continuation_inner(
             *registers = continuation.caller_registers;
             super::write_value(registers, continuation.destination, value);
             return Ok(());
+        }
+        StartedCall::Error(error, continuation) => {
+            *registers = continuation.caller_registers;
+            return Err(error);
         }
     };
     let context = crate::vm::current_context_or_default();
@@ -254,9 +263,9 @@ fn execute_call_continuation_inner(
                 // parent frame rather than an empty register vector.
                 current.registers = std::mem::take(&mut nested.caller_registers);
                 stack.push(current);
-                current = match start(nested.clone())? {
-                    Some(active) => active,
-                    None => {
+                current = match start(nested) {
+                    StartedCall::Active(active) => active,
+                    StartedCall::Fallback(nested) => {
                         let value = match invoke_with_receiver(
                             &nested.callee,
                             &nested.receiver,
@@ -274,6 +283,11 @@ fn execute_call_continuation_inner(
                         super::write_value(&mut parent.registers, nested.destination, value);
                         parent
                     }
+                    StartedCall::Error(error, _) => {
+                        let parent = stack.pop().expect("caller frame just pushed");
+                        *registers = parent.registers;
+                        return Err(error);
+                    }
                 };
                 None
             }
@@ -282,20 +296,21 @@ fn execute_call_continuation_inner(
                 // tail call.  Treat it as a frame replacement, not as an
                 // unconsumed completion: otherwise nested assert.throws sees an
                 // internal EvalError instead of the callback's own error value.
+                let parent = current.continuation;
                 let tail = crate::completion::CallContinuation {
                     callee: request.callee,
                     receiver: request.receiver,
                     arguments: request.arguments,
-                    caller_code: current.continuation.caller_code,
-                    caller_pc: current.continuation.caller_pc,
-                    caller_registers: current.continuation.caller_registers.clone(),
-                    caller_environment: current.continuation.caller_environment.clone(),
-                    destination: current.continuation.destination,
-                    guards: current.continuation.guards,
+                    caller_code: parent.caller_code,
+                    caller_pc: parent.caller_pc,
+                    caller_registers: parent.caller_registers,
+                    caller_environment: parent.caller_environment,
+                    destination: parent.destination,
+                    guards: parent.guards,
                 };
-                current = match start(tail.clone()) {
-                    Ok(Some(active)) => active,
-                    Ok(None) => {
+                current = match start(tail) {
+                    StartedCall::Active(active) => active,
+                    StartedCall::Fallback(tail) => {
                         let value = match invoke_with_receiver(
                             &tail.callee,
                             &tail.receiver,
@@ -315,11 +330,11 @@ fn execute_call_continuation_inner(
                         super::write_value(registers, tail.destination, value);
                         return Ok(());
                     }
-                    Err(error) => {
+                    StartedCall::Error(error, tail) => {
                         if let Some(parent) = stack.last() {
                             *registers = parent.registers.clone();
                         } else {
-                            *registers = tail.caller_registers.clone();
+                            *registers = tail.caller_registers;
                         }
                         return Err(error);
                     }
