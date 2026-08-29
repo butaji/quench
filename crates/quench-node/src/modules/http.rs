@@ -581,6 +581,10 @@ pub fn build() -> Value {
             "Agent",
             crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
         ),
+        (
+            "IncomingMessage",
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined);
     let methods = [
