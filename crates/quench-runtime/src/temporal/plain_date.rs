@@ -576,7 +576,17 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let left = date_parts(receiver)?;
     let right_value = from(other, None)?;
     let right = date_parts(Some(&right_value))?;
-    Ok(Value::Boolean(left == right))
+    let left_calendar = match receiver {
+        Some(Value::Object(object)) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
+    let right_calendar = match &right_value {
+        Value::Object(object) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
+    let left_calendar = canonical_calendar_id(&left_calendar).unwrap_or(left_calendar);
+    let right_calendar = canonical_calendar_id(&right_calendar).unwrap_or(right_calendar);
+    Ok(Value::Boolean(left == right && left_calendar == right_calendar))
 }
 
 fn add(
@@ -1633,12 +1643,16 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
-    let calendar_name = calendar_name_option(options)?;
+    let calendar_name_option_value = calendar_name_option(options)?;
+    let calendar_id = calendar_name(object);
     let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
-    if calendar_name == "always" {
-        result.push_str("[u-ca=iso8601]");
-    } else if calendar_name == "critical" {
-        result.push_str("[!u-ca=iso8601]");
+    match calendar_name_option_value.as_str() {
+        "always" => result.push_str(&format!("[u-ca={calendar_id}]")),
+        "critical" => result.push_str(&format!("[!u-ca={calendar_id}]")),
+        "auto" if calendar_id != "iso8601" => {
+            result.push_str(&format!("[u-ca={calendar_id}]"));
+        }
+        _ => {}
     }
     Ok(Value::String(result))
 }
