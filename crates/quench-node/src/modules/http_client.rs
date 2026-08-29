@@ -81,6 +81,11 @@ fn response_data(response: &Value, bytes: &[u8]) -> Value {
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
+    let signal = args.first().and_then(|options| {
+        matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
+            execute::get_property(options, "signal")
+        })
+    }).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
     let agent = args.first().and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
@@ -121,6 +126,21 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         },
     );
     drop(guard);
+    if let Some(signal) = signal {
+        if let Some(target) = crate::modules::event_target::target_identity(&signal) {
+            state.borrow_mut().http.client_signals.insert(target, id);
+            let listener = crate::host::capability(crate::registry::SPEC_HTTP_REQ_SIGNAL_ABORT);
+            let options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
+            crate::modules::event_target::add_event_listener(
+                state,
+                Some(&signal),
+                &[Value::String("abort".into()), listener, options],
+            )?;
+            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+                preabort_request(state, &req);
+            }
+        }
+    }
     if let Some(cb) = args.get(1) {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
@@ -131,6 +151,52 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         }
     }
     Ok(req)
+}
+
+fn preabort_request(state: &Rc<RefCell<HostState>>, request: &Value) {
+    set_request_property(Some(request), "destroyed", Value::Boolean(true));
+    let error = abort_error();
+    state.borrow_mut().net.pending_events.extend([
+        (request.clone(), "error".into(), vec![error]),
+        (request.clone(), "close".into(), Vec::new()),
+    ]);
+}
+
+fn abort_error() -> Value {
+    let error = execute::set_property(
+        quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("The operation was aborted".into())],
+        ),
+        "name",
+        Value::String("AbortError".into()),
+    );
+    execute::set_property(error, "code", Value::String("ABORT_ERR".into()))
+}
+
+/// AbortSignal transition for one pending ClientRequest. The signal-to-request
+/// map is the sole association fact; the ordinary destroy transition owns all
+/// request state and event ordering.
+pub fn req_signal_abort(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(signal) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some(target) = crate::modules::event_target::target_identity(signal) else {
+        return Ok(Value::Undefined);
+    };
+    let Some(id) = state.borrow_mut().http.client_signals.remove(&target) else {
+        return Ok(Value::Undefined);
+    };
+    let request = state.borrow().http.clientreqs.get(&id).map(|req| req.req.clone());
+    if let Some(request) = request {
+        let error = abort_error();
+        req_destroy(state, Some(&request), &[error])?;
+    }
+    Ok(Value::Undefined)
 }
 
 /// `req.abort()` — transition the request to its terminal aborted state and
@@ -149,7 +215,7 @@ pub fn req_abort(
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
-        if req.aborted {
+        if req.aborted || matches!(execute::get_property(&req.req, "destroyed"), Value::Boolean(true)) {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
         req.aborted = true;
@@ -195,6 +261,11 @@ pub fn req_destroy(
     if already_destroyed {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
+    state
+        .borrow_mut()
+        .http
+        .client_signals
+        .retain(|_, request_id| *request_id != id);
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     if let Some(error) = args.first().cloned() {
         net::emit(state, &request, "error", vec![error])?;
@@ -483,6 +554,11 @@ pub fn req_close(
         .clientreqs
         .get(&client_id)
         .map(|req| req.req.clone());
+    state
+        .borrow_mut()
+        .http
+        .client_signals
+        .retain(|_, request_id| *request_id != client_id);
     if let Some(request) = request {
         net::emit(state, &request, "close", Vec::new())?;
     }
