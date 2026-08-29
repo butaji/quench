@@ -53,6 +53,41 @@ for (const encoding of ['ascii', 'utf8', 'utf16le', 'ucs2', 'base64', 'binary', 
     assert.deepStrictEqual(result, pathBuffer.toString(encoding), encoding + ' async buffer');
   });
 }
+const content = Buffer.from('xyz\n');
+const target = Buffer.alloc(content.length + 2, 0x78);
+const result = fs.readFileSync('tests/node/test/fixtures/x.txt', { buffer: target });
+assert.deepStrictEqual(result, target.subarray(0, content.length));
+assert.deepStrictEqual(result, content);
+(async () => {
+  const handle = await fs.promises.open('tests/node/test/fixtures/x.txt', 'r');
+  const target = Buffer.alloc(4);
+  assert.deepStrictEqual(await handle.readFile({ buffer: target }), Buffer.from('xyz\n'));
+  await handle.close();
+})().then(() => undefined);
+new Promise((resolve, reject) => {
+  fs.readFile('tests/node/test/fixtures/x.txt', { buffer: Buffer.alloc(4) }, (error, value) => {
+    if (error) reject(error);
+    else {
+      assert.deepStrictEqual(value, Buffer.from('xyz\n'));
+      resolve();
+    }
+  });
+}).then(() => undefined);
+let size;
+const factoryResult = fs.readFileSync('tests/node/test/fixtures/x.txt', {
+  buffer(fileSize) {
+    size = fileSize;
+    return Buffer.alloc(fileSize + 2);
+  }
+});
+assert.strictEqual(size, 4);
+assert.deepStrictEqual(factoryResult, Buffer.from('xyz\n'));
+const fsBinding = require('internal/test/binding').internalBinding('fs');
+const originalFstat = fsBinding.fstat;
+fsBinding.fstat = function (...args) {
+  const result = Reflect.apply(originalFstat, this, args);
+  return Promise.resolve(result).then((stats) => stats);
+};
 const encodings = ['ascii', 'utf8', 'utf16le', 'ucs2', 'base64', 'binary', 'hex'];
 for (const encoding of encodings) {
   const expected = pathBuffer.toString(encoding);

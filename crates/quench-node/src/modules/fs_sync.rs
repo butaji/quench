@@ -107,10 +107,83 @@ fn read_bytes(path: &str, options: &FsOptions) -> Result<Value, VmError> {
     }
     let bytes = std::fs::read(Path::new(path))
         .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
+    let target = if let Some(buffer) = options.buffer.clone() {
+        if quench_runtime::is_callable(&buffer) {
+            quench_runtime::execute::call(
+                &buffer,
+                &Value::Undefined,
+                &[Value::Number(bytes.len() as f64)],
+            )?
+        } else {
+            buffer
+        }
+    } else {
+        Value::Undefined
+    };
+    if !matches!(target, Value::Undefined) {
+        let Some((buffer, offset, length)) = view_parts(&target) else {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options.buffer\" property must be an instance of Buffer, TypedArray, or DataView".into(),
+            ));
+        };
+        if length < bytes.len() {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(
+                "The \"buffer\" argument must be at least as large as the file".into(),
+            ));
+        }
+        buffer.bytes.borrow_mut()[offset..offset + bytes.len()].copy_from_slice(&bytes);
+        if let Some(encoding) = &options.encoding {
+            return Ok(crate::modules::buffer_enc::decode_str(&bytes, encoding));
+        }
+        let start = Value::Number(0.0);
+        let end = Value::Number(bytes.len() as f64);
+        let subarray = quench_runtime::execute::get_property(&target, "subarray");
+        if quench_runtime::is_callable(&subarray) {
+            return Ok(quench_runtime::execute::call(
+                &subarray,
+                &target,
+                &[start, end],
+            )?);
+        }
+        return Ok(super::buffer_proto::make_view(buffer, offset, bytes.len()));
+    }
     Ok(match &options.encoding {
         Some(encoding) => crate::modules::buffer_enc::decode_str(&bytes, encoding),
         None => crate::modules::buffer_proto::make_buffer(&bytes),
     })
+}
+
+fn view_parts(
+    value: &Value,
+) -> Option<(
+    std::rc::Rc<quench_runtime::value::ArrayBufferData>,
+    usize,
+    usize,
+)> {
+    macro_rules! view {
+        ($view:expr, $size:expr) => {
+            Some((
+                $view.buffer.clone(),
+                $view.byte_offset,
+                $view.length * $size,
+            ))
+        };
+    }
+    match value {
+        Value::Float64Array(view) => view!(view, 8),
+        Value::Float32Array(view) => view!(view, 4),
+        Value::Int8Array(view) => view!(view, 1),
+        Value::Int16Array(view) => view!(view, 2),
+        Value::Int32Array(view) => view!(view, 4),
+        Value::BigInt64Array(view) => view!(view, 8),
+        Value::BigUint64Array(view) => view!(view, 8),
+        Value::Uint32Array(view) => view!(view, 4),
+        Value::Uint8Array(view) => view!(view, 1),
+        Value::Uint8ClampedArray(view) => view!(view, 1),
+        Value::Uint16Array(view) => view!(view, 2),
+        Value::DataView(view) => Some((view.buffer.clone(), view.byte_offset, view.byte_length)),
+        _ => None,
+    }
 }
 
 pub fn read_file_sync(
