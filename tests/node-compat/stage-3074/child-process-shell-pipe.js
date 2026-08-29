@@ -20,6 +20,10 @@ if (process.argv[2] === "child") {
       assert.strictEqual(stdout, expected);
       assert.strictEqual(stderr, "");
       fs.unlinkSync(input);
+      exec(`"${process.execPath}" "${__filename}.missing"`, (error, stdout) => {
+        assert(error);
+        assert.strictEqual(stdout, "");
+      });
     }
   );
 }

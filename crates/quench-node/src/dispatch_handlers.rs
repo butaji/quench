@@ -3977,19 +3977,21 @@ pub fn cp_async(
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let eval_script = command_text.contains(" -e ");
-        let shell_capture = if crate::modules::child_process::needs_shell(&command_text) {
-            crate::modules::child_process::shell_output(&command_text, Some(&options))
-                .ok()
-                .map(|output| {
-                    (
-                        String::from_utf8_lossy(&output.stdout).into_owned(),
-                        String::from_utf8_lossy(&output.stderr).into_owned(),
-                        output.status.success(),
-                    )
-                })
-        } else {
-            None
-        };
+        let self_reexec = command_text.contains(&state.borrow().process.exec_path) && !eval_script;
+        let shell_capture =
+            if crate::modules::child_process::needs_shell(&command_text) || self_reexec {
+                crate::modules::child_process::shell_output(&command_text, Some(&options))
+                    .ok()
+                    .map(|output| {
+                        (
+                            String::from_utf8_lossy(&output.stdout).into_owned(),
+                            String::from_utf8_lossy(&output.stderr).into_owned(),
+                            output.status.success(),
+                        )
+                    })
+            } else {
+                None
+            };
         let mut callback_error = callback_error;
         let output = if let Some((stdout, _, success)) = &shell_capture {
             if !success {
