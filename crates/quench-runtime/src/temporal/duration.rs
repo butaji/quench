@@ -678,6 +678,71 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
+    let has_smallest_option = options.is_some_and(|value| match value {
+        Value::Object(object) => object
+            .iter()
+            .any(|(key, value)| key == "smallestUnit" && !matches!(value, Value::Undefined)),
+        _ => false,
+    });
+    if requested_largest == Some(0)
+        && !has_smallest_option
+        && duration_field(object, "years") != 0
+        && duration_field(object, "months") == 0
+        && duration_field(object, "weeks") == 0
+    {
+        let fields = [
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .iter()
+        .map(|name| Value::Number(duration_field(object, name) as f64))
+        .collect::<Vec<_>>();
+        return construct(&fields);
+    }
+    if let Some(relative) = relative_option(options).and_then(|value| zoned_relative_value(&value))
+    {
+        let fields = [
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .iter()
+        .map(|name| Value::Number(duration_field(object, name) as f64))
+        .collect::<Vec<_>>();
+        let duration = construct(&fields)?;
+        if index == 1 {
+            let total = zoned_total_calendar(&duration, &relative, 1)?;
+            let rounded = round_number(total, &rounding_mode(options)?);
+            let months = rounded as i128;
+            let mut result = vec![Value::Number(0.0); 10];
+            result[1] = Value::Number(months as f64);
+            return construct(&result);
+        }
+        if !has_calendar && largest == 3 && (index == 3 || requested_largest == Some(3)) {
+            return zoned_round_days(object, &duration, &relative, options, index);
+        }
+        if !has_calendar && largest == 4 && requested_largest == Some(4) {
+            let hours = duration_epoch_delta(&duration, &relative)? as f64 / 3_600_000_000_000.0;
+            let mut result = vec![Value::Number(0.0); 10];
+            result[4] = Value::Number(hours);
+            return construct(&result);
+        }
+    }
     if index >= 4
         && !has_calendar
         && relative_is_zoned(options)
@@ -708,7 +773,8 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             }
         }
     }
-    if requested_largest.is_some()
+    if has_calendar
+        && requested_largest.is_some()
         && largest < index
         && largest <= 2
         && rounding_increment(options, index)? > 1.0
@@ -905,6 +971,17 @@ fn normalize_round_options(options: Option<&Value>) -> Result<Option<Value>, VmE
 fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
     if !crate::value::is_object(value) {
         return Ok(value.clone());
+    }
+    if !matches!(
+        crate::execute::get_property_result(value, "timeZone")?,
+        Value::Undefined
+    ) {
+        return crate::temporal::execute(
+            crate::ops::Builtin::TemporalZonedDateTimeFrom,
+            None,
+            std::slice::from_ref(value),
+        )
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     }
     let resolved = crate::locals::resolved_replacement(value.clone());
     if let Value::Object(object) = &resolved {
@@ -1149,6 +1226,85 @@ fn calendar_time_round(
     construct(&fields)
 }
 
+fn zoned_round_days(
+    object: &crate::value::ObjectData,
+    duration: &Value,
+    relative: &Value,
+    options: Option<&Value>,
+    smallest_index: usize,
+) -> Result<Value, VmError> {
+    let has_smallest = options.is_some_and(|value| match value {
+        Value::Object(object) => object
+            .iter()
+            .any(|(key, value)| key == "smallestUnit" && !matches!(value, Value::Undefined)),
+        _ => false,
+    });
+    if has_smallest {
+        if smallest_index > 3 {
+            let scales = [
+                3_600_000_000_000_i128,
+                60_000_000_000,
+                1_000_000_000,
+                1_000_000,
+                1_000,
+                1,
+            ];
+            let actual = duration_epoch_delta(duration, relative)?;
+            let quantum =
+                scales[smallest_index - 4] * rounding_increment(options, smallest_index)? as i128;
+            let rounded = round_integer(actual, quantum, &rounding_mode(options)?) * quantum;
+            let sign = rounded.signum();
+            let mut remainder = rounded.abs();
+            let mut fields = vec![Value::Number(0.0); 10];
+            for (offset, scale) in scales.into_iter().enumerate() {
+                fields[offset + 4] = Value::Number((remainder / scale) as f64 * sign as f64);
+                remainder %= scale;
+            }
+            return construct(&fields);
+        }
+        let total = zoned_total_days(duration, relative)?;
+        let increment = rounding_increment(options, 3)?;
+        let rounded = round_number(total / increment, &rounding_mode(options)?) * increment;
+        let mut fields = vec![Value::Number(0.0); 10];
+        fields[3] = Value::Number(rounded);
+        return construct(&fields);
+    }
+    let actual = duration_epoch_delta(duration, relative)?;
+    let total = zoned_total_days(duration, relative)?;
+    if (total - total.round()).abs() < 1e-12 {
+        let mut fields = vec![Value::Number(0.0); 10];
+        fields[3] = Value::Number(total.round());
+        return construct(&fields);
+    }
+    let whole = total.trunc() as i128;
+    let anchor = {
+        let mut fields = vec![Value::Number(0.0); 10];
+        fields[3] = Value::Number(whole as f64);
+        construct(&fields)?
+    };
+    let mut remainder = (actual - duration_epoch_delta(&anchor, relative)?).abs();
+    let sign = if actual < 0 { -1.0 } else { 1.0 };
+    let scales = [
+        3_600_000_000_000_i128,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let mut fields = vec![Value::Number(0.0); 10];
+    fields[3] = Value::Number(whole as f64);
+    for (index, scale) in scales.into_iter().enumerate() {
+        let value = remainder / scale;
+        fields[index + 4] = Value::Number(value as f64 * sign);
+        remainder %= scale;
+    }
+    // Keep the original date fields out of the result; this helper is only
+    // used for time-only durations balanced into local days.
+    let _ = object;
+    construct(&fields)
+}
+
 fn duration_field_value(object: &crate::value::ObjectData, name: &str) -> Value {
     object
         .iter()
@@ -1300,6 +1456,13 @@ fn round_number(value: f64, mode: &str) -> f64 {
         "floor" => value.floor(),
         "trunc" => value.trunc(),
         "expand" => value.signum() * value.abs().ceil(),
+        "halfTrunc" => {
+            let absolute = value.abs();
+            let lower = absolute.floor();
+            let fraction = absolute - lower;
+            let rounded = if fraction > 0.5 { lower + 1.0 } else { lower };
+            rounded.copysign(value)
+        }
         _ => {
             let lower = value.floor();
             let fraction = value - lower;
