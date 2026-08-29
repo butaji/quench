@@ -88,6 +88,11 @@ fsBinding.fstat = function (...args) {
   const result = Reflect.apply(originalFstat, this, args);
   return Promise.resolve(result).then((stats) => stats);
 };
+const stats = fs.lstatSync('tests/node/test/fixtures/x.txt');
+for (const name of ['atime', 'mtime', 'ctime', 'birthtime']) {
+  assert(stats[name] instanceof Date, name + ' should be a Date');
+  assert(Number.isInteger(stats[name].getTime()), name + ' should expose an integral time');
+}
 const encodings = ['ascii', 'utf8', 'utf16le', 'ucs2', 'base64', 'binary', 'hex'];
 for (const encoding of encodings) {
   const expected = pathBuffer.toString(encoding);
