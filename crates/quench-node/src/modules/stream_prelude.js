@@ -273,6 +273,8 @@
       decoderEnded: false,
       awaitDrainWriters: null,
       pipeCount: 0,
+      pipes: [],
+      pipeRecords: [],
       autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
@@ -645,16 +647,13 @@
       return this;
     }
 
-      pipe(dest, options) {
-        const source = this;
-        const sourceState = source._readableState;
-      sourceState.pipeCount += 1;
-      if (sourceState.pipeCount > 1 && !sourceState.awaitDrainWriters) {
-        sourceState.awaitDrainWriters = new Set();
-      }
-      source.on("data", (chunk) => {
+    pipe(dest, options) {
+      const source = this;
+      const state = source._readableState;
+      state.pipeCount += 1;
+      state.pipes.push(dest);
+      const ondata = (chunk) => {
         if (dest.write(chunk) === false) {
-          const state = source._readableState;
           if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
           else if (state.awaitDrainWriters instanceof Set) state.awaitDrainWriters.add(dest);
           else if (state.awaitDrainWriters !== dest) {
@@ -665,31 +664,34 @@
             if (!writers) return;
             if (writers instanceof Set) writers.delete(dest);
             else if (writers === dest) state.awaitDrainWriters = null;
-            const drained = !state.awaitDrainWriters ||
-              (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0);
-            if (drained) {
+            if (!state.awaitDrainWriters ||
+                (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0)) {
               state.awaitDrainWriters = null;
               source.resume();
             }
           });
         }
-      });
-      let cleaned = false;
+      };
+      const onend = () => { if (!options || options.end !== false) dest.end(); };
+      const onclose = () => { if (typeof dest.destroy === "function") dest.destroy(); };
+      const record = { dest, ondata, onend, onclose, cleaned: false };
       const cleanup = () => {
-        if (cleaned) return;
-        cleaned = true;
+        if (record.cleaned) return;
+        record.cleaned = true;
+        source.removeListener("data", ondata);
         source.removeListener("end", onend);
         source.removeListener("end", cleanup);
         source.removeListener("close", onclose);
         source.removeListener("close", cleanup);
         dest.removeListener("close", cleanup);
+        state.pipeRecords = state.pipeRecords.filter((item) => item !== record);
+        state.pipes = state.pipeRecords.map((item) => item.dest);
+        state.pipeCount = state.pipes.length;
+        record.dest.emit("unpipe", source);
       };
-      const onend = () => {
-        if (!options || options.end !== false) dest.end();
-      };
-      const onclose = () => {
-        if (typeof dest.destroy === "function") dest.destroy();
-      };
+      record.cleanup = cleanup;
+      state.pipeRecords.push(record);
+      source.on("data", ondata);
       source.on("end", onend);
       source.on("end", cleanup);
       source.on("close", onclose);
@@ -701,8 +703,11 @@
     }
 
     unpipe(dest) {
-      this.removeAllListeners("data");
-      if (dest) dest.emit("unpipe", this);
+      const state = this._readableState;
+      const records = state.pipeRecords.filter((record) => !dest || record.dest === dest);
+      for (const record of records) {
+        record.cleanup();
+      }
       return this;
     }
   }
