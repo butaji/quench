@@ -3977,7 +3977,31 @@ pub fn cp_async(
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let eval_script = command_text.contains(" -e ");
-        let output = if eval_script && command_text.contains("console.log(42)") {
+        let shell_capture = if crate::modules::child_process::needs_shell(&command_text) {
+            crate::modules::child_process::shell_output(&command_text, Some(&options))
+                .ok()
+                .map(|output| {
+                    (
+                        String::from_utf8_lossy(&output.stdout).into_owned(),
+                        String::from_utf8_lossy(&output.stderr).into_owned(),
+                        output.status.success(),
+                    )
+                })
+        } else {
+            None
+        };
+        let mut callback_error = callback_error;
+        let output = if let Some((stdout, _, success)) = &shell_capture {
+            if !success {
+                let mut error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String(format!("Command failed: {command_text}"))],
+                );
+                execute::set_property_in_place(&mut error, "code", Value::Number(1.0));
+                callback_error = error;
+            }
+            stdout.clone()
+        } else if eval_script && command_text.contains("console.log(42)") {
             "42\n".into()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stdout\n".into()
@@ -3995,18 +4019,19 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        let stderr = if eval_script && command_text.contains("console.error(43)") {
-            "43\n"
+        let stderr = if let Some((_, stderr, _)) = shell_capture {
+            stderr
+        } else if eval_script && command_text.contains("console.error(43)") {
+            "43\n".into()
         } else if output == "foo\n" {
-            "bar\n"
+            "bar\n".into()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
-            "child stderr\n"
+            "child stderr\n".into()
         } else {
-            ""
+            String::new()
         };
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
-        let mut callback_error = callback_error;
         if eval_script && command_text.contains("process.exit(1)") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
@@ -4021,9 +4046,9 @@ pub fn cp_async(
             Value::String(output)
         };
         let stderr = if use_buffer {
-            cp_buffer_value(stderr)?
+            cp_buffer_value(&stderr)?
         } else {
-            Value::String(stderr.into())
+            Value::String(stderr)
         };
         state
             .borrow_mut()
