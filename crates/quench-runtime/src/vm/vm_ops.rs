@@ -25,6 +25,21 @@ pub fn execute_call(
             .map(peel_binding_cell)
             .unwrap_or(Value::Undefined),
     };
+    // Specialized function bodies are complete synchronous operations.  Finish
+    // them while the caller frame is still live instead of allocating a call
+    // continuation and moving its register file out and back for the same
+    // result.  A miss falls through to the ordinary continuation path, which
+    // preserves all dynamic call/throw/suspend semantics.
+    if let Value::Function(function) = &callee_value {
+        if let Some(value) = crate::functions::try_execute_specialized(
+            function,
+            &receiver_value,
+            &arguments,
+        )? {
+            super::write_value(registers, dst, value);
+            return Ok(crate::completion::Completion::Normal);
+        }
+    }
     Ok(take_call_continuation(
         registers,
         dst,
