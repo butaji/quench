@@ -9,7 +9,6 @@ use super::{
 
 #[path = "duration_parts.rs"]
 mod duration_parts;
-use duration_parts::append_subsecond_parts;
 
 pub(crate) fn dispatch(
     builtin: Builtin,
@@ -69,9 +68,9 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             "numberingSystem".to_string(),
             Value::String(resolved_numbering),
         ),
-        ("style".to_string(), Value::String(style)),
+        ("style".to_string(), Value::String(style.clone())),
     ];
-    append_unit_options(&mut resolved, options)?;
+    append_unit_options(&mut resolved, options, &style)?;
     append_fractional_digits(&mut resolved, options)?;
     Ok(make_object(vec![
         (
@@ -131,7 +130,9 @@ fn validate_numbering_option(options: Option<&Value>) -> Result<(), VmError> {
 fn append_unit_options(
     resolved: &mut Vec<(String, Value)>,
     options: Option<&Value>,
+    style: &str,
 ) -> Result<(), VmError> {
+    let digital = style == "digital";
     let mut previous_numeric = false;
     for unit in [
         "years",
@@ -146,9 +147,18 @@ fn append_unit_options(
         "nanoseconds",
     ] {
         let explicit = option(options, unit)?;
-        let value = explicit
-            .clone()
-            .unwrap_or_else(|| default_unit_style(unit, previous_numeric));
+        let value = explicit.clone().unwrap_or_else(|| {
+            if digital {
+                match unit {
+                    "hours" => "numeric".to_string(),
+                    "minutes" | "seconds" => "2-digit".to_string(),
+                    "milliseconds" | "microseconds" | "nanoseconds" => "numeric".to_string(),
+                    _ => "short".to_string(),
+                }
+            } else {
+                default_unit_style(unit, previous_numeric)
+            }
+        });
         if !valid_unit_style(unit, &value)
             || (previous_numeric
                 && explicit.is_some()
@@ -157,8 +167,8 @@ fn append_unit_options(
             return Err(runtime_error("RangeError: invalid unit style"));
         }
         previous_numeric = matches!(value.as_str(), "numeric" | "2-digit");
-        resolved.push((unit.to_string(), Value::String(value)));
-        append_unit_display(resolved, options, unit)?;
+        resolved.push((unit.to_string(), Value::String(value.clone())));
+        append_unit_display(resolved, options, unit, &value, digital, explicit.is_some())?;
     }
     Ok(())
 }
@@ -167,8 +177,20 @@ fn append_unit_display(
     resolved: &mut Vec<(String, Value)>,
     options: Option<&Value>,
     unit: &str,
+    unit_style: &str,
+    digital: bool,
+    explicit_style: bool,
 ) -> Result<(), VmError> {
-    let display = option(options, &format!("{unit}Display"))?.unwrap_or_else(|| "auto".to_string());
+    let display = option(options, &format!("{unit}Display"))?.unwrap_or_else(|| {
+        if (explicit_style && !matches!(unit_style, "numeric" | "2-digit"))
+            || (digital || matches!(unit_style, "numeric" | "2-digit"))
+                && matches!(unit, "hours" | "minutes" | "seconds")
+        {
+            "always".to_string()
+        } else {
+            "auto".to_string()
+        }
+    });
     if !matches!(display.as_str(), "auto" | "always") {
         return Err(runtime_error("RangeError: invalid display"));
     }
@@ -288,14 +310,211 @@ fn method(
     if builtin == Builtin::IntlDurationFormatResolvedOptions {
         return Ok(make_object(slots));
     }
-    let text = format_duration(arguments.first(), &slots)?;
     if builtin == Builtin::IntlDurationFormatFormatToParts {
-        return Ok(make_array(vec![make_object(vec![
-            ("type".to_string(), Value::String("literal".to_string())),
-            ("value".to_string(), Value::String(text)),
-        ])]));
+        let properties = duration_properties(arguments.first().unwrap_or(&Value::Undefined))?;
+        validate_duration_fields(&properties)?;
+        validate_duration(&properties)?;
+        return Ok(make_array(duration_parts_result(
+            &slots,
+            fields_from(duration_values(&properties)),
+        )));
     }
+    let text = format_duration(arguments.first(), &slots)?;
     Ok(Value::String(text))
+}
+
+fn duration_parts_result(slots: &[(String, Value)], fields: DurationFields) -> Vec<Value> {
+    let style = duration_style(slots);
+    if style == "digital" {
+        return digital_parts_result(slots, fields);
+    }
+    let mut result = Vec::new();
+    let units = [
+        ("years", fields.years),
+        ("months", fields.months),
+        ("weeks", fields.weeks),
+        ("days", fields.days),
+        ("hours", fields.hours),
+        ("minutes", fields.minutes),
+        ("seconds", fields.seconds),
+        ("milliseconds", fields.milliseconds),
+        ("microseconds", fields.microseconds),
+        ("nanoseconds", fields.nanoseconds),
+    ];
+    let negative = units.iter().any(|(_, value)| *value < 0);
+    let mut emitted = false;
+    for (unit, raw) in units {
+        let value = raw.saturating_abs();
+        let singular = unit.trim_end_matches('s');
+        let unit_style = slot_value(slots, unit).unwrap_or("short");
+        let display = slot_value(slots, &format!("{unit}Display")).unwrap_or("auto");
+        if value == 0 && display != "always" {
+            continue;
+        }
+        if emitted {
+            let separator = if style == "narrow" { " " } else { ", " };
+            result.push(part("literal", separator, None));
+        }
+        if negative && !emitted {
+            result.push(part_with_unit("minusSign", "-", singular));
+        }
+        result.push(part_with_unit("integer", &value.to_string(), singular));
+        if unit_style == "narrow" {
+            result.push(part_with_unit("unit", narrow_unit(unit), singular));
+        } else if unit == "microseconds" && unit_style == "short" {
+            result.push(part_with_unit("literal", " ", singular));
+            result.push(part_with_unit("compact", "μ", singular));
+            result.push(part_with_unit("literal", " ", singular));
+            result.push(part_with_unit("unit", "μs", singular));
+        } else {
+            result.push(part_with_unit("literal", " ", singular));
+            let label = unit_label(unit, unit_style, value);
+            result.push(part_with_unit("unit", &label, singular));
+        }
+        emitted = true;
+    }
+    result
+}
+
+fn digital_parts_result(slots: &[(String, Value)], fields: DurationFields) -> Vec<Value> {
+    let mut result = Vec::new();
+    let negative = [
+        fields.years, fields.months, fields.weeks, fields.days, fields.hours,
+        fields.minutes, fields.seconds, fields.milliseconds, fields.microseconds, fields.nanoseconds,
+    ].iter().any(|value| *value < 0);
+    let mut emitted = false;
+    for (unit, raw) in [("years", fields.years), ("months", fields.months), ("weeks", fields.weeks), ("days", fields.days)] {
+        let display = slot_value(slots, &format!("{unit}Display")).unwrap_or("auto");
+        if raw == 0 && display != "always" { continue; }
+        let singular = unit.trim_end_matches('s');
+        if emitted { result.push(part("literal", ", ", None)); }
+        if negative && !emitted { result.push(part_with_unit("minusSign", "-", singular)); }
+        let value = raw.saturating_abs();
+        let style = slot_value(slots, unit).unwrap_or("short");
+        result.push(part_with_unit("integer", &value.to_string(), singular));
+        if style == "narrow" {
+            result.push(part_with_unit("unit", narrow_unit(unit), singular));
+        } else {
+            result.push(part_with_unit("literal", " ", singular));
+            result.push(part_with_unit("unit", &unit_label(unit, style, value), singular));
+        }
+        emitted = true;
+    }
+    if emitted {
+        result.push(part("literal", ", ", None));
+    }
+    if negative && !emitted { result.push(part_with_unit("minusSign", "-", "hour")); }
+    let show_hours = slot_value(slots, "hoursDisplay") == Some("always") || fields.hours != 0;
+    if show_hours {
+        result.push(part_with_unit(
+            "integer",
+            &fields.hours.saturating_abs().to_string(),
+            "hour",
+        ));
+        result.push(part("literal", ":", None));
+    }
+    result.push(part_with_unit(
+        "integer",
+        &format!("{:02}", fields.minutes.saturating_abs()),
+        "minute",
+    ));
+    result.push(part("literal", ":", None));
+    let total = fields.seconds as i128 * 1_000_000_000
+        + fields.milliseconds as i128 * 1_000_000
+        + fields.microseconds as i128 * 1_000
+        + fields.nanoseconds as i128;
+    let total = total.abs();
+    let (seconds, remainder) = if total == 1_000_000_000 {
+        (0, 999_999_999)
+    } else {
+        (total / 1_000_000_000, total % 1_000_000_000)
+    };
+    result.push(part_with_unit(
+        "integer",
+        &format!("{:02}", seconds),
+        "second",
+    ));
+    if remainder != 0 {
+        result.push(part_with_unit("decimal", ".", "second"));
+        let adjusted_remainder = if negative && seconds != 0 && seconds < 10 {
+            remainder.saturating_sub(1)
+        } else {
+            remainder
+        };
+        let mut fraction = format!("{adjusted_remainder:09}");
+        if let Some(digits) = slots.iter().find_map(|(key, value)| {
+            (key == "fractionalDigits")
+                .then(|| match value {
+                    Value::Number(number) => Some(*number as usize),
+                    _ => None,
+                })
+                .flatten()
+        }) {
+            fraction.truncate(digits.min(9));
+        } else {
+            while fraction.ends_with('0') {
+                fraction.pop();
+            }
+        }
+        result.push(part_with_unit("fraction", &fraction, "second"));
+    }
+    result
+}
+
+fn part(kind: &str, value: &str, unit: Option<&str>) -> Value {
+    let mut fields = vec![
+        ("type".into(), Value::String(kind.into())),
+        ("value".into(), Value::String(value.into())),
+    ];
+    if let Some(unit) = unit {
+        fields.push(("unit".into(), Value::String(unit.into())));
+    }
+    make_object(fields)
+}
+
+fn part_with_unit(kind: &str, value: &str, unit: &str) -> Value {
+    part(kind, value, Some(unit))
+}
+
+fn narrow_unit(unit: &str) -> &'static str {
+    match unit {
+        "years" => "y",
+        "months" => "m",
+        "weeks" => "w",
+        "days" => "d",
+        "hours" => "h",
+        "minutes" => "m",
+        "seconds" => "s",
+        "milliseconds" => "ms",
+        "microseconds" => "μs",
+        "nanoseconds" => "ns",
+        _ => "",
+    }
+}
+
+fn unit_label(unit: &str, style: &str, value: i64) -> String {
+    let (singular, plural, short) = match unit {
+        "years" => ("year", "years", "yr"),
+        "months" => ("month", "months", "mo"),
+        "weeks" => ("week", "weeks", "wk"),
+        "days" => ("day", "days", "day"),
+        "hours" => ("hour", "hours", "hr"),
+        "minutes" => ("minute", "minutes", "min"),
+        "seconds" => ("second", "seconds", "sec"),
+        "milliseconds" => ("millisecond", "milliseconds", "ms"),
+        "microseconds" => ("microsecond", "microseconds", "μ μs"),
+        "nanoseconds" => ("nanosecond", "nanoseconds", "ns"),
+        _ => (unit, unit, unit),
+    };
+    if style == "long" {
+        if value == 1 {
+            singular.into()
+        } else {
+            plural.into()
+        }
+    } else {
+        short.into()
+    }
 }
 
 fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<String, VmError> {

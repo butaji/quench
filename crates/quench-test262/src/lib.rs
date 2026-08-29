@@ -116,6 +116,7 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
     // deliberately malformed preamble before those comments; skip only that
     // narrow preamble, never arbitrary JavaScript preceding the marker.
     let mut body = skip_hashbang_preamble(source);
+    body = skip_html_close_preamble(body);
     loop {
         if let Some(rest) = body.strip_prefix('\n') {
             body = rest;
@@ -136,6 +137,40 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
         return Err("unterminated test262 frontmatter".into());
     };
     Ok(&body[..end_offset])
+}
+
+fn skip_html_close_preamble(mut source: &str) -> &str {
+    loop {
+        let Some(line_end) = source.find('\n') else {
+            return source;
+        };
+        let line = &source[..line_end];
+        let bytes = line.as_bytes();
+        let mut cursor = 0;
+        loop {
+            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+                cursor += 1;
+            }
+            if bytes
+                .get(cursor..)
+                .is_some_and(|tail| tail.starts_with(b"/*"))
+            {
+                let Some(end) = line[cursor + 2..].find("*/") else {
+                    return source;
+                };
+                cursor += end + 4;
+                continue;
+            }
+            break;
+        }
+        if !bytes
+            .get(cursor..)
+            .is_some_and(|tail| tail.starts_with(b"-->"))
+        {
+            return source;
+        }
+        source = &source[line_end + 1..];
+    }
 }
 
 fn skip_hashbang_preamble(source: &str) -> &str {
