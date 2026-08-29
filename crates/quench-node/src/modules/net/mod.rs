@@ -399,6 +399,11 @@ fn resolve(host: &str, port: u16) -> SocketAddr {
 }
 
 pub(crate) fn resolve_connect(host: &str, port: u16) -> Option<SocketAddr> {
+    let host = if host == "localhost" {
+        LOCAL_HOST
+    } else {
+        host
+    };
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         return Some(SocketAddr::new(ip, port));
     }
