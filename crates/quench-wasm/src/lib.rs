@@ -1,15 +1,12 @@
-//! WebAssembly frontend for Quench.
+//! WebAssembly format: parse, validate, and wast scoring.
 //!
-//! Decode and validation are third-party. This crate lowers validated Wasm into
-//! common HIR; `quench-runtime` specialises and interprets. The wast harness
-//! scores each directive. Native i32 execute is live; other clusters stay
-//! unimplemented until lowered.
+//! This crate owns the binary/text format and the spec-suite harness.
+//! `quench-runtime` is the VM: load, instantiate, interpret.
 
 use std::fmt;
 
 mod decode;
 mod legacy_try;
-mod lower;
 mod wast_exec;
 mod wast_script;
 

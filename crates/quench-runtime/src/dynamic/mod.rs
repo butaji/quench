@@ -1,8 +1,8 @@
-//! Dynamic layer: QuickJS architecture, Native | Fast | Dynamic ladder.
+//! JS layer on the Wasm VM: QuickJS facts, Native | Fast | Dynamic climb.
 //!
-//! JSValue, atoms, shapes, Runtime/Context, RC+cycle GC, and stack bytecode
-//! are the facts. Native is the INT/float fast path; Fast is a guarded climb;
-//! Box/Guard are the only crossings. This is not a second object type.
+//! The Wasm store is Native|Fast|Dynamic with Arena|GC. This module is the
+//! slower JS layer: JSValue, atoms, shapes, Runtime/Context, RC+cycle, stack
+//! bytecode. It is not the Wasm GC heap.
 
 mod atom;
 mod jsvalue;

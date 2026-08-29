@@ -38,6 +38,13 @@ pub fn get(id: u32) -> Option<Rc<Inner>> {
 
 thread_local! {
     static PINNED: RefCell<Vec<Rc<Inner>>> = RefCell::new(Vec::new());
+    static HEAP: Rc<RefCell<crate::gc::GcHeap>> =
+        Rc::new(RefCell::new(crate::gc::GcHeap::default()));
+}
+
+/// Wasm store GC heap. Shared across instances on this thread (one store).
+pub fn heap() -> Rc<RefCell<crate::gc::GcHeap>> {
+    HEAP.with(Rc::clone)
 }
 
 /// Keep a failed instantiate alive so funcrefs written into imported tables remain.
