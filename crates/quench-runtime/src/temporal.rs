@@ -741,6 +741,12 @@ fn iso_offset_nanos(text: &str) -> i128 {
     sign * (hour * 3_600 + minute * 60 + second) * 1_000_000_000
 }
 
+fn iso_offset_has_seconds(text: &str) -> bool {
+    let body = text.get(1..).unwrap_or_default();
+    let core = body.split_once(['.', ',']).map_or(body, |(core, _)| core);
+    core.replace(':', "").len() == 6
+}
+
 fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     if depth > 4 {
         return false;
@@ -1340,7 +1346,8 @@ mod stubs {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if supplied_offset != actual_offset
-                    && (supplied_offset % 60_000_000_000 == 0 || timezone.starts_with(['+', '-']))
+                    && (super::iso_offset_has_seconds(offset_text)
+                        || timezone.starts_with(['+', '-']))
                 {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
@@ -1355,11 +1362,29 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
-            if offset_start.is_some() && matches!(offset_mode.as_str(), "ignore" | "prefer") {
+            if offset_start.is_some()
+                && (matches!(offset_mode.as_str(), "ignore" | "prefer")
+                    || (offset_mode == "reject" && !super::iso_offset_has_seconds(offset_text)))
+            {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
-                if offset_mode == "ignore" || supplied_offset != actual_offset {
-                    epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                let previous_offset =
+                    super::timezone_offset_nanos(&timezone, epoch - 86_400_000_000_000);
+                let use_previous = offset_mode == "reject"
+                    && !super::iso_offset_has_seconds(offset_text)
+                    && previous_offset != actual_offset
+                    && (supplied_offset - previous_offset).abs() <= 30_000_000_000;
+                if offset_mode == "ignore"
+                    || (supplied_offset != actual_offset
+                        && (!super::iso_offset_has_seconds(offset_text) || offset_mode == "prefer"))
+                    || use_previous
+                {
+                    if use_previous {
+                        epoch = local_epoch - previous_offset;
+                    } else {
+                        epoch =
+                            super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                    }
                     if epoch == i128::MIN {
                         return Err(crate::value::error::throw_range_error(
                             "Invalid ZonedDateTime",
@@ -1368,7 +1393,14 @@ mod stubs {
                 }
             }
             if offset_start.is_none() && !has_z {
-                epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                epoch = if !has_time_separator {
+                    let guess = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+                    super::timezone_start_of_day_epoch(&timezone, guess).unwrap_or_else(|| {
+                        super::timezone_local_epoch(&timezone, local_epoch, &disambiguation)
+                    })
+                } else {
+                    super::timezone_local_epoch(&timezone, local_epoch, &disambiguation)
+                };
                 if epoch == i128::MIN {
                     return Err(crate::value::error::throw_range_error(
                         "Invalid ZonedDateTime",
@@ -2901,7 +2933,8 @@ mod stubs {
                 .zip(scale.iter())
                 .map(|((new, old), scale)| ((*new - *old) as i128) * scale)
                 .sum::<i128>();
-            let epoch = match property("epochNanoseconds")? {
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let current_epoch = match property("epochNanoseconds")? {
                 Value::BigInt(value) => {
                     let epoch = value.parse::<i128>().unwrap_or(0);
                     if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
@@ -2909,7 +2942,15 @@ mod stubs {
                             "Invalid epochNanoseconds",
                         ));
                     }
-                    epoch + delta
+                    if arguments
+                        .first()
+                        .map_or(true, |value| matches!(value, Value::Undefined))
+                    {
+                        super::timezone_start_of_day_epoch(&timezone, epoch)
+                            .unwrap_or(epoch + delta)
+                    } else {
+                        epoch
+                    }
                 }
                 _ => {
                     return Err(crate::value::error::throw_type_error(
@@ -2917,12 +2958,31 @@ mod stubs {
                     ))
                 }
             };
+            let epoch = if arguments
+                .first()
+                .map_or(true, |value| matches!(value, Value::Undefined))
+            {
+                current_epoch
+            } else {
+                let year = crate::conversion::to_number(&property("year")?)? as i32;
+                let month = crate::conversion::to_number(&property("month")?)? as u32;
+                let day = crate::conversion::to_number(&property("day")?)? as u32;
+                let local_days = super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                    - super::plain_date::date_serial(1970.0, 1.0, 1.0);
+                let local_epoch = i128::from(local_days) * 86_400_000_000_000
+                    + units[0] as i128 * 3_600_000_000_000
+                    + units[1] as i128 * 60_000_000_000
+                    + units[2] as i128 * 1_000_000_000
+                    + units[3] as i128 * 1_000_000
+                    + units[4] as i128 * 1_000
+                    + units[5] as i128;
+                super::timezone_local_epoch(&timezone, local_epoch, "compatible")
+            };
             if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid epochNanoseconds",
                 ));
             }
-            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
@@ -4465,7 +4525,7 @@ mod stubs {
         let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
         let offset_nanos = crate::conversion::to_number(&property("offsetNanoseconds")?)? as i128;
         let offset_nanos = offset_nanos / 60_000_000_000 * 60_000_000_000;
-        let offset = super::format_offset(offset_nanos);
+        let mut offset = super::format_offset(offset_nanos);
         let options = arguments.first();
         if let Some(value) = options {
             if !matches!(
@@ -4712,6 +4772,37 @@ mod stubs {
             millisecond = (fraction / 1_000_000) as u32;
             microsecond = (fraction / 1_000 % 1_000) as u32;
             nanosecond = (fraction % 1_000) as u32;
+        }
+        if (smallest.is_some() || precision != usize::MAX)
+            && !timezone.starts_with(['+', '-'])
+            && matches!(calendar_text.as_str(), "iso8601" | "gregory")
+        {
+            let local_days = super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                - super::plain_date::date_serial(1970.0, 1.0, 1.0);
+            let local_epoch = local_days as i128 * 86_400_000_000_000
+                + i128::from(hour) * 3_600_000_000_000
+                + i128::from(minute) * 60_000_000_000
+                + i128::from(second) * 1_000_000_000
+                + fraction;
+            let corrected = super::timezone_local_epoch(&timezone, local_epoch, "compatible");
+            if corrected != i128::MIN {
+                let corrected_offset = super::timezone_offset_nanos(&timezone, corrected);
+                let local = corrected + corrected_offset;
+                if let Some(date) = chrono::NaiveDateTime::from_timestamp_opt(
+                    local.div_euclid(1_000_000_000) as i64,
+                    local.rem_euclid(1_000_000_000) as u32,
+                ) {
+                    year = date.year();
+                    month = date.month();
+                    day = date.day();
+                    hour = chrono::Timelike::hour(&date);
+                    minute = chrono::Timelike::minute(&date);
+                    second = chrono::Timelike::second(&date);
+                    offset = super::format_offset(
+                        corrected_offset / 60_000_000_000 * 60_000_000_000,
+                    );
+                }
+            }
         }
         let suffix = if precision == 0 || (fraction == 0 && precision == usize::MAX) {
             String::new()
