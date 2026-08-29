@@ -517,6 +517,8 @@ pub const SPEC_HTTP_AGENT: NodeSpec = NodeSpec::new("http:Agent", 0x0F0E);
 pub const SPEC_HTTP_REQ_RESUME: NodeSpec = NodeSpec::new("http:req:resume", 0x0F0F);
 pub const SPEC_HTTP_RES_SET_ENCODING: NodeSpec = NodeSpec::new("http:res:setEncoding", 0x0F10);
 pub const SPEC_HTTP_REQ_DESTROY: NodeSpec = NodeSpec::new("http:req:destroy", 0x0F16);
+pub const SPEC_HTTP_REQ_ABORT: NodeSpec = NodeSpec::new("http:req:abort", 0x0F17);
+pub const SPEC_HTTP_REQ_CLIENT_DESTROY: NodeSpec = NodeSpec::new("http:req:clientDestroy", 0x0F18);
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
 pub const SPEC_NET_SOCKET: NodeSpec = NodeSpec::new("net:Socket", 0x1013);
@@ -1051,6 +1053,8 @@ pub const CAP_HTTP_REQUEST: CapId = SPEC_HTTP_REQUEST.cap;
 pub const CAP_HTTP_REQ_END: CapId = SPEC_HTTP_REQ_END.cap;
 pub const CAP_HTTP_REQ_RESUME: CapId = SPEC_HTTP_REQ_RESUME.cap;
 pub const CAP_HTTP_REQ_DESTROY: CapId = SPEC_HTTP_REQ_DESTROY.cap;
+pub const CAP_HTTP_REQ_ABORT: CapId = SPEC_HTTP_REQ_ABORT.cap;
+pub const CAP_HTTP_REQ_CLIENT_DESTROY: CapId = SPEC_HTTP_REQ_CLIENT_DESTROY.cap;
 pub const CAP_HTTP_REQ_SET_HEADER: CapId = SPEC_HTTP_REQ_SET_HEADER.cap;
 pub const CAP_HTTP_REQ_WRITE: CapId = SPEC_HTTP_REQ_WRITE.cap;
 pub const CAP_HTTP_RESDATA: CapId = SPEC_HTTP_RESDATA.cap;
