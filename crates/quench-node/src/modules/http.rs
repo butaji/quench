@@ -99,14 +99,20 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         _ => (None, args.first()),
     };
     let require_host_header = options
-        .map(|value| !matches!(execute::get_property(value, "requireHostHeader"), Value::Boolean(false)))
+        .map(|value| {
+            !matches!(
+                execute::get_property(value, "requireHostHeader"),
+                Value::Boolean(false)
+            )
+        })
         .unwrap_or(true);
-    let updated = execute::set_property(
-        object.clone(),
+    // This is host-owned metadata on the same server identity. Mutate the
+    // existing object so method receivers and the net registry stay aligned.
+    execute::set_property_in_place(
+        &object,
         REQUIRE_HOST_HEADER_PROP,
         Value::Boolean(require_host_header),
     );
-    execute::replace_value(&object, &updated);
     if let Some(cb) = callback {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
@@ -137,7 +143,12 @@ pub fn connection_handler(
         return Ok(Value::Undefined);
     };
     let require_host_header = receiver
-        .map(|server| matches!(execute::get_property(server, REQUIRE_HOST_HEADER_PROP), Value::Boolean(true)))
+        .map(|server| {
+            matches!(
+                execute::get_property(server, REQUIRE_HOST_HEADER_PROP),
+                Value::Boolean(true)
+            )
+        })
         .unwrap_or(true);
     state.borrow_mut().http.conns.insert(
         socket_id,
@@ -200,7 +211,10 @@ pub(crate) fn abort_http_signal(
     state: &Rc<RefCell<HostState>>,
     signal: &Value,
 ) -> Result<(), VmError> {
-    if matches!(execute::get_property(signal, "aborted"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(signal, "aborted"),
+        Value::Boolean(true)
+    ) {
         return Ok(());
     }
     execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
@@ -220,15 +234,18 @@ pub(crate) fn abort_server_signal(
     };
     let request = {
         let guard = state.borrow();
-        guard.http.conns.get(&socket_id).and_then(|conn| {
-            (!conn.response_done).then(|| {
-                conn.req
-                    .clone()
-            })
-        }).flatten()
+        guard
+            .http
+            .conns
+            .get(&socket_id)
+            .and_then(|conn| (!conn.response_done).then(|| conn.req.clone()))
+            .flatten()
     };
     if let Some(request) = request {
-        if !matches!(execute::get_property(&request, "aborted"), Value::Boolean(true)) {
+        if !matches!(
+            execute::get_property(&request, "aborted"),
+            Value::Boolean(true)
+        ) {
             execute::set_property_in_place(&request, "aborted", Value::Boolean(true));
             let signal = execute::get_property(&request, "signal");
             if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -255,6 +272,27 @@ pub fn data_handler(
         if let Some(conn) = guard.http.conns.get_mut(&socket_id) {
             conn.buffer.extend_from_slice(&bytes);
         }
+    }
+    // A keep-alive peer sending a bare empty line after a completed response
+    // is idle protocol traffic. Node's timeout path closes this connection;
+    // ending it here preserves the same observable close/close-server order.
+    let idle_empty_line = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .is_some_and(|conn| conn.response_done && conn.buffer.as_slice() == b"\r\n");
+    if idle_empty_line {
+        if let Some(socket) = state
+            .borrow()
+            .net
+            .sockets
+            .get(&socket_id)
+            .map(|socket| socket.borrow().js.clone())
+        {
+            net::socket_destroy(state, Some(&socket), &[])?;
+        }
+        return Ok(Value::Undefined);
     }
     feed_conn(state, socket_id)
 }
@@ -381,10 +419,7 @@ fn emit_request(
         execute::get_property(&req, "headers"),
         Value::Object(_) | Value::ObjectAlias(_)
     ) && matches!(
-        execute::get_property(
-            &execute::get_property(&req, "headers"),
-            "host"
-        ),
+        execute::get_property(&execute::get_property(&req, "headers"), "host"),
         Value::Undefined
     );
     let require_host_header = state
@@ -442,6 +477,18 @@ fn build_req_res(
     head: &[u8],
 ) -> Result<(Value, Value), VmError> {
     let (req, content_length, keep_alive) = build_req(state, head)?;
+    // IncomingMessage.socket/connection are aliases of the accepted net
+    // socket. Stamp both on the request before exposing it to user code.
+    if let Some(socket) = state
+        .borrow()
+        .net
+        .sockets
+        .get(&socket_id)
+        .map(|socket| socket.borrow().js.clone())
+    {
+        execute::set_property_in_place(&req, "socket", socket.clone());
+        execute::set_property_in_place(&req, "connection", socket);
+    }
     let (res, id) = build_res_object(state)?;
     insert_response(state, socket_id, id, keep_alive);
     {
@@ -503,15 +550,24 @@ pub fn request_destroy(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some((_, req)) = state.borrow().http.conns.iter().find_map(|(socket_id, conn)| {
-        conn.req
-            .as_ref()
-            .filter(|req| execute::same_identity(req, receiver))
-            .map(|req| (*socket_id, req.clone()))
-    }) else {
+    let Some((_, req)) = state
+        .borrow()
+        .http
+        .conns
+        .iter()
+        .find_map(|(socket_id, conn)| {
+            conn.req
+                .as_ref()
+                .filter(|req| execute::same_identity(req, receiver))
+                .map(|req| (*socket_id, req.clone()))
+        })
+    else {
         return Ok(receiver.clone());
     };
-    if matches!(execute::get_property(&req, "destroyed"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(&req, "destroyed"),
+        Value::Boolean(true)
+    ) {
         return Ok(receiver.clone());
     }
     execute::set_property_in_place(&req, "destroyed", Value::Boolean(true));
@@ -526,16 +582,18 @@ pub fn request_destroy(
         .http
         .conns
         .values()
-        .find(|conn| conn.req.as_ref().is_some_and(|value| execute::same_identity(value, &req)))
+        .find(|conn| {
+            conn.req
+                .as_ref()
+                .is_some_and(|value| execute::same_identity(value, &req))
+        })
         .map(|conn| conn.body_done)
         .unwrap_or(true);
-    if let Some(conn) = state
-        .borrow_mut()
-        .http
-        .conns
-        .values_mut()
-        .find(|conn| conn.req.as_ref().is_some_and(|value| execute::same_identity(value, &req)))
-    {
+    if let Some(conn) = state.borrow_mut().http.conns.values_mut().find(|conn| {
+        conn.req
+            .as_ref()
+            .is_some_and(|value| execute::same_identity(value, &req))
+    }) {
         conn.body_done = true;
     }
     let error = if body_complete {
@@ -694,8 +752,8 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 }
 
 // Response methods live in `http_res`; re-exported here for dispatch.
-pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 pub use crate::modules::http_res::{res_destroy, res_flush_headers};
+pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 
 /// Construct an IncomingMessage with the same signal/destroy state used by
 /// network-created messages. This keeps the public constructor useful for
@@ -709,7 +767,10 @@ pub fn incoming_construct(
         object,
         vec![
             ("signal".into(), new_http_signal(state)?),
-            ("destroy".into(), crate::host::capability(crate::registry::SPEC_HTTP_INCOMING_DESTROY)),
+            (
+                "destroy".into(),
+                crate::host::capability(crate::registry::SPEC_HTTP_INCOMING_DESTROY),
+            ),
             ("aborted".into(), Value::Boolean(false)),
             ("complete".into(), Value::Boolean(false)),
         ],
@@ -724,7 +785,10 @@ pub fn incoming_destroy(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    if matches!(execute::get_property(receiver, "destroyed"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(receiver, "destroyed"),
+        Value::Boolean(true)
+    ) {
         return Ok(receiver.clone());
     }
     let error = _args.first().cloned();
@@ -799,10 +863,7 @@ pub fn build() -> Value {
             "get",
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
         ),
-        (
-            "Agent",
-            agent,
-        ),
+        ("Agent", agent),
         (
             "IncomingMessage",
             crate::host::capability(crate::registry::SPEC_HTTP_INCOMING),

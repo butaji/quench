@@ -91,7 +91,13 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value, VmError> {
     let port = state.borrow().net.paths.get(path).copied();
     match port {
-        Some(port) => connect(state, &[Value::Number(port as f64), Value::String("127.0.0.1".into())]),
+        Some(port) => connect(
+            state,
+            &[
+                Value::Number(port as f64),
+                Value::String("127.0.0.1".into()),
+            ],
+        ),
         None => {
             let (object, _) = new_net_object(state, socket_props())?;
             let error = host_api::object(vec![
@@ -99,7 +105,11 @@ pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value,
                 ("code".into(), Value::String("ENOENT".into())),
                 ("syscall".into(), Value::String("connect".into())),
             ]);
-            state.borrow_mut().net.pending_errors.push((object.clone(), error));
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((object.clone(), error));
             Ok(object)
         }
     }
@@ -508,10 +518,11 @@ pub fn server_listen(
         let listener = match bind_listener(0, None) {
             Ok(listener) => listener,
             Err(error) => {
-                state.borrow_mut().net.pending_errors.push((
-                    receiver.clone(),
-                    server_bind_error(&error, None, 0),
-                ));
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((receiver.clone(), server_bind_error(&error, None, 0)));
                 return Ok(receiver);
             }
         };
@@ -524,10 +535,11 @@ pub fn server_listen(
             let listener = match bind_listener(0, None) {
                 Ok(listener) => listener,
                 Err(error) => {
-                    state.borrow_mut().net.pending_errors.push((
-                        receiver.clone(),
-                        server_bind_error(&error, None, 0),
-                    ));
+                    state
+                        .borrow_mut()
+                        .net
+                        .pending_errors
+                        .push((receiver.clone(), server_bind_error(&error, None, 0)));
                     return Ok(receiver);
                 }
             };
@@ -659,6 +671,16 @@ pub fn server_close(
     // server and allow the registered close callback to fire.
     super::set_server_listening(&receiver, false)?;
     add_listener_cb(state, &receiver, args.first(), "close")?;
+    let no_connections = !state.borrow().net.sockets.values().any(|socket| {
+        socket.borrow().server_id == Some(id) && socket.borrow().state != SocketState::Closed
+    });
+    if no_connections {
+        if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
+            server.borrow_mut().close_emitted = true;
+        }
+        state.borrow_mut().net.servers.remove(&id);
+        super::emit(state, &receiver, "close", Vec::new())?;
+    }
     Ok(receiver)
 }
 
@@ -733,12 +755,7 @@ pub fn server_address(
     let Some(id) = receiver.and_then(net_id) else {
         return Ok(Value::Null);
     };
-    let server = state
-        .borrow()
-        .net
-        .servers
-        .get(&id)
-        .cloned();
+    let server = state.borrow().net.servers.get(&id).cloned();
     let Some(server) = server else {
         return Ok(Value::Null);
     };
@@ -856,6 +873,9 @@ pub fn socket_destroy(
     }
     if emit_close {
         emit(state, &receiver, "close", Vec::new())?;
+        // Destruction is terminal: remove the host record after observers
+        // receive the close event so a closing server can finish.
+        state.borrow_mut().net.sockets.remove(&id);
     }
     Ok(receiver)
 }
@@ -961,10 +981,8 @@ pub fn socket_set_timeout(
                 },
                 vec![receiver.clone()],
             );
-            let timer = crate::modules::timers::set_timeout(
-                state,
-                &[callback, Value::Number(timeout)],
-            )?;
+            let timer =
+                crate::modules::timers::set_timeout(state, &[callback, Value::Number(timeout)])?;
             execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, timer);
         }
     }
@@ -980,11 +998,7 @@ pub fn socket_timeout_fire(
         return Ok(Value::Undefined);
     };
     execute::set_property_in_place(socket, SOCKET_TIMEOUT_PROP, Value::Undefined);
-    crate::modules::events::method_emit(
-        state,
-        Some(socket),
-        &[Value::String("timeout".into())],
-    )
+    crate::modules::events::method_emit(state, Some(socket), &[Value::String("timeout".into())])
 }
 
 fn timeout_timer(socket: &Value) -> Option<Value> {
