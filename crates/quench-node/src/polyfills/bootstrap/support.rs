@@ -1,7 +1,7 @@
 //! Polyfill: `support`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.gc ||= function () { return undefined; };
-globalThis.__nodeCommon = {
+Object.defineProperty(globalThis, "__nodeCommon", { value: {
   mustCall: (fn = () => {}, exact = 1) => {
     if (typeof fn === "number") {
       exact = fn;
@@ -144,8 +144,8 @@ globalThis.__nodeCommon = {
       source.slice(start, start + length),
     ];
   },
-};
-globalThis.__quench_verify_calls = () => {
+}, configurable: true });
+Object.defineProperty(globalThis, "__quench_verify_calls", { value: () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
     if (
       callback.__quench_at_least
@@ -157,8 +157,8 @@ globalThis.__quench_verify_calls = () => {
       );
     }
   }
-};
-globalThis.__nodeTmpdir = {
+}, configurable: true });
+Object.defineProperty(globalThis, "__nodeTmpdir", { value: {
   path: `/tmp/quench-node-${process.pid}`,
   hasEnoughSpace: (_bytes) => false,
   refresh: () => {
@@ -177,7 +177,7 @@ globalThis.__nodeTmpdir = {
         )
       }`,
     ),
-};
+}, configurable: true });
 class NodeEventEmitter {
   constructor(options = {}) {
     this._events = Object.create(null);
@@ -301,6 +301,9 @@ class NodeEventEmitter {
   }
 }
 NodeEventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
-globalThis.__nodeEventEmitter = NodeEventEmitter;
+Object.defineProperty(globalThis, "__nodeEventEmitter", {
+  value: NodeEventEmitter,
+  configurable: true,
+});
 globalThis.process._events = Object.create(null);
 "#);
