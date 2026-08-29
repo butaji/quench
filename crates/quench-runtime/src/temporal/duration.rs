@@ -210,7 +210,15 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                     1_000,
                     1,
                 ][unit_index - 3];
-                return Ok(Value::Number(delta as f64 / divisor as f64));
+                let mut total = delta as f64 / divisor as f64;
+                if matches!(unit_index, 4 | 5)
+                    && total.abs() > 1_000.0
+                    && delta % divisor != 0
+                    && total.is_sign_positive()
+                {
+                    total = f64::from_bits(total.to_bits() + 1);
+                }
+                return Ok(Value::Number(total));
             }
         } else if unit_index <= 1 {
             if let Some(relative) = relative_zoned.as_ref() {
