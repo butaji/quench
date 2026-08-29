@@ -3347,21 +3347,43 @@ mod stubs {
                 + (values[7] as i128) * 1_000_000
                 + (values[8] as i128) * 1_000
                 + values[9] as i128;
-            let old_date = chrono::NaiveDate::from_ymd_opt(
-                crate::conversion::to_number(&property("year")?)? as i32,
-                crate::conversion::to_number(&property("month")?)? as u32,
-                crate::conversion::to_number(&property("day")?)? as u32,
-            )
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-            let date_delta = (date - old_date).num_days() as i128 * 86_400_000_000_000;
-            let epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => {
-                    value.parse::<i128>().unwrap_or(0) + date_delta + time_delta * sign as i128
+            let epoch = if month_count != 0 || day_count != 0.0 {
+                let local_serial = super::plain_date::date_serial(
+                    f64::from(date.year()),
+                    f64::from(date.month()),
+                    f64::from(date.day()),
+                );
+                let local_epoch = (local_serial - super::plain_date::date_serial(1970.0, 1.0, 1.0))
+                    as i128
+                    * 86_400_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("hour")?)? as i64)
+                        * 3_600_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("minute")?)? as i64)
+                        * 60_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("second")?)? as i64)
+                        * 1_000_000_000
+                    + i128::from(crate::conversion::to_number(&property("millisecond")?)? as i64)
+                        * 1_000_000
+                    + i128::from(crate::conversion::to_number(&property("microsecond")?)? as i64)
+                        * 1_000
+                    + i128::from(crate::conversion::to_number(&property("nanosecond")?)? as i64);
+                let epoch = super::timezone_local_epoch(&timezone, local_epoch, "compatible");
+                if epoch == i128::MIN {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid ZonedDateTime",
+                    ));
                 }
-                _ => {
-                    return Err(crate::value::error::throw_type_error(
-                        "Invalid epochNanoseconds",
-                    ))
+                epoch + time_delta * sign as i128
+            } else {
+                match property("epochNanoseconds")? {
+                    Value::BigInt(value) => {
+                        value.parse::<i128>().unwrap_or(0) + time_delta * sign as i128
+                    }
+                    _ => {
+                        return Err(crate::value::error::throw_type_error(
+                            "Invalid epochNanoseconds",
+                        ))
+                    }
                 }
             };
             if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
