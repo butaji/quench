@@ -1393,8 +1393,14 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
-    let receiver =
-        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let receiver = receiver
+        .filter(|value| {
+            matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+                (key == "\0temporal-plain-date-time" && value == Value::Boolean(true))
+                    || (key == "\0prototype" && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype))
+            }))
+        })
+        .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let other = from(other, None)?;
     let receiver_calendar = crate::execute::get_property_result(receiver, "calendarId")?;
     let other_calendar = crate::execute::get_property_result(&other, "calendarId")?;
@@ -1882,7 +1888,10 @@ fn with(
                 month_code = value.clone();
                 let number = crate::conversion::to_number(&month_code_number(&value)?)?;
                 month_code_number_value = Some(number);
-                let _ = month_code_text(&value)?;
+                let code = month_code_text(&value)?;
+                if receiver_calendar == "iso8601" && code.ends_with('L') {
+                    return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+                }
                 // The month code is authoritative when both month forms are
                 // present. Keep its numeric ordinal; the constructor
                 // preserves the code, including leap markers.
