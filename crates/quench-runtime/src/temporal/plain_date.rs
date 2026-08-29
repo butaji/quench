@@ -670,12 +670,39 @@ pub(crate) fn add_with_calendar(
     } else {
         Overflow::Constrain
     });
-    let result = date
-        .try_added_with_options(duration, options)
-        .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?;
     let preferred_day = (number_property(source, "days") == 0.0
         && number_property(source, "weeks") == 0.0)
         .then_some(day);
+    let result = if preferred_day.is_some() && (duration.years != 0 || duration.months != 0) {
+        let anchor =
+            calendar_date_for_code(year, date.month().to_input().code().0.as_ref(), 1, calendar);
+        match anchor {
+            Some(anchor) => anchor
+                .try_added_with_options(duration, options)
+                .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?,
+            None => date
+                .try_added_with_options(duration, options)
+                .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?,
+        }
+    } else {
+        date.try_added_with_options(duration, options)
+            .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?
+    };
+    let result = if let Some(preferred) = preferred_day {
+        if preferred <= u32::from(result.day_of_month().0) {
+            result
+        } else {
+            let year = result.year().extended_year();
+            let code = result.month().to_input().code().0.to_string();
+            let max = calendar_days_in_month_for_code(year, &code, calendar).unwrap_or(31);
+            if max < preferred && matches!(options.overflow, Some(Overflow::Reject)) {
+                return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+            }
+            calendar_date_for_code(year, &code, preferred.min(max), calendar).unwrap_or(result)
+        }
+    } else {
+        result
+    };
     Ok(object_from_calendar_date(result, calendar, preferred_day))
 }
 
