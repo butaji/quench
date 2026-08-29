@@ -167,8 +167,16 @@ pub fn table_size(
     dst: u16,
     table_idx: u32,
 ) -> Result<(), Failure> {
-    let n = table(vm, table_idx)?.borrow().elems.len() as i32;
-    regs[dst as usize] = Slot::Native(Native::I32(n));
+    let cell = table(vm, table_idx)?;
+    let tab = cell.borrow();
+    let n = tab.elems.len() as u64;
+    let table64 = tab.table64;
+    drop(tab);
+    regs[dst as usize] = if table64 {
+        Slot::Native(Native::I64(n as i64))
+    } else {
+        Slot::Native(Native::I32(n as i32))
+    };
     Ok(())
 }
 
@@ -180,31 +188,46 @@ pub fn table_grow(
     fill: u16,
     delta: u16,
 ) -> Result<(), Failure> {
-    let n = i32_addr(regs, delta)?;
+    let n = match regs[delta as usize] {
+        Slot::Native(Native::I64(v)) => v as u64,
+        Slot::Native(Native::I32(v)) => v as u32 as u64,
+        _ => 0,
+    };
     let fill = match regs[fill as usize] {
         Slot::Native(Native::Ref(v)) => v,
         _ => RefVal::Null,
     };
     let cell = table(vm, table_idx)?;
     let mut tab = cell.borrow_mut();
-    let old = tab.elems.len();
-    let new = match (old as u64).checked_add(n as u64) {
+    let old = tab.elems.len() as u64;
+    let fail = || {
+        if tab.table64 {
+            Slot::Native(Native::I64(-1))
+        } else {
+            Slot::Native(Native::I32(-1))
+        }
+    };
+    let new = match old.checked_add(n) {
         Some(new) => new,
         None => {
-            regs[dst as usize] = Slot::Native(Native::I32(-1));
+            regs[dst as usize] = fail();
             return Ok(());
         }
     };
     if !tab.table64 && new > u32::MAX as u64 {
-        regs[dst as usize] = Slot::Native(Native::I32(-1));
+        regs[dst as usize] = fail();
         return Ok(());
     }
     if tab.max.is_some_and(|max| new > max) {
-        regs[dst as usize] = Slot::Native(Native::I32(-1));
+        regs[dst as usize] = fail();
         return Ok(());
     }
     tab.elems.resize(new as usize, fill);
-    regs[dst as usize] = Slot::Native(Native::I32(old as i32));
+    regs[dst as usize] = if tab.table64 {
+        Slot::Native(Native::I64(old as i64))
+    } else {
+        Slot::Native(Native::I32(old as i32))
+    };
     Ok(())
 }
 

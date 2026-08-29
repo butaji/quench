@@ -286,8 +286,8 @@ impl SimdOp {
             Self::F32x4Abs => zipf32(a, 0, |x, _| x.abs()),
             Self::F32x4Neg => zipf32(a, 0, |x, _| -x),
             Self::F32x4Sqrt => zipf32(a, 0, |x, _| x.sqrt()),
-            Self::F32x4Min => zipf32(a, b, f32::min),
-            Self::F32x4Max => zipf32(a, b, f32::max),
+            Self::F32x4Min => zipf32(a, b, wasm_minf32),
+            Self::F32x4Max => zipf32(a, b, wasm_maxf32),
             Self::F32x4Eq => zip32(a, b, |x, y| {
                 u32::from(f32::from_bits(x) == f32::from_bits(y)).wrapping_neg()
             }),
@@ -309,8 +309,8 @@ impl SimdOp {
             Self::F64x2Abs => zipf64(a, 0, |x, _| x.abs()),
             Self::F64x2Neg => zipf64(a, 0, |x, _| -x),
             Self::F64x2Sqrt => zipf64(a, 0, |x, _| x.sqrt()),
-            Self::F64x2Min => zipf64(a, b, f64::min),
-            Self::F64x2Max => zipf64(a, b, f64::max),
+            Self::F64x2Min => zipf64(a, b, wasm_minf64),
+            Self::F64x2Max => zipf64(a, b, wasm_maxf64),
             Self::F64x2Eq => zip64(a, b, |x, y| {
                 u64::from(f64::from_bits(x) == f64::from_bits(y)).wrapping_neg()
             }),
@@ -588,4 +588,36 @@ fn zipf64(a: u128, b: u128, f: impl Fn(f64, f64) -> f64) -> u128 {
     zip64(a, b, |x, y| {
         f(f64::from_bits(x), f64::from_bits(y)).to_bits()
     })
+}
+
+fn wasm_minf32(a: f32, b: f32) -> f32 {
+    if a.is_nan() || b.is_nan() {
+        f32::from_bits(super::float::CANON_F32)
+    } else {
+        a.min(b)
+    }
+}
+
+fn wasm_maxf32(a: f32, b: f32) -> f32 {
+    if a.is_nan() || b.is_nan() {
+        f32::from_bits(super::float::CANON_F32)
+    } else {
+        a.max(b)
+    }
+}
+
+fn wasm_minf64(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::from_bits(super::float::CANON_F64)
+    } else {
+        a.min(b)
+    }
+}
+
+fn wasm_maxf64(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::from_bits(super::float::CANON_F64)
+    } else {
+        a.max(b)
+    }
 }
