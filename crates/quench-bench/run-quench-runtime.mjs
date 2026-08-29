@@ -35,7 +35,7 @@ BenchmarkSuite.RunSuites({
 
 function usage() {
   console.log(
-    "usage: node quench-bench/run-quench-runtime.mjs [--node PATH] [--quench PATH] [--runs N] [--only suite1,suite2] [--timeout-ms N] [--out FILE]"
+    "usage: node crates/quench-bench/run-quench-runtime.mjs [--node PATH] [--quench PATH] [--runs N] [--only suite1,suite2] [--timeout-ms N] [--out FILE]"
   );
 }
 function arg(name, fallback) {

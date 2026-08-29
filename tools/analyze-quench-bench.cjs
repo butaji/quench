@@ -7,7 +7,7 @@ const path = require("node:path");
 const { formatViolations, violations } = require("./lib/profile-contracts.cjs");
 
 const root = path.resolve(__dirname, "..");
-const suite = path.join(root, "quench-bench/js-engine-benchmark/v8-v7");
+const suite = path.join(root, "crates/quench-bench/js-engine-benchmark/v8-v7");
 const args = process.argv.slice(2);
 const fixtureArg = args[0];
 if (!fixtureArg || fixtureArg.startsWith("--")) usage("missing fixture");

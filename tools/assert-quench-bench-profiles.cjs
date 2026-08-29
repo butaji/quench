@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const contractsPath = path.join(root, "quench-bench/profile-contracts.json");
+const contractsPath = path.join(root, "crates/quench-bench/profile-contracts.json");
 const contracts = JSON.parse(fs.readFileSync(contractsPath, "utf8"));
 const separator = process.argv.indexOf("--");
 const requested = process.argv.slice(2, separator < 0 ? undefined : separator);
