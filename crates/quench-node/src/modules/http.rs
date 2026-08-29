@@ -791,7 +791,7 @@ pub fn incoming_construct(
 pub fn incoming_destroy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
@@ -802,19 +802,59 @@ pub fn incoming_destroy(
     ) {
         return Ok(receiver.clone());
     }
-    let error = _args.first().cloned();
+    let error = args.first().cloned();
     execute::set_property_in_place(receiver, "destroyed", Value::Boolean(true));
     execute::set_property_in_place(receiver, "errored", error.clone().unwrap_or(Value::Null));
-    execute::set_property_in_place(receiver, INCOMING_CLOSE_PENDING_PROP, Value::Boolean(true));
     let signal = execute::get_property(receiver, "signal");
     if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
         abort_http_signal(state, &signal)?;
     }
-    state
-        .borrow_mut()
-        .net
-        .pending_events
-        .push((receiver.clone(), "close".into(), Vec::new()));
+    let client_response = matches!(
+        execute::get_property(receiver, "__httpClientResponse"),
+        Value::Boolean(true)
+    ) || state
+        .borrow()
+        .http
+        .clientreqs
+        .values()
+        .any(|request| {
+            request
+                .res
+                .as_ref()
+                .is_some_and(|response| execute::same_identity(response, receiver))
+        });
+    if !client_response || error.is_some() {
+        execute::set_property_in_place(receiver, INCOMING_CLOSE_PENDING_PROP, Value::Boolean(true));
+    }
+    if !client_response {
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "close".into(), Vec::new()));
+    }
+    if client_response && error.is_some() {
+        let socket = state
+            .borrow()
+            .http
+            .clientreqs
+            .values()
+            .find(|request| {
+                request
+                    .res
+                    .as_ref()
+                    .is_some_and(|response| execute::same_identity(response, receiver))
+            })
+            .and_then(|request| request.socket.clone());
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "close".into(), Vec::new()));
+        if let Some(socket) = socket {
+            net::socket_destroy(state, Some(&socket), &[])?;
+        }
+    }
     if let Some(error) = error {
         net::emit(state, receiver, "error", vec![error])?;
     }
