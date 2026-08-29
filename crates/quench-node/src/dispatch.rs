@@ -460,6 +460,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_EXECFILE_ABORT => cp_exec_file_abort,
         CAP_CP_EXECFILE_COMPLETE => cp_exec_file_complete,
         CAP_TEST_RUN => test_run,
+        CAP_TEST_DONE => test_done,
         CAP_TEST_SKIP => test_skip,
         CAP_TEST_MOCK_FN => test_mock_fn,
         CAP_TEST_MOCK_CALL => test_mock_call,

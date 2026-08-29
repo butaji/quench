@@ -25,7 +25,7 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, connect_existing, connect_path, create_server, server_address, server_close,
+    complete_lookup, connect, connect_existing, connect_path, create_server, server_address, server_close,
     server_close_idle, server_listen, server_ref, server_unref, socket_address, socket_construct,
     socket_destroy, socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
     socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_timeout_fire,
@@ -82,9 +82,17 @@ pub struct NetState {
     pub sockets: HashMap<u64, Rc<RefCell<NetSocket>>>,
     pub pending_errors: Vec<(Value, Value)>,
     pub lookup_result: Option<Value>,
+    pub lookup_in_call: bool,
+    pub pending_lookups: Vec<PendingLookup>,
     pub pending_events: Vec<(Value, String, Vec<Value>)>,
     pub paths: HashMap<String, u16>,
     pub pending_writes: Vec<(Value, Vec<u8>)>,
+}
+
+pub struct PendingLookup {
+    pub socket: Value,
+    pub options: Value,
+    pub args: Vec<Value>,
 }
 
 impl Default for NetState {
@@ -101,6 +109,8 @@ impl NetState {
             sockets: HashMap::new(),
             pending_errors: Vec::new(),
             lookup_result: None,
+            lookup_in_call: false,
+            pending_lookups: Vec::new(),
             pending_events: Vec::new(),
             paths: HashMap::new(),
             pending_writes: Vec::new(),
@@ -115,6 +125,7 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         let server = s.borrow();
         server.listening && server.refed && !server.closed
     }) || !host.net.pending_errors.is_empty()
+        || !host.net.pending_lookups.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
             socket.state != SocketState::Closed

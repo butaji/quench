@@ -67,7 +67,11 @@ const __quenchNetModule = {
           // string result. An array is only valid when `all`/auto-selection
           // was requested; reject it asynchronously without invoking the
           // connect callback.
-          if (Array.isArray(value) && !autoSelect) {
+          const invalidArray = Array.isArray(value) &&
+            (!autoSelect || value.some((entry) =>
+              !entry || typeof entry !== "object" || typeof entry.address !== "string"
+            ));
+          if (invalidArray) {
             const invalid = new Error("Invalid IP address: lookup returned an array");
             invalid.code = "ERR_INVALID_IP_ADDRESS";
             queueMicrotask(() => socket.emit("error", invalid));
