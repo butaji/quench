@@ -83,6 +83,10 @@ node_api! {
 }
 
 node_api! {
+    (SPEC_TEST_DONE, CAP_TEST_DONE, "test:done", 0x1b22),
+}
+
+node_api! {
     (SPEC_INTERNAL_JS_STREAM, "internal:js_stream", 0x0F12),
     (SPEC_VM_SOURCE_TEXT_MODULE, "vm:SourceTextModule", 0x0F11),
     (SPEC_VM_MODULE_LINK, "vm:SourceTextModule:link", 0x0F13),

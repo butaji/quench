@@ -2287,7 +2287,18 @@ pub fn net_lookup_callback(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let result = host_api::array(args.to_vec());
-    state.borrow_mut().net.lookup_result = Some(result.clone());
+    let deferred = {
+        let mut host = state.borrow_mut();
+        if host.net.lookup_in_call {
+            host.net.lookup_result = Some(result.clone());
+            false
+        } else {
+            !host.net.pending_lookups.is_empty()
+        }
+    };
+    if deferred {
+        crate::modules::net::complete_lookup(state, result.clone())?;
+    }
     Ok(result)
 }
 
@@ -5677,6 +5688,23 @@ pub fn test_run(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::test::run(state, args)
+}
+
+pub fn test_done(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Promise(promise)) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let error = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if matches!(error, Value::Undefined | Value::Null) {
+        quench_runtime::resolve_promise(promise, Value::Undefined);
+    } else {
+        quench_runtime::reject_promise(promise, error);
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn test_get_context(

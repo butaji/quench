@@ -349,7 +349,7 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             arg,
             Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
         )
-    });
+    }).cloned();
     let Some(callback) = callback else {
         let emitter = crate::modules::events::new_emitter_object(state)?;
         let emit = crate::host::capability(crate::registry::SPEC_TEST_RUN_EMIT);
@@ -414,7 +414,31 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             todo: false,
         })
     });
-    let result = quench_runtime::vm::call_value(callback, &Value::Undefined, &[context.clone()]);
+    // Node's callback-style tests receive a completion callback as their
+    // second argument. Represent completion as the same promise state the
+    // runner already uses for async tests, with a bound host capability
+    // resolving/rejecting it when JavaScript invokes `done(error)`.
+    let callback_style = matches!(
+        quench_runtime::execute::get_property(&callback, "length"),
+        Value::Number(length) if length >= 2.0
+    );
+    let completion = Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Pending,
+    ));
+    let done = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_TEST_DONE.cap,
+            ),
+        },
+        vec![Value::Promise(completion.clone())],
+    );
+    let result = quench_runtime::vm::call_value(
+        &callback,
+        &Value::Undefined,
+        &[context.clone(), done],
+    );
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     let hook_context = frame.context.as_ref().unwrap_or(&context).clone();
     for hook in frame.after.iter().rev() {
@@ -444,9 +468,14 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
                 }
                 _ => None,
             });
+            let wait_for = if callback_style && !matches!(&result, Value::Promise(_)) {
+                Value::Promise(completion)
+            } else {
+                result
+            };
             let timed_out = match timeout {
-                Some(ms) => crate::modules::pump::await_promise_with_timeout(state, &result, ms),
-                None => crate::modules::pump::await_promise(state, &result).map(|_| false),
+                Some(ms) => crate::modules::pump::await_promise_with_timeout(state, &wait_for, ms),
+                None => crate::modules::pump::await_promise(state, &wait_for).map(|_| false),
             };
             if let Err(error) = timed_out {
                 CURRENT_CONTEXT.with(|current| current.replace(previous));
