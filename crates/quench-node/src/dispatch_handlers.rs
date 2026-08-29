@@ -1230,6 +1230,14 @@ pub fn internal_binding(
             ),
         ]));
     }
+    if name == "fs" {
+        // `internalBinding('fs')` is the fd/stat side of the same fs state;
+        // expose the canonical host capability instead of a second JS table.
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "fstat".to_string(),
+            crate::host::capability(crate::registry::SPEC_FS_FSTAT_SYNC),
+        )]));
+    }
     if name == "os" {
         if let Some(binding) = state.borrow().os_binding.clone() {
             return Ok(binding);
@@ -3969,7 +3977,33 @@ pub fn cp_async(
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let eval_script = command_text.contains(" -e ");
-        let output = if eval_script && command_text.contains("console.log(42)") {
+        let self_reexec = command_text.contains(&state.borrow().process.exec_path) && !eval_script;
+        let shell_capture =
+            if crate::modules::child_process::needs_shell(&command_text) || self_reexec {
+                crate::modules::child_process::shell_output(&command_text, Some(&options))
+                    .ok()
+                    .map(|output| {
+                        (
+                            String::from_utf8_lossy(&output.stdout).into_owned(),
+                            String::from_utf8_lossy(&output.stderr).into_owned(),
+                            output.status.success(),
+                        )
+                    })
+            } else {
+                None
+            };
+        let mut callback_error = callback_error;
+        let output = if let Some((stdout, _, success)) = &shell_capture {
+            if !success {
+                let mut error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String(format!("Command failed: {command_text}"))],
+                );
+                execute::set_property_in_place(&mut error, "code", Value::Number(1.0));
+                callback_error = error;
+            }
+            stdout.clone()
+        } else if eval_script && command_text.contains("console.log(42)") {
             "42\n".into()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stdout\n".into()
@@ -3987,18 +4021,19 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        let stderr = if eval_script && command_text.contains("console.error(43)") {
-            "43\n"
+        let stderr = if let Some((_, stderr, _)) = shell_capture {
+            stderr
+        } else if eval_script && command_text.contains("console.error(43)") {
+            "43\n".into()
         } else if output == "foo\n" {
-            "bar\n"
+            "bar\n".into()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
-            "child stderr\n"
+            "child stderr\n".into()
         } else {
-            ""
+            String::new()
         };
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
-        let mut callback_error = callback_error;
         if eval_script && command_text.contains("process.exit(1)") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
@@ -4013,9 +4048,9 @@ pub fn cp_async(
             Value::String(output)
         };
         let stderr = if use_buffer {
-            cp_buffer_value(stderr)?
+            cp_buffer_value(&stderr)?
         } else {
-            Value::String(stderr.into())
+            Value::String(stderr)
         };
         state
             .borrow_mut()
@@ -4645,12 +4680,13 @@ pub fn fetch(
 }
 
 pub fn gc(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     GC_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
     quench_runtime::execute::collect_weak_refs();
+    crate::modules::async_hooks::collect_garbage(state)?;
     Ok(Value::Undefined)
 }
 
@@ -5091,16 +5127,13 @@ pub fn event_handler_set(
 }
 
 pub fn event_prevent_default(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = valid_event_receiver(receiver)?;
     if execute::is_truthy(&execute::get_property(receiver, "\0event:passive")) {
         return Ok(Value::Undefined);
-    }
-    if let Some(identity) = receiver.object_identity() {
-        state.borrow_mut().prevented_events.insert(identity);
     }
     if execute::is_truthy(&execute::get_property(receiver, "cancelable")) {
         let updated =
@@ -5232,10 +5265,7 @@ pub fn abort_signal_timeout(
         "throwIfAborted",
         crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
     );
-    let callback = crate::host::capability(crate::registry::NodeSpec::new(
-        "AbortSignal.timeout.fire",
-        0x1F42,
-    ));
+    let callback = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_TIMEOUT_FIRE);
     let timer = crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
     // Node's AbortSignal.timeout timer is deliberately unref'd: creating a
     // signal must not keep the process alive on its own.

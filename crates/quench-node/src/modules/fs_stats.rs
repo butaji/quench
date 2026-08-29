@@ -72,6 +72,10 @@ pub fn stats(meta: &std::fs::Metadata) -> Value {
 #[cfg(unix)]
 fn stats_unix(meta: &std::fs::Metadata) -> Value {
     use std::os::unix::fs::MetadataExt;
+    let atime_ms = ms(meta.atime(), meta.atime_nsec());
+    let mtime_ms = ms(meta.mtime(), meta.mtime_nsec());
+    let ctime_ms = ms(meta.ctime(), meta.ctime_nsec());
+    let birthtime_ms = created_ms(meta);
     let entries: Vec<(String, Value)> = vec![
         ("dev".to_string(), Value::Number(meta.dev() as f64)),
         ("ino".to_string(), Value::Number(meta.ino() as f64)),
@@ -85,17 +89,24 @@ fn stats_unix(meta: &std::fs::Metadata) -> Value {
         ("blocks".to_string(), Value::Number(meta.blocks() as f64)),
         (
             "atimeMs".to_string(),
-            Value::Number(ms(meta.atime(), meta.atime_nsec())),
+            Value::Number(atime_ms),
         ),
         (
             "mtimeMs".to_string(),
-            Value::Number(ms(meta.mtime(), meta.mtime_nsec())),
+            Value::Number(mtime_ms),
         ),
         (
             "ctimeMs".to_string(),
-            Value::Number(ms(meta.ctime(), meta.ctime_nsec())),
+            Value::Number(ctime_ms),
         ),
-        ("birthtimeMs".to_string(), Value::Number(created_ms(meta))),
+        ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
+        ("atime".to_string(), quench_runtime::date::instance(atime_ms)),
+        ("mtime".to_string(), quench_runtime::date::instance(mtime_ms)),
+        ("ctime".to_string(), quench_runtime::date::instance(ctime_ms)),
+        (
+            "birthtime".to_string(),
+            quench_runtime::date::instance(birthtime_ms),
+        ),
     ];
     with_predicates(meta.mode(), entries)
 }

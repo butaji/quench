@@ -22,6 +22,10 @@ pub fn take_unhandled_rejections() -> Vec<(Rc<PromiseData>, Value)> {
     UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().drain(..).collect())
 }
 
+pub fn has_pending_unhandled_rejections() -> bool {
+    UNHANDLED_REJECTIONS.with(|queue| !queue.borrow().is_empty())
+}
+
 pub fn clear_jobs() {
     JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
 }
