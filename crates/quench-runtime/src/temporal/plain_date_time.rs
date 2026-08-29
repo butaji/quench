@@ -1852,6 +1852,7 @@ fn with(
     }
     let mut month = Value::Undefined;
     let mut month_code = Value::Undefined;
+    let mut month_code_text_value: Option<String> = None;
     let mut month_number_value = None;
     let mut month_code_number_value = None;
     let mut era = Value::Undefined;
@@ -1886,12 +1887,15 @@ fn with(
             }
             "monthCode" => {
                 month_code = value.clone();
-                let number = crate::conversion::to_number(&month_code_number(&value)?)?;
-                month_code_number_value = Some(number);
                 let code = month_code_text(&value)?;
-                if receiver_calendar == "iso8601" && code.ends_with('L') {
-                    return Err(crate::value::error::throw_range_error("Invalid monthCode"));
-                }
+                let number = code
+                    .strip_suffix('L')
+                    .unwrap_or(&code)
+                    .strip_prefix('M')
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .unwrap_or(f64::NAN);
+                month_code_number_value = Some(number);
+                month_code_text_value = Some(code);
                 // The month code is authoritative when both month forms are
                 // present. Keep its numeric ordinal; the constructor
                 // preserves the code, including leap markers.
@@ -1954,6 +1958,12 @@ fn with(
     };
     if overflow != "constrain" && overflow != "reject" {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
+    }
+    if !matches!(month_code, Value::Undefined) {
+        let code = month_code_text_value.as_deref().unwrap_or_default();
+        if receiver_calendar == "iso8601" && code.ends_with('L') {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
     }
     if !matches!(month_code, Value::Undefined) && month != Value::Undefined {
         let expected = match (&month_code, receiver_calendar.as_str()) {
