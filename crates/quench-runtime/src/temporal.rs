@@ -1,4 +1,4 @@
-use chrono::{Datelike, Offset, TimeZone};
+use chrono::{Datelike, Duration, LocalResult, Offset, TimeZone};
 
 pub(crate) mod duration;
 pub(crate) mod instant;
@@ -199,6 +199,24 @@ fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
         .and_then(|zone| zone.timestamp_opt(seconds, nanos).single())
         .map(|date| i128::from(date.offset().fix().local_minus_utc()) * 1_000_000_000)
         .unwrap_or(0)
+}
+
+pub(crate) fn timezone_start_of_day_epoch(timezone: &str, epoch: i128) -> Option<i128> {
+    let seconds = i64::try_from(epoch.div_euclid(1_000_000_000)).ok()?;
+    let zone = timezone.parse::<chrono_tz::Tz>().ok()?;
+    let local = zone.timestamp_opt(seconds, 0).single()?;
+    let date = local.date_naive();
+    for minute in 0..=180 {
+        let candidate = date.and_hms_opt(0, 0, 0)? + Duration::minutes(minute);
+        match zone.from_local_datetime(&candidate) {
+            LocalResult::Single(value) => return Some(i128::from(value.timestamp()) * 1_000_000_000),
+            LocalResult::Ambiguous(first, second) => {
+                return Some(i128::from(first.timestamp().min(second.timestamp())) * 1_000_000_000);
+            }
+            LocalResult::None => {}
+        }
+    }
+    None
 }
 
 fn canonical_timezone_name(text: &str) -> Option<String> {
@@ -1371,11 +1389,25 @@ mod stubs {
             }
             crate::ops::Builtin::TemporalZonedDateTimeHoursInDayGetter => {
                 if let Value::BigInt(epoch) = property("epochNanoseconds")? {
-                    let epoch = epoch.parse::<i128>().unwrap_or(0).unsigned_abs();
-                    if epoch >= 8_640_000_000_000_000_000_000u128 {
+                    let epoch = epoch.parse::<i128>().unwrap_or(0);
+                    if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
                         return Err(crate::value::error::throw_range_error(
                             "ZonedDateTime day boundary is out of range",
                         ));
+                    }
+                    let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+                    if let Some(start) = super::timezone_start_of_day_epoch(&timezone, epoch) {
+                        let mut probe = start + 86_400_000_000_000;
+                        for _ in 0..4 {
+                            if let Some(next) = super::timezone_start_of_day_epoch(&timezone, probe) {
+                                if next > start {
+                                    return Ok(Value::Number(
+                                        (next - start) as f64 / 3_600_000_000_000.0,
+                                    ));
+                                }
+                            }
+                            probe += 86_400_000_000_000;
+                        }
                     }
                 }
                 return Ok(Value::Number(24.0));
@@ -2256,12 +2288,14 @@ mod stubs {
                 1_000,
                 1,
             ];
-            let midnight = epoch
-                - current
-                    .iter()
-                    .zip(scale.iter())
-                    .map(|(value, scale)| *value as i128 * scale)
-                    .sum::<i128>();
+            let midnight = super::timezone_start_of_day_epoch(&timezone, epoch).unwrap_or_else(|| {
+                epoch
+                    - current
+                        .iter()
+                        .zip(scale.iter())
+                        .map(|(value, scale)| *value as i128 * scale)
+                        .sum::<i128>()
+            });
             let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             return Ok(super::zoned_record_with_calendar(
                 midnight,
