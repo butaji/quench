@@ -154,15 +154,9 @@ fn preserve_calendar_month_code(
     if let Value::Object(object) = &mut result {
         let object = std::rc::Rc::make_mut(object);
         object.set_property_in_place("month", Value::Number(ordinal as f64));
-        object.set_property_in_place(
-            "\0temporal-slot:\0month",
-            Value::Number(ordinal as f64),
-        );
+        object.set_property_in_place("\0temporal-slot:\0month", Value::Number(ordinal as f64));
         object.set_property_in_place("monthCode", Value::String(canonical.clone()));
-        object.set_property_in_place(
-            "\0temporal-slot:\0monthCode",
-            Value::String(canonical),
-        );
+        object.set_property_in_place("\0temporal-slot:\0monthCode", Value::String(canonical));
     }
     result
 }
@@ -171,7 +165,9 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     let calendar_text = match &calendar {
         Value::String(value) => Some(value.to_ascii_lowercase()),
-        Value::StringUnits(_) => Some(crate::conversion::to_string(&calendar)?.to_ascii_lowercase()),
+        Value::StringUnits(_) => {
+            Some(crate::conversion::to_string(&calendar)?.to_ascii_lowercase())
+        }
         _ => None,
     };
     let day = crate::execute::get_property_result(value, "day")?;
@@ -250,15 +246,13 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         let supports_month13 = calendar_text
             .as_deref()
             .is_some_and(crate::temporal::plain_date::calendar_supports_month13);
-        if !(1.0..=12.0).contains(&month_number)
-            && !(supports_month13 && month_number == 13.0)
-        {
+        if !(1.0..=12.0).contains(&month_number) && !(supports_month13 && month_number == 13.0) {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
         if matches!(&month_code, Value::String(value) if value.ends_with('L'))
-            && !calendar_text.as_deref().is_some_and(|value| {
-                matches!(value, "chinese" | "dangi" | "hebrew")
-            })
+            && !calendar_text
+                .as_deref()
+                .is_some_and(|value| matches!(value, "chinese" | "dangi" | "hebrew"))
         {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
@@ -310,7 +304,7 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
                 .unwrap_or_else(|| name.clone()),
             _ => "iso8601".to_string(),
         };
-        let max_month = if crate::temporal::plain_date::calendar_supports_month13(&calendar_name) {
+        let max_month = if crate::temporal::plain_date::calendar_has_month13(&calendar_name) {
             13.0
         } else {
             12.0
@@ -346,7 +340,8 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
                 &calendar_name,
             ),
         }
-        .unwrap_or_else(|| days_in_month(year_number, month_number) as u32) as f64;
+        .unwrap_or_else(|| days_in_month(year_number, month_number) as u32)
+            as f64;
         day = day.clamp(1.0, max_day);
         let result = construct(&[
             year,
@@ -425,9 +420,7 @@ pub(crate) fn derive_year_from_era(calendar: &str, era: &str, era_year: f64) -> 
         ("japanese", "meiji") => Some(era_year + 1867.0),
         ("ethiopic", "aa") => Some(era_year - 5500.0),
         ("roc", "broc") => Some(1.0 - era_year),
-        ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "bh") => {
-            Some(1.0 - era_year)
-        }
+        ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "bh") => Some(1.0 - era_year),
         _ => Some(era_year),
     }
 }
