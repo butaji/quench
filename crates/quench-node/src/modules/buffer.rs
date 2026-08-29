@@ -127,11 +127,12 @@ pub fn atob(args: &[Value]) -> Result<String, VmError> {
 }
 
 fn invalid_character_error() -> VmError {
+    let constructor = get_property(
+        &quench_runtime::vm::current_global_object(),
+        "DOMException",
+    );
     let error = Value::object(vec![
-        (
-            "constructor".into(),
-            Value::Builtin(quench_runtime::ops::Builtin::Error),
-        ),
+        ("constructor".into(), constructor),
         ("name".into(), Value::String("InvalidCharacterError".into())),
         ("code".into(), Value::Number(5.0)),
     ]);
@@ -438,7 +439,7 @@ pub fn build_object() -> Value {
 
 /// Build the `node:buffer` module namespace.
 pub fn build_module() -> Value {
-    let module_props: Vec<(String, Value)> = vec![
+    let mut module_props: Vec<(String, Value)> = vec![
         ("Buffer".to_string(), buffer_constructor()),
         ("atob".to_string(), atob_value()),
         ("btoa".to_string(), btoa_value()),
@@ -457,6 +458,27 @@ pub fn build_module() -> Value {
         ),
         ("constants".to_string(), constants_object()),
     ];
+    let global = quench_runtime::vm::current_global_object();
+    let blob = get_property(&global, "Blob");
+    if matches!(
+        blob,
+        Value::Function(_)
+            | Value::BoundFunction(_)
+            | Value::HostCapability(_)
+            | Value::Builtin(_)
+    ) {
+        module_props.push(("Blob".to_string(), blob));
+    }
+    let file = get_property(&global, "File");
+    if matches!(
+        file,
+        Value::Function(_)
+            | Value::BoundFunction(_)
+            | Value::HostCapability(_)
+            | Value::Builtin(_)
+    ) {
+        module_props.push(("File".to_string(), file));
+    }
     let module = crate::host::namespace_object_from_pairs(module_props);
     let descriptor = host_api::object(vec![
         (
