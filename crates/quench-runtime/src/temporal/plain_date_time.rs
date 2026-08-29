@@ -953,13 +953,24 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         }
     }
     let calendar = crate::temporal::parse_calendar_identifier(calendar)?;
-    let values = fields(receiver)?;
+    let mut values = fields(receiver)?;
+    let source_calendar = object_property_string(Some(receiver), "calendarId");
+    if calendar == "iso8601"
+        && source_calendar.as_deref() == Some("roc")
+        && let Some(related_year) = object_property_number(
+            Some(receiver),
+            "\0temporal-related-iso-year",
+        )
+    {
+        values[0] = f64::from(related_year);
+    }
     if object_property_string(Some(receiver), "calendarId").as_deref() == Some(&calendar) {
         let mut arguments = values.iter().copied().map(Value::Number).collect::<Vec<_>>();
         arguments.push(Value::String(calendar));
         return construct(&arguments);
     }
-    if !crate::temporal::plain_date::needs_calendar_boundary_projection(
+    if calendar != "roc"
+        && !crate::temporal::plain_date::needs_calendar_boundary_projection(
         values[0] as i32,
         values[1] as u32,
         values[2] as u32,
@@ -996,8 +1007,17 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     let month_code = crate::execute::get_property_result(&date, "monthCode")?;
     let mut arguments = vec![date_year, date_month, date_day];
     arguments.extend(values[3..].iter().copied().map(Value::Number));
-    arguments.extend([Value::String(calendar), month_code]);
-    construct(&arguments)
+    arguments.extend([Value::String(calendar.clone()), month_code]);
+    let mut result = construct(&arguments)?;
+    if calendar == "roc" {
+        if let Value::Object(object) = &mut result {
+            std::rc::Rc::make_mut(object).set_property_in_place(
+                "\0temporal-related-iso-year",
+                Value::Number(values[0]),
+            );
+        }
+    }
+    Ok(result)
 }
 
 fn epoch_nanos(values: &[f64]) -> i128 {
