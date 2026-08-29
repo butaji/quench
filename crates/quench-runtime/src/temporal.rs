@@ -741,12 +741,6 @@ fn iso_offset_nanos(text: &str) -> i128 {
     sign * (hour * 3_600 + minute * 60 + second) * 1_000_000_000
 }
 
-fn iso_offset_has_seconds(text: &str) -> bool {
-    let body = text.get(1..).unwrap_or_default();
-    let core = body.split_once(['.', ',']).map_or(body, |(core, _)| core);
-    core.replace(':', "").len() == 6
-}
-
 fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     if depth > 4 {
         return false;
@@ -1346,7 +1340,7 @@ mod stubs {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
                 if supplied_offset != actual_offset
-                    && (iso_offset_has_seconds(offset_text) || timezone.starts_with(['+', '-']))
+                    && (supplied_offset % 60_000_000_000 == 0 || timezone.starts_with(['+', '-']))
                 {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
