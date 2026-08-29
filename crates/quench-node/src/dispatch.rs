@@ -418,6 +418,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
         CAP_NET_SOCKET_SET_KEEP_ALIVE => crate::modules::net::socket_set_keep_alive,
+        CAP_NET_SOCKET_SET_TIMEOUT => crate::modules::net::socket_set_timeout,
+        CAP_NET_SOCKET_TIMEOUT_FIRE => crate::modules::net::socket_timeout_fire,
         CAP_NET_SOCKET_SET_ENCODING => crate::modules::net::socket_set_encoding,
         CAP_NET_SOCKET_PAUSE => crate::modules::net::socket_pause,
         CAP_NET_SOCKET_RESUME => crate::modules::net::socket_resume,

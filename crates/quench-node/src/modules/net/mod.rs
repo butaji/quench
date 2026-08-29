@@ -28,7 +28,7 @@ pub use methods::{
     connect, connect_existing, create_server, server_address, server_close, server_listen,
     server_ref, server_unref, socket_address, socket_construct, socket_destroy, socket_end,
     socket_pause, socket_ref, socket_resume, socket_set_encoding, socket_set_keep_alive,
-    socket_set_no_delay, socket_unref, socket_write,
+    socket_set_no_delay, socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -275,6 +275,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
             "setKeepAlive",
             cap(crate::registry::SPEC_NET_SOCKET_SET_KEEP_ALIVE),
         ),
+        ("setTimeout", cap(crate::registry::SPEC_NET_SOCKET_SET_TIMEOUT)),
         (
             "setEncoding",
             cap(crate::registry::SPEC_NET_SOCKET_SET_ENCODING),
@@ -435,7 +436,7 @@ fn unhandled_error(arg: Option<&Value>) -> VmError {
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
-        Value::Object(_) => {
+        Value::Object(_) | Value::ObjectAlias(_) => {
             let method = execute::get_property(value, "toString");
             if quench_runtime::is_callable(&method) {
                 if let Ok(Value::String(result)) = execute::call(&method, value, &[]) {
