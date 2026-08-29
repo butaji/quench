@@ -1642,8 +1642,12 @@ fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
+    let calendar = calendar_name(object);
+    let serial = calendar_date_serial(year as f64, month as f64, day as f64, &calendar)
+        .unwrap_or_else(|| date_serial(year as f64, month as f64, day as f64));
+    let (iso_year, iso_month, iso_day) = civil_from_serial(serial);
     Ok(Value::Number(f64::from(proleptic_weekday(
-        year, month, day,
+        iso_year, iso_month, iso_day,
     ))))
 }
 
