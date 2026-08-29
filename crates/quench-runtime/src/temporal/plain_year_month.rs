@@ -430,11 +430,36 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut year_value = crate::execute::get_property_result(value, "year")?;
     let era_value = crate::execute::get_property_result(value, "era")?;
     let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+    let era_provided = !matches!(era_value, Value::Undefined);
+    let era_year_provided = !matches!(era_year_value, Value::Undefined);
+    if era_provided != era_year_provided {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
+    if era_provided && !matches!(year_value, Value::Undefined) {
+        let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        if crate::temporal::plain_date::era_for_calendar(&calendar_name, 0.0).is_some()
+            && crate::temporal::plain_date::canonical_era_name(&calendar_name, &era).is_none()
+        {
+            return Err(crate::value::error::throw_range_error("Invalid era"));
+        }
+    }
     if matches!(year_value, Value::Undefined) {
         if !matches!(era_value, Value::Undefined) && !matches!(era_year_value, Value::Undefined) {
             let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
             let era = crate::temporal::plain_date::canonical_era_name(&calendar_name, &era)
+                .or_else(|| {
+                    crate::temporal::plain_date::era_for_calendar(&calendar_name, 0.0)
+                        .is_none()
+                        .then_some("")
+                })
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+            if era.is_empty() {
+                return Err(crate::value::error::throw_type_error(
+                    "Calendar does not use eras",
+                ));
+            }
             let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
             if !era_year.is_finite() {
                 return Err(crate::value::error::throw_range_error("Invalid eraYear"));
