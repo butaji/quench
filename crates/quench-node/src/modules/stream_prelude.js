@@ -197,6 +197,33 @@
       total + (typeof chunk === "string" ? chunk.length : chunk?.byteLength ?? 1), 0);
   }
 
+  function takeReadableChunk(state, size) {
+    if (state.objectMode || !(size > 0) || state.buffer.length < 2) {
+      return state.buffer.shift();
+    }
+    let remaining = size;
+    const parts = [];
+    while (state.buffer.length > 0 && remaining > 0) {
+      const chunk = state.buffer[0];
+      const length = typeof chunk === "string" ? chunk.length : chunk.byteLength;
+      if (length <= remaining) {
+        parts.push(state.buffer.shift());
+        remaining -= length;
+      } else {
+        parts.push(typeof chunk === "string"
+          ? chunk.slice(0, remaining)
+          : chunk.subarray(0, remaining));
+        state.buffer[0] = typeof chunk === "string"
+          ? chunk.slice(remaining)
+          : chunk.subarray(remaining);
+        remaining = 0;
+      }
+    }
+    if (parts.length === 1) return parts[0];
+    if (typeof Buffer !== "undefined") return Buffer.concat(parts);
+    return parts.join("");
+  }
+
   function validateEncoding(encoding) {
     const name = String(encoding).toLowerCase();
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
@@ -614,6 +641,10 @@
       if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+          // Consuming the final buffered chunk already delivered the
+          // readable notification for this turn. Do not manufacture an
+          // additional empty `readable` event before `end`.
+          st.emittedReadable = true;
           nextTick(() => {
             if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
@@ -634,13 +665,7 @@
           return null;
         }
         let chunk;
-        if (!st.objectMode && size > 0 && readableBufferLength(st) <= size &&
-            st.buffer.length > 1 && typeof Buffer !== "undefined") {
-          chunk = Buffer.concat(st.buffer);
-          st.buffer = [];
-        } else {
-          chunk = st.buffer.shift();
-        }
+        chunk = takeReadableChunk(st, size);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
@@ -674,7 +699,7 @@
         requestRead(this);
       }
       if (st.buffer.length > 0) {
-        let chunk = st.buffer.shift();
+        let chunk = takeReadableChunk(st, size);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
