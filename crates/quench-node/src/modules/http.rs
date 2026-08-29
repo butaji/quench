@@ -774,6 +774,10 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_HTTP_REQUEST),
         ),
         (
+            "ClientRequest",
+            crate::host::capability(crate::registry::SPEC_HTTP_CLIENT_REQUEST),
+        ),
+        (
             "get",
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
         ),
