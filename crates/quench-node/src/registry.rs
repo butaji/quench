@@ -523,6 +523,7 @@ pub const SPEC_HTTP_RES_DESTROY: NodeSpec = NodeSpec::new("http:res:destroy", 0x
 pub const SPEC_HTTP_RES_FLUSH_HEADERS: NodeSpec = NodeSpec::new("http:res:flushHeaders", 0x0F1A);
 pub const SPEC_HTTP_INCOMING: NodeSpec = NodeSpec::new("http:IncomingMessage", 0x0F1B);
 pub const SPEC_HTTP_INCOMING_DESTROY: NodeSpec = NodeSpec::new("http:IncomingMessage:destroy", 0x0F1C);
+pub const SPEC_HTTP_REQ_SIGNAL_ABORT: NodeSpec = NodeSpec::new("http:req:signalAbort", 0x0F1D);
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
 pub const SPEC_NET_SOCKET: NodeSpec = NodeSpec::new("net:Socket", 0x1013);
@@ -1063,6 +1064,7 @@ pub const CAP_HTTP_RES_DESTROY: CapId = SPEC_HTTP_RES_DESTROY.cap;
 pub const CAP_HTTP_RES_FLUSH_HEADERS: CapId = SPEC_HTTP_RES_FLUSH_HEADERS.cap;
 pub const CAP_HTTP_INCOMING: CapId = SPEC_HTTP_INCOMING.cap;
 pub const CAP_HTTP_INCOMING_DESTROY: CapId = SPEC_HTTP_INCOMING_DESTROY.cap;
+pub const CAP_HTTP_REQ_SIGNAL_ABORT: CapId = SPEC_HTTP_REQ_SIGNAL_ABORT.cap;
 pub const CAP_HTTP_REQ_SET_HEADER: CapId = SPEC_HTTP_REQ_SET_HEADER.cap;
 pub const CAP_HTTP_REQ_WRITE: CapId = SPEC_HTTP_REQ_WRITE.cap;
 pub const CAP_HTTP_RESDATA: CapId = SPEC_HTTP_RESDATA.cap;

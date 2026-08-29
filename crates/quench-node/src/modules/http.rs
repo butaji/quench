@@ -28,6 +28,8 @@ pub struct HttpState {
     pub clientreqs: HashMap<u64, crate::modules::http_client::ClientReq>,
     /// socket net id -> ClientRequest id.
     pub clients: HashMap<u64, u64>,
+    /// AbortSignal target id -> ClientRequest id.
+    pub client_signals: HashMap<u64, u64>,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -75,6 +77,7 @@ impl HttpState {
             res: HashMap::new(),
             clientreqs: HashMap::new(),
             clients: HashMap::new(),
+            client_signals: HashMap::new(),
         }
     }
 }
