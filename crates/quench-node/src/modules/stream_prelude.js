@@ -1602,25 +1602,27 @@
     }
   }
 
-  class Duplex extends Readable {
-    constructor(options) {
-      super(Object.assign({}, options || {}, { __quenchCompatConstruct: true }));
-      this._isDuplex = true;
-      initWritable(this, options || {});
-      initConstruct(this, options || {});
-      this.allowHalfOpen = !options || options.allowHalfOpen !== false;
-      if (options?.readable === false) {
-        this.readable = false;
-        this._readableState.ended = true;
-        this._readableState.endEmitted = true;
-      }
-      if (options?.writable === false) {
-        this.writable = false;
-        this._writableState.ended = true;
-        this._writableState.finished = true;
-      }
+  function Duplex(options) {
+    if (!(this instanceof Duplex)) return new Duplex(options || {});
+    options = options || {};
+    initReadable(this, Object.assign({}, options, { __quenchCompatConstruct: true }));
+    this._isDuplex = true;
+    initWritable(this, options);
+    initConstruct(this, options);
+    this.allowHalfOpen = options.allowHalfOpen !== false;
+    if (options.readable === false) {
+      this.readable = false;
+      this._readableState.ended = true;
+      this._readableState.endEmitted = true;
+    }
+    if (options.writable === false) {
+      this.writable = false;
+      this._writableState.ended = true;
+      this._writableState.finished = true;
     }
   }
+  Duplex.prototype = Object.create(Readable.prototype);
+  Duplex.prototype.constructor = Duplex;
   mixWritable(Duplex.prototype);
 
   class Transform extends Duplex {
