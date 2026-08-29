@@ -25,6 +25,14 @@ impl StringUnitsData {
     pub fn cached_hash(&self, hash: impl FnOnce(&[u16]) -> u64) -> u64 {
         *self.hash.get_or_init(|| hash(&self.units))
     }
+
+    /// Append UTF-16 units while preserving the flat canonical representation.
+    /// Callers must have exclusive ownership of this value; replacing the
+    /// hash cache keeps derived state coherent after mutation.
+    pub fn append_units(&mut self, units: &[u16]) {
+        self.units.extend_from_slice(units);
+        self.hash = OnceLock::new();
+    }
 }
 
 impl std::ops::Deref for StringUnitsData {
@@ -156,11 +164,25 @@ pub enum PromiseState {
 include!("value_promise.rs");
 
 /// Heap-allocated Promise data.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TypedArrayMeta {
     prototype: RefCell<Option<Value>>,
     properties: RefCell<Vec<(String, Value)>>,
+    descriptors: RefCell<Vec<(String, Value)>>,
     buffer_materialized: Cell<bool>,
+    extensible: Cell<bool>,
+}
+
+impl Default for TypedArrayMeta {
+    fn default() -> Self {
+        Self {
+            prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
+            descriptors: RefCell::new(Vec::new()),
+            buffer_materialized: Cell::new(false),
+            extensible: Cell::new(true),
+        }
+    }
 }
 
 impl TypedArrayMeta {
@@ -170,6 +192,14 @@ impl TypedArrayMeta {
 
     pub(crate) fn buffer_materialized(&self) -> bool {
         self.buffer_materialized.get()
+    }
+
+    pub(crate) fn is_extensible(&self) -> bool {
+        self.extensible.get()
+    }
+
+    pub(crate) fn set_extensible(&self, extensible: bool) {
+        self.extensible.set(extensible);
     }
 
     pub(crate) fn prototype(&self) -> Option<Value> {
@@ -198,8 +228,41 @@ impl TypedArrayMeta {
         }
     }
 
+    pub(crate) fn remove_property(&self, key: &str) {
+        self.properties.borrow_mut().retain(|(name, _)| name != key);
+        self.descriptors
+            .borrow_mut()
+            .retain(|(name, _)| name != key);
+    }
+
+    pub(crate) fn descriptor(&self, key: &str) -> Option<Value> {
+        self.descriptors
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_descriptor(&self, key: &str, value: Value) {
+        let mut descriptors = self.descriptors.borrow_mut();
+        if let Some((_, current)) = descriptors.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            descriptors.push((key.to_string(), value));
+        }
+    }
+
     pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
         self.properties.borrow().clone()
+    }
+
+    pub(crate) fn descriptor_keys(&self) -> Vec<String> {
+        self.descriptors
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 }
 
@@ -249,6 +312,7 @@ pub struct PromiseData {
     pub(crate) unhandled_queued: Cell<bool>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
+    pub(crate) aggregate_hooks: RefCell<Vec<(Rc<PromiseAggregate>, usize)>>,
 }
 
 impl PromiseData {
@@ -277,6 +341,7 @@ impl PromiseData {
             unhandled_queued: Cell::new(false),
             then_actions: RefCell::new(Vec::new()),
             continuations: RefCell::new(Vec::new()),
+            aggregate_hooks: RefCell::new(Vec::new()),
         }
     }
 
@@ -304,6 +369,10 @@ impl PromiseData {
         } else {
             properties.push((key.to_string(), value));
         }
+    }
+
+    pub(crate) fn add_aggregate_hook(&self, aggregate: Rc<PromiseAggregate>, index: usize) {
+        self.aggregate_hooks.borrow_mut().push((aggregate, index));
     }
 
     pub fn rejection_handled(&self) -> bool {
@@ -473,6 +542,7 @@ pub struct GeneratorState {
     pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
     pub(crate) async_for_of: Option<AsyncForOfState>,
+    pub(crate) pending_completion: Option<crate::completion::Completion>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -700,6 +770,18 @@ impl ObjectProperties {
 
     #[inline]
     pub(crate) fn position_rev(&self, key: &str) -> Option<usize> {
+        if let Some(index) = numeric_property_index(key) {
+            // Object literals used as array-likes commonly establish
+            // `length` first and then append numeric keys in order. Derive
+            // that slot from the canonical vector before falling back to the
+            // general reverse lookup; no parallel index is retained.
+            let candidates = [index, index.checked_add(1)?];
+            for candidate in candidates {
+                if self.names.get(candidate).is_some_and(|name| name == key) {
+                    return Some(candidate);
+                }
+            }
+        }
         self.names.iter().rposition(|name| name == key)
     }
 
@@ -782,6 +864,23 @@ impl ObjectProperties {
     }
 }
 
+#[inline]
+fn numeric_property_index(key: &str) -> Option<usize> {
+    if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
+        return None;
+    }
+    let mut index = 0usize;
+    for byte in key.bytes() {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        index = index
+            .checked_mul(10)?
+            .checked_add(usize::from(byte - b'0'))?;
+    }
+    Some(index)
+}
+
 impl From<Vec<(PropertyName, Value)>> for ObjectProperties {
     fn from(entries: Vec<(PropertyName, Value)>) -> Self {
         entries.into_iter().collect()
@@ -827,6 +926,20 @@ pub(crate) trait PropertyEntries {
     where
         Self: 'a;
     fn entries(&self) -> Self::Iter<'_>;
+
+    #[inline]
+    fn value_for_key(&self, key: &str) -> Option<Value> {
+        self.entries()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value))
+    }
+
+    #[inline]
+    fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
+        self.entries().rev().find_map(|(name, value)| {
+            crate::builtins::is_descriptor_key_for(name, key).then_some(value)
+        })
+    }
 }
 
 impl PropertyEntries for ObjectProperties {
@@ -839,6 +952,12 @@ impl PropertyEntries for ObjectProperties {
             (name.as_str(), value)
         }
         self.into_iter().map(split)
+    }
+
+    #[inline]
+    fn value_for_key(&self, key: &str) -> Option<Value> {
+        self.position_rev(key)
+            .and_then(|slot| self.slot_value(slot))
     }
 }
 
@@ -913,6 +1032,12 @@ pub struct ObjectData {
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
     pub(crate) created: Vec<PropertyName>,
+    // Derived tri-state cache for descriptor metadata. Mutation resets it;
+    // the property vector remains the sole semantic source of truth.
+    descriptor_metadata_state: std::cell::Cell<u8>,
+    // Derived tri-state cache for deletion tombstones. The canonical property
+    // vector remains authoritative; this only avoids repeated absence scans.
+    deleted_marker_state: std::cell::Cell<u8>,
 }
 
 impl Drop for ObjectData {
@@ -940,6 +1065,8 @@ impl Clone for ObjectData {
             private_slots: Rc::clone(&self.private_slots),
             original_prototype: RefCell::new(self.original_prototype()),
             created: self.created.clone(),
+            descriptor_metadata_state: std::cell::Cell::new(0),
+            deleted_marker_state: std::cell::Cell::new(0),
         }
     }
 }
@@ -949,6 +1076,18 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        if let Some(index) = crate::arrays::array_index(key) {
+            let append = self.properties.iter().next_back().is_some_and(|(name, _)| {
+                crate::arrays::array_index(name.as_str()).is_some_and(|last| last < index)
+            });
+            if append {
+                self.properties.push((key.into(), value));
+                self.created.push(key.into());
+                self.layout_id.set(0);
+                self.deleted_marker_state.set(0);
+                return;
+            }
+        }
         let index = { self.properties.iter().rposition(|(name, _)| name == key) };
         if let Some(index) = index {
             if let Some((_, mut current)) = self.properties.iter_mut().nth(index) {
@@ -958,7 +1097,11 @@ impl ObjectData {
             self.properties.push((key.into(), value));
             self.created.push(key.into());
         }
-        self.invalidate_layout();
+        self.layout_id.set(0);
+        if crate::builtins::is_descriptor_key(key) {
+            self.descriptor_metadata_state.set(0);
+        }
+        self.deleted_marker_state.set(0);
     }
 
     /// Borrow the canonical hot property storage once for dependent-load-heavy
@@ -998,6 +1141,8 @@ impl ObjectData {
 
     pub(crate) fn invalidate_layout(&self) {
         self.layout_id.set(0);
+        self.descriptor_metadata_state.set(0);
+        self.deleted_marker_state.set(0);
     }
 
     pub(crate) fn new(properties: Vec<(String, Value)>) -> Self {
@@ -1067,6 +1212,8 @@ impl ObjectData {
             private_slots,
             original_prototype: RefCell::new(None),
             created,
+            descriptor_metadata_state: std::cell::Cell::new(0),
+            deleted_marker_state: std::cell::Cell::new(0),
         }
     }
 
@@ -1083,6 +1230,30 @@ impl ObjectData {
     #[inline]
     pub(crate) fn has_replacement(&self) -> bool {
         self.replacement.borrow().is_some()
+    }
+
+    #[inline]
+    pub(crate) fn has_deleted_key(&self, key: &str) -> bool {
+        match self.deleted_marker_state.get() {
+            1 => false,
+            2 => self
+                .properties
+                .names()
+                .any(|name| crate::builtins::is_deleted_key_for(name.as_str(), key)),
+            _ => {
+                let has_marker = self
+                    .properties
+                    .names()
+                    .any(|name| crate::builtins::is_deleted_marker(name.as_str()));
+                self.deleted_marker_state
+                    .set(if has_marker { 2 } else { 1 });
+                has_marker
+                    && self
+                        .properties
+                        .names()
+                        .any(|name| crate::builtins::is_deleted_key_for(name.as_str(), key))
+            }
+        }
     }
 
     #[inline]
@@ -1108,6 +1279,8 @@ impl std::ops::Deref for ObjectData {
 impl std::ops::DerefMut for ObjectData {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.layout_id.set(0);
+        self.descriptor_metadata_state.set(0);
+        self.deleted_marker_state.set(0);
         &mut self.properties
     }
 }
@@ -1116,6 +1289,36 @@ impl PropertyEntries for ObjectData {
     type Iter<'a> = <ObjectProperties as PropertyEntries>::Iter<'a>;
     fn entries(&self) -> Self::Iter<'_> {
         self.properties.entries()
+    }
+
+    #[inline]
+    fn value_for_key(&self, key: &str) -> Option<Value> {
+        self.properties.value_for_key(key)
+    }
+
+    fn descriptor_metadata_for_key(&self, key: &str) -> Option<Value> {
+        match self.descriptor_metadata_state.get() {
+            1 => None,
+            2 => self.properties.descriptor_metadata_for_key(key),
+            _ => {
+                let metadata = self.properties.descriptor_metadata_for_key(key);
+                // A missing metadata entry is not a stable fact: a later
+                // Object.defineProperty can append one without replacing the
+                // object. Cache only the positive result; absence remains
+                // Unknown until the next lookup so a derived fact cannot go
+                // stale across an in-place metadata write.
+                if metadata.is_some() {
+                    self.descriptor_metadata_state.set(2);
+                } else if !self
+                    .properties
+                    .iter()
+                    .any(|(name, _)| crate::builtins::is_descriptor_key(name))
+                {
+                    self.descriptor_metadata_state.set(1);
+                }
+                metadata
+            }
+        }
     }
 }
 
@@ -1430,19 +1633,25 @@ pub(crate) struct PrivateName {
     source: PrivateNameId,
     identity: Rc<()>,
     realm: crate::ops::RealmId,
+    label: String,
 }
 
 impl PrivateName {
-    pub(crate) fn new(source: PrivateNameId) -> Self {
+    pub(crate) fn new(source: PrivateNameId, label: &str) -> Self {
         Self {
             source,
             identity: Rc::new(()),
             realm: crate::vm::current_context_or_default().realm(),
+            label: label.to_string(),
         }
     }
 
     pub(crate) fn realm(&self) -> crate::ops::RealmId {
         self.realm
+    }
+
+    pub(crate) fn label(&self) -> &str {
+        &self.label
     }
 
     pub(crate) fn same_identity(&self, other: &Self) -> bool {

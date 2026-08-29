@@ -1,7 +1,11 @@
-use regress::{Flags, Regex};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::{execute::VmError, ops::Builtin, value::Value};
+use crate::{
+    execute::VmError,
+    ops::Builtin,
+    regexp_backend::{Flags, Match, Regex},
+    value::Value,
+};
 
 pub fn validate_literal(body: &str) -> Result<(), String> {
     let bytes = body.as_bytes();
@@ -112,6 +116,74 @@ pub fn validate_pattern(body: &str) -> Result<(), String> {
     validate_quantified_lookbehind(body)?;
     validate_named_groups(body)?;
     Ok(())
+}
+
+/// Unicode RegExp grammars do not admit the legacy identity escapes for
+/// ASCII letters.  The parser used by the VM intentionally accepts a few of
+/// those escapes for non-Unicode patterns, so reject them at the grammar
+/// boundary before handing the source to the parser.
+pub fn validate_unicode_escapes(body: &str, unicode_sets: bool) -> Result<(), String> {
+    let chars: Vec<char> = body.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '\\' {
+            index += 1;
+            continue;
+        }
+        let Some(&escaped) = chars.get(index + 1) else {
+            break;
+        };
+        match escaped {
+            'c' => {
+                if !chars
+                    .get(index + 2)
+                    .is_some_and(|character| character.is_ascii_alphabetic())
+                {
+                    return Err(syntax_error());
+                }
+                index += 3;
+            }
+            'p' | 'P' => {
+                index = skip_braced_escape(&chars, index + 2);
+            }
+            'k' => {
+                index = skip_delimited_escape(&chars, index + 2, '<', '>');
+            }
+            'q' if unicode_sets => {
+                index = skip_braced_escape(&chars, index + 2);
+            }
+            character if character.is_ascii_alphabetic() => {
+                if !matches!(character, 'b' | 'B' | 'f' | 'n' | 'r' | 't' | 'v'
+                    | 'd' | 'D' | 's' | 'S' | 'w' | 'W' | 'u' | 'x')
+                {
+                    return Err(syntax_error());
+                }
+                index += 2;
+            }
+            _ => index += 2,
+        }
+    }
+    Ok(())
+}
+
+fn skip_braced_escape(chars: &[char], start: usize) -> usize {
+    if chars.get(start) != Some(&'{') {
+        return start;
+    }
+    chars[start + 1..]
+        .iter()
+        .position(|character| *character == '}')
+        .map_or(chars.len(), |offset| start + 2 + offset)
+}
+
+fn skip_delimited_escape(chars: &[char], start: usize, open: char, close: char) -> usize {
+    if chars.get(start) != Some(&open) {
+        return start;
+    }
+    chars[start + 1..]
+        .iter()
+        .position(|character| *character == close)
+        .map_or(chars.len(), |offset| start + 2 + offset)
 }
 fn validate_initial_quantifier(body: &str) -> Result<(), String> {
     if let Some(first) = body.chars().next() {

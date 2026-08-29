@@ -221,6 +221,9 @@ fn execute_named_callee(
     receiver_register: u16,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
+    if !crate::conversion::is_callable(&callee) {
+        return Err(crate::vm::not_callable());
+    }
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)

@@ -4,16 +4,32 @@ fn typed_array_static(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     match builtin {
-        crate::ops::Builtin::TypedArrayFrom => Some(from(receiver, arguments)),
+        crate::ops::Builtin::TypedArrayFrom => Some(typed_array_from(receiver, arguments)),
         crate::ops::Builtin::TypedArrayOf => Some(typed_array_of(receiver, arguments)),
         _ => None,
     }
+}
+
+fn typed_array_from(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver.filter(|value| is_constructor(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.from called on a non-constructor",
+        ));
+    };
+    crate::arrays::typed_from(Some(receiver), arguments)
 }
 
 fn typed_array_of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let source = Value::array(arguments.to_vec());
-    from(receiver, &[source])
+    let Some(receiver) = receiver.filter(|value| is_constructor(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.of called on a non-constructor",
+        ));
+    };
+    crate::arrays::of(Some(receiver), arguments)
 }

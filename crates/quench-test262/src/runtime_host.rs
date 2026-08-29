@@ -338,6 +338,7 @@ impl LinkedModule {
 }
 
 thread_local! {
+    static TEST_CAN_BLOCK: Cell<bool> = const { Cell::new(false) };
     static CURRENT_MODULE_GRAPH: Cell<Option<(*const LinkedModuleGraph, *const ModuleGraph)>> =
         const { Cell::new(None) };
     static CURRENT_MODULE_ID: Cell<Option<ModuleId>> = const { Cell::new(None) };
@@ -357,6 +358,10 @@ fn module_source_cell() -> ModuleBindingCell {
 }
 
 impl Test262Host for RuntimeHost {
+    fn configure(&mut self, metadata: &crate::TestMetadata) {
+        TEST_CAN_BLOCK.with(|can_block| can_block.set(metadata.can_block));
+    }
+
     fn run_script(&mut self, source: &str) -> Result<(), String> {
         run_source(source)
     }
@@ -418,6 +423,10 @@ fn run_source(source: &str) -> Result<(), String> {
 }
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+    // Each Test262 file is an independent Realm-like program. Clear the
+    // thread-local root global before installing the fresh execution scope so
+    // properties created by one fixture cannot leak into the next fixture.
+    quench_runtime::vm::reset_global_object();
     quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
@@ -457,7 +466,8 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::AgentMonotonicNow,
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
         ],
-    );
+    )
+    .with_can_block(TEST_CAN_BLOCK.with(Cell::get));
     context.with_host_capability(
         "$262",
         quench_runtime::ops::HostCapabilityRef {

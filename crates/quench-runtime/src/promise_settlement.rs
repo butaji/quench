@@ -14,6 +14,11 @@ fn claim_promise(promise: &Rc<PromiseData>) -> bool {
 fn settle_fulfilled(promise: &Rc<PromiseData>, value: Value) {
     if matches!(*promise.state.borrow(), PromiseState::Pending) {
         set_promise_state(promise, PromiseState::Fulfilled(value));
+        let hooks = std::mem::take(&mut *promise.aggregate_hooks.borrow_mut());
+        let state = promise.state.borrow().clone();
+        for (aggregate, index) in hooks {
+            crate::promise::aggregate_settle(&aggregate, index, &state);
+        }
         queue_promise(promise);
     }
 }
@@ -21,6 +26,11 @@ fn settle_fulfilled(promise: &Rc<PromiseData>, value: Value) {
 fn settle_rejected(promise: &Rc<PromiseData>, reason: Value) {
     if matches!(*promise.state.borrow(), PromiseState::Pending) {
         set_promise_state(promise, PromiseState::Rejected(reason));
+        let hooks = std::mem::take(&mut *promise.aggregate_hooks.borrow_mut());
+        let state = promise.state.borrow().clone();
+        for (aggregate, index) in hooks {
+            crate::promise::aggregate_settle(&aggregate, index, &state);
+        }
         queue_promise(promise);
     }
 }

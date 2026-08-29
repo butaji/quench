@@ -7,6 +7,7 @@
 //! and immediates until no referenced work remains, then runs
 //! `beforeExit`/`exit` handlers like Node does at end of run.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -23,6 +24,14 @@ const TIMER_ID_PROP: &str = "\0quench:timer:id";
 /// Node's `TIMEOUT_MAX` (2^31 - 1); larger delays clamp to 1ms.
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
 const PROMISES_PRELUDE: &str = include_str!("timers_promises.js");
+thread_local! { static MOCK_TIMER_NOW: Cell<Option<u64>> = const { Cell::new(None) }; }
+
+pub fn set_mock_timer_now(value: Option<u64>) {
+    MOCK_TIMER_NOW.with(|now| now.set(value));
+}
+pub fn mock_timer_now() -> Option<u64> {
+    MOCK_TIMER_NOW.with(Cell::get)
+}
 
 pub enum TimerKind {
     Timeout,
@@ -87,9 +96,18 @@ fn schedule(
     args: &[Value],
     kind: TimerKind,
 ) -> Result<Value, VmError> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut cb = args.first().cloned().unwrap_or(Value::Undefined);
     if !quench_runtime::is_callable(&cb) {
         return Err(invalid_callback_error());
+    }
+    // Capture the JS async context at registration time. The wrapper restores
+    // `__nodeCurrentAsyncResource` around invocation, which is the canonical
+    // source consumed by AsyncLocalStorage.getStore().
+    let global = quench_runtime::vm::current_global_object();
+    let capture = quench_runtime::execute::get_property(&global, "__nodeCaptureAsyncCallback");
+    if quench_runtime::is_callable(&capture) {
+        let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+        cb = quench_runtime::execute::call(&capture, &Value::Undefined, &[cb, current])?;
     }
     let domain = crate::modules::domain::current(state);
     // `setTimeout(cb, delay, ...args)`; `setImmediate(cb, ...args)`.
@@ -103,8 +121,20 @@ fn schedule(
     let id = state.borrow_mut().timers.allocate();
     let fire_at = monotonic_ms().saturating_add(delay);
     let destroyed = quench_runtime::value::BindingCell::new(Value::Boolean(false));
-    let object = timer_object(id, &destroyed)?;
+    let object = timer_object(id, &destroyed, &kind)?;
     let async_resource = async_resource(state, &kind)?;
+    // AsyncLocalStorage state is carried by the JS resource object. Capture
+    // the current resource's store map when the timer is created so the
+    // callback observes the same context after resource_before switches to
+    // this timer.
+    let global = quench_runtime::vm::current_global_object();
+    let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+    let stores = quench_runtime::execute::get_property(&current, "__nodeAsyncStores");
+    let async_resource = if matches!(stores, Value::Undefined) {
+        async_resource
+    } else {
+        quench_runtime::execute::set_property(async_resource, "__nodeAsyncStores", stores)
+    };
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
@@ -152,12 +182,24 @@ pub(crate) fn async_destroy(resource: &Value) {
 fn timer_object(
     id: u64,
     destroyed: &Rc<quench_runtime::value::BindingCell>,
+    kind: &TimerKind,
 ) -> Result<Value, VmError> {
+    let constructor_name = match kind {
+        TimerKind::Immediate => "Immediate",
+        TimerKind::Timeout | TimerKind::Interval => "Timeout",
+    };
     let object = crate::host::namespace_object_from_pairs(vec![
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
         (
             "_destroyed".to_string(),
             Value::BindingCell(Rc::clone(destroyed)),
+        ),
+        (
+            "constructor".to_string(),
+            host_api::object(vec![(
+                "name".to_string(),
+                Value::String(constructor_name.to_string()),
+            )]),
         ),
     ]);
     let methods: Vec<(&str, crate::registry::NodeSpec)> = vec![
@@ -310,10 +352,17 @@ fn invalid_callback_error() -> VmError {
 }
 
 pub(crate) fn monotonic_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    if let Some(value) = mock_timer_now() {
+        return value;
+    }
+    if quench_runtime::date::mock_enabled() {
+        return quench_runtime::date::current_time_ms().max(0.0) as u64;
+    }
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
 }
 
 /// Node delay normalization with duration warnings: NaN, negative,
@@ -364,6 +413,7 @@ fn emit_warning(state: &Rc<RefCell<HostState>>, name: &str, message: &str) {
 fn value_to_id(value: &Value) -> Option<u64> {
     match value {
         Value::Number(n) if n.is_finite() && *n >= 0.0 => Some(*n as u64),
+        Value::String(value) => value.parse::<u64>().ok(),
         Value::Object(_) => match quench_runtime::vm::get_property(value, TIMER_ID_PROP) {
             Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
             _ => None,
@@ -418,4 +468,27 @@ pub fn build_promises() -> Result<Value, VmError> {
     })?;
     let timers = crate::host::namespace_object_from_pairs(build());
     quench_runtime::vm::call_value(&factory, &Value::Undefined, &[timers])
+}
+
+/// Build the callback namespace with Node's promisify identity links.
+pub fn build_with_promises() -> Result<Value, VmError> {
+    let promises = build_promises()?;
+    let mut bindings = build();
+    for (name, value) in &mut bindings {
+        let promise_name = match name.as_str() {
+            "setTimeout" => Some("setTimeout"),
+            "setImmediate" => Some("setImmediate"),
+            _ => None,
+        };
+        if let Some(promise_name) = promise_name {
+            let promise = quench_runtime::execute::get_property_result(&promises, promise_name)?;
+            *value = quench_runtime::execute::set_property(
+                value.clone(),
+                crate::modules::util::PROMISIFY_CUSTOM_KEY,
+                promise,
+            );
+        }
+    }
+    bindings.push(("promises".to_string(), promises));
+    Ok(crate::host::namespace_object_from_pairs(bindings))
 }

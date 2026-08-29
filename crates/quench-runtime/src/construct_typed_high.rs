@@ -16,15 +16,16 @@ fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError>
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Int8ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_int8(crate::conversion::to_number(value)?));
+        view.set(index, to_int8(number_for_typed_array(value)?));
     }
     Ok(Value::Int8Array(Rc::new(view)))
 }
 
 fn copy_int8_array(source: &crate::value::Int8ArrayData) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Int8ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Int8ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Int8Array(Rc::new(view)))
@@ -34,26 +35,12 @@ fn view_int8_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
-    if offset > buffer.byte_length() {
-        return Err(range_error("Invalid Int8Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available
-    {
-        return Err(range_error("Invalid Int8Array length"));
-    }
+    let (offset, length) = typed_view_bounds(
+        buffer,
+        arguments,
+        crate::value::Int8ArrayData::BYTES_PER_ELEMENT,
+        "Int8Array",
+    )?;
     Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
         buffer.clone(),
         offset,
@@ -82,7 +69,7 @@ fn values_int16_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     ));
     let view = crate::value::Int16ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_int16(crate::conversion::to_number(value)?));
+        view.set(index, to_int16(number_for_typed_array(value)?));
     }
     Ok(Value::Int16Array(Rc::new(view)))
 }
@@ -90,9 +77,10 @@ fn values_int16_array(values: &[Value]) -> Result<Value, crate::execute::VmError
 fn copy_int16_array(
     source: &crate::value::Int16ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Int16ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Int16ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Int16Array(Rc::new(view)))
@@ -102,27 +90,8 @@ fn view_int16_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Int16ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Int16Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Int16Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Int16Array")?;
     Ok(Value::Int16Array(Rc::new(
         crate::value::Int16ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -135,7 +104,7 @@ fn values_int32_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     ));
     let view = crate::value::Int32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_int32(crate::conversion::to_number(value)?));
+        view.set(index, to_int32(number_for_typed_array(value)?));
     }
     Ok(Value::Int32Array(Rc::new(view)))
 }
@@ -143,9 +112,10 @@ fn values_int32_array(values: &[Value]) -> Result<Value, crate::execute::VmError
 fn copy_int32_array(
     source: &crate::value::Int32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Int32ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Int32ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Int32Array(Rc::new(view)))
@@ -155,27 +125,8 @@ fn view_int32_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Int32ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Int32Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Int32Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Int32Array")?;
     Ok(Value::Int32Array(Rc::new(
         crate::value::Int32ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -244,7 +195,7 @@ fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
     ));
     let view = crate::value::Float32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, crate::conversion::to_number(value)? as f32);
+        view.set(index, number_for_typed_array(value)? as f32);
     }
     Ok(Value::Float32Array(Rc::new(view)))
 }
@@ -252,9 +203,10 @@ fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
 fn copy_float32_array(
     source: &crate::value::Float32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Float32ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Float32ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(f32::NAN));
     }
     Ok(Value::Float32Array(Rc::new(view)))
@@ -264,27 +216,8 @@ fn view_float32_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Float32ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Float32Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Float32Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Float32Array")?;
     Ok(Value::Float32Array(Rc::new(
         crate::value::Float32ArrayData::new(buffer.clone(), offset, length),
     )))
@@ -303,7 +236,7 @@ fn values_float64_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
     ));
     let view = crate::value::Float64ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, crate::conversion::to_number(value)?);
+        view.set(index, number_for_typed_array(value)?);
     }
     Ok(Value::Float64Array(Rc::new(view)))
 }
@@ -311,9 +244,10 @@ fn values_float64_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
 fn copy_float64_array(
     source: &crate::value::Float64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Float64ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Float64ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(f64::NAN));
     }
     Ok(Value::Float64Array(Rc::new(view)))
@@ -323,27 +257,8 @@ fn view_float64_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = match arguments.get(1) {
-        Some(value) => crate::conversion::to_number(value)?,
-        None => 0.0,
-    };
-    let offset = to_index(offset)?;
     let element_size = crate::value::Float64ArrayData::BYTES_PER_ELEMENT;
-    if offset % element_size != 0 || offset > buffer.byte_length() {
-        return Err(range_error("Invalid Float64Array byte offset"));
-    }
-    let available = buffer.byte_length() - offset;
-    let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
-    };
-    if arguments
-        .get(2)
-        .is_some_and(|value| !matches!(value, Value::Undefined))
-        && length > available / element_size
-    {
-        return Err(range_error("Invalid Float64Array length"));
-    }
+    let (offset, length) = typed_view_bounds(buffer, arguments, element_size, "Float64Array")?;
     Ok(Value::Float64Array(Rc::new(
         crate::value::Float64ArrayData::new(buffer.clone(), offset, length),
     )))

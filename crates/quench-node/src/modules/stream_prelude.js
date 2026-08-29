@@ -24,6 +24,11 @@
       if (name === "data" && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
+        // The first data listener starts pulling before the next promise
+        // checkpoint, matching Node's lazy activation contract.
+        if (!this._readableState.reading && !this._readableState.ended) {
+          requestRead(this);
+        }
         // Deliver already-buffered/iterator data in this turn, but leave a
         // user-supplied _read pending so an immediate pause can cancel it.
         if (this._readableState.buffer.length > 0 || this.__quenchIterator) {
@@ -274,7 +279,10 @@
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
               : true)) {
-          st.flowing = false;
+          if (st.flowing) {
+            st.flowing = false;
+            stream._emitter.emit("pause");
+          }
           break;
         }
       }
@@ -288,12 +296,14 @@
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
-        !st.endScheduled && (st.flowing || stream.listenerCount("readable") === 0)) {
+        !st.endScheduled && (st.flowing ||
+          (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
         if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
-            (st.flowing || stream.listenerCount("readable") === 0)) {
+            (st.flowing ||
+              (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
@@ -469,16 +479,19 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-        }
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+          if (st.decoder && !st.objectMode) {
+            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          }
+        }
         return chunk;
       }
       if (!st.ended && !st.reading) {
@@ -487,16 +500,19 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-        }
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+          if (st.decoder && !st.objectMode) {
+            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          }
+        }
         return chunk;
       }
       finishIfEnded();
@@ -1621,6 +1637,12 @@
     if (wantReadable) stream.once("end", () => finish(undefined, "readable"));
     if (wantWritable) stream.once("finish", () => finish(undefined, "writable"));
     stream.once("error", (error) => finish(error));
+    stream.once("close", () => {
+      if (done || (readableDone && writableDone)) return;
+      const error = new Error("Premature close");
+      error.code = "ERR_STREAM_PREMATURE_CLOSE";
+      finish(error);
+    });
     return () => {
       done = true;
     };
@@ -1790,11 +1812,54 @@
   }
   Readable.isDisturbed = isDisturbed;
   Writable.destroy = destroy;
+  // Keep the public stream module's Duplex family connected to the canonical
+  // NodeDuplex adapters installed by the bootstrap layer.
+  const DuplexCompat = function (options = {}) {
+    return Reflect.construct(Duplex, [options], new.target || DuplexCompat);
+  };
+  DuplexCompat.prototype = Duplex.prototype;
+  Object.setPrototypeOf(DuplexCompat, Duplex);
+  DuplexCompat.from = (source, options = {}) => {
+    const pair = source && source.readable && source.readable.getReader
+      ? source
+      : source && source.getReader
+        ? { readable: source }
+        : null;
+    if (pair) return DuplexCompat.fromWeb(pair, options);
+    return Readable.from(source, options);
+  };
+  DuplexCompat.fromWeb = (pair, options) =>
+    (() => {
+      const readable = pair?.readable;
+      const reader = readable?.getReader?.();
+      if (!reader) return pair;
+      let reading = false;
+      return new Duplex({
+        ...options,
+        readable: true,
+        writable: false,
+        read() {
+          if (reading) return;
+          reading = true;
+          reader.read().then(({ value, done }) => {
+          reading = false;
+            if (done) {
+              this.push(null);
+              this.readable = false;
+            }
+            else this.push(value);
+          }, (error) => {
+            reading = false;
+            this.destroy(error);
+          });
+        }
+      });
+    })();
 
   return {
     Readable,
     Writable,
-    Duplex,
+    Duplex: DuplexCompat,
     Transform,
     PassThrough,
     Stream: Readable,

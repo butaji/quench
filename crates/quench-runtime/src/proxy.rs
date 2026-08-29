@@ -7,21 +7,25 @@ use std::rc::Rc;
 use std::slice;
 include!("proxy_set.rs");
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
-    validate_proxy_arguments(target, handler)?;
+    let target =
+        crate::locals::resolved_replacement(arguments.first().ok_or(VmError::NotCallable)?.clone());
+    let handler =
+        crate::locals::resolved_replacement(arguments.get(1).ok_or(VmError::NotCallable)?.clone());
+    validate_proxy_arguments(&target, &handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     Ok(Value::Proxy(Rc::new(ProxyValue {
-        target: target.clone(),
-        handler: handler.clone(),
+        target,
+        handler,
         revoked,
         private_slots: Rc::new(std::cell::RefCell::new(Vec::new())),
     })))
 }
 pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
-    validate_proxy_arguments(target, handler)?;
+    let target =
+        crate::locals::resolved_replacement(arguments.first().ok_or(VmError::NotCallable)?.clone());
+    let handler =
+        crate::locals::resolved_replacement(arguments.get(1).ok_or(VmError::NotCallable)?.clone());
+    validate_proxy_arguments(&target, &handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     let proxy = Value::Proxy(Rc::new(ProxyValue {
         target: target.clone(),
@@ -46,13 +50,31 @@ fn validate_proxy_arguments(target: &Value, handler: &Value) -> Result<(), VmErr
 }
 
 fn create_revoke_function(proxy: Value) -> Value {
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(Builtin::ProxyRevoke),
-        receiver: proxy,
-        arguments: Vec::new(),
-        properties: std::cell::RefCell::new(Vec::new()),
-    }))
+    let revoke = crate::vm::bind_method(&proxy, Value::Builtin(Builtin::ProxyRevoke));
+    if let Value::BoundFunction(bound) = &revoke {
+        let mut properties = bound.properties.borrow_mut();
+        for (name, value) in properties.iter_mut() {
+            if name == "name" {
+                *value = Value::String(String::new());
+            } else if name == &crate::builtins::descriptor_key("name") {
+                if let Value::Object(fields) = &*value {
+                    let mut entries = fields.properties.clone();
+                    if let Some((_, mut value)) =
+                        entries.iter_mut().find(|(name, _)| name == "value")
+                    {
+                        *value = Value::String(String::new());
+                    }
+                    *value = Value::Object(Rc::new(crate::value::ObjectData::new(
+                        entries
+                            .iter()
+                            .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+                            .collect(),
+                    )));
+                }
+            }
+        }
+    }
+    revoke
 }
 
 pub(crate) fn revoke(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -71,21 +93,28 @@ pub(crate) fn is_revoked(proxy: &ProxyValue) -> bool {
 
 fn check_revoked(proxy: &ProxyValue) -> Result<(), VmError> {
     if is_revoked(proxy) {
-        Err(crate::value::error::throw_type_error(
-            "Cannot perform operation on revoked proxy",
-        ))
+        let realm = crate::construct::constructor_realm(&proxy.target);
+        crate::vm::with_realm(realm, || {
+            Err(crate::value::error::throw_type_error(
+                "Cannot perform operation on revoked proxy",
+            ))
+        })
+        .unwrap_or_else(|| {
+            Err(crate::value::error::throw_type_error(
+                "Cannot perform operation on revoked proxy",
+            ))
+        })
     } else {
         Ok(())
     }
 }
 
-pub(crate) fn get_handler_trap(proxy: &ProxyValue, trap: &str) -> Option<Value> {
-    let value =
-        crate::execute::get_property_result(&proxy.handler, trap).unwrap_or(Value::Undefined);
+pub(crate) fn get_handler_trap(proxy: &ProxyValue, trap: &str) -> Result<Option<Value>, VmError> {
+    let value = crate::execute::get_property_result(&proxy.handler, trap)?;
     if matches!(value, Value::Undefined | Value::Null) {
-        None
+        Ok(None)
     } else {
-        Some(value)
+        Ok(Some(value))
     }
 }
 
@@ -99,6 +128,10 @@ pub(crate) fn call_trap(
         receiver.unwrap_or(&crate::value::Value::Undefined),
         arguments,
     )
+    .map_err(|error| match error {
+        VmError::NotCallable => crate::value::error::throw_type_error("Proxy trap is not callable"),
+        error => error,
+    })
 }
 
 pub(crate) fn proxy_get(
@@ -108,7 +141,7 @@ pub(crate) fn proxy_get(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "get") {
+        if let Some(trap) = get_handler_trap(proxy, "get")? {
             let receiver = receiver.unwrap_or(target);
             let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
             let result = call_trap(
@@ -195,7 +228,7 @@ fn proxy_target_property(
 pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "has") {
+        if let Some(trap) = get_handler_trap(proxy, "has")? {
             let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
@@ -206,7 +239,10 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
                     Some(&proxy.target),
                     Some(&Value::String(prop.to_string())),
                 )?;
-                if is_non_configurable_descriptor(&descriptor) {
+                if is_non_configurable_descriptor(&descriptor)
+                    || (!crate::properties::object_is_extensible(&proxy.target)
+                        && !matches!(descriptor, Value::Undefined | Value::Null))
+                {
                     return Err(crate::value::error::throw_type_error(
                         "Proxy has invariant violated",
                     ));
@@ -214,6 +250,13 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
             }
             return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
+        if matches!(proxy.target, Value::Proxy(_)) {
+            return proxy_has(&proxy.target, prop);
+        }
+        return Ok(Value::Boolean(crate::with_scope::has_property(
+            &proxy.target,
+            prop,
+        )?));
     }
     Ok(Value::Boolean(crate::with_scope::has_property(
         target, prop,
@@ -232,14 +275,14 @@ fn is_non_configurable_descriptor(descriptor: &Value) -> bool {
 pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "deleteProperty") {
+        if let Some(trap) = get_handler_trap(proxy, "deleteProperty")? {
             let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
             )?;
             let success = crate::execute::is_truthy(&result);
-            if !success {
+            if success {
                 let descriptor = crate::builtins::object::descriptor(
                     Some(&proxy.target),
                     Some(&Value::String(prop.to_string())),
@@ -255,9 +298,11 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
             }
             return Ok(Value::Boolean(success));
         }
+        return proxy_delete(&proxy.target, prop);
     }
+    let target = crate::locals::resolved_replacement(target.clone());
     let (updated, deleted) = crate::builtins::delete_property(target.clone(), prop);
-    crate::locals::replace_value(target, &updated);
+    crate::locals::replace_value(&target, &updated);
     Ok(Value::Boolean(deleted))
 }
 
@@ -268,7 +313,7 @@ pub(crate) fn proxy_apply(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "apply") {
+        if let Some(trap) = get_handler_trap(proxy, "apply")? {
             let args_array = Value::array(arguments.to_vec());
             return call_trap(
                 &trap,
@@ -301,7 +346,7 @@ pub(crate) fn proxy_construct(
     }
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "construct") {
+        if let Some(trap) = get_handler_trap(proxy, "construct")? {
             let args_array = Value::array(arguments.to_vec());
             let new_target = new_target.unwrap_or(target);
             let result = call_trap(
@@ -318,13 +363,28 @@ pub(crate) fn proxy_construct(
         }
     }
     let new_target = new_target.unwrap_or(target);
+    if let Value::Proxy(proxy) = target {
+        // A proxy without a construct trap forwards [[Construct]] to its
+        // target; recursing with the proxy itself would never reach the
+        // target's constructor (and can overflow the host stack).
+        let result =
+            crate::construct::construct_value_with_new_target(&proxy.target, new_target, arguments);
+        if is_revoked(proxy) {
+            return Err(crate::vm::not_callable());
+        }
+        return result;
+    }
     crate::construct::construct_value_with_new_target(target, new_target, arguments)
 }
 
 fn is_constructible(value: &Value) -> bool {
     match value {
         Value::Function(function) => {
-            !function.is_async && matches!(function.kind, FunctionKind::Ordinary)
+            !function.is_async
+                && matches!(
+                    function.kind,
+                    FunctionKind::Ordinary | FunctionKind::ClassConstructor
+                )
         }
         Value::BoundFunction(bound) => is_constructible(&bound.target),
         // A proxy is constructible exactly when its target is constructible.
@@ -339,7 +399,7 @@ fn is_constructible(value: &Value) -> bool {
 pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf") {
+        if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf")? {
             let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
             if !matches!(result, Value::Null) && !crate::value::is_object(&result) {
                 return Err(crate::value::error::throw_type_error(
@@ -362,17 +422,27 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
 }
 
 pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Result<Value, VmError> {
+    if matches!(target, Value::Builtin(Builtin::ObjectPrototype)) {
+        let current = crate::builtins::object::get_prototype_of(Some(target))?;
+        return Ok(Value::Boolean(crate::builtins::same_value(
+            Some(&current),
+            Some(prototype),
+        )));
+    }
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf") {
+        if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf")? {
+            let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
             let result = call_trap(
                 &trap,
-                &[proxy.target.clone(), prototype.clone()],
+                &[proxy_target.clone(), prototype.clone()],
                 Some(&proxy.handler),
-            )?;
+            );
+            let result = result?;
             let success = crate::execute::is_truthy(&result);
-            if success && !crate::properties::object_is_extensible(&proxy.target) {
-                let current = crate::builtins::object::get_prototype_of(Some(&proxy.target))?;
+            let current_target = crate::locals::resolved_replacement(proxy.target.clone());
+            if success && !proxy_target_is_extensible(&current_target)? {
+                let current = crate::builtins::object::get_prototype_of(Some(&current_target))?;
                 if !crate::builtins::same_value(Some(&current), Some(prototype)) {
                     return Err(crate::value::error::throw_type_error(
                         "Proxy setPrototypeOf invariant violated",
@@ -381,6 +451,7 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
             }
             return Ok(Value::Boolean(success));
         }
+        return proxy_set_prototype_of(&proxy.target, prototype);
     }
     if prototype_matches(target, prototype)? {
         return Ok(Value::Boolean(true));
@@ -395,16 +466,31 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
 
 fn prototype_matches(target: &Value, prototype: &Value) -> Result<bool, VmError> {
     let current = crate::builtins::object::get_prototype_of(Some(target))?;
-    Ok(crate::builtins::same_value(Some(&current), Some(prototype)))
+    let current = crate::locals::resolved_replacement(current);
+    let prototype = crate::locals::resolved_replacement(prototype.clone());
+    Ok(crate::builtins::same_value(
+        Some(&current),
+        Some(&prototype),
+    ))
+}
+
+fn proxy_target_is_extensible(target: &Value) -> Result<bool, VmError> {
+    if matches!(target, Value::Proxy(_)) {
+        return Ok(crate::execute::is_truthy(&proxy_is_extensible(target)?));
+    }
+    Ok(crate::properties::object_is_extensible(target))
 }
 
 fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError> {
-    let mut current = prototype.clone();
+    let target = crate::locals::resolved_replacement(target.clone());
+    let mut current = crate::locals::resolved_replacement(prototype.clone());
     while !matches!(current, Value::Null) {
-        if crate::builtins::same_value(Some(&current), Some(target)) {
+        if crate::builtins::same_value(Some(&current), Some(&target)) {
             return Ok(true);
         }
-        current = crate::builtins::object::get_prototype_of(Some(&current))?;
+        current = crate::locals::resolved_replacement(crate::builtins::object::get_prototype_of(
+            Some(&current),
+        )?);
     }
     Ok(false)
 }
@@ -412,27 +498,34 @@ fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError
 pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "isExtensible") {
-            let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
+        let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
+        if let Some(trap) = get_handler_trap(proxy, "isExtensible")? {
+            let result = call_trap(&trap, slice::from_ref(&proxy_target), Some(&proxy.handler))?;
             let reported = crate::execute::is_truthy(&result);
-            if reported != crate::properties::object_is_extensible(&proxy.target) {
+            if reported != crate::properties::object_is_extensible(&proxy_target) {
                 return Err(crate::value::error::throw_type_error(
                     "Proxy isExtensible invariant violated",
                 ));
             }
             return Ok(Value::Boolean(reported));
         }
+        let extensible = match proxy_target {
+            Value::Proxy(_) => crate::execute::is_truthy(&proxy_is_extensible(&proxy_target)?),
+            target => crate::properties::object_is_extensible(&target),
+        };
+        return Ok(Value::Boolean(extensible));
     }
     require_reflect_object(target)?;
+    let target = crate::locals::resolved_replacement(target.clone());
     Ok(Value::Boolean(crate::properties::object_is_extensible(
-        target,
+        &target,
     )))
 }
 
 pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "preventExtensions") {
+        if let Some(trap) = get_handler_trap(proxy, "preventExtensions")? {
             let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
             let success = crate::execute::is_truthy(&result);
             if success && crate::properties::object_is_extensible(&proxy.target) {
@@ -465,12 +558,17 @@ pub(crate) fn proxy_get_own_property_descriptor(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor") {
+        if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor")? {
             let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
             )?;
+            if !matches!(result, Value::Undefined | Value::Object(_)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
+                ));
+            }
             let target_desc = crate::builtins::object::descriptor(
                 Some(&proxy.target),
                 Some(&Value::String(prop.to_string())),
@@ -508,14 +606,35 @@ fn validate_get_own_property_descriptor_result(
                 "Proxy getOwnPropertyDescriptor invariant violated",
             ));
         }
+        if let Value::Object(result_fields) = result {
+            if result_fields.iter().any(|(name, value)| {
+                name == "configurable" && matches!(value, Value::Boolean(false))
+            }) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy getOwnPropertyDescriptor invariant violated",
+                ));
+            }
+        }
         return Ok(());
     };
     let Value::Object(result_fields) = result else {
         return Ok(());
     };
+    let result_configurable = result_fields
+        .iter()
+        .rev()
+        .find_map(|(n, v)| (n == "configurable").then_some(v));
     let target_configurable = target_fields
         .iter()
+        .rev()
         .find_map(|(n, v)| (n == "configurable").then_some(v));
+    if matches!(result_configurable, Some(Value::Boolean(false)))
+        && matches!(target_configurable, Some(Value::Boolean(true)))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy getOwnPropertyDescriptor invariant violated",
+        ));
+    }
     if matches!(target_configurable, Some(Value::Boolean(false))) {
         let result_configurable = result_fields
             .iter()
@@ -561,7 +680,7 @@ pub(crate) fn proxy_define_property(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "defineProperty") {
+        if let Some(trap) = get_handler_trap(proxy, "defineProperty")? {
             let result = call_trap(
                 &trap,
                 &[
@@ -576,11 +695,8 @@ pub(crate) fn proxy_define_property(
             }
             return Ok(result);
         }
+        return proxy_define_property(&proxy.target, prop, descriptor);
     }
-    let target = match target {
-        Value::Proxy(proxy) => &proxy.target,
-        target => target,
-    };
     let updated = crate::builtins::define_property(&[
         target.clone(),
         Value::String(prop.to_string()),
@@ -598,6 +714,31 @@ fn validate_define_invariant(
     let current =
         crate::builtins::object::descriptor(Some(target), Some(&Value::String(prop.to_string())))?;
     let fields = crate::builtins::descriptor_fields(descriptor)?;
+    let field = |name: &str| {
+        fields
+            .iter()
+            .rev()
+            .find_map(|(candidate, value)| (candidate == name).then_some(value))
+    };
+    if matches!(&current, Value::Undefined | Value::Null) {
+        if !crate::properties::object_is_extensible(target)
+            || matches!(field("configurable"), Some(Value::Boolean(false)))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty invariant violated",
+            ));
+        }
+        return Ok(());
+    }
+    let Value::Object(current_fields) = &current else {
+        return Ok(());
+    };
+    let current_field = |name: &str| {
+        current_fields
+            .iter()
+            .rev()
+            .find_map(|(candidate, value)| (candidate == name).then_some(value))
+    };
     let non_configurable = matches!(
         &current,
         Value::Object(properties)
@@ -605,6 +746,8 @@ fn validate_define_invariant(
                 name == "configurable" && matches!(value, Value::Boolean(false))
             })
     );
+    let setting_config_false = matches!(field("configurable"), Some(Value::Boolean(false)));
+    let current_config_true = matches!(current_field("configurable"), Some(Value::Boolean(true)));
     if non_configurable
         && fields
             .iter()
@@ -614,13 +757,32 @@ fn validate_define_invariant(
             "Proxy defineProperty invariant violated",
         ));
     }
-    let non_writable = matches!(
-        &current,
-        Value::Object(properties)
-            if properties.iter().any(|(name, value)| {
-                name == "writable" && matches!(value, Value::Boolean(false))
-            })
-    );
+    if setting_config_false && current_config_true {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty invariant violated",
+        ));
+    }
+    if non_configurable {
+        if let (Some(current_enum), Some(requested_enum)) =
+            (current_field("enumerable"), field("enumerable"))
+        {
+            if !crate::builtins::same_value(Some(&current_enum), Some(&requested_enum)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy defineProperty invariant violated",
+                ));
+            }
+        }
+    }
+    let non_writable = matches!(current_field("writable"), Some(Value::Boolean(false)));
+    let current_writable = matches!(current_field("writable"), Some(Value::Boolean(true)));
+    if non_configurable
+        && current_writable
+        && matches!(field("writable"), Some(Value::Boolean(false)))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty invariant violated",
+        ));
+    }
     if non_configurable && non_writable {
         let current_value = descriptor_value(&current, "value");
         let requested_value = fields

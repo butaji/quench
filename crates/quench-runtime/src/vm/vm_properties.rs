@@ -105,6 +105,28 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
     if !matches!(direct, Value::Undefined) {
         return direct;
     }
+    if value.typed_array_meta().is_some() {
+        // Integer-indexed exotic objects consume every canonical numeric key,
+        // including out-of-bounds indices.  An OOB read therefore produces
+        // `undefined` without consulting the prototype chain (which keeps a
+        // user-installed numeric prototype property from leaking through).
+        if crate::typed_array_ops::typed_array_index(key).is_some()
+            || crate::typed_array_ops::canonical_numeric_index(key)
+        {
+            return Value::Undefined;
+        }
+        if let Some(prototype) = crate::typed_array_prototype::get(value) {
+            let inherited = get_property(&prototype, key);
+            if !matches!(inherited, Value::Undefined) {
+                return inherited;
+            }
+            if let Ok(inherited) = crate::vm::get_property_with_receiver(&prototype, key, value) {
+                if !matches!(inherited, Value::Undefined) {
+                    return inherited;
+                }
+            }
+        }
+    }
     primitive_prototype_property(value, key)
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
@@ -114,11 +136,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
     }
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
-            bind_callable_property(
-                &Value::Builtin(crate::ops::Builtin::SymbolPrototype),
-                crate::ops::Builtin::SymbolPrototype,
-                key,
-            )
+            bind_callable_property(value, crate::ops::Builtin::SymbolPrototype, key)
         }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
         Array(values) => {
@@ -128,8 +146,9 @@ fn get_property_value(value: &Value, key: &str) -> Value {
                     .prototype()
                     .map(|prototype| get_property(&prototype, key))
                     .or_else(|| {
-                        (!values.is_arguments())
-                            .then(|| get_property(&Value::Builtin(crate::ops::Builtin::ArrayPrototype), key))
+                        (!values.is_arguments()).then(|| {
+                            get_property(&Value::Builtin(crate::ops::Builtin::ArrayPrototype), key)
+                        })
                     })
                     .unwrap_or(property)
             } else {
@@ -148,6 +167,11 @@ fn get_property_value(value: &Value, key: &str) -> Value {
 
 fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
     use Value::*;
+    if key == "constructor" {
+        if let Some(result) = crate::typed_array_prototype::constructor_override(value) {
+            return result;
+        }
+    }
     match value {
         Float64Array(view) => float64_array_property(view, key),
         Float32Array(view) => float32_array_property(view, key),
@@ -225,7 +249,11 @@ fn set_property(data: &crate::value::SetData, key: &str) -> Value {
         return own;
     }
     if key == "constructor" {
-        return Value::Builtin(if data.weak { Builtin::WeakSet } else { Builtin::Set });
+        return Value::Builtin(if data.weak {
+            Builtin::WeakSet
+        } else {
+            Builtin::Set
+        });
     }
     if key == "size" && !data.weak {
         return Value::Number(data.values.borrow().len() as f64);
@@ -259,19 +287,37 @@ fn iterator_property(value: &Value, key: &str) -> Value {
         return get_property(&Value::Builtin(Builtin::IteratorPrototype), key);
     }
     if key == "constructor" {
-        return Value::Builtin(match crate::collections::iterator::builtin_for(
-            match value { Value::Iterator(data) => data, _ => unreachable!() },
-        ) {
-            Builtin::MapIteratorPrototype => Builtin::Map,
-            Builtin::SetIteratorPrototype => Builtin::Set,
-            _ => Builtin::Object,
-        });
+        return Value::Builtin(
+            match crate::collections::iterator::builtin_for(match value {
+                Value::Iterator(data) => data,
+                _ => unreachable!(),
+            }) {
+                Builtin::MapIteratorPrototype => Builtin::Map,
+                Builtin::SetIteratorPrototype => Builtin::Set,
+                _ => Builtin::Object,
+            },
+        );
     }
     let property = crate::collections::iterator::property_for(value, key);
     iterator_property_value(value, property)
 }
 
 fn iterator_property_value(value: &Value, property: Value) -> Value {
+    // Array iterators inherit `next` from ArrayIterator.prototype. Keep that
+    // prototype edge observable: user code may replace it before a constructor
+    // consumes the iterator. Protocol iterators carry their own `next` method
+    // and therefore do not consult this override.
+    if matches!(
+        value,
+        Value::Iterator(data)
+            if matches!(&*data.state.borrow(), crate::value::IteratorState::Native { .. })
+    ) {
+        if let Some(override_value) =
+            crate::vm::intrinsic_override_property(Builtin::ArrayIteratorPrototype, "next", value)
+        {
+            return crate::vm::bind_method(value, override_value);
+        }
+    }
     if matches!(
         property,
         Value::Builtin(
@@ -420,6 +466,43 @@ fn primitive_constructor(value: &Value) -> Option<Builtin> {
 
 fn generator_property(value: &Value, key: &str) -> Value {
     let is_async = matches!(value, Value::Generator(generator) if generator.function.is_async);
+    if key == "Symbol.toStringTag" {
+        let prototype =
+            crate::builtins::object::get_prototype_of(Some(value)).unwrap_or_else(|_| {
+                if is_async {
+                    crate::builtins::async_generator_prototype()
+                } else {
+                    crate::builtins::generator_prototype()
+                }
+            });
+        if let Ok(Value::Object(fields)) =
+            crate::builtins::object::descriptor(Some(&prototype), Some(&Value::String(key.into())))
+        {
+            if let Some(getter) = fields
+                .iter()
+                .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+            {
+                return match getter {
+                    Value::Builtin(builtin) => {
+                        crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))
+                            .unwrap_or(Value::Undefined)
+                    }
+                    getter => crate::functions::execute_target(&getter, value, &[])
+                        .unwrap_or(Value::Undefined),
+                };
+            }
+        }
+        return crate::execute::get_property_result(&prototype, key).unwrap_or_else(|_| {
+            Value::String(
+                if is_async {
+                    "AsyncGenerator"
+                } else {
+                    "Generator"
+                }
+                .into(),
+            )
+        });
+    }
     let builtin = match key {
         "next" => {
             if is_async {
@@ -527,7 +610,20 @@ fn inherited_function_property(
         );
     }
     if !matches!(prototype, Value::Builtin(Builtin::Promise))
-        || !matches!(bound.target, Value::Builtin(Builtin::PromiseResolve | Builtin::PromiseReject | Builtin::PromiseAll | Builtin::PromiseAllSettled | Builtin::PromiseAny | Builtin::PromiseRace | Builtin::PromiseWithResolvers | Builtin::PromiseTry))
+        || !matches!(
+            bound.target,
+            Value::Builtin(
+                Builtin::PromiseResolve
+                    | Builtin::PromiseReject
+                    | Builtin::PromiseAll
+                    | Builtin::PromiseAllKeyed
+                    | Builtin::PromiseAllSettled
+                    | Builtin::PromiseAny
+                    | Builtin::PromiseRace
+                    | Builtin::PromiseWithResolvers
+                    | Builtin::PromiseTry
+            )
+        )
     {
         return inherited;
     }

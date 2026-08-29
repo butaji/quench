@@ -3,6 +3,7 @@
 //! encode tracker, and the `maxKeys` pair budget.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -41,6 +42,7 @@ impl Scan<'_> {
         &mut self,
         i: usize,
         out: &mut Vec<(String, Vec<String>)>,
+        indices: &mut HashMap<String, usize>,
         decode: &Decode,
         fallback: &Decode,
     ) -> bool {
@@ -66,7 +68,7 @@ impl Scan<'_> {
             self.value
                 .extend_from_slice(&self.units[self.last_pos..end]);
         }
-        self.flush(out, decode, fallback);
+        self.flush(out, indices, decode, fallback);
         self.pairs -= 1;
         if self.pairs == 0 {
             return true;
@@ -77,9 +79,16 @@ impl Scan<'_> {
         false
     }
 
-    fn flush(&mut self, out: &mut Vec<(String, Vec<String>)>, decode: &Decode, fallback: &Decode) {
+    fn flush(
+        &mut self,
+        out: &mut Vec<(String, Vec<String>)>,
+        indices: &mut HashMap<String, usize>,
+        decode: &Decode,
+        fallback: &Decode,
+    ) {
         add_key_val(
             out,
+            indices,
             &self.key,
             &self.value,
             self.key_encoded,
@@ -177,6 +186,7 @@ impl Scan<'_> {
 
 fn add_key_val(
     out: &mut Vec<(String, Vec<String>)>,
+    indices: &mut HashMap<String, usize>,
     key: &[u16],
     value: &[u16],
     key_encoded: bool,
@@ -194,9 +204,11 @@ fn add_key_val(
     } else {
         String::from_utf16_lossy(value)
     };
-    match out.iter_mut().find(|(k, _)| *k == key) {
-        Some((_, values)) => values.push(value),
-        None => out.push((key, vec![value])),
+    if let Some(index) = indices.get(&key).copied() {
+        out[index].1.push(value);
+    } else {
+        indices.insert(key.clone(), out.len());
+        out.push((key, vec![value]));
     }
 }
 
@@ -248,9 +260,17 @@ pub fn parse(
     let (decode, fallback) = select_decode(options, receiver);
     let custom = matches!(decode, Decode::Custom(_));
     let mut scan = Scan::new(&units, args, custom, max_keys(options))?;
-    let done = scan.run(&mut out, &decode, &fallback);
+    let mut indices = HashMap::new();
+    let done = scan.run(&mut out, &mut indices, &decode, &fallback);
     if !done {
-        finish_scan(&mut scan, &units, &mut out, &decode, &fallback);
+        finish_scan(
+            &mut scan,
+            &units,
+            &mut out,
+            &mut indices,
+            &decode,
+            &fallback,
+        );
     }
     null_object(out)
 }
@@ -284,12 +304,13 @@ impl<'a> Scan<'a> {
     fn run(
         &mut self,
         out: &mut Vec<(String, Vec<String>)>,
+        indices: &mut HashMap<String, usize>,
         decode: &Decode,
         fallback: &Decode,
     ) -> bool {
         for (i, &code) in self.units.iter().enumerate() {
             if self.sep.get(self.sep_idx) == Some(&code) {
-                if self.on_separator(i, out, decode, fallback) {
+                if self.on_separator(i, out, indices, decode, fallback) {
                     return true;
                 }
             } else {
@@ -304,6 +325,7 @@ fn finish_scan(
     scan: &mut Scan,
     units: &[u16],
     out: &mut Vec<(String, Vec<String>)>,
+    indices: &mut HashMap<String, usize>,
     decode: &Decode,
     fallback: &Decode,
 ) {
@@ -316,7 +338,7 @@ fn finish_scan(
     } else if scan.eq_idx == 0 && scan.key.is_empty() {
         return;
     }
-    scan.flush(out, decode, fallback);
+    scan.flush(out, indices, decode, fallback);
 }
 
 /// Build the result object with a null prototype and insertion-ordered keys.

@@ -75,7 +75,10 @@ fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(_)) = arguments.first() else {
         return Err(type_error("$262.agent.start expects a string"));
     };
-    run_eval_script(arguments)
+    crate::atomics::begin_agent_callback();
+    let result = run_eval_script(arguments);
+    crate::atomics::end_agent_callback();
+    result
 }
 
 fn agent_receive_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
@@ -102,7 +105,13 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let value = match arguments.first().cloned().unwrap_or(Value::Undefined) {
+        Value::Number(value) => Value::String(
+            crate::conversion::to_string(&Value::Number(value)).unwrap_or_default(),
+        ),
+        Value::BigInt(value) => Value::String(value),
+        value => value,
+    };
     let associates = matches!(&value,
         Value::String(value)
             if value == "ok"
@@ -235,11 +244,23 @@ fn realm_global_object(
         ("Number", Builtin::Number),
         ("String", Builtin::String),
         ("RegExp", Builtin::RegExp),
+        ("Reflect", Builtin::Reflect),
         ("Boolean", Builtin::Boolean),
         ("Symbol", Builtin::Symbol),
         ("ArrayBuffer", Builtin::ArrayBuffer),
         ("SharedArrayBuffer", Builtin::SharedArrayBuffer),
         ("DataView", Builtin::DataView),
+        ("Float64Array", Builtin::Float64Array),
+        ("Float32Array", Builtin::Float32Array),
+        ("Int8Array", Builtin::Int8Array),
+        ("Int16Array", Builtin::Int16Array),
+        ("Int32Array", Builtin::Int32Array),
+        ("Uint8Array", Builtin::Uint8Array),
+        ("Uint8ClampedArray", Builtin::Uint8ClampedArray),
+        ("Uint16Array", Builtin::Uint16Array),
+        ("Uint32Array", Builtin::Uint32Array),
+        ("BigInt64Array", Builtin::BigInt64Array),
+        ("BigUint64Array", Builtin::BigUint64Array),
         ("parseFloat", Builtin::ParseFloat),
         ("parseInt", Builtin::ParseInt),
         ("TypeError", Builtin::TypeError),

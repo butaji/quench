@@ -5,10 +5,13 @@ include!("regexp_cache.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
+    if flags.contains('u') || flags.contains('v') {
+        validate_unicode_escapes(pattern, flags.contains('v'))?;
+    }
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
-    let normalized = normalize_named_group_escapes(pattern);
+    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
@@ -28,11 +31,15 @@ pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> 
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    if flags.contains('u') || flags.contains('v') {
+        validate_unicode_escapes(pattern, flags.contains('v'))
+            .map_err(|_| "SyntaxError: invalid regular expression".to_string())?;
+    }
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
     let reg_flags: Flags = flags.into();
-    let normalized = normalize_named_group_escapes(pattern);
+    let normalized = normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern));
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&normalized, reg_flags)
     }))
@@ -119,6 +126,45 @@ fn append_decoded_group_name(output: &mut String, name: &[char]) {
         return;
     };
     output.push_str(&decoded);
+}
+
+const NEW_UNICODE_SCRIPTS: &[(&str, &str, &str)] = &[
+    (
+        "Beria_Erfe",
+        "Berf",
+        r"\u{16EA0}-\u{16EB8}\u{16EBB}-\u{16ED3}",
+    ),
+    ("Sidetic", "Sidt", r"\u{10940}-\u{10959}"),
+    (
+        "Tai_Yo",
+        "Tayo",
+        r"\u{1E6C0}-\u{1E6DE}\u{1E6E0}-\u{1E6F5}\u{1E6FE}-\u{1E6FF}",
+    ),
+    (
+        "Tolong_Siki",
+        "Tols",
+        r"\u{11DB0}-\u{11DDB}\u{11DE0}-\u{11DE9}",
+    ),
+];
+
+fn normalize_new_unicode_scripts(pattern: &str) -> String {
+    let mut normalized = pattern.to_string();
+    for (name, alias, ranges) in NEW_UNICODE_SCRIPTS {
+        for value in [*name, *alias] {
+            for property in ["Script", "sc", "Script_Extensions", "scx"] {
+                for escape in ['p', 'P'] {
+                    let needle = format!(r"\{escape}{{{property}={value}}}");
+                    let class = if escape == 'p' {
+                        format!("[{ranges}]")
+                    } else {
+                        format!("[^{ranges}]")
+                    };
+                    normalized = normalized.replace(&needle, &class);
+                }
+            }
+        }
+    }
+    normalized
 }
 
 pub fn execute_builtin(
@@ -331,11 +377,7 @@ fn build_re_flags(flags: &str) -> String {
     f
 }
 
-fn find_match<'a>(
-    regex: &'a Regex,
-    text: &'a str,
-    sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+fn find_match<'a>(regex: &'a Regex, text: &'a str, sticky: bool) -> Result<Option<Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
         regex
             .find_from(text, 0)
@@ -349,7 +391,7 @@ fn find_match_from<'a>(
     regex: &'a Regex,
     text: &'a str,
     start: usize,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| regex.find_from(text, start).next()))
         .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
 }
@@ -359,7 +401,7 @@ fn find_match_from_sticky<'a>(
     text: &'a str,
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     let matched = find_match_from(regex, text, start)?;
     Ok(matched.filter(|matched| !sticky || matched.start() == start))
 }
@@ -369,7 +411,7 @@ fn find_match_utf16(
     text: &str,
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     let units: Vec<u16> = text.encode_utf16().collect();
     let start_units = crate::strings::byte_to_utf16(text, start);
     let mut matched = regex.find_from_utf16(&units, start_units).next();
@@ -387,6 +429,22 @@ fn find_match_utf16(
     Ok(matched)
 }
 
+/// Match a canonical UTF-16 string without first materializing a UTF-8 copy.
+/// The returned ranges are already UTF-16 offsets, which is exactly the index
+/// space used by RegExp.lastIndex and the observable `test` result.
+fn find_match_units(
+    regex: &Regex,
+    units: &[u16],
+    start: usize,
+    sticky: bool,
+) -> Result<Option<Match>, VmError> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let matched = regex.find_from_utf16(units, start).next();
+        matched.filter(|found| !sticky || found.start() == start)
+    }))
+    .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+}
+
 fn utf16_range_to_bytes(text: &str, range: &std::ops::Range<usize>) -> std::ops::Range<usize> {
     crate::strings::utf16_byte_index(text, range.start)
         ..crate::strings::utf16_byte_index(text, range.end)
@@ -399,7 +457,7 @@ fn compile_and_find<'a>(
     text: &'a str,
     start: usize,
     sticky: bool,
-) -> Result<Option<regress::Match>, VmError> {
+) -> Result<Option<Match>, VmError> {
     #[cfg(feature = "execution-trace")]
     let compile_start = std::time::Instant::now();
     let regex = compiled_for(receiver, source, flags)?;
@@ -430,8 +488,6 @@ fn compile_and_find<'a>(
             result = find_match_from_sticky(&fallback, text, start, sticky);
         }
     }
-    result = adjust_duplicate_quantified_match(result, source, flags, text, start);
-    result = repair_duplicate_alternative_match(result, &regex, source, flags, text, start);
     #[cfg(feature = "execution-trace")]
     {
         let match_ns = match_start.elapsed().as_nanos();
@@ -452,167 +508,6 @@ fn single_dot_anchor(source: &str) -> bool {
             | "(?-s:(?s:^.$))"
             | "(?-s:(?s-:^.$))"
     )
-}
-
-fn repair_duplicate_alternative_match(
-    result: Result<Option<regress::Match>, VmError>,
-    regex: &Regex,
-    source: &str,
-    flags: &str,
-    text: &str,
-    start: usize,
-) -> Result<Option<regress::Match>, VmError> {
-    if source.contains("(?<x>a)|(?<x>b)|c")
-        && text
-            .get(start..)
-            .is_some_and(|tail| tail.starts_with("aac"))
-    {
-        let Some(mut metadata) = find_match_from(regex, "aa", 0)? else {
-            return Ok(None);
-        };
-        metadata.range = start..start + 3;
-        metadata
-            .captures
-            .iter_mut()
-            .for_each(|capture| *capture = None);
-        return Ok(Some(metadata));
-    }
-    if !source.contains("(?<y>a)(?<x>b)") || !source.contains("(?<z>c)|(?<z>d)") {
-        return result;
-    }
-    let fallback_source = replace_group_occurrence(
-        &replace_group_occurrence(source, "x", 2, "x2"),
-        "z",
-        2,
-        "z2",
-    );
-    let fallback = compile(&fallback_source, flags).map_err(VmError::EvalError)?;
-    let Some(found) = find_match_from(&fallback, text, start)? else {
-        return Ok(None);
-    };
-    let mut repaired = find_match_from(regex, "ac", 0)?.unwrap_or_else(|| found.clone());
-    repaired.range = found.range;
-    repaired.captures = found.captures;
-    Ok(Some(repaired))
-}
-
-fn replace_group_occurrence(
-    source: &str,
-    name: &str,
-    occurrence: usize,
-    replacement: &str,
-) -> String {
-    let marker = format!("(?<{name}>");
-    let mut seen = 0;
-    let mut output = String::with_capacity(source.len());
-    let mut cursor = 0;
-    while let Some(relative) = source[cursor..].find(&marker) {
-        let start = cursor + relative;
-        output.push_str(&source[cursor..start]);
-        seen += 1;
-        if seen == occurrence {
-            output.push_str("(?<");
-            output.push_str(replacement);
-            output.push('>');
-        } else {
-            output.push_str(&marker);
-        }
-        cursor = start + marker.len();
-    }
-    output.push_str(&source[cursor..]);
-    output
-}
-
-fn adjust_duplicate_quantified_match(
-    result: Result<Option<regress::Match>, VmError>,
-    source: &str,
-    flags: &str,
-    text: &str,
-    start: usize,
-) -> Result<Option<regress::Match>, VmError> {
-    if !source.contains("\\k<") || !source.contains("(?<x>") {
-        return result;
-    }
-    let branches = duplicate_branch_literals(source);
-    if branches.len() != 2 {
-        return result;
-    }
-    let mut matched = match result? {
-        Some(matched) => matched,
-        None => {
-            let fallback_source = replace_backreference_with_wildcard(source);
-            let fallback = compile(&fallback_source, flags).map_err(VmError::EvalError)?;
-            let Some(matched) = find_match_from(&fallback, text, start)? else {
-                return Ok(None);
-            };
-            matched
-        }
-    };
-    let bytes = text.as_bytes();
-    let repeated = source.contains("){2}");
-    let width = if repeated { 4 } else { 2 };
-    let mut found = None;
-    for index in start..bytes.len().saturating_sub(width - 1) {
-        let first = bytes[index] as char;
-        let second_offset = if repeated { 2 } else { 0 };
-        let second = bytes[index + second_offset] as char;
-        if branches.contains(&first)
-            && branches.contains(&second)
-            && bytes[index] == bytes[index + 1]
-            && (!repeated || bytes[index + 2] == bytes[index + 3])
-        {
-            found = Some((index, first, second));
-            break;
-        }
-    }
-    let Some((index, first, second)) = found else {
-        return Ok(None);
-    };
-    if index != matched.start() {
-        return Ok(None);
-    }
-    matched.range = index..index + width;
-    matched
-        .captures
-        .iter_mut()
-        .for_each(|capture| *capture = None);
-    if let Some(slot) = branches.iter().position(|branch| *branch == second) {
-        if let Some(capture) = matched.captures.get_mut(slot) {
-            let capture_start = if repeated { index + 2 } else { index };
-            *capture = Some(capture_start..capture_start + 1);
-        }
-    }
-    let _ = first;
-    Ok(Some(matched))
-}
-
-fn replace_backreference_with_wildcard(source: &str) -> String {
-    let Some(start) = source.find("\\k<") else {
-        return source.to_string();
-    };
-    let Some(relative_end) = source[start + 3..].find('>') else {
-        return source.to_string();
-    };
-    let end = start + 3 + relative_end + 1;
-    format!("{}.{}", &source[..start], &source[end..])
-}
-
-fn duplicate_branch_literals(source: &str) -> Vec<char> {
-    let marker = "(?<";
-    let mut branches = Vec::new();
-    let mut cursor = 0;
-    while let Some(relative) = source[cursor..].find(marker) {
-        let start = cursor + relative;
-        let Some(close) = source[start + marker.len()..].find('>') else {
-            break;
-        };
-        let literal = source.as_bytes().get(start + marker.len() + close + 1);
-        if let Some(literal) = literal.filter(|byte| byte.is_ascii_alphabetic()) {
-            branches.push(*literal as char);
-        }
-        cursor = start + marker.len() + close + 1;
-    }
-    branches
 }
 
 fn source_contains_surrogate_escape(source: &str) -> bool {
@@ -646,6 +541,19 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
         .any(|byte| *byte == b'\n' || *byte == b'\r')
 }
 
+fn anchored_match_units(source: &str, flags: &str, last_index: usize, input: &[u16]) -> bool {
+    if last_index == 0 || !source.starts_with('^') {
+        return true;
+    }
+    if !flags.contains('m') {
+        return false;
+    }
+    [last_index.saturating_sub(1), last_index]
+        .into_iter()
+        .filter_map(|index| input.get(index))
+        .any(|unit| *unit == b'\n' as u16 || *unit == b'\r' as u16)
+}
+
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -661,10 +569,49 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     if let Some(matched) = surrogate_property_test(arguments.first(), &source, &flags) {
         return Ok(Value::Boolean(matched));
     }
+    if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
+        if let Some(Value::StringUnits(units)) = arguments.first() {
+            if crate::regexp_native::find_units(&source, &flags, units, 0).is_some() {
+                return Ok(Value::Boolean(true));
+            }
+        }
+    }
+    if let Some(Value::StringUnits(units)) = arguments.first() {
+        let global_or_sticky = flags.contains('g') || flags.contains('y');
+        if global_or_sticky && last_index > units.len() {
+            set_last_index(receiver, 0.0)?;
+            return Ok(Value::Boolean(false));
+        }
+        let search_start = if global_or_sticky { last_index } else { 0 };
+        if let Some(matched) =
+            crate::regexp_native::find_units(&source, &flags, units, search_start)
+        {
+            if global_or_sticky {
+                set_last_index(receiver, matched.end as f64)?;
+            }
+            return Ok(Value::Boolean(true));
+        }
+        let pattern = if source.is_empty() { "(?:)" } else { &source };
+        let re_flags = build_re_flags(&flags);
+        let found = anchored_match_units(&source, &flags, last_index, units)
+            .then(|| {
+                let regex = compiled_for(receiver, pattern, &re_flags)?;
+                find_match_units(&regex, units, search_start, flags.contains('y'))
+            })
+            .transpose()?
+            .flatten();
+        if global_or_sticky {
+            set_last_index(
+                receiver,
+                found.as_ref().map_or(0, |matched| matched.end()) as f64,
+            )?;
+        }
+        return Ok(Value::Boolean(found.is_some()));
+    }
     let s = argument_string(arguments)?;
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
-        if let Some(matched) = simple_character_class_test(&source, &s) {
-            return Ok(Value::Boolean(matched));
+        if crate::regexp_native::find_str(&source, &flags, &s, 0).is_some() {
+            return Ok(Value::Boolean(true));
         }
     }
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
@@ -672,6 +619,13 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(false));
     }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
+    if let Some(matched) = crate::regexp_native::find_str(&source, &flags, &s, search_start) {
+        if flags.contains('g') || flags.contains('y') {
+            let next = crate::strings::byte_to_utf16(&s, matched.end);
+            set_last_index(receiver, next as f64)?;
+        }
+        return Ok(Value::Boolean(true));
+    }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let found = anchored_match(&source, &flags, last_index, &s)
@@ -743,25 +697,6 @@ fn surrogate_property_test(value: Option<&Value>, source: &str, flags: &str) -> 
     Some(if negated { !matches } else { matches })
 }
 
-fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
-    let class = source
-        .strip_prefix("\\\\")
-        .or_else(|| source.strip_prefix('\\'))?;
-    if !matches!(class, "d" | "D" | "s" | "S" | "w" | "W") {
-        return None;
-    }
-    let matches_class = |character: char| match class {
-        "d" => character.is_ascii_digit(),
-        "D" => !character.is_ascii_digit(),
-        "s" => is_ecma_whitespace(character),
-        "S" => !is_ecma_whitespace(character),
-        "w" => character.is_ascii_alphanumeric() || character == '_',
-        "W" => !(character.is_ascii_alphanumeric() || character == '_'),
-        _ => false,
-    };
-    Some(input.chars().any(matches_class))
-}
-
 pub(crate) fn is_ecma_whitespace(character: char) -> bool {
     matches!(
         character,
@@ -802,6 +737,9 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Null);
     }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
+    if let Some(matched) = crate::regexp_native::find_str(&source, &flags, &s, search_start) {
+        return build_native_match_result(receiver, &s, matched, &flags);
+    }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     if let Some(m) = anchored_match(&source, &flags, last_index, &s)
@@ -849,7 +787,7 @@ pub(crate) fn is_current_realm(value: &Value) -> bool {
 fn build_match_result(
     receiver: &Value,
     s: &str,
-    m: regress::Match,
+    m: Match,
     search_start: usize,
     flags: &str,
 ) -> Result<Value, VmError> {
@@ -873,13 +811,43 @@ fn build_match_result(
     Ok(result)
 }
 
+fn build_native_match_result(
+    receiver: &Value,
+    input: &str,
+    matched: crate::regexp_native::NativeMatch,
+    flags: &str,
+) -> Result<Value, VmError> {
+    let end = crate::strings::byte_to_utf16(input, matched.end);
+    if flags.contains('g') || flags.contains('y') {
+        set_last_index(receiver, end as f64)?;
+    }
+    let start = crate::strings::byte_to_utf16(input, matched.start);
+    let value = Value::String(input[matched.start..matched.end].to_string());
+    let mut result = match_result(vec![value], Value::Number(start as f64), input, None);
+    if flags.contains('d') {
+        result = crate::builtins::set_property(
+            result,
+            "indices",
+            crate::builtins::set_property(
+                Value::array(vec![Value::array(vec![
+                    Value::Number(start as f64),
+                    Value::Number(end as f64),
+                ])]),
+                "groups",
+                Value::Undefined,
+            ),
+        );
+    }
+    Ok(result)
+}
+
 fn nonunicode_code_unit_pattern(source: &str) -> bool {
     source == "."
         || source.contains(".") && source.contains("(?<")
         || source_contains_surrogate_escape(source)
 }
 
-fn match_indices(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
+fn match_indices(text: &str, m: &Match, offset: usize, unicode: bool) -> Value {
     let mut indices = vec![Value::array(vec![
         Value::Number(match_start_index(text, offset + m.start()) as f64),
         Value::Number(match_end_index(text, offset + m.start(), offset + m.end(), unicode) as f64),
@@ -901,7 +869,7 @@ fn match_indices(text: &str, m: &regress::Match, offset: usize, unicode: bool) -
     crate::builtins::set_property(Value::array(indices), "groups", groups)
 }
 
-fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
+fn named_index_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Value {
     if m.named_groups().next().is_none() {
         Value::Undefined
     } else {
@@ -924,7 +892,7 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bo
     }
 }
 
-fn named_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Option<Value> {
+fn named_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Option<Value> {
     let mut properties = vec![("\0prototype".to_string(), Value::Null)];
     properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
         let value = range.map_or(Value::Undefined, |range| {
@@ -936,7 +904,7 @@ fn named_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) ->
         .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
 }
 
-fn merged_named_ranges(m: &regress::Match) -> Vec<(String, Option<std::ops::Range<usize>>)> {
+fn merged_named_ranges(m: &Match) -> Vec<(String, Option<std::ops::Range<usize>>)> {
     let mut merged = Vec::new();
     for (name, range) in m.named_groups() {
         if let Some((_, current)) = merged.iter_mut().find(|(candidate, _)| candidate == name) {
@@ -950,7 +918,7 @@ fn merged_named_ranges(m: &regress::Match) -> Vec<(String, Option<std::ops::Rang
     merged
 }
 
-fn match_values(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Vec<Value> {
+fn match_values(text: &str, m: &Match, offset: usize, unicode: bool) -> Vec<Value> {
     let mut values = m
         .groups()
         .map(|group| match group {
@@ -1098,7 +1066,9 @@ pub(crate) fn repeat_exact_global_exec(
     if source != input || !source.bytes().all(|byte| byte.is_ascii_alphanumeric()) || flags != "g" {
         return None;
     }
-    let last_index = receiver.hot_properties().slot_word(REGEXP_LAST_INDEX_SLOT)?;
+    let last_index = receiver
+        .hot_properties()
+        .slot_word(REGEXP_LAST_INDEX_SLOT)?;
     last_index.store(Value::Number(input.encode_utf16().count() as f64));
     Some(())
 }
@@ -1196,7 +1166,10 @@ mod tests {
     fn global_empty_replace_inserts_once_at_each_position() {
         let regexp = Value::Object(
             ObjectData::new(vec![
-                ("\0regexp_source".to_string(), Value::String("(?:)".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("(?:)".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
             ])
             .into(),

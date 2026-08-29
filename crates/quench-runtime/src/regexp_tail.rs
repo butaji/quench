@@ -16,8 +16,8 @@ fn regex_receiver(receiver: Option<&Value>, method: &str) -> Result<Value, VmErr
     }
 }
 
-/// Extract the owned source/flags and compile a regress regex for `receiver`.
-fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError> {
+/// Extract the owned source/flags and compile the backend regex for `receiver`.
+fn compiled_regex(receiver: &Value) -> Result<(Regex, String), VmError> {
     let (source, flags, _) = extract_regex_parts(receiver)?;
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re = compile(pattern, &build_re_flags(&flags)).map_err(VmError::EvalError)?;
@@ -26,7 +26,7 @@ fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError>
 
 /// Copy capture-group byte ranges out of a match so the borrow can end before
 /// a String is rebound.
-fn group_ranges(m: &regress::Match, passes: &mut Vec<Option<(usize, usize)>>) {
+fn group_ranges(m: &Match, passes: &mut Vec<Option<(usize, usize)>>) {
     passes.extend(
         m.groups()
             .skip(1)
@@ -46,10 +46,12 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
     let flags = observable_flags(&receiver)?;
-    if !flags.contains('g') {
+    let global = observable_bool(&receiver, "global")?;
+    if !global {
         return regexp_exec(&receiver, &input);
     }
-    if !unicode_mode(&flags)
+    let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
+    if !unicode
         && extract_source(&receiver) == "."
         && builtin_regexp_exec_property(&receiver)
         && (fast_set_last_index(&receiver, &Value::Number(0.0))
@@ -58,7 +60,7 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
         return Ok(Value::array(units));
     }
-    symbol_match_global(&receiver, &input, unicode_mode(&flags))
+    symbol_match_global(&receiver, &input, unicode)
 }
 
 fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
@@ -166,7 +168,8 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let s = to_string_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let flags = observable_flags(&receiver)?;
-    let global = flags.contains('g');
+    let global = observable_bool(&receiver, "global")?;
+    let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if crate::conversion::is_callable(&replacement) {
         if dynamic_exec(&receiver, global) {
             return replace_with_exec_callable(&receiver, &s, &replacement, global);
@@ -180,7 +183,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         }
     }
     if let Some(target) = surrogate_alternative_pattern(&extract_source(&receiver)) {
-        if global && !unicode_mode(&flags) && !replacement.contains('$') {
+        if global && !unicode && !replacement.contains('$') {
             return replace_surrogate_units(&s, &replacement, target);
         }
     }
@@ -253,6 +256,12 @@ fn replace_surrogate_units(input: &str, replacement: &str, target: u16) -> Resul
 
 fn observable_flags(receiver: &Value) -> Result<String, VmError> {
     crate::conversion::to_string(&crate::execute::get_property_result(receiver, "flags")?)
+}
+
+fn observable_bool(receiver: &Value, key: &str) -> Result<bool, VmError> {
+    Ok(crate::conversion::to_boolean(
+        &crate::execute::get_property_result(receiver, key)?,
+    ))
 }
 
 fn dynamic_exec(receiver: &Value, global: bool) -> bool {
@@ -513,7 +522,7 @@ fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<()
         return Ok(());
     }
     let index = extract_last_index(receiver)?;
-    let unicode = unicode_mode(&extract_flags(receiver));
+    let unicode = observable_bool(receiver, "unicode")?;
     set_last_index(receiver, advance_string_index(input, index, unicode) as f64)
 }
 
@@ -553,6 +562,7 @@ fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Va
 fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Result<Value, VmError> {
     let (re, flags) = compiled_regex(receiver)?;
     let global = flags.contains('g');
+    let unicode = unicode_mode(&flags);
     let mut out = String::new();
     let mut copied = 0;
     let mut search = 0;
@@ -560,7 +570,12 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
         let Some(m) = find_match_from(&re, s, search)? else { break };
         let start = m.start();
         let end = m.end();
-        let args = replacer_args(s, s, &m, end);
+        let index = if unicode {
+            crate::strings::byte_to_utf16(s, start)
+        } else {
+            start
+        };
+        let args = replacer_args(s, s, &m, end, index);
         out.push_str(&s[copied..start]);
         let replaced = crate::functions::execute_target(replacement, &Value::Undefined, &args)?;
         out.push_str(&crate::conversion::to_string(&replaced)?);
@@ -582,8 +597,9 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
 fn replacer_args(
     s: &str,
     rest: &str,
-    m: &regress::Match,
+    m: &Match,
     end: usize,
+    index: usize,
 ) -> Vec<Value> {
     let mut args = vec![
         Value::String(rest[m.start()..end].to_string()),
@@ -595,7 +611,7 @@ fn replacer_args(
         };
         args.push(value);
     }
-    args.push(Value::Number((s.len() - rest.len() + m.start()) as f64));
+    args.push(Value::Number((s.len() - rest.len() + index) as f64));
     args.push(Value::String(s.to_string()));
     if m.named_groups().next().is_some() {
         let mut groups = vec![("\0prototype".to_string(), Value::Null)];
@@ -616,7 +632,7 @@ fn next_char(text: &str, at: usize) -> usize {
     text[at..].chars().next().map_or(text.len(), |c| at + c.len_utf8())
 }
 
-fn expand_template(template: &str, input: &str, rest: &str, m: &regress::Match) -> String {
+fn expand_template(template: &str, input: &str, rest: &str, m: &Match) -> String {
     let mut out = String::new();
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;
@@ -637,7 +653,7 @@ fn expand_template_token(
     index: usize,
     input: &str,
     rest: &str,
-    m: &regress::Match,
+    m: &Match,
 ) -> Option<usize> {
     if chars.get(index) != Some(&'$') {
         return None;
@@ -681,8 +697,9 @@ fn expand_template_token(
             let name: String = chars[index + 2..end].iter().collect();
             let value = m
                 .named_groups()
-                .find(|(group_name, _)| *group_name == name.as_str())
-                .and_then(|(_, range)| range)
+                .filter(|(group_name, _)| *group_name == name.as_str())
+                .filter_map(|(_, range)| range)
+                .last()
                 .map_or_else(String::new, |range| rest[range.start..range.end].to_string());
             out.push_str(&value);
             return Some(end + 1);
@@ -693,17 +710,17 @@ fn expand_template_token(
     Some(index + 2)
 }
 
-fn replacement_prefix(input: &str, rest: &str, m: &regress::Match) -> String {
+fn replacement_prefix(input: &str, rest: &str, m: &Match) -> String {
     let offset = input.len() - rest.len();
     input[..offset + m.start()].to_string()
 }
 
-fn replacement_suffix(input: &str, rest: &str, m: &regress::Match) -> String {
+fn replacement_suffix(input: &str, rest: &str, m: &Match) -> String {
     let offset = input.len() - rest.len();
     input[offset + m.end()..].to_string()
 }
 
-fn template_group_number(m: &regress::Match, rest: &str, number: usize) -> Option<String> {
+fn template_group_number(m: &Match, rest: &str, number: usize) -> Option<String> {
     if number == 0 {
         return None;
     }
@@ -711,7 +728,7 @@ fn template_group_number(m: &regress::Match, rest: &str, number: usize) -> Optio
     Some(group.map_or_else(String::new, |(start, end)| rest[start..end].to_string()))
 }
 
-fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
+fn groups_at<'a>(m: &'a Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
     m.groups()
         .skip(1)
         .map(|group| group.map(|range| (range.start, range.end)))

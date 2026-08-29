@@ -2,7 +2,10 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModule;
 {
-  globalThis.__nodeCurrentAsyncResource ||= {};
+  Object.defineProperty(globalThis, "__nodeCurrentAsyncResource", {
+    value: globalThis.__nodeCurrentAsyncResource || {},
+    writable: true, configurable: true, enumerable: false
+  });
   globalThis.__nodeNextAsyncId ||= 1;
   globalThis.__nodeAsyncHooks ||= new Set();
   globalThis.__nodePromiseResources ||= new WeakMap();

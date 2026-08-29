@@ -5,19 +5,22 @@ pub(crate) fn construct_bigint64_array(
 ) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => bigint64_with_length(0),
-        Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
         Some(Value::ArrayBuffer(buffer)) => view_bigint64_array(buffer, arguments),
         Some(Value::BigInt64Array(view)) => copy_bigint64_array(view),
-        Some(Value::Array(values)) => values_bigint64_array(&values.snapshot()),
+        Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
+            values_bigint64_array(&values.snapshot())
+        }
         Some(value) if value.is_typed_array() => {
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_bigint64_array(&values)
         }
-        Some(Value::Object(properties)) => {
-            bigint_object_values(properties, "BigInt64Array")
-                .and_then(|values| values_bigint64_array(&values))
+        Some(Value::Object(properties)) => bigint_object_values(properties, "BigInt64Array")
+            .and_then(|values| values_bigint64_array(&values)),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_bigint64_array(&values)
         }
-        Some(_) => Err(type_error("BigInt64Array source must contain BigInts")),
+        Some(value) => bigint64_with_length(to_index(crate::conversion::to_number(value)?)?),
     }
 }
 
@@ -26,19 +29,22 @@ pub(crate) fn construct_biguint64_array(
 ) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => biguint64_with_length(0),
-        Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
         Some(Value::ArrayBuffer(buffer)) => view_biguint64_array(buffer, arguments),
         Some(Value::BigUint64Array(view)) => copy_biguint64_array(view),
-        Some(Value::Array(values)) => values_biguint64_array(&values.snapshot()),
+        Some(Value::Array(values)) if array_iteration_is_intrinsic() => {
+            values_biguint64_array(&values.snapshot())
+        }
         Some(value) if value.is_typed_array() => {
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_biguint64_array(&values)
         }
-        Some(Value::Object(properties)) => {
-            bigint_object_values(properties, "BigUint64Array")
-                .and_then(|values| values_biguint64_array(&values))
+        Some(Value::Object(properties)) => bigint_object_values(properties, "BigUint64Array")
+            .and_then(|values| values_biguint64_array(&values)),
+        Some(value) if crate::value::is_object(value) => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_biguint64_array(&values)
         }
-        Some(_) => Err(type_error("BigUint64Array source must contain BigInts")),
+        Some(value) => biguint64_with_length(to_index(crate::conversion::to_number(value)?)?),
     }
 }
 
@@ -78,10 +84,13 @@ fn new_biguint64_data(
 
 fn bigint_object_values(
     properties: &Rc<crate::value::ObjectData>,
-    name: &str,
+    _name: &str,
 ) -> Result<Vec<Value>, crate::execute::VmError> {
     let object = Value::Object(properties.clone());
-    let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => values, Err(_) => object_array_like(properties)?.ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?, };
+    let values = match crate::collections::iterator::collect_iterable(object.clone()) {
+        Ok(values) => values,
+        Err(_) => object_array_like(properties)?.unwrap_or_default(),
+    };
     Ok(values)
 }
 
@@ -104,8 +113,9 @@ fn values_biguint64_array(values: &[Value]) -> Result<Value, crate::execute::VmE
 fn copy_bigint64_array(
     source: &crate::value::BigInt64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
-    let view = new_bigint64_data(source.length)?;
-    for index in 0..source.length {
+    let length = source.logical_len();
+    let view = new_bigint64_data(length)?;
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::BigInt64Array(view))
@@ -114,8 +124,9 @@ fn copy_bigint64_array(
 fn copy_biguint64_array(
     source: &crate::value::BigUint64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
-    let view = new_biguint64_data(source.length)?;
-    for index in 0..source.length {
+    let length = source.logical_len();
+    let view = new_biguint64_data(length)?;
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::BigUint64Array(view))
@@ -154,18 +165,30 @@ fn bigint_view_bounds(
         None => 0.0,
     };
     let offset = to_index(offset)?;
+    if *buffer.detached.borrow() {
+        return Err(type_error("Cannot use a detached ArrayBuffer"));
+    }
     let available = buffer
         .byte_length()
         .checked_sub(offset)
         .ok_or_else(|| range_error(&format!("Invalid {name} byte offset")))?;
-    if offset % BIGINT_ELEMENT_SIZE != 0
-        || arguments.get(2).is_none() && available % BIGINT_ELEMENT_SIZE != 0
-    {
+    if offset % BIGINT_ELEMENT_SIZE != 0 {
         return Err(range_error(&format!("Invalid {name} byte offset")));
     }
     let length = match arguments.get(2) {
-        None | Some(Value::Undefined) => view_length(buffer, available / BIGINT_ELEMENT_SIZE),
-        Some(value) => to_index(crate::conversion::to_number(value)?)?,
+        None | Some(Value::Undefined) => {
+            if available % BIGINT_ELEMENT_SIZE != 0 && buffer.max_byte_length.is_none() {
+                return Err(range_error(&format!("Invalid {name} byte length")));
+            }
+            view_length(buffer, available / BIGINT_ELEMENT_SIZE)
+        }
+        Some(value) => {
+            let number = crate::conversion::to_number(value)?;
+            if *buffer.detached.borrow() {
+                return Err(type_error("Cannot use a detached ArrayBuffer"));
+            }
+            to_index(number)?
+        }
     };
     if arguments
         .get(2)
@@ -191,17 +214,26 @@ pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError>
         let primitive = crate::conversion::to_primitive(value, "number")?;
         return bigint_bits(&primitive);
     }
+    if crate::conversion::is_symbol(value) {
+        return Err(type_error("Cannot convert a Symbol value to BigInt"));
+    }
     let raw = match value {
         Value::BigInt(raw) | Value::String(raw) => raw.clone(),
-        Value::StringUnits(units) => String::from_utf16(&units.to_vec())
-            .map_err(|_| type_error("Invalid BigInt value"))?,
+        Value::StringUnits(units) => {
+            String::from_utf16(&units.to_vec()).map_err(|_| type_error("Invalid BigInt value"))?
+        }
+        Value::Boolean(value) => return Ok(u64::from(*value)),
         _ => {
             return Err(type_error("Cannot convert a non-BigInt value to BigInt"));
         }
     };
+    let raw = raw.trim().to_string();
+    if raw.is_empty() {
+        return Ok(0);
+    }
     let integer = raw
         .parse::<num_bigint::BigInt>()
-        .map_err(|_| type_error("Invalid BigInt value"))?;
+        .map_err(|_| crate::value::error::throw_syntax_error("Invalid BigInt value"))?;
     let fill = if integer.sign() == num_bigint::Sign::Minus {
         u8::MAX
     } else {

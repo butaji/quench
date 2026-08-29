@@ -185,10 +185,7 @@ pub fn build() -> Vec<(String, Value)> {
             "format".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
         ),
-        (
-            "promisify".to_string(),
-            promisify,
-        ),
+        ("promisify".to_string(), promisify),
         (
             "deprecate".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
@@ -202,10 +199,18 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_UTIL_SYSTEM_ERROR_NAME),
         ),
         (
+            "convertProcessSignalToExitCode".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE),
+        ),
+        (
             "_exceptionWithHostPort".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_EXCEPTION_WITH_HOST_PORT),
         ),
         ("inspect".to_string(), inspect_capability()),
+        (
+            "aborted".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_ABORTED),
+        ),
         (
             "isDeepStrictEqual".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL),
@@ -562,7 +567,10 @@ fn colorize(value: &Value, rendered: String) -> String {
         ("\x1b[90m", "\x1b[39m")
     } else if quench_runtime::execute::is_symbol(value) {
         ("\x1b[32m", "\x1b[39m")
-    } else if matches!(value, Value::Boolean(_) | Value::Number(_) | Value::BigInt(_)) {
+    } else if matches!(
+        value,
+        Value::Boolean(_) | Value::Number(_) | Value::BigInt(_)
+    ) {
         ("\x1b[33m", "\x1b[39m")
     } else {
         return rendered;
@@ -632,26 +640,27 @@ fn value_to_string(value: &Value) -> String {
         Value::Undefined => "undefined".into(),
         // Node: objects with a custom `toString` go through `String(arg)`;
         // plain objects inspect.
-        Value::Object(_)
-        | Value::ObjectAlias(_)
-        | Value::Function(_)
-        | Value::BoundFunction(_) => match quench_runtime::execute::to_js_string(value) {
-            Ok(text) if text != "[object Object]" && !text.is_empty() => text,
-            // `%s` inspects plain objects at depth 0: nested containers
-            // collapse to `[Array]` / `[Object]`.
-            _ => {
-                let rendered = inspect_depth(value, 0);
-                let constructor = quench_runtime::execute::get_property(value, "constructor");
-                match quench_runtime::execute::get_property(&constructor, "name") {
-                    Value::String(name)
-                        if !name.is_empty() && name != "Object" && rendered.starts_with('{') =>
-                    {
-                        format!("{name} {rendered}")
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Function(_) | Value::BoundFunction(_) => {
+            match quench_runtime::execute::to_js_string(value) {
+                Ok(text) if text != "[object Object]" && !text.is_empty() => text,
+                // `%s` inspects plain objects at depth 0: nested containers
+                // collapse to `[Array]` / `[Object]`.
+                _ => {
+                    let rendered = inspect_depth(value, 0);
+                    let constructor = quench_runtime::execute::get_property(value, "constructor");
+                    match quench_runtime::execute::get_property(&constructor, "name") {
+                        Value::String(name)
+                            if !name.is_empty()
+                                && name != "Object"
+                                && rendered.starts_with('{') =>
+                        {
+                            format!("{name} {rendered}")
+                        }
+                        _ => rendered,
                     }
-                    _ => rendered,
                 }
             }
-        },
+        }
         Value::Array(_) => {
             let depth = COMPACT_OVERRIDE.with(|slot| slot.borrow().is_some_and(|value| value));
             inspect_array(value, if depth { 1 } else { 3 })
@@ -705,7 +714,8 @@ fn symbol_string(value: &Value) -> String {
         return format!("Symbol({body})");
     }
     let description = body.strip_prefix("Symbol.").unwrap_or(body);
-    if description.is_empty() || description == "\u{1}" || description.chars().any(char::is_control) {
+    if description.is_empty() || description == "\u{1}" || description.chars().any(char::is_control)
+    {
         return "Symbol()".into();
     }
     format!("Symbol({description})")
@@ -850,6 +860,48 @@ pub fn inspect(value: &Value) -> String {
 }
 
 pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
+    if matches!(
+        quench_runtime::execute::get_property(value, "\0source_text_module"),
+        Value::Boolean(true)
+    ) {
+        if depth == 0 {
+            return "[SourceTextModule]".into();
+        }
+        let status = inspect_with_depth(&quench_runtime::execute::get_property(value, "status"), 0);
+        let identifier = inspect_with_depth(
+            &quench_runtime::execute::get_property(value, "identifier"),
+            0,
+        );
+        let context = inspect_with_depth(
+            &quench_runtime::execute::get_property(value, "context"),
+            depth.saturating_sub(1),
+        );
+        return format!(
+            "SourceTextModule {{\n  status: {status},\n  identifier: {identifier},\n  context: {context}\n}}"
+        );
+    }
+    if matches!(
+        quench_runtime::execute::get_property(value, "\0module_namespace"),
+        Value::Boolean(true)
+    ) {
+        let pending = quench_runtime::execute::get_property(value, "\0module_uninitialized");
+        let entries = quench_runtime::execute::own_enumerable_keys(value)
+            .into_iter()
+            .map(|key| {
+                let item = quench_runtime::execute::get_property(value, &key);
+                let text = if matches!(
+                    quench_runtime::execute::get_property(&pending, &key),
+                    Value::Boolean(true)
+                ) {
+                    "<uninitialized>".to_string()
+                } else {
+                    inspect_with_depth(&item, depth.saturating_sub(1))
+                };
+                format!("{key}: {text}")
+            })
+            .collect::<Vec<_>>();
+        return format!("[Module: null prototype] {{ {} }}", entries.join(", "));
+    }
     if value.object_identity().is_some() {
         for key in quench_runtime::execute::own_enumerable_keys(value) {
             if quench_runtime::execute::same_identity(
@@ -860,7 +912,10 @@ pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
             }
         }
     }
-    if matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)) {
+    if matches!(
+        value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) {
         let canonical = quench_runtime::execute::canonical_value(value);
         for key in quench_runtime::execute::own_enumerable_keys(&canonical) {
             let mut current = canonical.clone();
@@ -927,7 +982,9 @@ pub fn inspect_with_options(
         if matches!(value, Value::Object(_) | Value::ObjectAlias(_))
             && !matches!(
                 quench_runtime::execute::get_prototype_of(value),
-                Ok(Value::Builtin(quench_runtime::ops::Builtin::StringPrototype))
+                Ok(Value::Builtin(
+                    quench_runtime::ops::Builtin::StringPrototype
+                ))
             )
         {
             let hidden = quench_runtime::execute::own_keys(value)
@@ -1019,6 +1076,20 @@ pub fn inspect_with_options(
     rendered
 }
 
+pub fn inspect_with_options_colors(
+    value: &Value,
+    depth: usize,
+    show_hidden: bool,
+    max_array_length: Option<usize>,
+    getters: bool,
+    colors: bool,
+) -> String {
+    COLORS_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(colors));
+    let rendered = inspect_with_options(value, depth, show_hidden, max_array_length, getters);
+    COLORS_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+    rendered
+}
+
 pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<String> {
     let Value::Proxy(proxy) = value else {
         return None;
@@ -1046,8 +1117,8 @@ pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<St
         if depth <= 1 {
             "Proxy [Array]".into()
         } else {
-        inspect_proxy(&proxy.handler, depth.saturating_sub(1), true)
-            .unwrap_or_else(|| "<unknown>".into())
+            inspect_proxy(&proxy.handler, depth.saturating_sub(1), true)
+                .unwrap_or_else(|| "<unknown>".into())
         }
     } else {
         inspect_proxy_handler(&proxy.handler, depth)
@@ -1102,7 +1173,12 @@ fn inspect_proxy_handler(value: &Value, depth: usize) -> String {
     }
     let body = keys
         .iter()
-        .map(|key| format!("  {key}: {}", inspect_shallow(&quench_runtime::execute::get_property(value, key))))
+        .map(|key| {
+            format!(
+                "  {key}: {}",
+                inspect_shallow(&quench_runtime::execute::get_property(value, key))
+            )
+        })
         .collect::<Vec<_>>()
         .join(",\n");
     format!("{{\n{body}\n}}")
@@ -1116,7 +1192,12 @@ fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
         return inspect_date(value);
     }
     if depth <= 2 {
-        return inspect_getter_recursive(value, depth.saturating_sub(1), 0, value.object_identity());
+        return inspect_getter_recursive(
+            value,
+            depth.saturating_sub(1),
+            0,
+            value.object_identity(),
+        );
     }
     let own_keys = quench_runtime::execute::own_keys(value)
         .into_iter()
@@ -1128,16 +1209,20 @@ fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
     let mut keys = own_keys.clone();
     let mut prototype = quench_runtime::execute::get_prototype_of(value).ok();
     while let Some(current) = prototype {
-        for key in quench_runtime::execute::own_keys(&current).into_iter().filter_map(|key| {
-            match key {
+        for key in quench_runtime::execute::own_keys(&current)
+            .into_iter()
+            .filter_map(|key| match key {
                 Value::String(key) if !key.starts_with('\0') => Some(key),
                 _ => None,
-            }
-        }) {
-            if key != "constructor" && !keys.contains(&key)
+            })
+        {
+            if key != "constructor"
+                && !keys.contains(&key)
                 && matches!(
                     quench_runtime::execute::call(
-                        &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+                        &Value::Builtin(
+                            quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor
+                        ),
                         &Value::Undefined,
                         &[current.clone(), Value::String(key.clone())],
                     ),
@@ -1172,9 +1257,11 @@ fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
     let name = quench_runtime::execute::get_prototype_of(value)
         .ok()
         .map(|prototype| quench_runtime::execute::get_property(&prototype, "constructor"))
-        .and_then(|constructor| match quench_runtime::execute::get_property(&constructor, "name") {
-            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
-            _ => None,
+        .and_then(|constructor| {
+            match quench_runtime::execute::get_property(&constructor, "name") {
+                Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+                _ => None,
+            }
         });
     match name {
         Some(name) => format!("{name} {{ {body} }}"),
@@ -1198,12 +1285,13 @@ fn inspect_getter_recursive(
     let mut keys = own_keys.clone();
     let mut prototype = quench_runtime::execute::get_prototype_of(value).ok();
     while let Some(current) = prototype {
-        for key in quench_runtime::execute::own_keys(&current).into_iter().filter_map(|key| {
-            match key {
+        for key in quench_runtime::execute::own_keys(&current)
+            .into_iter()
+            .filter_map(|key| match key {
                 Value::String(key) if key != "constructor" && !key.starts_with('\0') => Some(key),
                 _ => None,
-            }
-        }) {
+            })
+        {
             if !keys.contains(&key) {
                 keys.push(key);
             }
@@ -1213,19 +1301,29 @@ fn inspect_getter_recursive(
     let name = quench_runtime::execute::get_prototype_of(value)
         .ok()
         .map(|prototype| quench_runtime::execute::get_property(&prototype, "constructor"))
-        .and_then(|constructor| match quench_runtime::execute::get_property(&constructor, "name") {
-            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
-            _ => None,
-        })
+        .and_then(
+            |constructor| match quench_runtime::execute::get_property(&constructor, "name") {
+                Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+                _ => None,
+            },
+        )
         .unwrap_or_default();
     let mut parts = Vec::new();
     for key in keys {
         let inherited = !own_keys.contains(&key);
-        let label = if inherited { format!("[{key}]") } else { key.clone() };
+        let label = if inherited {
+            format!("[{key}]")
+        } else {
+            key.clone()
+        };
         let rendered = inspect_getter_property(value, &key, depth, root_identity);
         parts.push(format!("{label}: {rendered}"));
     }
-    let prefix = if name.is_empty() { String::new() } else { format!("{name} ") };
+    let prefix = if name.is_empty() {
+        String::new()
+    } else {
+        format!("{name} ")
+    };
     if indent == 0 {
         let pad = " ".repeat(indent + 2);
         let body = parts
@@ -1251,7 +1349,8 @@ fn inspect_getter_property(
 ) -> String {
     let descriptor = inherited_property_descriptor(value, key);
     if let Some(Value::Object(descriptor)) = descriptor {
-        let getter = quench_runtime::execute::get_property(&Value::Object(descriptor.clone()), "get");
+        let getter =
+            quench_runtime::execute::get_property(&Value::Object(descriptor.clone()), "get");
         if !matches!(getter, Value::Undefined) {
             if let Ok(result) = quench_runtime::execute::call(&getter, value, &[]) {
                 let shown = if result.object_identity() == root_identity {
@@ -1363,6 +1462,23 @@ fn inspect_string_segment(value: &str) -> String {
 }
 
 fn inspect_depth(value: &Value, depth: usize) -> String {
+    if let Value::Promise(promise) = value {
+        return match &*promise.state.borrow() {
+            quench_runtime::value::PromiseState::Pending => "Promise { <pending> }".into(),
+            quench_runtime::value::PromiseState::Fulfilled(value) => {
+                format!(
+                    "Promise {{ {} }}",
+                    inspect_depth(value, depth.saturating_sub(1))
+                )
+            }
+            quench_runtime::value::PromiseState::Rejected(value) => {
+                format!(
+                    "Promise {{ <rejected> {} }}",
+                    inspect_depth(value, depth.saturating_sub(1))
+                )
+            }
+        };
+    }
     if let Value::Proxy(proxy) = value {
         if *proxy.revoked.borrow() {
             return "<Revoked Proxy>".into();
@@ -1376,7 +1492,25 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
             inspect_depth(&proxy.target, depth.saturating_sub(1))
         };
     }
-    if matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)) {
+    if matches!(
+        value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) {
+        if matches!(quench_runtime::execute::get_property(value, "Symbol.toStringTag"), Value::String(ref tag) if tag == "AbortController")
+            && quench_runtime::execute::has_own_property(value, "signal")
+            && quench_runtime::execute::has_own_property(value, "abort")
+        {
+            let signal = quench_runtime::execute::get_property(value, "\0quench:abort:signal");
+            let aborted = quench_runtime::execute::get_property(&signal, "aborted");
+            return if depth <= 4 {
+                "AbortController { signal: [AbortSignal] }".into()
+            } else {
+                format!(
+                    "AbortController {{ signal: AbortSignal {{ aborted: {} }} }}",
+                    inspect_shallow(&aborted)
+                )
+            };
+        }
         if let Some(custom) = inspect_custom(value, depth) {
             return custom;
         }
@@ -1486,6 +1620,7 @@ fn inspect_regexp(value: &Value) -> String {
         _ => String::new(),
     };
     let literal = format!("/{source}/{flags}");
+    let literal = colorize_regexp(&literal);
     let constructor = quench_runtime::execute::get_property(value, "constructor");
     let name = match quench_runtime::execute::get_property(&constructor, "name") {
         Value::String(name) if name != "RegExp" && !name.is_empty() => Some(name),
@@ -1507,6 +1642,197 @@ fn inspect_regexp(value: &Value) -> String {
     } else {
         format!("{prefix}{literal} {{\n{}\n}}", props.join(",\n"))
     }
+}
+
+fn colorize_regexp(literal: &str) -> String {
+    let enabled = COLORS_OVERRIDE.with(|slot| slot.borrow().unwrap_or(false));
+    if !enabled {
+        return literal.to_string();
+    }
+    let mut out = String::new();
+    let mut last_style = String::new();
+    let mut push = |style: &str, text: &str| {
+        if style != last_style {
+            if !last_style.is_empty() {
+                out.push_str("\x1b[39m");
+            }
+            if !style.is_empty() {
+                out.push_str(style);
+            }
+            last_style = style.to_string();
+        }
+        out.push_str(text);
+    };
+    let chars: Vec<char> = literal.chars().collect();
+    let unicode = literal.ends_with("/u");
+    let mut index = 0;
+    let mut flags = false;
+    let mut slash_count = 0;
+    let mut in_class = false;
+    let mut in_quantifier = false;
+    let mut quantifier_range = false;
+    let mut group_depth = 0usize;
+    let mut named_group = false;
+    while index < chars.len() {
+        let character = chars[index];
+        if character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(') {
+            if let Some(next) = chars.get(index + 1) {
+                if matches!(next, '<' | '=' | '!' | ':') {
+                    let lookbehind = *next == '<' && chars.get(index + 2) == Some(&'!');
+                    push("", "");
+                    if lookbehind {
+                        push("\x1b[31m", "?<");
+                        push("\x1b[31m", "!");
+                    } else {
+                        push("\x1b[31m", &format!("?{next}"));
+                    }
+                    named_group = *next == '<';
+                    index += if lookbehind { 3 } else { 2 };
+                    continue;
+                }
+            }
+        }
+        let closing_slash = character == '/' && slash_count == 1;
+        let style = if index == 0 || closing_slash {
+            "\x1b[32m"
+        } else if flags {
+            "\x1b[31m"
+        } else if character == '\\' {
+            push("", "");
+            let escape_style = if group_depth > 0 || unicode {
+                "\x1b[36m"
+            } else {
+                "\x1b[33m"
+            };
+            push(escape_style, &character.to_string());
+            if let Some(next) = chars.get(index + 1) {
+                push(escape_style, &next.to_string());
+                index += 1;
+            }
+            push("", "");
+            index += 1;
+            continue;
+        } else if character == '(' || character == ')' || character == '>' {
+            if character == '(' {
+                group_depth += 1;
+            } else if character == ')' {
+                group_depth = group_depth.saturating_sub(1);
+            } else if named_group {
+                named_group = false;
+            }
+            "\x1b[31m"
+        } else if character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(') {
+            "\x1b[31m"
+        } else if character == '=' && matches!(chars.get(index.wrapping_sub(1)), Some('?')) {
+            "\x1b[31m"
+        } else if character == '!' && chars.get(index.wrapping_sub(1)) == Some(&'?') {
+            "\x1b[31m"
+        } else if character == '<' && chars.get(index.wrapping_sub(1)) == Some(&'?') {
+            named_group = true;
+            "\x1b[31m"
+        } else if matches!(character, '^' | '$' | '|' | '*' | '+' | '?' | '.') {
+            if in_class && character == '^' {
+                if unicode {
+                    "\x1b[36m"
+                } else {
+                    "\x1b[33m"
+                }
+            } else if in_class && character == '.' {
+                "\x1b[33m"
+            } else if character == '|' {
+                if group_depth > 0 {
+                    "\x1b[32m"
+                } else {
+                    "\x1b[35m"
+                }
+            } else if group_depth > 0 && matches!(character, '*' | '+' | '?') {
+                "\x1b[32m"
+            } else if character == '.' && group_depth == 0 {
+                "\x1b[36m"
+            } else {
+                "\x1b[35m"
+            }
+        } else if character == '{' {
+            in_quantifier = true;
+            quantifier_range = chars[index + 1..]
+                .iter()
+                .position(|value| *value == '}')
+                .and_then(|end| chars.get(index + 1..index + 1 + end))
+                .is_some_and(|body| body.contains(&','));
+            if quantifier_range {
+                "\x1b[31m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character == '}' {
+            in_quantifier = false;
+            if quantifier_range {
+                "\x1b[31m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character == ',' {
+            if in_quantifier {
+                "\x1b[33m"
+            } else {
+                "\x1b[32m"
+            }
+        } else if character == '[' {
+            in_class = true;
+            "\x1b[33m"
+        } else if character == ']' {
+            in_class = false;
+            "\x1b[33m"
+        } else if character == '-' {
+            if in_class && unicode {
+                "\x1b[35m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character.is_ascii_digit() {
+            if in_quantifier {
+                if quantifier_range {
+                    "\x1b[36m"
+                } else {
+                    "\x1b[35m"
+                }
+            } else if in_class && unicode {
+                "\x1b[36m"
+            } else if in_class {
+                "\x1b[33m"
+            } else {
+                "\x1b[36m"
+            }
+        } else if named_group {
+            "\x1b[33m"
+        } else if group_depth > 0 {
+            "\x1b[36m"
+        } else {
+            "\x1b[33m"
+        };
+        let group_prefix = character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(');
+        let force_token = matches!(character, '^' | '$' | '*' | '+' | '?' | '.' | '(' | ')')
+            || (character.is_ascii_digit() && !(in_quantifier && quantifier_range))
+            || (group_depth > 0 && !named_group && character.is_ascii_alphabetic());
+        if force_token {
+            push("", "");
+            push(style, &character.to_string());
+            if !group_prefix {
+                push("", "");
+            }
+        } else {
+            push(style, &character.to_string());
+        }
+        if character == '/' {
+            slash_count += 1;
+            flags = slash_count > 1;
+        }
+        index += 1;
+    }
+    if !last_style.is_empty() {
+        out.push_str("\x1b[39m");
+    }
+    out
 }
 
 fn inspect_collection(owner: &Value, depth: usize, sorted: bool) -> String {
@@ -1536,7 +1862,11 @@ fn inspect_collection(owner: &Value, depth: usize, sorted: bool) -> String {
         entries.sort();
     }
     let length = entries.len();
-    let name = if matches!(owner, Value::Set(_)) { "Set" } else { "Map" };
+    let name = if matches!(owner, Value::Set(_)) {
+        "Set"
+    } else {
+        "Map"
+    };
     if entries.is_empty() {
         return format!("{name}({length}) {{}}");
     }
@@ -1741,7 +2071,10 @@ fn inspect_array(value: &Value, depth: usize) -> String {
             } else {
                 key.clone()
             };
-            format!("{display}: {}", inspect_property(value, &key, depth.saturating_sub(1)))
+            format!(
+                "{display}: {}",
+                inspect_property(value, &key, depth.saturating_sub(1))
+            )
         })
         .collect::<Vec<_>>();
     if items.is_empty() && properties.is_empty() {
@@ -1776,7 +2109,10 @@ fn inspect_named_array(value: &Value, depth: usize, name: &str) -> String {
     }
     for key in quench_runtime::execute::own_enumerable_keys(value) {
         if key != "length" && key.parse::<usize>().is_err() {
-            parts.push(format!("{key}: {}", inspect_property(value, &key, depth.saturating_sub(1))));
+            parts.push(format!(
+                "{key}: {}",
+                inspect_property(value, &key, depth.saturating_sub(1))
+            ));
         }
     }
     format!("{name}({length}) [ {} ]", parts.join(", "))
@@ -1857,10 +2193,7 @@ fn inspect_verbose(value: &Value, depth: usize, indent: usize) -> String {
                 })
                 .collect::<Vec<_>>();
             let mut lines = items;
-            lines.push(format!(
-                "{pad}[length]: {}",
-                array.len()
-            ));
+            lines.push(format!("{pad}[length]: {}", array.len()));
             format!("[\n{}\n{}]", lines.join(",\n"), " ".repeat(indent))
         }
         Value::Function(_) | Value::BoundFunction(_) => inspect_verbose_function(value, indent),
@@ -1886,22 +2219,71 @@ fn inspect_verbose_function(value: &Value, indent: usize) -> String {
 
 /// Plain objects render as `{ key: value, ... }` with shallow values.
 fn inspect_object(value: &Value, depth: usize) -> String {
+    if matches!(quench_runtime::execute::get_property(value, "Symbol.toStringTag"), Value::String(ref tag) if tag == "AbortController")
+        && quench_runtime::execute::has_own_property(value, "signal")
+        && quench_runtime::execute::has_own_property(value, "abort")
+    {
+        let signal = quench_runtime::execute::get_property(value, "\0quench:abort:signal");
+        let aborted = quench_runtime::execute::get_property(&signal, "aborted");
+        return if depth <= 4 {
+            "AbortController { signal: [AbortSignal] }".into()
+        } else {
+            format!(
+                "AbortController {{ signal: AbortSignal {{ aborted: {} }} }}",
+                inspect_shallow(&aborted)
+            )
+        };
+    }
     let prototype = quench_runtime::execute::get_prototype_of(value).ok();
     let original_prototype = value.original_prototype();
     let null_prototype = matches!(prototype, Some(Value::Null));
-    let constructor_name = match quench_runtime::execute::get_property(value, "\0original_constructor_name") {
-        Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
-        _ => None,
-    }.or_else(|| original_prototype
-            .as_ref()
-            .or(prototype.as_ref())
-            .and_then(|prototype| {
-                let constructor = quench_runtime::execute::get_property(prototype, "constructor");
-                match quench_runtime::execute::get_property(&constructor, "name") {
+    let constructor_name =
+        match quench_runtime::execute::get_property(value, "\0original_constructor_name") {
+            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+            _ => None,
+        }
+        .or_else(
+            || match quench_runtime::execute::get_property(value, "constructor") {
+                Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+                constructor => match quench_runtime::execute::get_property(&constructor, "name") {
                     Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
                     _ => None,
-                }
-            }));
+                },
+            },
+        )
+        .or_else(|| {
+            original_prototype
+                .as_ref()
+                .or(prototype.as_ref())
+                .and_then(|prototype| {
+                    let constructor =
+                        quench_runtime::execute::get_property(prototype, "constructor");
+                    match quench_runtime::execute::get_property(&constructor, "name") {
+                        Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+                        _ => None,
+                    }
+                })
+        });
+    if constructor_name.as_deref() == Some("AbortController") {
+        let signal = quench_runtime::execute::get_property(value, "\0quench:abort:signal");
+        let aborted = quench_runtime::execute::get_property(&signal, "aborted");
+        return if depth <= 4 {
+            "AbortController { signal: [AbortSignal] }".into()
+        } else {
+            format!(
+                "AbortController {{ signal: AbortSignal {{ aborted: {} }} }}",
+                inspect_shallow(&aborted)
+            )
+        };
+    }
+    if constructor_name.as_deref() == Some("AbortSignal") {
+        let aborted = quench_runtime::execute::get_property(value, "aborted");
+        return if depth == 0 {
+            "[AbortSignal]".into()
+        } else {
+            format!("AbortSignal {{ aborted: {} }}", inspect_shallow(&aborted))
+        };
+    }
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
         return if null_prototype {
@@ -1922,17 +2304,30 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             let property_value = quench_runtime::execute::get_property(value, key);
             let rendered = if matches!(key.as_str(), "actual" | "expected") {
                 match property_value {
-                    Value::String(text) if text.len() > 488 => {
-                        format!("'{}...'", &text[..488])
+                    Value::String(text) if text.len() > 9_488 => {
+                        format!("'{}...'", &text[..9_488])
                     }
                     Value::String(text) if text.contains('\n') => {
-                        let mut lines = text.split('\n').take(10)
-                            .map(|line| format!("'{line}\\n' +"))
-                            .collect::<Vec<_>>();
-                        lines.push("'...'".into());
-                        format!("{}", lines.join("\n    "))
+                        let full_diff = matches!(
+                            quench_runtime::execute::get_property(value, "diff"),
+                            Value::String(mode) if mode == "full"
+                        );
+                        if full_diff {
+                            let prefix = text.split_inclusive('\n').take(10).collect::<String>();
+                            format!("'{}...'", prefix.replace('\n', "\\n"))
+                        } else {
+                            let mut lines = text
+                                .split('\n')
+                                .take(10)
+                                .map(|line| format!("'{line}\\n' +"))
+                                .collect::<Vec<_>>();
+                            lines.push("'...'".into());
+                            lines.join("\n    ")
+                        }
                     }
-                    _ if property_value.object_identity() == value.object_identity() => "[Circular]".into(),
+                    _ if property_value.object_identity() == value.object_identity() => {
+                        "[Circular]".into()
+                    }
                     _ => inspect_property(value, key, depth.saturating_sub(1)),
                 }
             } else if property_value.object_identity() == value.object_identity() {
@@ -1990,14 +2385,9 @@ fn inspect_property_mode(value: &Value, key: &str, depth: usize, getters: bool) 
         .ok();
     }
     if let Some(Value::Object(descriptor)) = descriptor {
-        let getter = quench_runtime::execute::get_property(
-            &Value::Object(descriptor.clone()),
-            "get",
-        );
-        let setter = quench_runtime::execute::get_property(
-            &Value::Object(descriptor),
-            "set",
-        );
+        let getter =
+            quench_runtime::execute::get_property(&Value::Object(descriptor.clone()), "get");
+        let setter = quench_runtime::execute::get_property(&Value::Object(descriptor), "set");
         if !matches!(getter, Value::Undefined) {
             if getters && matches!(getter, Value::Function(_) | Value::BoundFunction(_)) {
                 if let Ok(result) = quench_runtime::execute::call(&getter, value, &[]) {
@@ -2059,11 +2449,7 @@ fn inspect_custom(value: &Value, depth: usize) -> Option<String> {
     inspect_custom_with_receiver(value, value, depth)
 }
 
-fn inspect_custom_with_receiver(
-    value: &Value,
-    receiver: &Value,
-    depth: usize,
-) -> Option<String> {
+fn inspect_custom_with_receiver(value: &Value, receiver: &Value, depth: usize) -> Option<String> {
     let method = quench_runtime::execute::get_property_result(
         value,
         "Symbol.for.nodejs.util.inspect.custom\0",
@@ -2150,7 +2536,11 @@ fn inspect_array_buffer_with_limit(
             format!("<{} ... {suffix} more {plural}>", shown.join(" "))
         }
     };
-    let label = if buffer.shared { "SharedArrayBuffer" } else { "ArrayBuffer" };
+    let label = if buffer.shared {
+        "SharedArrayBuffer"
+    } else {
+        "ArrayBuffer"
+    };
     let mut result = if *buffer.detached.borrow() {
         format!("{label} {{ (detached), [byteLength]: {length}")
     } else {
@@ -2284,9 +2674,7 @@ fn inspect_typed_array(
                 &index.to_string(),
             ))
         };
-        lines.push(format!(
-            "  {rendered},"
-        ));
+        lines.push(format!("  {rendered},"));
     }
     if length > 0 {
         lines.last_mut().expect("typed array value").pop();

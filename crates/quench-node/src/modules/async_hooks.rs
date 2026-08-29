@@ -30,12 +30,14 @@ struct Hook {
     resolve: Option<Value>,
 }
 
-use crate::registry::{SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID,
-    SPEC_ASYNC_EXECUTION_RESOURCE, SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE,
-    SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER, SPEC_ASYNC_RESOURCE_BEFORE,
-    SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
-    SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID, SPEC_ASYNC_LOCAL_GET,
-    SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_ENTER, SPEC_ASYNC_LOCAL_DISABLE};
+use crate::registry::{
+    SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID, SPEC_ASYNC_EXECUTION_RESOURCE,
+    SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE, SPEC_ASYNC_LOCAL_DISABLE,
+    SPEC_ASYNC_LOCAL_ENTER, SPEC_ASYNC_LOCAL_GET, SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_RESOURCE,
+    SPEC_ASYNC_RESOURCE_AFTER, SPEC_ASYNC_RESOURCE_BEFORE, SPEC_ASYNC_RESOURCE_DESTROY,
+    SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN, SPEC_ASYNC_RESOURCE_TRIGGER,
+    SPEC_ASYNC_TRIGGER_ID,
+};
 
 #[derive(Debug)]
 pub struct AsyncHooksState {
@@ -45,7 +47,10 @@ pub struct AsyncHooksState {
     current_resource: Option<Value>,
     hooks: Vec<Hook>,
     promise_resources: HashMap<usize, Value>,
-    local_stores: HashMap<u64, Value>,
+    // Stores are keyed by (async resource id, AsyncLocalStorage id). This
+    // keeps context propagation in the host state machine instead of relying
+    // on a second JS-only context registry.
+    local_stores: HashMap<(u64, u64), Value>,
     next_local_id: u64,
     pub(crate) current_local_store: Option<Value>,
     resource_stack: Vec<(u64, Option<Value>)>,
@@ -91,12 +96,18 @@ pub fn build() -> Value {
             "executionAsyncId",
             crate::host::capability(SPEC_ASYNC_EXECUTION_ID),
         ),
-        ("triggerAsyncId", crate::host::capability(SPEC_ASYNC_TRIGGER_ID)),
+        (
+            "triggerAsyncId",
+            crate::host::capability(SPEC_ASYNC_TRIGGER_ID),
+        ),
         (
             "executionAsyncResource",
             crate::host::capability(SPEC_ASYNC_EXECUTION_RESOURCE),
         ),
-        ("createHook", crate::host::capability(SPEC_ASYNC_CREATE_HOOK)),
+        (
+            "createHook",
+            crate::host::capability(SPEC_ASYNC_CREATE_HOOK),
+        ),
         (
             "AsyncLocalStorage",
             crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE),
@@ -119,8 +130,17 @@ pub fn execution_id(
 
 pub fn new_async_local_storage(
     state: &Rc<RefCell<HostState>>,
-    _: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    // The bootstrap class is the canonical state machine: it carries stores
+    // on `__nodeCurrentAsyncResource`, so timers, promises, and user-created
+    // resources all share one context representation. Keep the Rust path as
+    // a fallback for profiles that omit the bootstrap surface.
+    let global = quench_runtime::vm::current_global_object();
+    let constructor = execute::get_property(&global, "__nodeAsyncLocalStorage");
+    if quench_runtime::is_callable(&constructor) {
+        return execute::construct_value(&constructor, args);
+    }
     let mut host = state.borrow_mut();
     let id = host.async_hooks.next_local_id;
     host.async_hooks.next_local_id += 1;
@@ -133,11 +153,8 @@ pub fn new_async_local_storage(
         "getStore",
         crate::host::capability(SPEC_ASYNC_LOCAL_GET),
     );
-    let object = execute::set_property(
-        object,
-        "run",
-        crate::host::capability(SPEC_ASYNC_LOCAL_RUN),
-    );
+    let object =
+        execute::set_property(object, "run", crate::host::capability(SPEC_ASYNC_LOCAL_RUN));
     let object = execute::set_property(
         object,
         "enterWith",
@@ -163,11 +180,12 @@ pub fn local_get_store(
     _: &[Value],
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
+    let resource_id = state.borrow().async_hooks.current_id;
     Ok(state
         .borrow()
         .async_hooks
         .local_stores
-        .get(&id)
+        .get(&(resource_id, id))
         .cloned()
         .unwrap_or(Value::Undefined))
 }
@@ -178,8 +196,9 @@ pub fn local_enter_with(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
+    let resource_id = state.borrow().async_hooks.current_id;
     state.borrow_mut().async_hooks.local_stores.insert(
-        id,
+        (resource_id, id),
         args.first().cloned().unwrap_or(Value::Undefined),
     );
     Ok(Value::Undefined)
@@ -191,7 +210,11 @@ pub fn local_disable(
     _: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(id) = local_id(receiver) {
-        state.borrow_mut().async_hooks.local_stores.remove(&id);
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .retain(|(_, local_id), _| *local_id != id);
     }
     Ok(Value::Undefined)
 }
@@ -201,23 +224,39 @@ pub fn local_run(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let callback = args.get(1).ok_or_else(|| VmError::Thrown(host_api::object(vec![])))?;
+    let callback = args
+        .get(1)
+        .ok_or_else(|| VmError::Thrown(host_api::object(vec![])))?;
     if !quench_runtime::is_callable(callback) {
         return Err(VmError::Thrown(host_api::object(vec![])));
     }
     let id = local_id(receiver).unwrap_or_default();
-    let previous = state.borrow().async_hooks.local_stores.get(&id).cloned();
+    let resource_id = state.borrow().async_hooks.current_id;
+    let previous = state
+        .borrow()
+        .async_hooks
+        .local_stores
+        .get(&(resource_id, id))
+        .cloned();
     state.borrow_mut().async_hooks.local_stores.insert(
-        id,
+        (resource_id, id),
         args.first().cloned().unwrap_or(Value::Undefined),
     );
     let result = execute::call(callback, receiver.unwrap_or(&Value::Undefined), &args[2..]);
     match previous {
         Some(value) => {
-            state.borrow_mut().async_hooks.local_stores.insert(id, value);
+            state
+                .borrow_mut()
+                .async_hooks
+                .local_stores
+                .insert((resource_id, id), value);
         }
         None => {
-            state.borrow_mut().async_hooks.local_stores.remove(&id);
+            state
+                .borrow_mut()
+                .async_hooks
+                .local_stores
+                .remove(&(resource_id, id));
         }
     };
     result
@@ -249,11 +288,28 @@ pub fn execution_resource(
 }
 
 pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let parent_id = state.borrow().async_hooks.current_id;
     let trigger = args
         .first()
         .and_then(|value| trigger_id_of(state, value))
         .unwrap_or(state.borrow().async_hooks.current_id);
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
+    let inherited: Vec<(u64, Value)> = state
+        .borrow()
+        .async_hooks
+        .local_stores
+        .iter()
+        .filter_map(|((resource_id, local_id), value)| {
+            (*resource_id == parent_id).then(|| (*local_id, value.clone()))
+        })
+        .collect();
+    for (local_id, value) in inherited {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .insert((id, local_id), value);
+    }
     let resource = host_api::object(vec![
         (ASYNC_ID.to_string(), Value::Number(id as f64)),
         (TRIGGER_ID.to_string(), Value::Number(trigger as f64)),
@@ -430,9 +486,7 @@ pub fn create_hook(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args.first().cloned().unwrap_or(Value::Undefined);
-    let callback = |name: &str| {
-        id_property(&options, name).filter(quench_runtime::is_callable)
-    };
+    let callback = |name: &str| id_property(&options, name).filter(quench_runtime::is_callable);
     let mut host = state.borrow_mut();
     let id = host.async_hooks.next_hook_id;
     host.async_hooks.next_hook_id += 1;
@@ -462,10 +516,7 @@ pub fn create_hook(
 /// Engine-owned Promise lifecycle edge. Promise allocation is reported by
 /// `quench-runtime`; the host turns it into the same resource identity family
 /// used by timers and `AsyncResource`.
-pub fn promise_hook(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(event)) = args.first() else {
         return Ok(Value::Undefined);
     };
@@ -536,6 +587,7 @@ pub fn promise_hook(
     }
     Ok(Value::Undefined)
 }
+
 pub fn hook_toggle(
     _: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -612,7 +664,10 @@ fn active_callbacks_from(state: &AsyncHooksState, event: HookEvent) -> Vec<Value
 }
 
 fn set_hook_enabled(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, enabled: bool) {
-    let Some(id) = receiver.and_then(|value| id_property(value, HOOK_ID)).and_then(number) else {
+    let Some(id) = receiver
+        .and_then(|value| id_property(value, HOOK_ID))
+        .and_then(number)
+    else {
         return;
     };
     if let Some(hook) = state

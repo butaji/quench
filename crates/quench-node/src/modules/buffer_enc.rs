@@ -50,6 +50,10 @@ pub fn invalid_arg_value(message: String) -> VmError {
     coded_error("TypeError", "ERR_INVALID_ARG_VALUE", &message)
 }
 
+pub fn invalid_state(message: String) -> VmError {
+    coded_error("Error", "ERR_INVALID_STATE", &message)
+}
+
 pub fn invalid_this() -> VmError {
     coded_error(
         "TypeError",
@@ -294,13 +298,15 @@ pub fn is_utf8(value: &Value) -> Result<bool, VmError> {
             }
             Ok(std::str::from_utf8(&buf.bytes.borrow()).is_ok())
         }
-        value if is_view(value) => view_bytes(value).map_or(Ok(true), |(buffer, offset, length)| {
-            if *buffer.detached.borrow() {
-                return Ok(true);
-            }
-            let bytes = buffer.bytes.borrow();
-            Ok(std::str::from_utf8(&bytes[offset..offset + length]).is_ok())
-        }),
+        value if is_view(value) => {
+            view_bytes(value).map_or(Ok(true), |(buffer, offset, length)| {
+                if *buffer.detached.borrow() {
+                    return Ok(true);
+                }
+                let bytes = buffer.bytes.borrow();
+                Ok(std::str::from_utf8(&bytes[offset..offset + length]).is_ok())
+            })
+        }
         _ => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
@@ -319,13 +325,15 @@ pub fn is_ascii(value: &Value) -> Result<bool, VmError> {
             }
             Ok(buf.bytes.borrow().is_ascii())
         }
-        value if is_view(value) => view_bytes(value).map_or(Ok(true), |(buffer, offset, length)| {
-            if *buffer.detached.borrow() {
-                return Ok(true);
-            }
-            let bytes = buffer.bytes.borrow();
-            Ok(bytes[offset..offset + length].is_ascii())
-        }),
+        value if is_view(value) => {
+            view_bytes(value).map_or(Ok(true), |(buffer, offset, length)| {
+                if *buffer.detached.borrow() {
+                    return Ok(true);
+                }
+                let bytes = buffer.bytes.borrow();
+                Ok(bytes[offset..offset + length].is_ascii())
+            })
+        }
         _ => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
@@ -388,7 +396,7 @@ pub fn invalid_arg_received(value: &Value) -> String {
     match value {
         Value::Null => " Received null".into(),
         Value::Undefined => " Received undefined".into(),
-        Value::Object(_) => invalid_arg_object(value),
+        Value::Object(_) | Value::Proxy(_) => invalid_arg_object(value),
         Value::Function(_) | Value::BoundFunction(_) => {
             let name = quench_runtime::execute::get_property(value, "name");
             match name {
@@ -430,6 +438,6 @@ fn invalid_arg_object(value: &Value) -> String {
         {
             " Received [Object: null prototype] {}".into()
         }
-        _ => " Received [object Object]".into(),
+        _ => " Received an instance of Object".into(),
     }
 }

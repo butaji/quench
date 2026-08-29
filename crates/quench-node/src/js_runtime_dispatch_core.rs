@@ -10,11 +10,18 @@ impl QuenchNodeHost {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::Require) => {
-                if matches!(arguments.first(), Some(Value::String(name)) if name.trim_start_matches("node:") == "string_decoder")
-                {
-                    Ok(string_decoder_module())
-                } else {
-                    require_module(arguments)
+                match arguments.first() {
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "string_decoder" =>
+                    {
+                        Ok(string_decoder_module())
+                    }
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "stream" =>
+                    {
+                        crate::modules::stream::build(&self.state)
+                    }
+                    _ => require_module(arguments),
                 }
             }
             HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {

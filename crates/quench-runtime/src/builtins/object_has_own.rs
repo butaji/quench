@@ -16,13 +16,34 @@ fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
+    has_own_property_result_order(receiver, key, receiver.is_some())
+}
+
+pub(crate) fn has_own_property_static_result(
+    target: Option<&Value>,
+    key: Option<&Value>,
+) -> Result<Value, VmError> {
+    has_own_property_result_order(target, key, false)
+}
+
+fn has_own_property_result_order(
+    receiver: Option<&Value>,
+    key: Option<&Value>,
+    key_first: bool,
+) -> Result<Value, VmError> {
+    // The prototype method performs ToPropertyKey before ToObject so a
+    // coercion error wins over a nullish receiver error.
+    let coerced_key = key_first
+        .then(|| key.map(crate::properties::dynamic_property_key))
+        .flatten()
+        .transpose()?;
     let receiver = require_object_coercible(receiver)?;
     let receiver = crate::vm::resolve_global_owner(receiver)
         .unwrap_or_else(|| crate::locals::resolved_replacement(receiver.clone()));
     let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
-    let key = crate::properties::dynamic_property_key(key)?;
+    let key = coerced_key.map_or_else(|| crate::properties::dynamic_property_key(key), Ok)?;
     crate::module_bindings::exports(&receiver, &key)?;
     Ok(Value::Boolean(owns_property(&receiver, &key)?))
 }
@@ -91,15 +112,22 @@ fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &
 }
 
 fn typed_array_owns(value: &Value, key: &str) -> bool {
-    if let Ok(index) = key.parse::<usize>() {
+    if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
         return crate::typed_array_prototype::index_exists(value, index);
     }
+    if crate::typed_array_ops::canonical_numeric_index(key) {
+        return false;
+    }
     crate::typed_array_prototype::own_property(value, key).is_some()
+        || crate::typed_array_prototype::descriptor(value, key).is_some()
 }
 
 fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
     if crate::vm::is_legacy_global(key) {
         return false;
+    }
+    if key.parse::<usize>().is_ok() {
+        return properties.hot_properties().position_rev(key).is_some();
     }
     let deleted = properties
         .iter()
@@ -145,10 +173,35 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
+    // TypedArray.from/of are inherited from %TypedArray%; the constructor
+    // property resolver exposes them without making them own properties.
+    if matches!(
+        builtin,
+        Builtin::Float64Array
+            | Builtin::Float32Array
+            | Builtin::Int8Array
+            | Builtin::Int16Array
+            | Builtin::Int32Array
+            | Builtin::Uint8Array
+            | Builtin::Uint8ClampedArray
+            | Builtin::Uint16Array
+            | Builtin::Uint32Array
+            | Builtin::BigInt64Array
+            | Builtin::BigUint64Array
+    ) && matches!(key, "from" | "of")
+    {
+        return false;
+    }
     if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }
-    (builtin == Builtin::Object && key == "hasOwn")
+    if key == "BYTES_PER_ELEMENT"
+        && crate::builtins::props::is_typed_array_bytes_builtin(builtin)
+    {
+        return true;
+    }
+    (builtin == Builtin::ObjectPrototype && key == "__proto__")
+        || (builtin == Builtin::Object && key == "hasOwn")
         || crate::builtins::read_intrinsic_override(builtin, key).is_some()
         || super::own_property_names(builtin).contains(&key)
         || super::callable_property(builtin, key).is_some()

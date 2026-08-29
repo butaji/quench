@@ -4,16 +4,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
     globalThis.process[Symbol.toStringTag] ||= "process";
     globalThis.gc ||= () => undefined;
-    globalThis.process.emitWarning = (message, options = {}) => {
-      const warning =
-        message instanceof Error ? message : new Error(String(message));
-      const settings =
-        typeof options === "string" ? { name: options } : options || {};
-      warning.name = String(settings.name || "Warning");
-      if (settings.code !== undefined) warning.code = settings.code;
-      globalThis.process.emit("warning", warning);
-      return undefined;
-    };
     const activeTimers = new Map();
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;

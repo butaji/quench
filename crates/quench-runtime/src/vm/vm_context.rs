@@ -120,6 +120,7 @@ pub struct VmContext {
     host_bindings: Vec<(String, HostCapabilityRef)>,
     host_values: Vec<(String, Value)>,
     can_block: bool,
+    source_text: Option<Rc<str>>,
 }
 impl Default for VmContext {
     fn default() -> Self {
@@ -131,6 +132,7 @@ impl Default for VmContext {
             host_bindings: Vec::new(),
             host_values: Vec::new(),
             can_block: false,
+            source_text: None,
         }
     }
 }
@@ -177,6 +179,15 @@ impl VmContext {
     pub fn with_can_block(mut self, can_block: bool) -> Self {
         self.can_block = can_block;
         self
+    }
+
+    pub fn with_source_text(mut self, source: impl Into<Rc<str>>) -> Self {
+        self.source_text = Some(source.into());
+        self
+    }
+
+    pub fn source_text(&self) -> Option<&str> {
+        self.source_text.as_deref()
     }
 
     pub(crate) fn can_block(&self) -> bool {

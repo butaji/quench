@@ -37,6 +37,8 @@ fn same_value_objects(left: &Value, right: &Value) -> bool {
             Rc::ptr_eq(left, right)
         }
         (Value::Uint32Array(left), Value::Uint32Array(right)) => Rc::ptr_eq(left, right),
+        (Value::BigInt64Array(left), Value::BigInt64Array(right)) => Rc::ptr_eq(left, right),
+        (Value::BigUint64Array(left), Value::BigUint64Array(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
         (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),

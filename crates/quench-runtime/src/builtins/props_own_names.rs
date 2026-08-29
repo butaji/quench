@@ -374,6 +374,8 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
         | Builtin::FunctionPrototype
         | Builtin::Error
         | Builtin::Promise
+        | Builtin::Object
+        | Builtin::Proxy
         | Builtin::ThrowTypeError => own_property_names_standard_core(builtin),
         _ => own_property_names_standard_tail(builtin),
     }
@@ -381,6 +383,35 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
 
 fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::Object => &[
+            "length",
+            "name",
+            "prototype",
+            "assign",
+            "getOwnPropertyDescriptor",
+            "getOwnPropertyDescriptors",
+            "getOwnPropertyNames",
+            "getOwnPropertySymbols",
+            "hasOwn",
+            "is",
+            "preventExtensions",
+            "seal",
+            "create",
+            "defineProperties",
+            "defineProperty",
+            "freeze",
+            "getPrototypeOf",
+            "setPrototypeOf",
+            "isExtensible",
+            "isFrozen",
+            "isSealed",
+            "keys",
+            "entries",
+            "fromEntries",
+            "values",
+            "groupBy",
+        ],
+        Builtin::Proxy => &["length", "name", "revocable"],
         Builtin::Function => &["length", "name", "prototype"],
         Builtin::AbstractModuleSource => &["length", "name", "prototype"],
         Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
@@ -418,6 +449,7 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
             "resolve",
             "reject",
             "all",
+            "allKeyed",
             "allSettled",
             "any",
             "race",

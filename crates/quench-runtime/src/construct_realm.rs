@@ -34,7 +34,7 @@ pub(crate) fn get_prototype_from_constructor(
     default(constructor_realm(&constructor))
 }
 
-fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
+pub(crate) fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
     fn value_realm(value: &Value) -> Option<crate::ops::RealmId> {
         match value {
             Value::Function(function) => Some(function_realm_id(function)),
@@ -55,6 +55,7 @@ fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
                     receiver => value_realm(receiver),
                 })
                 .or_else(|| value_realm(&bound.target)),
+            Value::Proxy(proxy) => value_realm(&proxy.target),
             _ => None,
         }
     }

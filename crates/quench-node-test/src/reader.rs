@@ -86,6 +86,7 @@ impl NodeRunner {
     /// Run one fixture and classify the completion.
     pub fn run(&mut self, fixture: &NodeFixture) -> NodeOutcome {
         // Fresh host per fixture with `node <file>` argv semantics.
+        let _cwd_guard = FixtureCwdGuard::capture();
         let script = fixture.path.to_string_lossy().into_owned();
         let (host, context) = quench_node::host::install_script_with_args(
             RealmId::ROOT,
@@ -93,8 +94,9 @@ impl NodeRunner {
             &script,
             &fixture.argv,
         );
+        let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
-        self.context = context;
+        self.context = context.with_source_text(fixture_source.clone());
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
@@ -109,7 +111,6 @@ impl NodeRunner {
             .is_some_and(|extension| extension == "mjs");
         // CJS fixtures receive Node's wrapper; ESM fixtures retain module
         // syntax so the runtime's module reducer owns import facts.
-        let fixture_source = strip_v8_native_probes(&fixture.source);
         let source = if is_module {
             quench_node::esm_imports::transform_esm_imports(&fixture_source)
                 .replace("await import(", "require(")
@@ -137,12 +138,20 @@ impl NodeRunner {
         } else {
             String::new()
         };
+        // Node exposes WHATWG stream constructors globally. Install the
+        // shared surface before the fixture so globals and `stream/web`
+        // resolve to one constructor identity.
+        let web_streams_surface = ["web-streams"]
+            .into_iter()
+            .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
+            .collect::<Vec<_>>()
+            .join("\n");
         let url_pattern_surface =
             quench_node::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
         let source = format!(
             "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
         );
-        let source = format!("{dgram_surface}\n{dns_surface}\n{source}");
+        let source = format!("{web_streams_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) if is_module && source.contains("await ") => {
@@ -174,10 +183,14 @@ impl NodeRunner {
         let result = self.route_uncaught(result);
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
-            Err(error) => match self.drive("__quench_run_exit__();") {
-                Ok(_) => Err(error),
-                Err(exit_error) => Err(exit_error),
-            },
+            Err(error) => {
+                // Preserve the original observable exception. The exit pump
+                // may itself return a control-flow completion, but replacing
+                // the assertion/error here would make every failed fixture
+                // look like an opaque `process.exit(1)`.
+                let _ = self.drive("__quench_run_exit__();");
+                Err(error)
+            }
             ok => ok.map(|_| ()),
         };
         Self::classify(result, self.host.exit_code())
@@ -238,6 +251,22 @@ impl NodeRunner {
                 Ok(quench_runtime::value::Value::Undefined)
             }
             result => result,
+        }
+    }
+}
+
+struct FixtureCwdGuard(Option<PathBuf>);
+
+impl FixtureCwdGuard {
+    fn capture() -> Self {
+        Self(std::env::current_dir().ok())
+    }
+}
+
+impl Drop for FixtureCwdGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.as_ref() {
+            let _ = std::env::set_current_dir(path);
         }
     }
 }

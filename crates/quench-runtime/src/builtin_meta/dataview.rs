@@ -14,8 +14,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ArrayBufferTransfer => Some("transfer"),
         Builtin::ArrayBufferTransferToFixedLength => Some("transferToFixedLength"),
         Builtin::DataViewBufferGetter => Some("get buffer"),
+        Builtin::TypedArrayBufferGetter => Some("get buffer"),
         Builtin::DataViewByteLengthGetter => Some("get byteLength"),
         Builtin::TypedArrayByteLengthGetter => Some("get byteLength"),
+        Builtin::TypedArrayByteOffsetGetter => Some("get byteOffset"),
+        Builtin::TypedArrayLengthGetter => Some("get length"),
+        Builtin::TypedArrayToStringTagGetter => Some("get [Symbol.toStringTag]"),
         Builtin::DataViewByteOffsetGetter => Some("get byteOffset"),
         Builtin::SharedArrayBufferByteLengthGetter => Some("get byteLength"),
         Builtin::SharedArrayBufferGrowableGetter => Some("get growable"),
@@ -31,8 +35,12 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::ArrayBufferIsView => Some(1.0),
         Builtin::DataViewBufferGetter
+        | Builtin::TypedArrayBufferGetter
         | Builtin::DataViewByteLengthGetter
         | Builtin::TypedArrayByteLengthGetter
+        | Builtin::TypedArrayByteOffsetGetter
+        | Builtin::TypedArrayLengthGetter
+        | Builtin::TypedArrayToStringTagGetter
         | Builtin::DataViewByteOffsetGetter
         | Builtin::SharedArrayBufferByteLengthGetter => Some(0.0),
         Builtin::ArrayBufferByteLengthGetter => Some(0.0),

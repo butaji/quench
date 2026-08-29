@@ -3,6 +3,11 @@ pub(crate) fn number_constant(key: &str) -> Option<Value> {
 }
 
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if key == "BYTES_PER_ELEMENT"
+        && is_typed_array_bytes_builtin(_builtin)
+    {
+        return false;
+    }
     if _builtin == Builtin::ArrayPrototype && key == "length" {
         return false;
     }
@@ -48,6 +53,34 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     true
 }
 
+pub(crate) fn is_typed_array_bytes_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Float64Array
+            | Builtin::Float64ArrayPrototype
+            | Builtin::Float32Array
+            | Builtin::Float32ArrayPrototype
+            | Builtin::Int8Array
+            | Builtin::Int8ArrayPrototype
+            | Builtin::Int16Array
+            | Builtin::Int16ArrayPrototype
+            | Builtin::Int32Array
+            | Builtin::Int32ArrayPrototype
+            | Builtin::Uint8Array
+            | Builtin::Uint8ArrayPrototype
+            | Builtin::Uint8ClampedArray
+            | Builtin::Uint8ClampedArrayPrototype
+            | Builtin::Uint16Array
+            | Builtin::Uint16ArrayPrototype
+            | Builtin::Uint32Array
+            | Builtin::Uint32ArrayPrototype
+            | Builtin::BigInt64Array
+            | Builtin::BigInt64ArrayPrototype
+            | Builtin::BigUint64Array
+            | Builtin::BigUint64ArrayPrototype
+    )
+}
+
 fn builtin_length(builtin: Builtin) -> f64 {
     use Builtin::*;
     if let Some(length) = data_view_length(builtin) {
@@ -66,7 +99,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         ArrayBuffer | Object | DataView => 1.0,
         ObjectCreate => 2.0,
         Float64Array | Float32Array | Int8Array | Int16Array | Uint16Array | Int32Array
-        | Uint32Array | Uint8ClampedArray | BigInt64Array | BigUint64Array => 3.0,
+        | Uint32Array | Uint8Array | Uint8ClampedArray | BigInt64Array | BigUint64Array => 3.0,
         MapEntries | MapKeys | MapValues | DateNow => 0.0,
         RegExp => 2.0,
         DateParse => 1.0,

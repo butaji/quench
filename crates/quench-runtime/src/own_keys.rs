@@ -81,7 +81,30 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
     let length = typed_array_length(value)?;
     let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     if let Some(meta) = value.typed_array_meta() {
-        for (key, _) in meta.own_properties() {
+        let mut names: Vec<String> = meta
+            .own_properties()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        for key in meta.descriptor_keys() {
+            if !names.iter().any(|current| current == &key) {
+                names.push(key);
+            }
+        }
+        for key in names {
+            let enumerable = meta
+                .descriptor(&key)
+                .and_then(|descriptor| match descriptor {
+                    Value::Object(fields) => fields
+                        .iter()
+                        .rev()
+                        .find_map(|(name, value)| (name == "enumerable").then_some(value)),
+                    _ => None,
+                })
+                .is_none_or(|value| matches!(value, Value::Boolean(true)));
+            if !enumerable {
+                continue;
+            }
             if !keys.iter().any(|current| current == &key) {
                 keys.push(key);
             }
@@ -91,7 +114,7 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
 }
 
 fn typed_array_length(value: &Value) -> Option<usize> {
-    Some(match value {
+    let length = match value {
         Value::Float64Array(view) => view.logical_len(),
         Value::Float32Array(view) => view.logical_len(),
         Value::Int8Array(view) => view.logical_len(),
@@ -104,12 +127,33 @@ fn typed_array_length(value: &Value) -> Option<usize> {
         Value::BigInt64Array(view) => view.logical_len(),
         Value::BigUint64Array(view) => view.logical_len(),
         _ => return None,
-    })
+    };
+    crate::typed_array_prototype::is_out_of_bounds(value)
+        .then_some(0)
+        .or(Some(length))
 }
 
 fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
     if let Some(keys) = script_global_view_keys(target) {
         return keys;
+    }
+    if matches!(target, Value::Proxy(_)) {
+        let Ok(Value::Array(keys)) = crate::proxy::proxy_own_keys(target) else {
+            return Vec::new();
+        };
+        return keys
+            .snapshot()
+            .into_iter()
+            .filter_map(|key| match key {
+                Value::String(key) if !key.contains('\0') => Some(key),
+                _ => None,
+            })
+            .filter(|key| {
+                crate::proxy::proxy_get_own_property_descriptor(target, key)
+                    .ok()
+                    .is_some_and(|descriptor| descriptor_enumerable_value(Some(&descriptor)))
+            })
+            .collect();
     }
     let target = crate::locals::resolved_replacement(target.clone());
     if let Some(keys) = typed_array_enumerable_keys(&target) {
@@ -353,10 +397,17 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
 ) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.entries().find(|(key, _)| *key == "_value")
     else {
-        let keys = ordered(properties, symbols)
+        let mut keys = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value" && key != "timeValue")
             .collect();
+        if !symbols
+            && properties
+                .entries()
+                .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+        {
+            append_global_keys(&mut keys);
+        }
         return filter_namespace_symbol_name(properties, symbols, keys);
     };
 
@@ -370,6 +421,18 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
         return filter_namespace_symbol_name(properties, symbols, keys);
     }
     boxed_string_keys(properties, &value, symbols)
+}
+
+fn append_global_keys(keys: &mut Vec<String>) {
+    for key in crate::globals::script_property_names()
+        .iter()
+        .copied()
+        .chain(["NaN", "Infinity", "undefined"])
+    {
+        if !keys.iter().any(|current| current == key) {
+            keys.push(key.to_string());
+        }
+    }
 }
 
 fn filter_namespace_symbol_name<P: crate::value::PropertyEntries + ?Sized>(
@@ -411,10 +474,23 @@ fn boxed_string_keys<P: crate::value::PropertyEntries + ?Sized>(
         .enumerate()
         .map(|(index, _)| index.to_string())
         .collect::<Vec<_>>();
-    let mut string_keys: Vec<String> = ordered(properties, false)
+    let ordered_keys: Vec<String> = ordered(properties, false)
         .into_iter()
         .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
         .collect();
+    let mut string_keys: Vec<String> = Vec::new();
+    let mut extra_indices: Vec<(u32, String)> = Vec::new();
+    for key in ordered_keys {
+        if let Some(index) = array_index(&key) {
+            if !keys.iter().any(|existing| existing == &key) {
+                extra_indices.push((index, key));
+            }
+        } else {
+            string_keys.push(key);
+        }
+    }
+    extra_indices.sort_by_key(|(index, _)| *index);
+    keys.extend(extra_indices.into_iter().map(|(_, key)| key));
     // Ensure "length" is present and appears first among the non-index
     // string keys, in creation order. `Object.defineProperty` may have
     // re-defined or removed the own `length` slot; if it is missing,
@@ -454,6 +530,28 @@ fn descriptor_enumerable_value(descriptor: Option<&Value>) -> bool {
 }
 
 fn keys(target: &Value, symbols: bool) -> Vec<String> {
+    if matches!(target, Value::Proxy(_)) {
+        return crate::proxy::proxy_own_keys(target)
+            .ok()
+            .and_then(|value| match value {
+                Value::Array(values) => Some(
+                    values
+                        .snapshot()
+                        .into_iter()
+                        .filter_map(|value| match value {
+                            Value::String(key)
+                                if crate::conversion::is_symbol_string(&key) == symbols =>
+                            {
+                                Some(key)
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
+    }
     match target {
         Value::Object(properties) => object_keys(properties.as_ref(), symbols),
         Value::ObjectAlias(alias) => alias
@@ -468,11 +566,40 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             string_keys(value, symbols)
         }
         Value::Builtin(builtin) => builtin_keys(*builtin, symbols),
-        value => value
-            .typed_array_meta()
-            .map(|meta| ordered(&meta.own_properties()[..], symbols))
-            .unwrap_or_default(),
+        value if typed_array_length(value).is_some() => typed_array_own_keys(value, symbols),
+        _ => Vec::new(),
     }
+}
+
+fn typed_array_own_keys(value: &Value, symbols: bool) -> Vec<String> {
+    let length = typed_array_length(value).unwrap_or(0);
+    if symbols {
+        return value
+            .typed_array_meta()
+            .map(|meta| {
+                ordered(&meta.own_properties()[..], true)
+                    .into_iter()
+                    .filter(|key| crate::conversion::is_symbol_string(key))
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
+    if let Some(meta) = value.typed_array_meta() {
+        let mut names = meta.own_properties();
+        names.extend(
+            meta.descriptor_keys()
+                .into_iter()
+                .map(|key| (key, Value::Undefined)),
+        );
+        let extras: Vec<String> = ordered(&names[..], false)
+            .into_iter()
+            .filter(|key| !crate::conversion::is_symbol_string(key))
+            .filter(|key| !keys.iter().any(|current| current == key))
+            .collect();
+        keys.extend(extras);
+    }
+    keys
 }
 
 fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
