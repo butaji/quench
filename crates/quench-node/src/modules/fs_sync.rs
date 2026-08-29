@@ -286,10 +286,15 @@ pub fn realpath_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    super::fs::parse_options(args.get(1))?;
+    let options = super::fs::parse_options(args.get(1))?;
     let canon = std::fs::canonicalize(Path::new(&path))
         .map_err(|e| super::fs_error::fs_error("realpath", Some(&path), &e))?;
-    Ok(Value::String(canon.to_string_lossy().into_owned()))
+    let canon = canon.to_string_lossy().into_owned();
+    Ok(match options.encoding.as_deref() {
+        Some("buffer") => super::buffer_proto::make_buffer(canon.as_bytes()),
+        Some(encoding) => crate::modules::buffer_enc::decode_str(canon.as_bytes(), encoding),
+        None => Value::String(canon),
+    })
 }
 
 pub fn mkdir_sync(
