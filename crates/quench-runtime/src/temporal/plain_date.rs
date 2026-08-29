@@ -2038,8 +2038,9 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         .filter(|value| !matches!(value, Value::Undefined))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid calendar"))?;
     let target = match calendar {
-        Value::String(name) => canonical_calendar_id(name).unwrap_or_else(|| name.clone()),
-        Value::StringUnits(_) => crate::conversion::to_string(calendar)?,
+        Value::String(_) | Value::StringUnits(_) => {
+            crate::temporal::parse_calendar_identifier(calendar)?
+        }
         Value::Object(value)
             if value.iter().any(|(key, value)| {
                 key == "calendarId" && value == Value::String("iso8601".into())
@@ -2049,13 +2050,6 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         }
         _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
     };
-    if matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
-        if !is_iso_calendar_value(calendar)? {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
-        }
-    } else if !matches!(calendar, Value::Object(_)) {
-        return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    }
     let source = calendar_name(object);
     if source != target {
         return convert_calendar(object, &source, &target);
@@ -2211,7 +2205,15 @@ fn with(
         if let Value::String(code) =
             crate::execute::get_property_result(receiver.unwrap(), "monthCode")?
         {
-            if code.ends_with('L') {
+            if let Some((ordinal, _)) = calendar_date_from_code(
+                year as i32,
+                &code,
+                1,
+                &receiver_calendar,
+            ) {
+                month_code_text = Some(code);
+                explicit_month = ordinal as f64;
+            } else if code.ends_with('L') {
                 if calendar_date_from_code(year as i32, &code, 1, &receiver_calendar).is_some() {
                     month_code_text = Some(code);
                 } else if overflow == "reject" {
