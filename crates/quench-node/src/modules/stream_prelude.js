@@ -71,6 +71,24 @@
       };
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.once(name, wrapper);
+      if (name === "data" && this._readableState) {
+        this.resume();
+        if (!this._readableState.reading && !this._readableState.ended) {
+          requestRead(this);
+        }
+        if (this._readableState.buffer.length > 0 || this.__quenchIterator) {
+          flowReadable(this);
+        }
+      }
+      if (name === "readable" && this._readableState) {
+        this._readableState.readableListenerTurnPending = true;
+        const state = this._readableState;
+        nextTick(() => { state.readableListenerTurnPending = false; });
+        if (!this._readableState.reading && !this._readableState.ended) {
+          this._readableState.flowing = false;
+          requestRead(this);
+        }
+      }
       return this;
     },
     prependListener(name, fn) {
@@ -1896,33 +1914,99 @@
     if (pair) return DuplexCompat.fromWeb(pair, options);
     return Readable.from(source, options);
   };
-  DuplexCompat.fromWeb = (pair, options) =>
-    (() => {
-      const readable = pair?.readable;
-      const reader = readable?.getReader?.();
-      if (!reader) return pair;
-      let reading = false;
-      return new Duplex({
-        ...options,
-        readable: true,
-        writable: false,
-        read() {
-          if (reading) return;
-          reading = true;
-          reader.read().then(({ value, done }) => {
+  DuplexCompat.fromWeb = (pair, options = {}) => {
+    const readable = pair?.readable;
+    const writable = pair?.writable;
+    const reader = readable?.getReader?.();
+    const writer = writable?.getWriter?.();
+    if (!reader && !writer) return pair;
+    let reading = false;
+    return new Duplex({
+      ...options,
+      readable: !!reader,
+      writable: !!writer,
+      read() {
+        if (!reader || reading) return;
+        reading = true;
+        Promise.resolve(reader.read()).then(({ value, done }) => {
           reading = false;
-            if (done) {
-              this.push(null);
-              this.readable = false;
-            }
-            else this.push(value);
-          }, (error) => {
-            reading = false;
-            this.destroy(error);
-          });
-        }
+          if (done) this.push(null);
+          else this.push(value);
+        }, (error) => {
+          reading = false;
+          this.destroy(error);
+        });
+      },
+      write(chunk, _encoding, callback) {
+        if (!writer) return callback();
+        Promise.resolve(writer.write(chunk)).then(() => callback(), callback);
+      },
+      final(callback) {
+        if (!writer) return callback();
+        Promise.resolve(writer.close()).then(() => callback(), callback);
+      },
+      destroy(error, callback) {
+        const closing = error ? writer?.abort(error) : undefined;
+        Promise.resolve(closing).then(() => reader?.cancel(error), () => {})
+          .then(() => callback(error), callback);
+      }
+    });
+  };
+
+  DuplexCompat.toWeb = (duplex, options = {}) => {
+    if (!duplex || typeof duplex.on !== "function" ||
+        typeof duplex.write !== "function") {
+      throw Object.assign(new TypeError("The duplex argument must be a Duplex"), {
+        code: "ERR_INVALID_ARG_TYPE"
       });
-    })();
+    }
+    const web = globalThis.__quenchWebStreams || {};
+    const ReadableStream = web.ReadableStream || globalThis.ReadableStream;
+    const WritableStream = web.WritableStream || globalThis.WritableStream;
+    if (typeof ReadableStream !== "function" || typeof WritableStream !== "function") {
+      throw new Error("WebStreams are unavailable");
+    }
+    if (options.type !== undefined && options.readableType === undefined) {
+      process.emitWarning(
+        "Passing 'options.type' to Duplex.toWeb() is deprecated. Use 'options.readableType' instead.",
+        { name: "DeprecationWarning", code: "DEP0201" }
+      );
+    }
+    const readable = new ReadableStream({
+      start(controller) {
+        duplex.on("data", (chunk) => controller.enqueue(chunk));
+        duplex.once("end", () => controller.close());
+        duplex.once("error", (error) => controller.error(error));
+      },
+      cancel(reason) {
+        duplex.destroy?.(reason);
+      }
+    });
+    const writable = new WritableStream({
+      write(chunk) {
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const done = (error) => {
+            if (settled) return;
+            settled = true;
+            if (error) reject(error);
+            else resolve();
+          };
+          try { duplex.write(chunk, done); } catch (error) { done(error); }
+        });
+      },
+      close() {
+        return new Promise((resolve, reject) => {
+          try { duplex.end((error) => error ? reject(error) : resolve()); }
+          catch (error) { reject(error); }
+        });
+      },
+      abort(reason) {
+        duplex.destroy?.(reason);
+      }
+    });
+    return { readable, writable };
+  };
 
   return {
     Readable,
