@@ -415,6 +415,19 @@ pub(crate) fn emit(
     event: &str,
     args: Vec<Value>,
 ) -> Result<(), VmError> {
+    if event == "close"
+        && matches!(
+            execute::get_property(receiver, crate::modules::http::INCOMING_CLOSE_PENDING_PROP),
+            Value::Boolean(true)
+        )
+    {
+        execute::set_property_in_place(receiver, "closed", Value::Boolean(true));
+        execute::set_property_in_place(
+            receiver,
+            crate::modules::http::INCOMING_CLOSE_PENDING_PROP,
+            Value::Boolean(false),
+        );
+    }
     let id = emitter_id(receiver).or_else(|| state.borrow().emitters.identity(receiver));
     let listeners: Vec<Listener> = id
         .and_then(|id| state.borrow().emitters.get(id))
