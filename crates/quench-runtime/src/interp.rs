@@ -895,7 +895,11 @@ fn step_call_indirect(
     args: &[u16],
     dsts: &[u16],
 ) -> Result<Step, Failure> {
-    let i = read_i32(regs, index)? as u32 as usize;
+    let i = match regs[index as usize] {
+        Slot::Native(Native::I32(v)) => v as u32 as usize,
+        Slot::Native(Native::I64(v)) => v as u64 as usize,
+        _ => return Err(Failure::Trap(Trap::Unimplemented)),
+    };
     let tab = vm
         .table(table)
         .ok_or(Failure::Trap(Trap::OutOfBoundsTable))?;
