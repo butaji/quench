@@ -1,0 +1,61 @@
+//! Dynamic layer: QuickJS architecture, Native | Fast | Dynamic ladder.
+//!
+//! JSValue, atoms, shapes, Runtime/Context, RC+cycle GC, and stack bytecode
+//! are the facts. Native is the INT/float fast path; Fast is a guarded climb;
+//! Box/Guard are the only crossings. This is not a second object type.
+
+mod atom;
+mod jsvalue;
+mod opcode;
+mod rt;
+mod shape;
+
+pub use atom::{Atom, AtomTable};
+pub use jsvalue::{JsValue, Tag};
+pub use opcode::{Bytecode, Op, StackUse};
+pub use rt::{Context, GcHeader, JsString, Object, Runtime};
+pub use shape::{Shape, ShapeId, ShapeTable, PROP_CONFIGURABLE, PROP_CWE, PROP_ENUMERABLE, PROP_WRITABLE};
+
+/// Dynamic payload. One representation: a QuickJS JSValue. Not `value::Value`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Dynamic {
+    inner: JsValue,
+}
+
+impl Dynamic {
+    pub fn from_js(inner: JsValue) -> Self {
+        Self { inner }
+    }
+
+    pub fn from_number(value: f64) -> Self {
+        Self {
+            inner: JsValue::from_number(value),
+        }
+    }
+
+    pub fn undefined() -> Self {
+        Self {
+            inner: JsValue::Undefined,
+        }
+    }
+
+    pub fn as_js(&self) -> &JsValue {
+        &self.inner
+    }
+
+    pub fn as_number(&self) -> Option<f64> {
+        self.inner.as_f64()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Dynamic, Tag};
+
+    #[test]
+    fn number_round_trip() {
+        assert_eq!(Dynamic::from_number(3.0).as_number(), Some(3.0));
+        assert_eq!(Dynamic::from_number(3.0).as_js().tag(), Tag::Int);
+        assert_eq!(Dynamic::undefined().as_number(), None);
+    }
+}
