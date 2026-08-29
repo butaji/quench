@@ -9,7 +9,6 @@ use wasmparser::WasmFeatures;
 use wast::core::{WastArgCore, WastRetCore};
 use wast::{QuoteWat, WastArg, WastExecute, WastInvoke, WastRet, Wat};
 
-use crate::lower::lower_binary;
 use crate::wast_script::DirectiveResult;
 
 pub struct Store {
@@ -77,12 +76,9 @@ impl Store {
     }
 
     fn try_build(&self, bytes: &[u8], features: WasmFeatures) -> Result<Instance, InvokeError> {
-        let hir = lower_binary(bytes, features).map_err(|_| InvokeError::Unimplemented)?;
-        let mut resolved = Vec::new();
-        for import in hir.imports.iter() {
-            resolved.push(self.lookup(&import.module, &import.name, &import.kind, &hir.types)?);
-        }
-        Instance::from_hir_imports(hir, resolved)
+        Instance::from_bytes(bytes, features, |module, name, kind, types| {
+            self.lookup(module, name, kind, types)
+        })
     }
 
     fn lookup(

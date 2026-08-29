@@ -12,7 +12,7 @@ struct Frame {
     regs: Vec<Slot>,
     dsts: Box<[u16]>,
     handlers: Vec<Box<[crate::hir::CatchClause]>>,
-    caught: Option<(u32, Vec<Slot>)>,
+    caught: Vec<(u32, Vec<Slot>)>,
 }
 
 enum Step {
@@ -156,7 +156,7 @@ fn tail_values(
             regs: values,
             dsts,
             handlers: Vec::new(),
-            caught: None,
+            caught: Vec::new(),
         };
     }
     Ok(())
@@ -236,7 +236,7 @@ fn new_frame(vm: &Instance, func: u32, args: &[Slot], dsts: Box<[u16]>) -> Resul
                 regs: Vec::new(),
                 dsts,
                 handlers: Vec::new(),
-                caught: None,
+                caught: Vec::new(),
             });
         }
         _ => return Err(Failure::Trap(Trap::Unimplemented)),
@@ -249,7 +249,7 @@ fn new_frame(vm: &Instance, func: u32, args: &[Slot], dsts: Box<[u16]>) -> Resul
         regs,
         dsts,
         handlers: Vec::new(),
-        caught: None,
+        caught: Vec::new(),
     })
 }
 
@@ -300,8 +300,12 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
         Inst::ThrowRef { src } => {
             return throw_ref(vm, &frame.regs, *src);
         }
-        Inst::Rethrow => {
-            return match &frame.caught {
+        Inst::Rethrow { depth } => {
+            let i = frame
+                .caught
+                .len()
+                .saturating_sub(1 + *depth as usize);
+            return match frame.caught.get(i) {
                 Some((tag, args)) => Err(Failure::Exception {
                     tag: *tag,
                     args: args.clone(),
@@ -651,7 +655,7 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
         Inst::Gc { .. }
         | Inst::Throw { .. }
         | Inst::ThrowRef { .. }
-        | Inst::Rethrow
+        | Inst::Rethrow { .. }
         | Inst::TryBegin { .. }
         | Inst::TryEnd => Ok(Step::Next),
         Inst::Guard { dst, src, kind } => {
@@ -803,7 +807,7 @@ fn catch_in(vm: &Instance, frame: &mut Frame, tag: u32, args: &[Slot]) -> bool {
                     let r = crate::gc::alloc_exn(&mut vm.gc().borrow_mut(), tag, args.to_vec());
                     payload.push(Slot::Native(Native::Ref(r)));
                 }
-                frame.caught = Some((tag, args.to_vec()));
+                frame.caught.push((tag, args.to_vec()));
                 write_returns(&mut frame.regs, &catch.dsts, payload);
                 frame.pc = catch.target as usize;
                 frame.handlers.truncate(idx);
@@ -866,15 +870,7 @@ fn step_call_ref(
         RefVal::Func { inst, index } => (inst, index),
         _ => return Err(Failure::Trap(Trap::IndirectCallMismatch)),
     };
-    let want = vm
-        .types()
-        .get(type_idx as usize)
-        .ok_or(Failure::Trap(Trap::IndirectCallMismatch))?;
-    let callee = instance::lookup_func(inst, index).ok_or(Failure::Trap(Trap::Unimplemented))?;
-    let got = callee
-        .func_sig(index)
-        .ok_or(Failure::Trap(Trap::IndirectCallMismatch))?;
-    if got != *want {
+    if !crate::gc::func_type_ok(vm, inst, index, type_idx, false) {
         return Err(Failure::Trap(Trap::IndirectCallMismatch));
     }
     Ok(Step::Call {
@@ -911,15 +907,7 @@ fn step_call_indirect(
         None => return Err(Failure::Trap(Trap::UndefinedElement)),
     };
     drop(tab);
-    let want = vm
-        .types()
-        .get(type_idx as usize)
-        .ok_or(Failure::Trap(Trap::IndirectCallMismatch))?;
-    let callee = instance::lookup_func(inst, func).ok_or(Failure::Trap(Trap::Unimplemented))?;
-    let got = callee
-        .func_sig(func)
-        .ok_or(Failure::Trap(Trap::IndirectCallMismatch))?;
-    if got != *want {
+    if !crate::gc::func_type_ok(vm, inst, func, type_idx, false) {
         return Err(Failure::Trap(Trap::IndirectCallMismatch));
     }
     Ok(Step::Call {

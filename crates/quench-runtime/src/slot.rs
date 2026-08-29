@@ -1,4 +1,4 @@
-//! One register slot: the layer tag is the representation.
+//! One register slot: Native | Fast | Dynamic. Storage is on the payload.
 
 use crate::dynamic::Dynamic;
 use crate::fast::Fast;
@@ -20,6 +20,15 @@ impl Slot {
             Self::Native(_) => Layer::Native,
             Self::Fast(_) => Layer::Fast,
             Self::Dynamic(_) => Layer::Dynamic,
+        }
+    }
+
+    pub fn storage(&self) -> crate::layer::Storage {
+        match self {
+            Self::Native(crate::native::Native::Ref(_)) | Self::Dynamic(_) => {
+                crate::layer::Storage::Gc
+            }
+            _ => crate::layer::Storage::Arena,
         }
     }
 
@@ -97,5 +106,17 @@ mod tests {
         assert_eq!(dynamic.layer(), crate::layer::Layer::Dynamic);
         let fast = dynamic.guard(GuardKind::I32).expect("guard");
         assert_eq!(fast, Slot::Fast(crate::fast::Fast::I32(7)));
+    }
+
+    #[test]
+    fn native_scalar_is_arena_ref_is_gc() {
+        assert_eq!(
+            Slot::native_i32(1).storage(),
+            crate::layer::Storage::Arena
+        );
+        assert_eq!(
+            Slot::Native(crate::native::Native::Ref(crate::native::RefVal::Null)).storage(),
+            crate::layer::Storage::Gc
+        );
     }
 }

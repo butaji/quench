@@ -1,17 +1,17 @@
-//! One ladder: Native, Fast, Dynamic.
+//! VM DSL: Native | Fast | Dynamic, and Arena + GC.
 //!
-//! A layer is a property of a representation and of an operation, not of a
-//! language. Frontends only choose the default; a guard or a box is the only
-//! crossing. There is no per-language object type.
+//! Two independent facts. Layer is how much is known. Storage is where the
+//! payload lives. The store uses both: Native i32 is Arena; Native structref
+//! is GC. QuickJS (`dynamic::Runtime`) is the JS layer on top, not Storage.
 
 use crate::facts::Fact;
 
-/// How a payload is stored. Arena is bump/reset; Gc is QuickJS RC + cycle.
+/// Store storage. Arena and GC both exist; neither is "the" layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Storage {
-    /// Native linear memory, instance GC heap, bytecode. Freed as a region.
+    /// Linear memory, tables, bytecode, unboxed locals. Reset as a region.
     Arena,
-    /// Dynamic objects. QuickJS refcount plus a cycle pass. No explicit roots.
+    /// Store GC heap: structs, arrays, exns.
     Gc,
 }
 
@@ -52,12 +52,6 @@ impl Layer {
         }
     }
 
-    pub fn storage(self) -> Storage {
-        match self {
-            Self::Native => Storage::Arena,
-            Self::Fast | Self::Dynamic => Storage::Gc,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -79,9 +73,9 @@ mod tests {
     }
 
     #[test]
-    fn native_is_arena_dynamic_is_gc() {
-        assert_eq!(Layer::Native.storage(), super::Storage::Arena);
-        assert_eq!(Layer::Fast.storage(), super::Storage::Gc);
-        assert_eq!(Layer::Dynamic.storage(), super::Storage::Gc);
+    fn layer_and_storage_are_independent() {
+        assert_ne!(super::Storage::Arena, super::Storage::Gc);
+        assert_eq!(Layer::join(Layer::Native, Layer::Fast), Layer::Fast);
+        assert_eq!(Layer::join(Layer::Fast, Layer::Dynamic), Layer::Dynamic);
     }
 }

@@ -355,6 +355,8 @@ mod tests {
             "simd_store16_lane.wast",
             "simd_store32_lane.wast",
             "simd_store64_lane.wast",
+            "relaxed_dot_product.wast",
+            "relaxed_madd_nmadd.wast",
         ] {
             let report = suite.run_file(root.join(rel));
             for result in &report.results {
@@ -462,6 +464,9 @@ mod tests {
             "legacy/try_catch.wast",
             "legacy/throw.wast",
             "legacy/rethrow.wast",
+            "legacy/try_delegate.wast",
+            "type-subtyping.wast",
+            "linking0.wast",
         ] {
             let report = suite.run_file(root.join(rel));
             for result in &report.results {
@@ -475,6 +480,42 @@ mod tests {
             "{} gc/exn failures:\n{}",
             failed.len(),
             failed.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+        );
+    }
+
+    #[test]
+    fn vendored_custom_descriptors_execute() {
+        let root = testsuite_root();
+        let suite = TestSuite::new(&root);
+        let mut failed = Vec::new();
+        for rel in [
+            "proposals/custom-descriptors/struct_new_desc.wast",
+            "proposals/custom-descriptors/ref_get_desc.wast",
+            "proposals/custom-descriptors/ref_cast_desc_eq.wast",
+            "proposals/custom-descriptors/br_on_cast_desc_eq.wast",
+            "proposals/custom-descriptors/br_on_cast_desc_eq_fail.wast",
+            "proposals/custom-descriptors/exact-casts.wast",
+            "proposals/custom-descriptors/exact.wast",
+            "proposals/custom-descriptors/descriptors.wast",
+            "proposals/custom-descriptors/array_new_exact.wast",
+            "proposals/custom-descriptors/br_on_cast.wast",
+            "proposals/custom-descriptors/br_on_cast_fail.wast",
+            "proposals/custom-descriptors/exact-func-import.wast",
+            "proposals/custom-descriptors/binary.wast",
+            "proposals/custom-descriptors/binary-descriptors.wast",
+        ] {
+            let report = suite.run_file(root.join(rel));
+            for result in &report.results {
+                if !result.passed {
+                    failed.push(result.format_line(rel));
+                }
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "{} custom-descriptors failures:\n{}",
+            failed.len(),
+            failed.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
         );
     }
 

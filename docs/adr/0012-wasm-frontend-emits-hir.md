@@ -1,5 +1,7 @@
-# Wasm frontend emits HIR
+# Format crate vs VM crate
 
-`quench-wasm` parses, validates, and translates Wasm into the runtime’s common HIR. `quench-runtime` owns HIR, specialises HIR to MIR, and interprets. The Wasm crate does not execute; the runtime does not decode Wasm bytes.
+`quench-wasm` is the Wasm **format**: parse, validate, wast scoring. `quench-runtime` is the **VM**: load bytes into the store, instantiate, interpret Native | Fast | Dynamic with Arena | GC.
 
-**Considered Options**: runtime performs Wasm→HIR; frontend emits MIR and skips HIR.
+**Considered Options**: frontend lowers to HIR; runtime never sees Wasm bytes.
+
+**Decision**: the VM loads validated binaries (`wasm::load`). The format crate does not own execute or a second lowering compiler.

@@ -8,18 +8,31 @@ pub enum GcStorage {
     I8,
     I16,
     Val(crate::hir::Kind),
+    /// Packed as a typed ref so rec-group identity is data.
+    Ref { type_idx: Option<u32> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GcType {
-    Func,
+    Func {
+        super_idx: Option<u32>,
+        descriptor_idx: Option<u32>,
+        describes_idx: Option<u32>,
+        is_final: bool,
+    },
     Struct {
         fields: Box<[GcStorage]>,
         super_idx: Option<u32>,
+        descriptor_idx: Option<u32>,
+        describes_idx: Option<u32>,
+        is_final: bool,
     },
     Array {
         elem: GcStorage,
         super_idx: Option<u32>,
+        descriptor_idx: Option<u32>,
+        describes_idx: Option<u32>,
+        is_final: bool,
     },
 }
 
@@ -27,6 +40,8 @@ pub enum GcType {
 pub enum GcOp {
     StructNewDefault { type_idx: u32 },
     StructNew { type_idx: u32 },
+    StructNewDesc { type_idx: u32 },
+    StructNewDefaultDesc { type_idx: u32 },
     StructGet {
         field: u32,
         signed: Option<bool>,
@@ -47,12 +62,25 @@ pub enum GcOp {
     ArrayInitElem { elem: u32 },
     RefCast {
         nullable: bool,
+        exact: bool,
         heap: crate::hir::HeapKind,
         type_idx: Option<u32>,
     },
     RefTest {
         nullable: bool,
+        exact: bool,
         heap: crate::hir::HeapKind,
+        type_idx: Option<u32>,
+    },
+    RefGetDesc,
+    RefCastDesc {
+        nullable: bool,
+        exact: bool,
+        type_idx: Option<u32>,
+    },
+    RefTestDesc {
+        nullable: bool,
+        exact: bool,
         type_idx: Option<u32>,
     },
     AnyConvertExtern,

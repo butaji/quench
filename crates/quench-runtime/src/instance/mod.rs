@@ -90,7 +90,7 @@ pub(crate) struct Inner {
     pub elems: RefCell<Vec<Option<Box<[RefVal]>>>>,
     pub tags: Box<[FuncSig]>,
     pub gc_types: Box<[crate::hir::GcType]>,
-    pub gc: RefCell<crate::gc::GcHeap>,
+    pub gc: Rc<RefCell<crate::gc::GcHeap>>,
     pub tag_ids: Box<[u32]>,
     pub exports: HashMap<String, Export>,
     pub start: Option<u32>,
@@ -129,6 +129,30 @@ impl Instance {
         build::from_hir_imports(module, resolved)
     }
 
+    /// VM load: bytes → instance. Import lookup stays at the format/host edge.
+    pub fn from_bytes(
+        bytes: &[u8],
+        features: wasmparser::WasmFeatures,
+        mut lookup: impl FnMut(
+            &str,
+            &str,
+            &crate::hir::ImportKind,
+            &[FuncSig],
+        ) -> Result<ResolvedImport, InvokeError>,
+    ) -> Result<Self, InvokeError> {
+        let hir = crate::wasm::load(bytes, features).map_err(|_| InvokeError::Unimplemented)?;
+        let mut resolved = Vec::new();
+        for import in hir.imports.iter() {
+            resolved.push(lookup(
+                &import.module,
+                &import.name,
+                &import.kind,
+                &hir.types,
+            )?);
+        }
+        Self::from_hir_imports(hir, resolved)
+    }
+
     pub fn unsupported() -> Self {
         let id = registry::alloc_id();
         let inner = Rc::new(Inner {
@@ -143,7 +167,7 @@ impl Instance {
             elems: RefCell::new(Vec::new()),
             tags: Box::new([]),
             gc_types: Box::new([]),
-            gc: RefCell::new(crate::gc::GcHeap::default()),
+            gc: registry::heap(),
             tag_ids: Box::new([]),
             exports: HashMap::new(),
             start: None,
@@ -193,7 +217,7 @@ impl Instance {
     }
 
     pub fn gc(&self) -> &RefCell<crate::gc::GcHeap> {
-        &self.inner.gc
+        self.inner.gc.as_ref()
     }
 
     pub fn gc_type(&self, index: u32) -> Option<crate::hir::GcType> {
@@ -447,7 +471,7 @@ fn spectest() -> Instance {
         elems: RefCell::new(Vec::new()),
         tags: Box::new([]),
         gc_types: Box::new([]),
-        gc: RefCell::new(crate::gc::GcHeap::default()),
+        gc: registry::heap(),
         tag_ids: Box::new([]),
         exports,
         start: None,
@@ -462,6 +486,10 @@ fn func_sig(params: &[Kind], results: &[Kind]) -> FuncSig {
         results: results.to_vec().into_boxed_slice(),
         rec_len: 1,
         rec_index: 0,
+        has_super: false,
+        is_final: true,
+        sub_depth: 0,
+        chain: Box::new([]),
     }
 }
 
