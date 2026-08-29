@@ -1738,16 +1738,17 @@ mod stubs {
                     );
                     serial
                         .or_else(|| {
-                            (!code.ends_with('L')).then(|| {
+                            if !code.ends_with('L') {
                                 super::plain_date::calendar_date_serial(
                                     year as f64,
                                     month as f64,
                                     day as f64,
                                     &calendar,
                                 )
-                            })
+                            } else {
+                                None
+                            }
                         })
-                        .flatten()
                         .ok_or_else(|| {
                             crate::value::error::throw_range_error("Invalid monthCode")
                         })?
