@@ -444,6 +444,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             "era and eraYear must be provided together",
         ));
     }
+    if era_year_provided {
+        let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+    }
     let year_number = crate::conversion::to_number(&year_value)?;
     if !matches!(year_value, Value::Undefined) && !year_number.is_finite() {
         return Err(crate::value::error::throw_range_error(
@@ -737,6 +743,13 @@ fn to_plain_date(
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
     let year_value = crate::execute::get_property_result(date_fields, "year")?;
+    let era_year = crate::execute::get_property_result(date_fields, "eraYear")?;
+    if !matches!(era_year, Value::Undefined) {
+        let era_year = crate::conversion::to_number(&era_year)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+    }
     if matches!(year_value, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing year"));
     }
