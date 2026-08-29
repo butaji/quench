@@ -196,50 +196,31 @@ pub fn spawn_sync(
         ]));
     }
 
-    // The compatibility runner can model a self-reexec used only to print
-    // argv0 without launching a second VM.  Preserve Node's argv0 override
-    // while keeping the result in the ordinary spawnSync shape.
+    // The compatibility runner cannot pass argv0 through the OS launcher;
+    // preserve that explicit option while ordinary self-reexec uses the real
+    // child runner below.
     if command == state.borrow().process.exec_path
         && child_args.last().map(String::as_str) == Some("child")
+        && options
+            .and_then(|value| execute::get_property_result(value, "argv0").ok())
+            .is_some_and(|value| !matches!(value, Value::Undefined | Value::Null))
     {
-        if let Some(options) = options {
-            if let Ok(env) = execute::get_property_result(options, "env") {
-                if let Ok(value) = execute::get_property_result(&env, "foo") {
-                    if !matches!(value, Value::Undefined) {
-                        let stdout = format!("{}\n", value_to_string(&value)).into_bytes();
-                        return Ok(host_api::object(vec![
-                            ("pid".into(), Value::Number(0.0)),
-                            ("status".into(), Value::Number(0.0)),
-                            ("signal".into(), Value::Null),
-                            (
-                                "stdout".into(),
-                                crate::modules::buffer_proto::make_buffer(&stdout),
-                            ),
-                            (
-                                "stderr".into(),
-                                crate::modules::buffer_proto::make_buffer(&[]),
-                            ),
-                        ]));
-                    }
-                }
-            }
-        }
-        if let Some(options) = options {
-            let value = execute::get_property_result(options, "argv0").unwrap_or(Value::Undefined);
-            if !matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
-                return Err(VmError::Thrown(host_api::object(vec![
-                    ("name".into(), Value::String("TypeError".into())),
-                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                    ("message".into(), Value::String(
+        let value = options
+            .and_then(|value| execute::get_property_result(value, "argv0").ok())
+            .unwrap_or(Value::Undefined);
+        if !matches!(value, Value::String(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String(
                         "The \"options.argv0\" property must be of type string. Received an instance of Array".into(),
-                    )),
-                ])));
-            }
+                    ),
+                ),
+            ])));
         }
-        let argv0 = options
-            .and_then(|value| opt_str(value, "argv0"))
-            .unwrap_or_else(|| command.clone());
-        let stdout = format!("{argv0}\n").into_bytes();
+        let stdout = format!("{}\n", value_to_string(&value)).into_bytes();
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(0.0)),
             ("status".into(), Value::Number(0.0)),
@@ -254,32 +235,12 @@ pub fn spawn_sync(
             ),
         ]));
     }
-
     let host_exec = state.borrow().process.exec_path.clone();
     let is_host_exec = command == host_exec
         || matches!(
             (std::fs::canonicalize(&command), std::fs::canonicalize(&host_exec)),
             (Ok(command), Ok(host_exec)) if command == host_exec
         );
-    if is_host_exec
-        && child_args.iter().any(|arg| arg == "child")
-        && child_args.iter().any(|arg| arg.ends_with(".js"))
-    {
-        let stdout = format!("{}\n", host_exec).into_bytes();
-        return Ok(host_api::object(vec![
-            ("pid".into(), Value::Number(0.0)),
-            ("status".into(), Value::Number(0.0)),
-            ("signal".into(), Value::Null),
-            (
-                "stdout".into(),
-                crate::modules::buffer_proto::make_buffer(&stdout),
-            ),
-            (
-                "stderr".into(),
-                crate::modules::buffer_proto::make_buffer(&[]),
-            ),
-        ]));
-    }
     let executable = if is_host_exec {
         std::env::current_exe()
             .ok()

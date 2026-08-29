@@ -164,8 +164,19 @@ fn classify(result: Result<(), VmError>, exit_code: Option<i32>) -> RunOutcome {
         (_, Some(code)) => RunOutcome::ok(code),
         (Ok(_), None) => RunOutcome::success(),
         // Top-level uncaught exception: report it and exit 1.
-        (Err(error), None) => RunOutcome::fail(1, error.render()),
+        (Err(error), None) => RunOutcome::fail(1, uncaught_render(&error)),
     }
+}
+
+fn uncaught_render(error: &VmError) -> String {
+    if let VmError::Thrown(value) = error {
+        if matches!(value, Value::Null | Value::Undefined)
+            || matches!(value, Value::String(text) if text.starts_with("Symbol.") && text.contains('\0'))
+        {
+            return format!("Error: {}", error.render());
+        }
+    }
+    error.render()
 }
 
 /// Execute a tiny driver snippet (e.g. `__quench_run_loop__();`) in
