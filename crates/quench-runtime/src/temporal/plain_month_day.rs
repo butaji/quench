@@ -294,7 +294,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         let month = month_code.trim_start_matches('M').parse().unwrap_or(0.0);
         let year = reference_year(value);
         let day = apply_overflow(year, month, day, reject)?;
-        return construct_with_year(month, day, year);
+        let calendar = crate::execute::get_property_result(value, "calendarId")
+            .ok()
+            .and_then(|value| crate::conversion::to_string(&value).ok())
+            .unwrap_or_else(|| "iso8601".into());
+        return Ok(set_calendar_id(construct_with_year(month, day, year)?, &calendar));
     }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     validate_calendar(&calendar)?;
@@ -462,8 +466,18 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let other = from(other, None)?;
+    let receiver_calendar = crate::execute::get_property_result(receiver, "calendarId")
+        .ok()
+        .and_then(|value| crate::conversion::to_string(&value).ok())
+        .unwrap_or_else(|| "iso8601".into());
+    let other_calendar = crate::execute::get_property_result(&other, "calendarId")
+        .ok()
+        .and_then(|value| crate::conversion::to_string(&value).ok())
+        .unwrap_or_else(|| "iso8601".into());
     Ok(Value::Boolean(
-        fields(receiver)? == fields(&other)? && reference_year(receiver) == reference_year(&other),
+        fields(receiver)? == fields(&other)?
+            && reference_year(receiver) == reference_year(&other)
+            && receiver_calendar == other_calendar,
     ))
 }
 
