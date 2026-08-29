@@ -1583,6 +1583,8 @@ fn to_zoned_date_time(
     } else {
         (argument.clone(), Value::Undefined)
     };
+    let explicit_plain_time = crate::value::is_object(argument)
+        && !matches!(time_value, Value::Undefined);
     let timezone = timezone_identifier(&timezone)?;
     let time = if matches!(time_value, Value::Undefined) {
         crate::temporal::plain_time::construct(&[])?
@@ -1611,8 +1613,10 @@ fn to_zoned_date_time(
         + i128::from(minute) * 60_000_000_000
         + i128::from(second) * 1_000_000_000
         + i128::from(nanos);
-    let mut epoch = day_delta * 86_400_000_000_000 + time_nanos - fixed_timezone_offset(&timezone);
-    if time_nanos == 0 {
+    let local_epoch = day_delta * 86_400_000_000_000 + time_nanos;
+    let mut epoch = local_epoch
+        - crate::temporal::timezone_offset_nanos(&timezone, local_epoch);
+    if time_nanos == 0 && !explicit_plain_time {
         if let Some(start) = crate::temporal::timezone_start_of_day_epoch(&timezone, epoch) {
             epoch = start;
         }
