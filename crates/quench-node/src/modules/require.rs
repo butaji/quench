@@ -32,6 +32,18 @@ fn global_constructor_or_capability(
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    // ESM test helpers resolve `common/index.mjs` through its CJS bridge.
+    // Reuse the single support object so call-check wrappers retain identity
+    // regardless of whether the fixture is CJS or ESM.
+    if spec.ends_with("/common/index") || spec == "../common/index" {
+        let common = quench_runtime::execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "__nodeCommon",
+        );
+        if matches!(common, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(common);
+        }
+    }
     if matches!(spec.as_str(), "child_process" | "node:child_process") {
         let global = quench_runtime::vm::current_global_object();
         let module = quench_runtime::execute::get_property(&global, "__nodeRequireChildProcess");
@@ -613,9 +625,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     quench_runtime::host_api::object(vec![
                         (
                             "enable".to_string(),
-                            crate::host::capability(
-                                crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE,
-                            ),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE),
                         ),
                         (
                             "tick".to_string(),
@@ -623,9 +633,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                         ),
                         (
                             "setTime".to_string(),
-                            crate::host::capability(
-                                crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME,
-                            ),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME),
                         ),
                         (
                             "reset".to_string(),
