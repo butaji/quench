@@ -14,6 +14,28 @@ pub(crate) fn reduce_loop_body(
     )
 }
 
+pub(crate) fn reduce_loop_body_with_slots(
+    statement: &Statement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+    completion: u16,
+    body_slots: &mut Vec<u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_loop_body_slots(
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+        completion,
+        body_slots,
+    )
+}
+
 pub(crate) fn reduce_loop_body_slots(
     statement: &Statement<'_>,
     ops: &mut Vec<Op>,

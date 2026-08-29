@@ -120,9 +120,10 @@ pub(crate) fn reduce_for_in(
     } else {
         slot
     };
+    let mut body_slots = Vec::new();
     let (mut body, _) = crate::switch::with_completion(dst, || {
         let mut body = Vec::new();
-        let last = crate::loops::reduce_loop_body(
+        let last = reduce_loop_body_with_slots(
             &statement.body,
             &mut body,
             facts,
@@ -130,6 +131,7 @@ pub(crate) fn reduce_for_in(
             next_slot,
             &mut body_locals,
             dst,
+            &mut body_slots,
         )?;
         Ok::<_, Vec<String>>((body, last))
     })?;
@@ -144,7 +146,7 @@ pub(crate) fn reduce_for_in(
         slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
-        iteration_slots: iteration_binding_slots(&statement.left, &body_locals),
+        iteration_slots: iteration_slots(&statement.left, &body_locals, &body_slots),
         dst,
     });
     Ok(Some(dst))
@@ -196,20 +198,30 @@ fn prepend_iteration_immutability(
     }
 }
 
-fn iteration_binding_slots(
+fn iteration_slots(
     left: &oxc::ast::ast::ForStatementLeft<'_>,
     locals: &HashMap<String, u16>,
+    body_slots: &[u16],
 ) -> Vec<u16> {
-    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
-        return Vec::new();
+    let mut slots = match left {
+        oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) => declaration
+            .declarations
+            .first()
+            .map(|declarator| {
+                crate::binding_patterns::names(&declarator.id)
+                    .into_iter()
+                    .filter_map(|name| locals.get(&name).copied())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
     };
-    let Some(declarator) = declaration.declarations.first() else {
-        return Vec::new();
-    };
-    crate::binding_patterns::names(&declarator.id)
-        .into_iter()
-        .filter_map(|name| locals.get(&name).copied())
-        .collect()
+    for slot in body_slots {
+        if !slots.contains(slot) {
+            slots.push(*slot);
+        }
+    }
+    slots
 }
 
 fn emit_for_in_initializer(
@@ -266,9 +278,10 @@ pub(crate) fn reduce_for_of(
     } else {
         slot
     };
+    let mut body_slots = Vec::new();
     let (mut body, _) = crate::switch::with_completion(dst, || {
         let mut body = Vec::new();
-        let last = crate::loops::reduce_loop_body(
+        let last = reduce_loop_body_with_slots(
             &statement.body,
             &mut body,
             facts,
@@ -276,6 +289,7 @@ pub(crate) fn reduce_for_of(
             next_slot,
             &mut body_locals,
             dst,
+            &mut body_slots,
         )?;
         Ok::<_, Vec<String>>((body, last))
     })?;
@@ -290,7 +304,7 @@ pub(crate) fn reduce_for_of(
         slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
-        iteration_slots: iteration_binding_slots(&statement.left, &body_locals),
+        iteration_slots: iteration_slots(&statement.left, &body_locals, &body_slots),
         r#await: statement.r#await,
         dst,
     });
