@@ -486,6 +486,18 @@ pub fn server_listen(
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
     if args.len() == 1 && args.first().is_some_and(quench_runtime::is_callable) {
+        let listener = match bind_listener(0, None) {
+            Ok(listener) => listener,
+            Err(error) => {
+                state.borrow_mut().net.pending_errors.push((
+                    receiver.clone(),
+                    server_bind_error(&error, None, 0),
+                ));
+                return Ok(receiver);
+            }
+        };
+        register_server(state, &receiver, Some(listener))?;
+        add_listener_cb(state, &receiver, args.first(), "listening")?;
         return Ok(receiver);
     }
     if let Some(Value::String(path)) = args.first() {
