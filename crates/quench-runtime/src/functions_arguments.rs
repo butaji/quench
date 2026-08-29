@@ -332,6 +332,15 @@ fn execute_bound_builtin(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let crate::ops::Builtin::HostCapability(kind) = builtin {
+        let receiver = bound_this_for_call(bound).unwrap_or_else(|| bound.receiver.clone());
+        return crate::vm::execute_host_capability_with_receiver(
+            kind,
+            Some(&bound.receiver),
+            Some(&receiver),
+            arguments,
+        );
+    }
     // Proxy.revocable's revoke function is a bound intrinsic whose receiver
     // is the proxy itself. Realm probing the receiver would re-enter an
     // active get trap when revoke is called from that trap.
@@ -346,6 +355,17 @@ fn execute_bound_builtin(
         .unwrap_or_else(|| execute_builtin_target(builtin, Some(&bound.receiver), arguments)),
         _ => execute_builtin_target(builtin, Some(&bound.receiver), arguments),
     }
+}
+
+pub(crate) fn bound_this_for_call(
+    bound: &crate::value::BoundFunctionValue,
+) -> Option<crate::value::Value> {
+    bound
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(key, value)| (key == "\0bound_this").then(|| value.clone()))
 }
 
 #[inline(never)]
@@ -380,10 +400,11 @@ pub(crate) fn execute_target(
             };
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
+            let receiver = bound_this_for_call(bound).unwrap_or_else(|| receiver.clone());
             crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&bound.receiver),
-                Some(receiver),
+                Some(&receiver),
                 &combined,
             )
         }
@@ -519,6 +540,7 @@ fn execute_function_call_in_realm(
             };
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments.get(1..).unwrap_or_default());
+            let this = bound_this_for_call(bound).unwrap_or(this);
             return crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&capability),
@@ -586,8 +608,12 @@ fn bind_function_target(
             extra.splice(0..0, bound.arguments.clone());
             (call_target, bound_receiver)
         }
-        target => (target.clone(), requested_receiver),
+        target => (target.clone(), requested_receiver.clone()),
     };
+    let host_capability_target = matches!(
+        target,
+        crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))
+    );
     let name = bound_function_name(&target)?;
     let length = bound_function_length(&target, extra.len() as f64);
     let mut properties = Vec::new();
@@ -603,6 +629,9 @@ fn bind_function_target(
         crate::value::Value::String(name.clone()),
         name_descriptor(&name),
     );
+    if host_capability_target {
+        properties.push(("\0bound_this".to_string(), requested_receiver));
+    }
     Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
             realm: crate::vm::current_context_or_default().realm(),
