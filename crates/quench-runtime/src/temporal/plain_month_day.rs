@@ -104,7 +104,19 @@ fn construct_calendar_month_day(
             ]),
         )));
     }
-    let value = construct_with_year(month, day, reference_year)?;
+    let (iso_month, iso_day) = crate::temporal::plain_date::calendar_iso_date_for_code(
+        reference_year as i32,
+        code,
+        day as u32,
+        calendar,
+    )
+    .map(|(month, day)| (f64::from(month), f64::from(day)))
+    .unwrap_or((month, day));
+    let mut value = construct_with_year(iso_month, iso_day, reference_year)?;
+    if let Value::Object(object) = &mut value {
+        std::rc::Rc::make_mut(object)
+            .set_property_in_place("day", Value::Number(day.trunc()));
+    }
     Ok(set_month_code(set_calendar_id(value, calendar), code))
 }
 
@@ -498,6 +510,64 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Missing year"));
     }
     let reject = overflow_reject(options)?;
+    // Calendar month codes carry calendar-specific month lengths (including
+    // leap months). Resolve those facts before falling back to ISO month
+    // arithmetic, and choose the deterministic ISO reference year required by
+    // PlainMonthDay.
+    if calendar_id != "iso8601" && calendar_id != "gregory" {
+        if let Some(code) = month_code_text.as_deref() {
+            let mut resolved_code = code.to_string();
+            let mut adjusted_day = day;
+            if year_number.is_finite() {
+                let limit = crate::temporal::plain_date::calendar_days_in_month_for_code(
+                    year as i32,
+                    code,
+                    &calendar_id,
+                )
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainMonthDay"))?;
+                if reject && day > f64::from(limit) {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid PlainMonthDay",
+                    ));
+                }
+                adjusted_day = adjusted_day.min(f64::from(limit));
+            }
+            let reference_year = loop {
+                if let Some(reference_year) = crate::temporal::plain_date::calendar_reference_iso_year_for_code(
+                    &resolved_code,
+                    adjusted_day as u32,
+                    &calendar_id,
+                ) {
+                    break reference_year;
+                }
+                if !reject && resolved_code.ends_with('L') {
+                    let regular_code = resolved_code.trim_end_matches('L').to_string();
+                    if crate::temporal::plain_date::calendar_reference_iso_year_for_code(
+                        &regular_code,
+                        adjusted_day as u32,
+                        &calendar_id,
+                    )
+                    .is_some()
+                    {
+                        resolved_code = regular_code;
+                        continue;
+                    }
+                }
+                if reject || adjusted_day <= 1.0 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid PlainMonthDay",
+                    ));
+                }
+                adjusted_day -= 1.0;
+            };
+            return construct_calendar_month_day(
+                &resolved_code,
+                adjusted_day,
+                f64::from(reference_year),
+                &calendar_id,
+            );
+        }
+    }
     let month = if let Some(month_code) = month_code_text.as_deref() {
         let parsed = parse_month_code(month_code)?;
         if let Some(month_number) = month_number {
@@ -547,7 +617,9 @@ fn parse_month_code(value: &str) -> Result<f64, VmError> {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
     let month = value[1..3].parse::<f64>().unwrap_or(0.0);
-    if bytes.len() != 3 || !(1.0..=12.0).contains(&month) {
+    if !((bytes.len() == 3) || (bytes.len() == 4 && bytes[3] == b'L'))
+        || !(1.0..=12.0).contains(&month)
+    {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
     Ok(month)
