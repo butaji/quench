@@ -654,16 +654,30 @@ fn value_to_i32(value: &Value) -> i32 {
 /// `process.stdout.write(chunk)` / `process.stderr.write(chunk)` —
 /// writes the chunk to the host output sink and returns true.
 pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let chunk = match args.first() {
-        Some(Value::String(s)) => s.clone(),
-        Some(value) => crate::modules::util::inspect(value),
-        None => String::new(),
-    };
+    let chunk = stream_chunk(args.first());
     let guard = state.borrow();
     if let Some(sink) = &guard.output {
         sink(&chunk);
     }
     Ok(Value::Boolean(true))
+}
+
+fn stream_chunk(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Uint8Array(view) => {
+            let bytes = view.buffer.bytes.borrow();
+            let end = view
+                .byte_offset
+                .saturating_add(view.length)
+                .min(bytes.len());
+            String::from_utf8_lossy(&bytes[view.byte_offset..end]).into_owned()
+        }
+        _ => crate::modules::util::inspect(value),
+    }
 }
 
 /// `process.umask([mask])` — accepts an optional new mask, returns the
