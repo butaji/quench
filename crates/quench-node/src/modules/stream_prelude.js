@@ -2294,8 +2294,28 @@
     if (source && typeof source.then === "function") {
       return duplexFromPromise(source, options);
     }
+    if (source && typeof source.arrayBuffer === "function" && source.size !== undefined) {
+      let reading = false;
+      return new Duplex(Object.assign({}, options, {
+        readable: true,
+        writable: false,
+        read() {
+          if (reading) return;
+          reading = true;
+          this.push(source._data);
+          this.push(null);
+        }
+      }));
+    }
     if (source && typeof source.stream === "function") {
       return DuplexCompat.fromWeb({ readable: source.stream() }, options);
+    }
+    if (source && (typeof source.getReader === "function" ||
+                   typeof source.getWriter === "function")) {
+      return DuplexCompat.fromWeb({
+        readable: typeof source.getReader === "function" ? source : undefined,
+        writable: typeof source.getWriter === "function" ? source : undefined
+      }, options);
     }
     if (source && (typeof source[Symbol.asyncIterator] === "function" ||
                    typeof source[Symbol.iterator] === "function")) {
