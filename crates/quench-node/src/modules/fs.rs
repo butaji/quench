@@ -186,7 +186,7 @@ fn index_arg(value: Option<&Value>, name: &str, default: usize) -> Result<usize,
     }
 }
 
-fn open_options(flags: &str) -> Result<std::fs::OpenOptions, VmError> {
+pub(crate) fn open_options(flags: &str) -> Result<std::fs::OpenOptions, VmError> {
     let mut options = std::fs::OpenOptions::new();
     match flags {
         "r" => {
@@ -201,6 +201,13 @@ fn open_options(flags: &str) -> Result<std::fs::OpenOptions, VmError> {
         "w+" => {
             options.read(true).write(true).create(true).truncate(true);
         }
+        "wx+" => {
+            options
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .truncate(true);
+        }
         "a" => {
             options.write(true).create(true).append(true);
         }
@@ -212,6 +219,9 @@ fn open_options(flags: &str) -> Result<std::fs::OpenOptions, VmError> {
         }
         "ax" => {
             options.write(true).create_new(true).append(true);
+        }
+        "ax+" => {
+            options.read(true).write(true).create_new(true).append(true);
         }
         _ => {
             return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
