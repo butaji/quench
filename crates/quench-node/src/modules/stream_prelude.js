@@ -27,10 +27,13 @@
         fn.call(this);
       }
       if (name === "data" && this._readableState) {
-        this.resume();
+        // A readable listener keeps a zero-HWM stream in manual-read mode.
+        const manualRead = this._readableState.highWaterMark === 0 &&
+          this.listenerCount("readable") > 0;
+        if (!manualRead) this.resume();
         // The first data listener starts pulling before the next promise
         // checkpoint, matching Node's lazy activation contract.
-        if (!this._readableState.reading && !this._readableState.ended) {
+        if (!manualRead && !this._readableState.reading && !this._readableState.ended) {
           requestRead(this);
         }
         // Deliver already-buffered/iterator data in this turn, but leave a
@@ -40,9 +43,10 @@
         }
       }
       if (name === "readable" && this._readableState &&
-          !this._readableState.reading && !this._readableState.ended) {
+          !this._readableState.ended) {
         this._readableState.flowing = false;
-        requestRead(this);
+        this._readableState.needReadable = true;
+        if (!this._readableState.reading) requestRead(this);
       }
       if (name === "readable" && this._readableState) {
         this._readableState.readableListenerTurnPending = true;
@@ -77,8 +81,10 @@
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.once(name, wrapper);
       if (name === "data" && this._readableState) {
-        this.resume();
-        if (!this._readableState.reading && !this._readableState.ended) {
+        const manualRead = this._readableState.highWaterMark === 0 &&
+          this.listenerCount("readable") > 0;
+        if (!manualRead) this.resume();
+        if (!manualRead && !this._readableState.reading && !this._readableState.ended) {
           requestRead(this);
         }
         if (this._readableState.buffer.length > 0 || this.__quenchIterator) {
@@ -89,9 +95,10 @@
         this._readableState.readableListenerTurnPending = true;
         const state = this._readableState;
         nextTick(() => { state.readableListenerTurnPending = false; });
-        if (!this._readableState.reading && !this._readableState.ended) {
+        if (!this._readableState.ended) {
           this._readableState.flowing = false;
-          requestRead(this);
+          this._readableState.needReadable = true;
+          if (!this._readableState.reading) requestRead(this);
         }
       }
       return this;
@@ -258,6 +265,8 @@
       flowing: null,
       flowScheduled: false,
       reading: false,
+      readingMore: false,
+      needReadable: false,
       readRequests: 0,
       ended: false,
       endEmitted: false,
@@ -327,6 +336,11 @@
     if (stream.listenerCount("readable") > 0 &&
         (st.buffer.length > 0 || st.ended) && !st.emittedReadable) {
       st.emittedReadable = true;
+      st.needReadable = false;
+      if (st.ended && st.buffer.length === 0) {
+        st.readingMore = false;
+        st.readableEofPending = false;
+      }
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
     }
@@ -362,6 +376,7 @@
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+        st.highWaterMark !== 0 &&
         !st.endScheduled && (st.flowing || stream.listenerCount("readable") > 0 ||
           (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
       if (st.decoder && !st.decoderEnded) {
@@ -380,6 +395,9 @@
             (st.flowing || stream.listenerCount("readable") > 0 ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
+          st.needReadable = false;
+          st.reading = false;
+          st.readingMore = false;
           stream.readable = false;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
@@ -494,6 +512,7 @@
       }
       if (chunk === null) {
         st.ended = true;
+        st.needReadable = false;
         if (st.buffer.length > 0 &&
             (this._isDuplex || !st.readableListenerTurnPending) &&
             this.listenerCount("readable") > 0) {
@@ -515,6 +534,7 @@
           chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
         }
         st.buffer.push(normalizeReadableChunk(this, chunk));
+        if (st.needReadable || st.flowing) st.readingMore = true;
       }
       scheduleFlow(this);
       if (st.ended) return false;
@@ -539,7 +559,12 @@
       if (st.ended) st.ended = false;
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
       st.reading = st.readRequests > 0;
-      scheduleFlow(this);
+      if (this.listenerCount("readable") > 0 && !st.flowing && st.needReadable) {
+        st.emittedReadable = false;
+        flowReadable(this);
+      } else {
+        scheduleFlow(this);
+      }
       return true;
     }
 
@@ -567,6 +592,9 @@
           nextTick(() => {
             if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
+              st.needReadable = false;
+              st.reading = false;
+              st.readingMore = false;
               this.readable = false;
               this._emitter.emit("end");
             }
@@ -574,7 +602,20 @@
         }
       };
       if (st.buffer.length > 0) {
-        let chunk = st.buffer.shift();
+        if (!st.objectMode && size > 0 && !st.ended &&
+            readableBufferLength(st) < size) {
+          st.needReadable = true;
+          if (!st.reading) requestRead(this);
+          return null;
+        }
+        let chunk;
+        if (!st.objectMode && size > 0 && readableBufferLength(st) <= size &&
+            st.buffer.length > 1 && typeof Buffer !== "undefined") {
+          chunk = Buffer.concat(st.buffer);
+          st.buffer = [];
+        } else {
+          chunk = st.buffer.shift();
+        }
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
@@ -583,7 +624,9 @@
         finishIfEnded();
         scheduleReadableIfNeeded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+        if (st.buffer.length === 0 && !st.ended && !st.reading &&
+            st.highWaterMark !== 0) {
+          st.needReadable = this.listenerCount("readable") > 0;
           st.reading = true;
           requestRead(this);
           if (st.decoder && !st.objectMode) {
@@ -601,6 +644,7 @@
         return chunk;
       }
       if (!st.ended && !st.reading) {
+        st.needReadable = this.listenerCount("readable") > 0;
         requestRead(this);
       }
       if (st.buffer.length > 0) {
