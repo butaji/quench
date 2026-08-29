@@ -34,7 +34,7 @@ pub(crate) fn zoned_construct(
     let timezone_value = arguments.get(1).unwrap_or(&crate::value::Value::Undefined);
     if matches!(timezone_value, crate::value::Value::String(_) | crate::value::Value::StringUnits(_)) {
         let text = crate::conversion::to_string(timezone_value)?;
-        if text.contains('T') && text.contains('-') && text.bytes().any(|byte| byte.is_ascii_digit()) {
+        if looks_like_datetime_identifier(&text) {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         }
     }
@@ -291,7 +291,7 @@ pub(crate) fn parse_timezone_identifier(
         return normalize_offset_identifier(&text)
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"));
     }
-    if text.contains('T') {
+    if looks_like_datetime_identifier(&text) {
         let base = text.split('[').next().unwrap_or(&text);
         let annotation = text
             .split('[')
@@ -330,6 +330,14 @@ pub(crate) fn parse_timezone_identifier(
     }
     canonical_timezone_name(&text)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"))
+}
+
+pub(crate) fn looks_like_datetime_identifier(text: &str) -> bool {
+    text.find(['T', 't', ' ']).is_some_and(|index| {
+        index >= 8
+            && text[..index].contains('-')
+            && text[..index].bytes().any(|byte| byte.is_ascii_digit())
+    })
 }
 
 fn normalize_offset_identifier(text: &str) -> Option<String> {
