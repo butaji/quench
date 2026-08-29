@@ -545,6 +545,9 @@ pub const SPEC_NET_LOOKUP_CALLBACK: NodeSpec = NodeSpec::new("net:lookupCallback
 pub const SPEC_NET_SOCKET_SET_ENCODING: NodeSpec = NodeSpec::new("net:socket:setEncoding", 0x1010);
 pub const SPEC_NET_SOCKET_PAUSE: NodeSpec = NodeSpec::new("net:socket:pause", 0x1011);
 pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 0x1012);
+pub const SPEC_NET_SOCKET_SET_TIMEOUT: NodeSpec = NodeSpec::new("net:socket:setTimeout", 0x1017);
+pub const SPEC_NET_SOCKET_TIMEOUT_FIRE: NodeSpec =
+    NodeSpec::new("net:socket:timeoutFire", 0x1018);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);
@@ -1095,6 +1098,8 @@ pub const CAP_NET_SOCKET_RESUME: CapId = SPEC_NET_SOCKET_RESUME.cap;
 pub const CAP_NET_SOCKET_SET_ENCODING: CapId = SPEC_NET_SOCKET_SET_ENCODING.cap;
 pub const CAP_NET_SOCKET_SET_KEEP_ALIVE: CapId = SPEC_NET_SOCKET_SET_KEEP_ALIVE.cap;
 pub const CAP_NET_SOCKET_SET_NO_DELAY: CapId = SPEC_NET_SOCKET_SET_NO_DELAY.cap;
+pub const CAP_NET_SOCKET_SET_TIMEOUT: CapId = SPEC_NET_SOCKET_SET_TIMEOUT.cap;
+pub const CAP_NET_SOCKET_TIMEOUT_FIRE: CapId = SPEC_NET_SOCKET_TIMEOUT_FIRE.cap;
 pub const CAP_NET_SOCKET_UNREF: CapId = SPEC_NET_SOCKET_UNREF.cap;
 pub const CAP_NET_SOCKET_WRITE: CapId = SPEC_NET_SOCKET_WRITE.cap;
 pub const CAP_OS_ARCH: CapId = SPEC_OS_ARCH.cap;
