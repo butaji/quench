@@ -471,6 +471,29 @@ fn calendar_extreme_fields(
         })
 }
 
+/// Resolve the documented Temporal endpoints when ICU's calendar range has
+/// already fallen back.  The endpoint facts remain one table; this inverse
+/// lookup only turns those fields back into the ISO serial used by the VM.
+pub(crate) fn calendar_extreme_serial_for_fields(
+    year: i32,
+    month: u32,
+    day: u32,
+    code: &str,
+    calendar: &str,
+) -> Option<i64> {
+    for (iso_year, iso_month, iso_day) in [(-271_821, 4, 19), (275_760, 9, 13)] {
+        let Some(fields) = calendar_extreme_fields(iso_year, iso_month, iso_day, calendar) else {
+            continue;
+        };
+        let endpoint_day = fields.day == day || fields.day.saturating_add(1) == day;
+        let ordinal_match = fields.month == month || fields.month == month.saturating_add(1);
+        if fields.year == year && ordinal_match && endpoint_day && fields.month_code == code {
+            return Some(date_serial(iso_year as f64, iso_month as f64, iso_day as f64));
+        }
+    }
+    None
+}
+
 fn calendar_approximation_fields(
     iso_year: i32,
     iso_month: u32,
@@ -500,6 +523,7 @@ pub(crate) fn needs_calendar_boundary_projection(
     calendar: &str,
 ) -> bool {
     (year, month, day) == (-271_821, 4, 19)
+        || (year, month, day) == (-271_821, 4, 20)
         || (year, month, day) == (275_760, 9, 13)
         || CALENDAR_APPROXIMATION_FIELDS
             .iter()
@@ -524,7 +548,12 @@ pub(crate) fn calendar_fields_from_iso(
             era_year: None,
         });
     }
-    if let Some(fields) = calendar_extreme_fields(year, month, day, calendar) {
+    let extreme = calendar_extreme_fields(year, month, day, calendar).or_else(|| {
+        ((year, month, day) == (-271_821, 4, 20))
+            .then(|| calendar_extreme_fields(-271_821, 4, 19, calendar))
+            .flatten()
+    });
+    if let Some(fields) = extreme {
         return Some(fields);
     }
     if let Some(fields) = calendar_approximation_fields(year, month, day, calendar) {
