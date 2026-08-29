@@ -380,6 +380,7 @@
             (st.flowing || stream.listenerCount("readable") > 0 ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
+          stream.readable = false;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
             nextTick(() => stream.destroy());
@@ -566,6 +567,7 @@
           nextTick(() => {
             if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
+              this.readable = false;
               this._emitter.emit("end");
             }
           });
