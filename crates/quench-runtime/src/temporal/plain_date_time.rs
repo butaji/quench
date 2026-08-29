@@ -853,7 +853,8 @@ fn normalize_time_zone_identifier(text: &str) -> Result<String, VmError> {
         }
         return Ok(annotation.to_string());
     }
-    let time = text.split(['T', 't', ' ']).nth(1);
+    let time = crate::temporal::looks_like_datetime_identifier(text)
+        .then(|| text.split(['T', 't', ' ']).nth(1).unwrap_or_default());
     if let Some(time) = time {
         if time.ends_with(['Z', 'z']) {
             return Ok("UTC".into());
