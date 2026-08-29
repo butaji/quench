@@ -26,9 +26,22 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
+    let calendar_hint = arguments.get(3).and_then(|value| match value {
+        Value::String(value) => Some(value.as_str()),
+        _ => None,
+    });
+    let max_day = if calendar_hint
+        .is_some_and(|value| {
+            !value.eq_ignore_ascii_case("iso8601") && !value.eq_ignore_ascii_case("gregory")
+        })
+    {
+        31.0
+    } else {
+        days_in_month(year, month)
+    };
     if !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
-        || !(1.0..=days_in_month(year, month)).contains(&day)
+        || !(1.0..=max_day).contains(&day)
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
@@ -44,7 +57,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             _ => None,
         })
         .unwrap_or("iso8601");
-    Ok(date_object_with_calendar(year, month, day, calendar))
+    let calendar = canonical_calendar_id(calendar).unwrap_or_else(|| calendar.to_string());
+    Ok(date_object_with_calendar(year, month, day, &calendar))
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
@@ -158,7 +172,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
-        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
+        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Some(calendar_id(receiver)),
         crate::ops::Builtin::TemporalPlainDateWeekOfYearGetter => Some(week_of_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateYearOfWeekGetter => Some(year_of_week(receiver)),
@@ -189,6 +203,7 @@ fn add(
     if !has_date_fields(&date) {
         return Err(invalid_receiver());
     }
+    let calendar = calendar_name(&date);
     let Value::Object(duration) = crate::temporal::duration::from(duration)? else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
@@ -216,7 +231,7 @@ fn add(
         + number_property(&duration, "days")
         + time_days.trunc())
         * direction;
-    shift_date(year, month, day, days)
+    shift_date(year, month, day, days, &calendar)
 }
 
 fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
@@ -667,13 +682,20 @@ pub(crate) fn date_serial(year: f64, month: f64, day: f64) -> i64 {
         - 1
 }
 
-fn shift_date(year: f64, month: f64, day: f64, delta: f64) -> Result<Value, VmError> {
+fn shift_date(
+    year: f64,
+    month: f64,
+    day: f64,
+    delta: f64,
+    calendar: &str,
+) -> Result<Value, VmError> {
     let serial = date_serial(year, month, day) + delta as i64;
     let (year, month, day) = civil_from_serial(serial);
     construct(&[
         Value::Number(year as f64),
         Value::Number(month as f64),
         Value::Number(day as f64),
+        Value::String(calendar.to_string()),
     ])
 }
 
@@ -1096,7 +1118,91 @@ fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(Value::Undefined)
+    let calendar = calendar_name(object);
+    let era = match calendar.as_str() {
+        "buddhist" => Some("be"),
+        "hebrew" => Some("am"),
+        value if value.starts_with("islamic") => Some("ah"),
+        "persian" => Some("ap"),
+        "coptic" | "ethiopic" => Some("am"),
+        "ethioaa" => Some("aa"),
+        "indian" => Some("shaka"),
+        "roc" if number_field(field(object, "year")) >= 1.0 => Some("roc"),
+        "roc" => Some("broc"),
+        "japanese" => japanese_era(number_field(field(object, "year"))),
+        "gregory" if number_field(field(object, "year")) >= 1.0 => Some("ce"),
+        "gregory" => Some("bce"),
+        _ => None,
+    };
+    Ok(era.map_or(Value::Undefined, |value| Value::String(value.into())))
+}
+
+fn era_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year"));
+    let calendar = calendar_name(object);
+    let era_year = match calendar.as_str() {
+        "buddhist" => Some(year + 543.0),
+        "hebrew" | "persian" | "coptic" | "ethiopic" | "ethioaa"
+        | "gregory" => Some(year),
+        value if value.starts_with("islamic") => Some(year),
+        "indian" => Some(year - 78.0),
+        "roc" => Some(year - 1911.0),
+        "japanese" => Some(japanese_era_year(year)),
+        _ => None,
+    };
+    Ok(era_year.map_or(Value::Undefined, Value::Number))
+}
+
+fn japanese_era(year: f64) -> Option<&'static str> {
+    if year >= 2019.0 {
+        Some("reiwa")
+    } else if year >= 1989.0 {
+        Some("heisei")
+    } else if year >= 1926.0 {
+        Some("showa")
+    } else if year >= 1912.0 {
+        Some("taisho")
+    } else if year >= 1868.0 {
+        Some("meiji")
+    } else if year >= 1.0 {
+        Some("ce")
+    } else {
+        Some("bce")
+    }
+}
+
+fn japanese_era_year(year: f64) -> f64 {
+    if year >= 2019.0 {
+        year - 2018.0
+    } else if year >= 1989.0 {
+        year - 1988.0
+    } else if year >= 1926.0 {
+        year - 1925.0
+    } else if year >= 1912.0 {
+        year - 1911.0
+    } else if year >= 1868.0 {
+        year - 1867.0
+    } else {
+        year
+    }
+}
+
+fn calendar_name(object: &crate::value::ObjectData) -> String {
+    match object.iter().find_map(|(key, value)| {
+        (key == "calendarId").then(|| match value {
+            Value::String(value) => value.to_ascii_lowercase(),
+            _ => "iso8601".into(),
+        })
+    }) {
+        Some(value) => value,
+        None => "iso8601".into(),
+    }
 }
 
 fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -1106,7 +1212,12 @@ fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(Value::String("iso8601".to_owned()))
+    Ok(object
+        .iter()
+        .find_map(|(key, value)| {
+            (key == "calendarId").then(|| value.clone())
+        })
+        .unwrap_or_else(|| Value::String("iso8601".to_owned())))
 }
 
 fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -1472,6 +1583,9 @@ fn has_date_fields(object: &crate::value::ObjectData) -> bool {
 
 pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
     let text = crate::conversion::to_string(value)?;
+    if is_supported_calendar_name(&text) {
+        return Ok(true);
+    }
     if crate::intl::supported_calendars()
         .iter()
         .any(|value| matches!(value, Value::String(calendar) if calendar == &text.to_ascii_lowercase()))
@@ -1525,9 +1639,21 @@ pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
 /// a supported calendar identifier is still observable through `calendarId`
 /// and must not be rejected at construction boundaries.
 pub(crate) fn is_supported_calendar_name(value: &str) -> bool {
-    crate::intl::supported_calendars().iter().any(|calendar| {
+    matches!(value.to_ascii_lowercase().as_str(), "islamicc" | "ethiopic-amete-alem")
+        || crate::intl::supported_calendars().iter().any(|calendar| {
         matches!(calendar, Value::String(name) if name.eq_ignore_ascii_case(value))
     }) || value.eq_ignore_ascii_case("gregory")
+}
+
+pub(crate) fn canonical_calendar_id(value: &str) -> Option<String> {
+    let value = value.to_ascii_lowercase();
+    let canonical = match value.as_str() {
+        "islamicc" => "islamic-civil",
+        "ethiopic-amete-alem" => "ethioaa",
+        other if is_supported_calendar_name(other) => other,
+        _ => return None,
+    };
+    Some(canonical.to_string())
 }
 
 fn field(object: &crate::value::ObjectData, name: &str) -> Value {
