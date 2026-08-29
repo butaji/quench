@@ -936,6 +936,24 @@ pub fn method_listener_count(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let event = event_name(args.first())?;
+    // The HTTP parser is an internal socket consumer.  Once it reports a
+    // parse error Node detaches that consumer before invoking user handlers,
+    // while the socket's ordinary lifecycle listeners remain observable.
+    // Keep that transition as state rather than mutating the emitter during
+    // error delivery (which could drop the socket's end/close progression).
+    if event == "data" {
+        let parser_failed = receiver
+            .and_then(crate::modules::net::net_id)
+            .and_then(|socket_id| {
+                let guard = state.borrow();
+                let client_id = guard.http.clients.get(&socket_id)?;
+                Some(guard.http.clientreqs.get(client_id)?.parse_error)
+            })
+            .unwrap_or(false);
+        if parser_failed {
+            return Ok(Value::Number(0.0));
+        }
+    }
     let count = expect_emitter(state, receiver)
         .and_then(|id| state.borrow().emitters.get(id))
         .map(|emitter| {
