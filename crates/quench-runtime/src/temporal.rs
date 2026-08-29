@@ -2164,9 +2164,14 @@ mod stubs {
         }
         let property = |name: &str| {
             if let Value::Object(object) = receiver {
-                let hidden = format!("\0temporal-slot:\0{name}");
-                if let Some((_, value)) = object.iter().find(|(key, _)| key == &hidden) {
-                    return Ok(value.clone());
+                let iso = object.iter().any(|(key, value)| {
+                    key == "calendarId" && matches!(value, Value::String(id) if id == "iso8601")
+                });
+                if iso {
+                    let hidden = format!("\0temporal-slot:\0{name}");
+                    if let Some((_, value)) = object.iter().find(|(key, _)| key == &hidden) {
+                        return Ok(value.clone());
+                    }
                 }
             }
             crate::execute::get_property_result(receiver, name)
