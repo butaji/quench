@@ -41,7 +41,7 @@ fn run_op(
     if let Some(result) = run_simple_op(registers, op)? {
         return Ok(result.map(crate::completion::Completion::Return));
     }
-    if let Some(result) = run_control_op(registers, op)? {
+    if let Some(result) = run_control_op(registers, op, context)? {
         return Ok(Some(result));
     }
     run_dispatch_op(registers, op).map(|value| value.map(crate::completion::Completion::Return))
@@ -244,13 +244,14 @@ fn run_make_builtin(registers: &mut crate::register_file::RegisterFile, op: &Op)
 fn run_control_op(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
+    context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::completion::Completion;
     use Op::*;
     match op {
         ForIn { .. } => crate::loops::execute_for_in(registers, op).map(Some),
         ForOf { .. } => crate::loops::execute_for_of(registers, op).map(Some),
-        Branch { .. } => crate::branch::execute(registers, op).map(Some),
+        Branch { .. } => crate::branch::execute_with_context(registers, op, context).map(Some),
         Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
         With { .. } => crate::with_scope::execute(registers, op).map(Some),
         PrivateScope { .. } => crate::private_environment::execute_scope(registers, op).map(Some),
