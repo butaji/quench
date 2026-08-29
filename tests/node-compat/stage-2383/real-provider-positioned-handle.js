@@ -4,7 +4,7 @@ const path = require("path");
 const vfs = require("node:vfs");
 const { getVirtualFd } = require("internal/vfs/fd");
 
-const root = path.join(process.cwd(), "stage-2383-real-handle");
+const root = path.join(process.cwd(), "tmp", "stage-2383-real-handle");
 fs.mkdirSync(root, { recursive: true });
 fs.writeFileSync(path.join(root, "file.txt"), "hello world");
 

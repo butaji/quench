@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vfs = require("node:vfs");
 
-const root = path.join(process.cwd(), "stage-2384-real-promises");
+const root = path.join(process.cwd(), "tmp", "stage-2384-real-promises");
 fs.mkdirSync(root, { recursive: true });
 const provider = vfs.create(new vfs.RealFSProvider(root));
 

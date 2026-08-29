@@ -1,7 +1,8 @@
 const assert = require("assert");
 const fs = require("fs");
 console.log("uid", process.getuid(), "gid", process.getgid());
-const path = `${process.cwd()}/tests/node-compat/stage-2364/read-only`;
+const path = `${process.cwd()}/tmp/stage-2364/read-only`;
+fs.mkdirSync(`${process.cwd()}/tmp/stage-2364`, { recursive: true });
 try {
   fs.chmodSync(path, 0o666);
   fs.unlinkSync(path);

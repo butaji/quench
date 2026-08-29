@@ -1,6 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
-const path = `${process.cwd()}/tests/node-compat/stage-2309/access.txt`;
+const path = `${process.cwd()}/tmp/stage-2309/access.txt`;
+fs.mkdirSync(`${process.cwd()}/tmp/stage-2309`, { recursive: true });
 
 try {
   fs.unlinkSync(path);

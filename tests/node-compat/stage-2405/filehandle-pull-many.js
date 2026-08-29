@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const { text } = require("stream/iter");
 
-const root = fs.mkdtempSync(path.join(process.cwd(), "pull-many-"));
+fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
+const root = fs.mkdtempSync(path.join(process.cwd(), "tmp", "pull-many-"));
 const jobs = Array.from({ length: 19 }, async (_, index) => {
   const filename = path.join(root, `file-${index}`);
   fs.writeFileSync(filename, `value-${index}`);
