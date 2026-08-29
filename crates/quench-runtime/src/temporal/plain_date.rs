@@ -1,5 +1,6 @@
 use chrono::Datelike;
 use icu_calendar::{
+    cal::Iso,
     options::{DateAddOptions, Overflow},
     types::{DateDuration, Month},
     AnyCalendar, AnyCalendarKind, Date,
@@ -9,7 +10,7 @@ use crate::{execute::VmError, value::Value};
 
 #[path = "plain_date_tail.rs"]
 mod plain_date_tail;
-use plain_date_tail::{date_object_with_calendar, number};
+use plain_date_tail::{date_object, date_object_with_calendar, number};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
@@ -44,11 +45,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     } else {
         days_in_month(year, month)
     };
+    let calendar_name = calendar_hint
+        .and_then(canonical_calendar_id)
+        .unwrap_or_else(|| "iso8601".into());
+    let month_valid = (1.0..=12.0).contains(&month)
+        || (month == 13.0
+            && calendar_supports_month13(&calendar_name)
+            && calendar_date(year as i32, 13, day as u32, &calendar_name).is_some());
     if !(-271_821.0..=275_760.0).contains(&year)
-        || !(1.0..=12.0).contains(&month)
-            && !(month == 13.0
-                && calendar_hint.is_some_and(calendar_supports_month13))
-        || !(1.0..=max_day).contains(&day)
+        || !month_valid
+            || !(1.0..=max_day).contains(&day)
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
@@ -65,7 +71,21 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         })
         .unwrap_or("iso8601");
     let calendar = canonical_calendar_id(calendar).unwrap_or_else(|| calendar.to_string());
-    Ok(date_object_with_calendar(year, month, day, &calendar))
+    let mut result = date_object_with_calendar(year, month, day, &calendar);
+    if month == 13.0 {
+        if let Some(date) = calendar_date(year as i32, 13, day as u32, &calendar) {
+            let code = date.month().to_input().code().0.to_string();
+            if let Value::Object(object) = &mut result {
+                let object = std::rc::Rc::make_mut(object);
+                object.set_property_in_place("monthCode", Value::String(code.clone()));
+                object.set_property_in_place(
+                    "\0temporal-slot:\0monthCode",
+                    Value::String(code),
+                );
+            }
+        }
+    }
+    Ok(result)
 }
 
 pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
@@ -101,24 +121,7 @@ fn days_in_month(year: f64, month: f64) -> f64 {
 
 /// Derive calendar facts from one ICU4X date value shared by all calendars.
 fn calendar_date(year: i32, month: u32, day: u32, calendar: &str) -> Option<Date<AnyCalendar>> {
-    let kind = match calendar {
-        "buddhist" => AnyCalendarKind::Buddhist,
-        "chinese" => AnyCalendarKind::Chinese,
-        "coptic" => AnyCalendarKind::Coptic,
-        "dangi" => AnyCalendarKind::Dangi,
-        "ethiopic" => AnyCalendarKind::Ethiopian,
-        "ethioaa" => AnyCalendarKind::EthiopianAmeteAlem,
-        "gregory" => AnyCalendarKind::Gregorian,
-        "hebrew" => AnyCalendarKind::Hebrew,
-        "indian" => AnyCalendarKind::Indian,
-        "islamic-civil" => AnyCalendarKind::HijriTabularTypeIIFriday,
-        "islamic-tbla" => AnyCalendarKind::HijriTabularTypeIIThursday,
-        "islamic-umalqura" => AnyCalendarKind::HijriUmmAlQura,
-        "japanese" => AnyCalendarKind::Japanese,
-        "persian" => AnyCalendarKind::Persian,
-        "roc" => AnyCalendarKind::Roc,
-        _ => return None,
-    };
+    let kind = calendar_kind(calendar)?;
     let calendar = AnyCalendar::new(kind);
     let input_month = if matches!(
         calendar,
@@ -141,8 +144,103 @@ fn calendar_date(year: i32, month: u32, day: u32, calendar: &str) -> Option<Date
     Date::try_new(year.into(), input_month, day as u8, calendar).ok()
 }
 
-fn calendar_days_in_month(year: i32, month: u32, calendar: &str) -> Option<u32> {
+fn calendar_kind(calendar: &str) -> Option<AnyCalendarKind> {
+    Some(match calendar {
+        "buddhist" => AnyCalendarKind::Buddhist,
+        "chinese" => AnyCalendarKind::Chinese,
+        "coptic" => AnyCalendarKind::Coptic,
+        "dangi" => AnyCalendarKind::Dangi,
+        "ethiopic" => AnyCalendarKind::Ethiopian,
+        "ethioaa" => AnyCalendarKind::EthiopianAmeteAlem,
+        "gregory" => AnyCalendarKind::Gregorian,
+        "hebrew" => AnyCalendarKind::Hebrew,
+        "indian" => AnyCalendarKind::Indian,
+        "islamic-civil" => AnyCalendarKind::HijriTabularTypeIIFriday,
+        "islamic-tbla" => AnyCalendarKind::HijriTabularTypeIIThursday,
+        "islamic-umalqura" => AnyCalendarKind::HijriUmmAlQura,
+        "japanese" => AnyCalendarKind::Japanese,
+        "persian" => AnyCalendarKind::Persian,
+        "roc" => AnyCalendarKind::Roc,
+        _ => return None,
+    })
+}
+
+pub(crate) fn calendar_date_from_code(
+    year: i32,
+    code: &str,
+    day: u32,
+    calendar: &str,
+) -> Option<(u32, String)> {
+    let date = calendar_date_for_code(year, code, day, calendar)?;
+    Some((
+        u32::from(date.month().ordinal),
+        date.month().to_input().code().0.to_string(),
+    ))
+}
+
+fn calendar_date_for_code(
+    year: i32,
+    code: &str,
+    day: u32,
+    calendar: &str,
+) -> Option<Date<AnyCalendar>> {
+    let kind = calendar_kind(calendar)?;
+    let base = code
+        .strip_suffix('L')
+        .unwrap_or(code)
+        .strip_prefix('M')?
+        .parse::<u8>()
+        .ok()?;
+    let input = if code.ends_with('L') {
+        Month::leap(base)
+    } else {
+        Month::new(base)
+    };
+    Date::try_new(year.into(), input, day as u8, AnyCalendar::new(kind)).ok()
+}
+
+pub(crate) fn calendar_days_in_month(year: i32, month: u32, calendar: &str) -> Option<u32> {
     calendar_date(year, month, 1, calendar).map(|date| u32::from(date.days_in_month()))
+}
+
+pub(crate) fn calendar_days_in_month_for_code(
+    year: i32,
+    code: &str,
+    calendar: &str,
+) -> Option<u32> {
+    calendar_date_for_code(year, code, 1, calendar).map(|date| u32::from(date.days_in_month()))
+}
+
+pub(crate) struct CalendarDateFields {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub month_code: String,
+    pub related_year: Option<i32>,
+}
+
+pub(crate) fn calendar_fields_from_iso(
+    year: i32,
+    month: u32,
+    day: u32,
+    calendar: &str,
+) -> Option<CalendarDateFields> {
+    let kind = calendar_kind(calendar)?;
+    let date = Date::try_new_iso(year, month as u8, day as u8)
+        .ok()?
+        .to_calendar(AnyCalendar::new(kind));
+    let (year, related_year) = match date.year() {
+        icu_calendar::types::YearInfo::Era(value) => (value.year, None),
+        icu_calendar::types::YearInfo::Cyclic(value) => (value.related_iso, Some(value.related_iso)),
+        _ => (year, None),
+    };
+    Some(CalendarDateFields {
+        year,
+        month: u32::from(date.month().number()),
+        day: u32::from(date.day_of_month().0),
+        month_code: date.month().to_input().code().0.to_string(),
+        related_year,
+    })
 }
 
 fn calendar_days_in_year(year: i32, month: u32, calendar: &str) -> Option<u32> {
@@ -157,10 +255,17 @@ fn calendar_is_leap_year(year: i32, month: u32, calendar: &str) -> Option<bool> 
     calendar_date(year, month, 1, calendar).map(|date| date.is_in_leap_year())
 }
 
-fn object_from_calendar_date(date: Date<AnyCalendar>, calendar: &str) -> Value {
+fn object_from_calendar_date(
+    date: Date<AnyCalendar>,
+    calendar: &str,
+    preferred_day: Option<u32>,
+) -> Value {
     let year = date.year().extended_year();
     let month = u32::from(date.month().ordinal);
-    let day = u32::from(date.day_of_month().0);
+    let day = preferred_day
+        .filter(|candidate| *candidate > u32::from(date.day_of_month().0))
+        .filter(|candidate| calendar_month_max(calendar, year, month) >= *candidate)
+        .unwrap_or_else(|| u32::from(date.day_of_month().0));
     let month_code = date.month().to_input().code().0.to_string();
     let mut result = date_object_with_calendar(
         f64::from(year),
@@ -176,6 +281,18 @@ fn object_from_calendar_date(date: Date<AnyCalendar>, calendar: &str) -> Value {
     result
 }
 
+fn calendar_month_max(calendar: &str, year: i32, month: u32) -> u32 {
+    match calendar {
+        "indian" if (2..=6).contains(&month) => 31,
+        "indian" => 30,
+        "persian" if month <= 6 => 31,
+        "persian" if month <= 11 => 30,
+        "persian" => calendar_is_leap_year(year, month, calendar)
+            .map_or(29, |leap| if leap { 30 } else { 29 }),
+        _ => 0,
+    }
+}
+
 fn add_with_calendar(
     date: &crate::value::ObjectData,
     source: &crate::value::ObjectData,
@@ -186,7 +303,13 @@ fn add_with_calendar(
     let year = number_field(field(date, "year")) as i32;
     let month = number_field(field(date, "month")) as u32;
     let day = number_field(field(date, "day")) as u32;
-    let date = calendar_date(year, month, day, calendar)
+    let date = match field(date, "monthCode") {
+        Value::String(code) if code.ends_with('L') => {
+            calendar_date_for_code(year, &code, day, calendar)
+        }
+        _ => None,
+    }
+    .or_else(|| calendar_date(year, month, day, calendar))
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
     let source_sign = [
         "years",
@@ -218,11 +341,17 @@ fn add_with_calendar(
     let result = date
         .try_added_with_options(duration, options)
         .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?;
-    Ok(object_from_calendar_date(result, calendar))
+    let preferred_day = (number_property(source, "days") == 0.0
+        && number_property(source, "weeks") == 0.0)
+        .then_some(day);
+    Ok(object_from_calendar_date(result, calendar, preferred_day))
 }
 
 pub(crate) fn calendar_supports_month13(calendar: &str) -> bool {
-    matches!(calendar, "coptic" | "ethiopic" | "ethioaa")
+    matches!(
+        calendar,
+        "coptic" | "ethiopic" | "ethioaa" | "chinese" | "dangi" | "hebrew"
+    )
 }
 
 pub(crate) fn days_in_month_for_record(year: i32, month: u32) -> u32 {
@@ -1274,7 +1403,12 @@ fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     let calendar = calendar_name(object);
-    let era = era_for_calendar(&calendar, number_field(field(object, "year")));
+    let era = era_for_calendar_date(
+        &calendar,
+        number_field(field(object, "year")),
+        number_field(field(object, "month")),
+        number_field(field(object, "day")),
+    );
     Ok(era.map_or(Value::Undefined, |value| Value::String(value.into())))
 }
 
@@ -1287,7 +1421,12 @@ fn era_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     }
     let year = number_field(field(object, "year"));
     let calendar = calendar_name(object);
-    let era_year = era_year_for_calendar(&calendar, year);
+    let era_year = era_year_for_calendar_date(
+        &calendar,
+        year,
+        number_field(field(object, "month")),
+        number_field(field(object, "day")),
+    );
     Ok(era_year.map_or(Value::Undefined, Value::Number))
 }
 
@@ -1312,6 +1451,18 @@ pub(crate) fn era_for_calendar(calendar: &str, year: f64) -> Option<&'static str
     }
 }
 
+pub(crate) fn era_for_calendar_date(
+    calendar: &str,
+    year: f64,
+    month: f64,
+    day: f64,
+) -> Option<&'static str> {
+    if calendar != "japanese" {
+        return era_for_calendar(calendar, year);
+    }
+    Some(japanese_era_date(year as i32, month as u32, day as u32))
+}
+
 pub(crate) fn era_year_for_calendar(calendar: &str, year: f64) -> Option<f64> {
     match calendar {
         "buddhist" => Some(year),
@@ -1331,6 +1482,18 @@ pub(crate) fn era_year_for_calendar(calendar: &str, year: f64) -> Option<f64> {
     }
 }
 
+pub(crate) fn era_year_for_calendar_date(
+    calendar: &str,
+    year: f64,
+    month: f64,
+    day: f64,
+) -> Option<f64> {
+    if calendar != "japanese" {
+        return era_year_for_calendar(calendar, year);
+    }
+    Some(japanese_era_year_date(year as i32, month as u32, day as u32))
+}
+
 fn japanese_era(year: f64) -> Option<&'static str> {
     if year >= 2019.0 {
         Some("reiwa")
@@ -1346,6 +1509,30 @@ fn japanese_era(year: f64) -> Option<&'static str> {
         Some("ce")
     } else {
         Some("bce")
+    }
+}
+
+fn japanese_era_date(year: i32, month: u32, day: u32) -> &'static str {
+    match (year, month, day) {
+        (year, month, day) if (year, month, day) >= (2019, 5, 1) => "reiwa",
+        (year, month, day) if (year, month, day) >= (1989, 1, 8) => "heisei",
+        (year, month, day) if (year, month, day) >= (1926, 12, 25) => "showa",
+        (year, month, day) if (year, month, day) >= (1912, 7, 30) => "taisho",
+        (year, month, day) if (year, month, day) >= (1868, 9, 8) => "meiji",
+        (year, ..) if year >= 1 => "ce",
+        _ => "bce",
+    }
+}
+
+fn japanese_era_year_date(year: i32, month: u32, day: u32) -> f64 {
+    match japanese_era_date(year, month, day) {
+        "reiwa" => f64::from(year - 2018),
+        "heisei" => f64::from(year - 1988),
+        "showa" => f64::from(year - 1925),
+        "taisho" => f64::from(year - 1911),
+        "meiji" => f64::from(year - 1867),
+        "ce" => f64::from(year),
+        _ => f64::from(1 - year),
     }
 }
 
@@ -1474,20 +1661,24 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     let calendar = calendar
         .filter(|value| !matches!(value, Value::Undefined))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid calendar"))?;
-    if matches!(calendar, Value::Object(object) if object.iter().any(|(key, value)| key == "calendarId" && value == Value::String("iso8601".into())))
-    {
-        return construct(&[
-            field(object, "year"),
-            field(object, "month"),
-            field(object, "day"),
-        ]);
-    }
+    let target = match calendar {
+        Value::String(name) => canonical_calendar_id(name).unwrap_or_else(|| name.clone()),
+        Value::StringUnits(_) => crate::conversion::to_string(calendar)?,
+        Value::Object(value) if value.iter().any(|(key, value)| {
+            key == "calendarId" && value == Value::String("iso8601".into())
+        }) => "iso8601".into(),
+        _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
+    };
     if matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
         if !is_iso_calendar_value(calendar)? {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
-    } else {
+    } else if !matches!(calendar, Value::Object(_)) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    let source = calendar_name(object);
+    if source != target {
+        return convert_calendar(object, &source, &target);
     }
     construct(&[
         field(object, "year"),
@@ -1495,6 +1686,48 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         field(object, "day"),
         calendar.clone(),
     ])
+}
+
+fn convert_calendar(
+    object: &crate::value::ObjectData,
+    source: &str,
+    target: &str,
+) -> Result<Value, VmError> {
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let source_date = if source == "iso8601" {
+        Date::try_new_iso(year, month as u8, day as u8)
+            .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?
+    } else {
+        match field(object, "monthCode") {
+            Value::String(code)
+                if matches!(source, "chinese" | "dangi" | "hebrew") =>
+            {
+                calendar_date_for_code(year, &code, day, source)
+            }
+            Value::String(code) if code.ends_with('L') => {
+                calendar_date_for_code(year, &code, day, source)
+            }
+            _ => calendar_date(year, month, day, source),
+        }
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?
+        .to_calendar(Iso)
+    };
+    if target == "iso8601" {
+        return Ok(date_object(
+            f64::from(source_date.year().extended_year()),
+            f64::from(source_date.month().ordinal),
+            f64::from(source_date.day_of_month().0),
+        ));
+    }
+    let kind = calendar_kind(target)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
+    Ok(object_from_calendar_date(
+        source_date.to_calendar(AnyCalendar::new(kind)),
+        target,
+        None,
+    ))
 }
 
 fn with(

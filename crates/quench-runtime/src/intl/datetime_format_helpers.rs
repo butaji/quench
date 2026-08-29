@@ -60,11 +60,32 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
     .or_else(|| proleptic_year_format(&format_slots, number))
     .or_else(|| fractional_format(&format_slots, number))
     .unwrap_or_else(|| range_text(number));
-    let text = if slot_string(&format_slots, "calendar").as_deref() == Some("chinese")
-        && slot_string(&format_slots, "locale").is_some_and(|locale| locale.starts_with("zh"))
-        && slot_string(&format_slots, "year").is_some()
+    // Keep `format()` and `formatToParts()` on the same calendarized data path.
+    // The compact date formatter above emits ISO fields, while parts are
+    // rewritten through ICU for non-Gregorian calendars (including leap
+    // months).  Joining those parts preserves the observable equivalence.
+    let text = if has_date
+        && slot_string(&format_slots, "calendar")
+            .is_some_and(|calendar| calendar != "gregory" && calendar != "iso8601")
     {
-        format!("{text}己亥年")
+        date_time_parts(&format_slots, number)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| match part {
+                        Value::Object(properties) => properties
+                            .iter()
+                            .find_map(|(name, value)| (name == "value").then_some(value))
+                            .and_then(|value| match value {
+                                Value::String(value) => Some(value.clone()),
+                                _ => None,
+                            }),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .concat()
+            })
+            .unwrap_or(text)
     } else {
         text
     };
@@ -635,17 +656,15 @@ fn parts_for_fields(
 
 fn calendarize_parts(parts: &mut Vec<Value>, slots: &[(String, Value)], year: i32, month: u32, day: u32) {
     let calendar = slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
-    if calendar != "chinese" && calendar != "dangi" {
+    if calendar == "gregory" || calendar == "iso8601" {
         return;
     }
-    let (lunar_month, lunar_day) = match (year, month, day, calendar.as_str()) {
-        (2000, 1, 1, _) => (11, 25),
-        (1900, 1, 1, _) => (12, 1),
-        (2100, 1, 1, "chinese") => (11, 21),
-        (2050, 1, 1, "dangi") => (12, 8),
-        _ => (month, day),
+    let Some(fields) = crate::temporal::plain_date::calendar_fields_from_iso(
+        year, month, day, &calendar,
+    ) else {
+        return;
     };
-    let related_year = if month == 1 && day == 1 { year - 1 } else { year };
+    let lunisolar = matches!(calendar.as_str(), "chinese" | "dangi");
     let mut result = Vec::with_capacity(parts.len() + 1);
     for part in parts.drain(..) {
         let Value::Object(properties) = &part else {
@@ -662,8 +681,11 @@ fn calendarize_parts(parts: &mut Vec<Value>, slots: &[(String, Value)], year: i3
                 continue;
             }
         };
-        if kind == "year" {
-            result.push(typed_part("relatedYear", related_year.to_string()));
+        if kind == "year" && lunisolar {
+            result.push(typed_part(
+                "relatedYear",
+                fields.related_year.unwrap_or(fields.year).to_string(),
+            ));
             let numeric_month = slot_string(slots, "month")
                 .is_none_or(|style| !matches!(style.as_str(), "long" | "short" | "narrow"));
             if numeric_month {
@@ -679,16 +701,18 @@ fn calendarize_parts(parts: &mut Vec<Value>, slots: &[(String, Value)], year: i3
                     result.push(literal_part("年"));
                 }
             }
+        } else if kind == "year" {
+            result.push(typed_part("year", fields.year.to_string()));
         } else if kind == "month" {
             if slot_string(slots, "month")
                 .is_some_and(|style| matches!(style.as_str(), "long" | "short" | "narrow"))
             {
                 result.push(part);
             } else {
-                result.push(typed_part("month", lunar_month.to_string()));
+                result.push(typed_part("month", fields.month.to_string()));
             }
         } else if kind == "day" {
-            result.push(typed_part("day", lunar_day.to_string()));
+            result.push(typed_part("day", fields.day.to_string()));
         } else {
             result.push(part);
         }

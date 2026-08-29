@@ -132,6 +132,41 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
     Ok(result)
 }
 
+fn preserve_calendar_month_code(
+    mut result: Value,
+    year: f64,
+    month: f64,
+    day: f64,
+    calendar: &str,
+    code: &Value,
+) -> Value {
+    let Value::String(code) = code else {
+        return result;
+    };
+    let Some((ordinal, canonical)) = crate::temporal::plain_date::calendar_date_from_code(
+        year as i32,
+        code,
+        day as u32,
+        calendar,
+    ) else {
+        return result;
+    };
+    if let Value::Object(object) = &mut result {
+        let object = std::rc::Rc::make_mut(object);
+        object.set_property_in_place("month", Value::Number(ordinal as f64));
+        object.set_property_in_place(
+            "\0temporal-slot:\0month",
+            Value::Number(ordinal as f64),
+        );
+        object.set_property_in_place("monthCode", Value::String(canonical.clone()));
+        object.set_property_in_place(
+            "\0temporal-slot:\0monthCode",
+            Value::String(canonical),
+        );
+    }
+    result
+}
+
 fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     let calendar_text = match &calendar {
@@ -281,15 +316,70 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             12.0
         };
         let month_number = month_number.clamp(1.0, max_month);
-        day = day.clamp(1.0, days_in_month(year_number, month_number));
-        return construct(&[
+        let max_day = match &month_code {
+            Value::String(code) => crate::temporal::plain_date::calendar_days_in_month_for_code(
+                year_number as i32,
+                code,
+                &calendar_name,
+            ),
+            _ if matches!(calendar_name.as_str(), "chinese" | "dangi" | "hebrew") => {
+                let ordinal = crate::temporal::plain_date::calendar_days_in_month(
+                    year_number as i32,
+                    month_number as u32,
+                    &calendar_name,
+                );
+                let code = format!("M{month_number:02.0}");
+                let by_code = crate::temporal::plain_date::calendar_days_in_month_for_code(
+                    year_number as i32,
+                    &code,
+                    &calendar_name,
+                );
+                match (ordinal, by_code) {
+                    (Some(left), Some(right)) => Some(left.min(right)),
+                    (Some(value), None) | (None, Some(value)) => Some(value),
+                    _ => None,
+                }
+            }
+            _ => crate::temporal::plain_date::calendar_days_in_month(
+                year_number as i32,
+                month_number as u32,
+                &calendar_name,
+            ),
+        }
+        .unwrap_or_else(|| days_in_month(year_number, month_number) as u32) as f64;
+        day = day.clamp(1.0, max_day);
+        let result = construct(&[
             year,
             Value::Number(month_number),
             Value::Number(day),
-            calendar,
-        ]);
+            calendar.clone(),
+        ])?;
+        let calendar_name = match &calendar {
+            Value::String(name) => name.as_str(),
+            _ => "iso8601",
+        };
+        return Ok(preserve_calendar_month_code(
+            result,
+            year_number,
+            month_number,
+            day,
+            calendar_name,
+            &month_code,
+        ));
     }
-    construct(&[year, month, Value::Number(day), calendar])
+    let result = construct(&[year, month, Value::Number(day), calendar.clone()])?;
+    let calendar_name = match &calendar {
+        Value::String(name) => name.as_str(),
+        _ => "iso8601",
+    };
+    Ok(preserve_calendar_month_code(
+        result,
+        year_number,
+        month_number,
+        day,
+        calendar_name,
+        &month_code,
+    ))
 }
 
 pub(crate) fn canonical_era_name(calendar: &str, era: &str) -> Option<&'static str> {
