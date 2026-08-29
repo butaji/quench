@@ -301,6 +301,12 @@ pub(crate) fn execute(
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let value = receiver
+        .filter(|value| {
+            matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+                (key == "\0temporal-plain-date-time" && value == Value::Boolean(true))
+                    || (key == "\0prototype" && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype))
+            }))
+        })
         .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?
         .clone();
     crate::intl::datetime::format_temporal_value(
@@ -1848,20 +1854,18 @@ fn with(
     let mut era_provided = false;
     let mut era_year_provided = false;
     let mut recognized = false;
-    for name in [
-        "day",
-        "hour",
-        "microsecond",
-        "millisecond",
-        "minute",
-        "month",
-        "monthCode",
-        "nanosecond",
-        "second",
-        "year",
-        "era",
-        "eraYear",
-    ] {
+    let field_names: &[&str] = if receiver_calendar == "iso8601" {
+        &[
+            "day", "hour", "microsecond", "millisecond", "minute", "month",
+            "monthCode", "nanosecond", "second", "year",
+        ]
+    } else {
+        &[
+            "day", "hour", "microsecond", "millisecond", "minute", "month",
+            "monthCode", "nanosecond", "second", "year", "era", "eraYear",
+        ]
+    };
+    for name in field_names.iter().copied() {
         let value = crate::execute::get_property_result(changes, name)?;
         if matches!(value, Value::Undefined) {
             continue;
