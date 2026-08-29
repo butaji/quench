@@ -158,6 +158,14 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CommonSkip) => {
                 Ok(Value::Undefined)
             }
+            HostCapabilityKind::Custom(CapabilityName::CommonPrintSkipMessage) => {
+                let message = arguments.first().map(safe_value_string).unwrap_or_default();
+                crate::modules::console::log(
+                    &self.state,
+                    &[Value::String(format!("# SKIP: {message}"))],
+                    false,
+                )
+            }
             HostCapabilityKind::Custom(CapabilityName::CommonGetArrayBufferViews) => {
                 let value = match (arguments.first(), arguments.get(1)) {
                     (Some(Value::String(value)), Some(Value::String(encoding)))
