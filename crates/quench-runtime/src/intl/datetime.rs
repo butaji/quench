@@ -139,11 +139,14 @@ impl DateTimeOptions {
         }
         let calendar =
             super::locale::calendar_from_tag(&locale).unwrap_or_else(|| "gregory".to_string());
+        let numbering_system = super::numbering_system(&locale)
+            .unwrap_or_else(|| super::default_numbering_system(&locale))
+            .to_string();
         let mut formatter = DateTimeOptions {
             locale,
             calendar,
-            numbering_system: "latn".to_string(),
-            time_zone: "UTC".to_string(),
+            numbering_system,
+            time_zone: "America/Lima".to_string(),
             components: Vec::new(),
             fractional_second_digits: None,
             hour12: None,
@@ -180,6 +183,7 @@ impl DateTimeOptions {
         }
         if key == "hour12" {
             self.hour12 = Some(crate::execute::is_truthy(value));
+            self.locale = super::locale::remove_unicode_extension(&self.locale, "hc");
             return Ok(());
         }
         if key == "fractionalSecondDigits" {
@@ -194,6 +198,9 @@ impl DateTimeOptions {
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
+                if key == "hourCycle" {
+                    self.locale = super::locale::remove_unicode_extension(&self.locale, "hc");
+                }
             } else {
                 return Err(runtime_error("RangeError: invalid date/time option"));
             }
@@ -235,7 +242,12 @@ impl DateTimeOptions {
                     return Err(runtime_error("RangeError: invalid numberingSystem"));
                 }
                 if super::supported_values::NUMBERING_SYSTEMS.contains(&value.as_str()) {
+                    let locale_numbering = super::numbering_system(&self.locale);
                     self.numbering_system = value;
+                    if locale_numbering != Some(self.numbering_system.as_str()) {
+                        self.locale =
+                            super::locale::remove_unicode_extension(&self.locale, "nu");
+                    }
                 }
             }
             _ => {}
@@ -302,29 +314,29 @@ impl DateTimeOptions {
         }
         if self.hour12.is_some() {
             self.components.retain(|(key, _)| key != "hourCycle");
+            self.set_component(
+                "hourCycle",
+                if self.hour12 == Some(true) {
+                    if self.locale.starts_with("ja") { "h11" } else { "h12" }
+                } else {
+                    "h23"
+                }
+                .to_string(),
+            );
         } else if !self.contains("hourCycle") {
-            self.set_component("hourCycle", "h23".to_string());
+            let cycle = locale_hour_cycle(&self.locale).unwrap_or_else(|| if self.locale.starts_with("ja") {
+                "h11"
+            } else if self.locale.starts_with("en") {
+                "h12"
+            } else {
+                "h23"
+            });
+            self.set_component("hourCycle", cycle.to_string());
         }
     }
 
     fn build_object(&self) -> Value {
         let properties = vec![
-            (
-                "formatToParts".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatToParts),
-            ),
-            (
-                "formatRange".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatRange),
-            ),
-            (
-                "formatRangeToParts".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts),
-            ),
-            (
-                "resolvedOptions".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatResolvedOptions),
-            ),
             (
                 "\0prototype".to_string(),
                 crate::vm::realm_intrinsic(crate::ops::Builtin::IntlDateTimeFormatPrototype),
@@ -391,6 +403,17 @@ fn valid_component(text: &str, allowed: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn locale_hour_cycle(locale: &str) -> Option<&str> {
+    let (_, extension) = locale.split_once("-u-")?;
+    let parts: Vec<_> = extension.split('-').collect();
+    let index = parts.iter().position(|part| *part == "hc")? + 1;
+    let value = parts.get(index).copied()?;
+    COMPONENT_VALUES
+        .iter()
+        .find(|(name, values)| *name == "hourCycle" && values.contains(&value))
+        .map(|_| value)
 }
 
 fn canonicalize_time_zone(time_zone: &str) -> String {
@@ -482,7 +505,13 @@ fn prototype_result(
             let (start, end) = range_values(arguments, slots)?;
             Ok(make_array(range_parts(&start, &end)))
         }
-        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots.to_vec())),
+        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(
+            slots
+                .iter()
+                .filter(|(name, _)| !name.starts_with('\0'))
+                .cloned()
+                .collect(),
+        )),
         _ => Err(runtime_error("TypeError: method not found")),
     }
 }
