@@ -522,7 +522,8 @@ pub const SPEC_HTTP_REQ_CLIENT_DESTROY: NodeSpec = NodeSpec::new("http:req:clien
 pub const SPEC_HTTP_RES_DESTROY: NodeSpec = NodeSpec::new("http:res:destroy", 0x0F19);
 pub const SPEC_HTTP_RES_FLUSH_HEADERS: NodeSpec = NodeSpec::new("http:res:flushHeaders", 0x0F1A);
 pub const SPEC_HTTP_INCOMING: NodeSpec = NodeSpec::new("http:IncomingMessage", 0x0F1B);
-pub const SPEC_HTTP_INCOMING_DESTROY: NodeSpec = NodeSpec::new("http:IncomingMessage:destroy", 0x0F1C);
+pub const SPEC_HTTP_INCOMING_DESTROY: NodeSpec =
+    NodeSpec::new("http:IncomingMessage:destroy", 0x0F1C);
 pub const SPEC_HTTP_REQ_SIGNAL_ABORT: NodeSpec = NodeSpec::new("http:req:signalAbort", 0x0F1D);
 pub const SPEC_HTTP_REQ_ERROR: NodeSpec = NodeSpec::new("http:req:error", 0x0F1E);
 pub const SPEC_HTTP_AGENT_GET_NAME: NodeSpec = NodeSpec::new("http:Agent:getName", 0x0F20);
@@ -542,7 +543,8 @@ pub const SPEC_NET_SET_ASF_TIMEOUT: NodeSpec =
 // net socket / server methods (dispatched with the JS receiver).
 pub const SPEC_NET_SERVER_LISTEN: NodeSpec = NodeSpec::new("net:server:listen", 0x1007);
 pub const SPEC_NET_SERVER_CLOSE: NodeSpec = NodeSpec::new("net:server:close", 0x1008);
-pub const SPEC_NET_SERVER_CLOSE_IDLE: NodeSpec = NodeSpec::new("net:server:closeIdleConnections", 0x1018);
+pub const SPEC_NET_SERVER_CLOSE_IDLE: NodeSpec =
+    NodeSpec::new("net:server:closeIdleConnections", 0x1019);
 pub const SPEC_NET_SERVER_ADDRESS: NodeSpec = NodeSpec::new("net:server:address", 0x1009);
 pub const SPEC_NET_SERVER_UNREF: NodeSpec = NodeSpec::new("net:server:unref", 0x1014);
 pub const SPEC_NET_SERVER_REF: NodeSpec = NodeSpec::new("net:server:ref", 0x1015);
@@ -558,8 +560,7 @@ pub const SPEC_NET_SOCKET_SET_ENCODING: NodeSpec = NodeSpec::new("net:socket:set
 pub const SPEC_NET_SOCKET_PAUSE: NodeSpec = NodeSpec::new("net:socket:pause", 0x1011);
 pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 0x1012);
 pub const SPEC_NET_SOCKET_SET_TIMEOUT: NodeSpec = NodeSpec::new("net:socket:setTimeout", 0x1017);
-pub const SPEC_NET_SOCKET_TIMEOUT_FIRE: NodeSpec =
-    NodeSpec::new("net:socket:timeoutFire", 0x1018);
+pub const SPEC_NET_SOCKET_TIMEOUT_FIRE: NodeSpec = NodeSpec::new("net:socket:timeoutFire", 0x1018);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);
@@ -1107,6 +1108,7 @@ pub const CAP_NET_LOOKUP_CALLBACK: CapId = SPEC_NET_LOOKUP_CALLBACK.cap;
 pub const CAP_NET_SERVER: CapId = SPEC_NET_SERVER.cap;
 pub const CAP_NET_SERVER_ADDRESS: CapId = SPEC_NET_SERVER_ADDRESS.cap;
 pub const CAP_NET_SERVER_CLOSE: CapId = SPEC_NET_SERVER_CLOSE.cap;
+pub const CAP_NET_SERVER_CLOSE_IDLE: CapId = SPEC_NET_SERVER_CLOSE_IDLE.cap;
 pub const CAP_NET_SERVER_LISTEN: CapId = SPEC_NET_SERVER_LISTEN.cap;
 pub const CAP_NET_SERVER_REF: CapId = SPEC_NET_SERVER_REF.cap;
 pub const CAP_NET_SERVER_UNREF: CapId = SPEC_NET_SERVER_UNREF.cap;

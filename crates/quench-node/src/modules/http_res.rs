@@ -54,6 +54,9 @@ pub fn res_write_head(
         return Ok(Value::Undefined);
     };
     let status = args.first().and_then(number).unwrap_or(200).clamp(100, 599);
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, "statusCode", Value::Number(status as f64));
+    }
     if let Some(Value::Array(_)) = args.get(1) {
         let array = args.get(1).cloned().unwrap_or(Value::Undefined);
         let mut guard = state.borrow_mut();
@@ -136,17 +139,17 @@ pub fn res_write(
         res.body.extend_from_slice(&bytes);
         let first_write = !res.headers_sent;
         if first_write
-            && !res
-                .headers
-                .iter()
-                .any(|(key, _)| key.eq_ignore_ascii_case("content-length") || key.eq_ignore_ascii_case("transfer-encoding"))
+            && !res.headers.iter().any(|(key, _)| {
+                key.eq_ignore_ascii_case("content-length")
+                    || key.eq_ignore_ascii_case("transfer-encoding")
+            })
         {
-            res.headers.push(("Transfer-Encoding".into(), "chunked".into()));
+            res.headers
+                .push(("Transfer-Encoding".into(), "chunked".into()));
         }
-        let chunked = res
-            .headers
-            .iter()
-            .any(|(key, value)| key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked"));
+        let chunked = res.headers.iter().any(|(key, value)| {
+            key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
+        });
         res.chunked = chunked;
         res.headers_sent = true;
         res.sent_body = res.body.len();
@@ -300,7 +303,11 @@ fn compose(
     let chunked = headers.iter().any(|(key, value)| {
         key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     });
-    if !chunked && !headers.iter().any(|(key, _)| key.eq_ignore_ascii_case("content-length")) {
+    if !chunked
+        && !headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+    {
         out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     }
     if !headers
