@@ -128,13 +128,26 @@ pub fn res_write(
             .ok_or_else(|| execute::type_error("chunk required"))?;
         chunk_bytes(Some(value))
     };
-    let (status, text, headers, socket, keep_alive, first_write) = {
+    let (status, text, mut headers, socket, keep_alive, first_write, chunked) = {
         let mut guard = state.borrow_mut();
         let Some(res) = guard.http.res.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
         res.body.extend_from_slice(&bytes);
         let first_write = !res.headers_sent;
+        if first_write
+            && !res
+                .headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("content-length") || key.eq_ignore_ascii_case("transfer-encoding"))
+        {
+            res.headers.push(("Transfer-Encoding".into(), "chunked".into()));
+        }
+        let chunked = res
+            .headers
+            .iter()
+            .any(|(key, value)| key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked"));
+        res.chunked = chunked;
         res.headers_sent = true;
         res.sent_body = res.body.len();
         (
@@ -144,12 +157,17 @@ pub fn res_write(
             res.socket.clone(),
             res.keep_alive,
             first_write,
+            chunked,
         )
     };
     let payload = if first_write {
         compose(status, &text, &headers, &bytes, keep_alive)
     } else {
-        bytes
+        if chunked {
+            chunk_frame(&bytes)
+        } else {
+            bytes
+        }
     };
     if !payload.is_empty() {
         net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
@@ -172,7 +190,7 @@ pub fn res_end(
             res_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (status, text, headers, body, socket, keep_alive, headers_sent) = {
+    let (status, text, headers, body, socket, keep_alive, headers_sent, chunked) = {
         let guard = state.borrow();
         let Some(res) = guard.http.res.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -185,12 +203,16 @@ pub fn res_end(
             res.socket.clone(),
             res.keep_alive,
             res.headers_sent,
+            res.chunked,
         )
     };
     let status = status_code(receiver, status);
     if !headers_sent {
         let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
+    } else if chunked {
+        let terminator = host_api::bytes(b"0\r\n\r\n");
+        crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&terminator))?;
     }
     if let Some(socket_id) = net::net_id(&socket) {
         if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
@@ -277,7 +299,12 @@ fn compose(
 ) -> Vec<u8> {
     let text = if text.is_empty() { "OK" } else { text };
     let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
-    out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+    let chunked = headers.iter().any(|(key, value)| {
+        key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
+    });
+    if !chunked && !headers.iter().any(|(key, _)| key.eq_ignore_ascii_case("content-length")) {
+        out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+    }
     if !headers
         .iter()
         .any(|(key, _)| key.eq_ignore_ascii_case("date"))
@@ -290,8 +317,22 @@ fn compose(
     let connection = if keep_alive { "keep-alive" } else { "close" };
     out.extend_from_slice(format!("Connection: {connection}\r\n").as_bytes());
     out.extend_from_slice(b"\r\n");
-    out.extend_from_slice(body);
+    if chunked {
+        out.extend_from_slice(&chunk_frame(body));
+    } else {
+        out.extend_from_slice(body);
+    }
     out
+}
+
+fn chunk_frame(body: &[u8]) -> Vec<u8> {
+    if body.is_empty() {
+        return Vec::new();
+    }
+    let mut frame = format!("{:x}\r\n", body.len()).into_bytes();
+    frame.extend_from_slice(body);
+    frame.extend_from_slice(b"\r\n");
+    frame
 }
 
 fn number(value: &Value) -> Option<u16> {

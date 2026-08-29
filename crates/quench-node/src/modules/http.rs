@@ -63,6 +63,7 @@ pub struct Res {
     pub keep_alive: bool,
     pub headers_sent: bool,
     pub sent_body: usize,
+    pub chunked: bool,
 }
 
 impl Default for HttpState {
@@ -573,6 +574,7 @@ fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep
             keep_alive,
             headers_sent: false,
             sent_body: 0,
+            chunked: false,
         },
     );
 }
