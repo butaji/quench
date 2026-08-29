@@ -46,3 +46,9 @@ crates/quench-node/.*.bun-build
 /tests/node-compat/stage-*/access.txt
 /tests/node-compat/stage-*/read-only
 /tests/node-compat/stage-*/root/
+
+# Legacy build-target directories (consolidated into /target/)
+/target-array-assembly/
+/target-value-assembly/
+/target-native/
+/target-native-fat/

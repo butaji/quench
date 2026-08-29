@@ -165,7 +165,7 @@ fn main() -> ExitCode {
 }
 
 /// Emit a machine-readable JSON report consumable by
-/// `tools/merge-differential-reports.cjs`: a fingerprint identifying the run
+/// `tools/perf/merge-differential-reports.cjs`: a fingerprint identifying the run
 /// tree plus one `{fixture, category}` row per executed test.
 fn write_json_report(
     path: &Path,

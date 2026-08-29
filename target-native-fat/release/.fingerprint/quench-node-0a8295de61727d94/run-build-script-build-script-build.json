@@ -1,1 +1,0 @@
-{"rustc":16366243165657216489,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[12036964999568660644,"build_script_build",false,11382307362502398902]],"local":[{"Precalculated":"1787433408.331061730s (src/polyfills/mod.rs)"}],"rustflags":["-C","target-cpu=native"],"config":0,"compile_kind":0}
