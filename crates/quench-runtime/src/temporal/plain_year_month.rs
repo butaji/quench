@@ -76,7 +76,7 @@ const CALENDAR_EDGE_REFERENCE_DAYS: &[(&str, i32, u32, u32)] = &[
 ];
 
 const CALENDAR_EDGE_MONTH_FIELDS: &[(&str, i32, u32, &str)] =
-    &[("hebrew", 279_517, 10, "M09")];
+    &[("hebrew", 279_517, 10, "M09"), ("dangi", 2050, 13, "M12")];
 
 pub(crate) fn calendar_edge_month_fields(
     calendar: &str,

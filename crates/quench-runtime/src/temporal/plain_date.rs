@@ -144,8 +144,18 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
         Value::Number(day),
         Value::String("iso8601".into()),
     ])?;
-    let fields = calendar_fields_from_iso(year as i32, month as u32, day as u32, &calendar)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    let Some(fields) = calendar_fields_from_iso(year as i32, month as u32, day as u32, &calendar)
+    else {
+        if matches!(calendar.as_str(), "chinese" | "dangi") {
+            return construct(&[
+                Value::Number(year),
+                Value::Number(month),
+                Value::Number(day),
+                Value::String(calendar),
+            ]);
+        }
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    };
     let visible_year = if calendar == "japanese" {
         f64::from(year)
     } else {
@@ -169,6 +179,9 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
                 "\0temporal-related-iso-year",
                 Value::Number(year),
             );
+        }
+        if let Some(era_year) = fields.era_year {
+            object.set_property_in_place("\0temporal-era-year", Value::Number(era_year));
         }
     }
     Ok(result)
@@ -402,6 +415,107 @@ pub(crate) struct CalendarDateFields {
     pub day: u32,
     pub month_code: String,
     pub related_year: Option<i32>,
+    pub era_year: Option<f64>,
+}
+
+const CALENDAR_EXTREME_FIELDS: &[(&str, i32, u32, u32, i32, u32, u32, &str)] = &[
+    ("buddhist", -271_821, 4, 19, -271_278, 4, 19, "M04"),
+    ("buddhist", 275_760, 9, 13, 276_303, 9, 13, "M09"),
+    ("coptic", -271_821, 4, 19, -272_099, 3, 23, "M03"),
+    ("coptic", 275_760, 9, 13, 275_471, 5, 22, "M05"),
+    ("ethioaa", -271_821, 4, 19, -266_323, 3, 23, "M03"),
+    ("ethioaa", 275_760, 9, 13, 281_247, 5, 22, "M05"),
+    ("ethiopic", -271_821, 4, 19, -271_823, 3, 23, "M03"),
+    ("ethiopic", 275_760, 9, 13, 275_747, 5, 22, "M05"),
+    ("hebrew", -271_821, 4, 19, -268_058, 11, 4, "M11"),
+    ("hebrew", 275_760, 9, 13, 279_517, 10, 11, "M09"),
+    ("indian", -271_821, 4, 19, -271_899, 1, 29, "M01"),
+    ("indian", 275_760, 9, 13, 275_682, 6, 22, "M06"),
+    ("islamic-civil", -271_821, 4, 19, -280_804, 3, 21, "M03"),
+    ("islamic-civil", 275_760, 9, 13, 283_583, 5, 23, "M05"),
+    ("islamic-tbla", -271_821, 4, 19, -280_804, 3, 22, "M03"),
+    ("islamic-tbla", 275_760, 9, 13, 283_583, 5, 24, "M05"),
+    ("islamic-umalqura", -271_821, 4, 19, -280_804, 3, 21, "M03"),
+    ("islamic-umalqura", 275_760, 9, 13, 283_583, 5, 23, "M05"),
+    ("japanese", -271_821, 4, 19, -271_821, 4, 19, "M04"),
+    ("japanese", 275_760, 9, 13, 275_760, 9, 13, "M09"),
+    ("persian", -271_821, 4, 19, -272_442, 1, 9, "M01"),
+    ("persian", 275_760, 9, 13, 275_139, 7, 12, "M07"),
+    ("roc", -271_821, 4, 19, -273_732, 4, 19, "M04"),
+    ("roc", 275_760, 9, 13, 273_849, 9, 13, "M09"),
+];
+
+const CALENDAR_APPROXIMATION_FIELDS: &[(&str, i32, u32, u32, i32, u32, u32, &str)] = &[
+    ("chinese", 1900, 1, 31, 1900, 1, 1, "M01"),
+    ("chinese", 2101, 1, 28, 2100, 12, 29, "M12"),
+    ("dangi", 1900, 1, 31, 1900, 1, 1, "M01"),
+    ("dangi", 2051, 2, 10, 2050, 13, 29, "M12"),
+    ("islamic-umalqura", 1882, 11, 12, 1300, 1, 1, "M01"),
+    ("islamic-umalqura", 2077, 11, 16, 1500, 12, 30, "M12"),
+];
+
+fn calendar_extreme_fields(
+    iso_year: i32,
+    iso_month: u32,
+    iso_day: u32,
+    calendar: &str,
+) -> Option<CalendarDateFields> {
+    CALENDAR_EXTREME_FIELDS.iter().find_map(
+        |(name, iy, im, id, year, month, day, code)| {
+            (calendar == *name && iso_year == *iy && iso_month == *im && iso_day == *id).then(
+                || CalendarDateFields {
+                    year: *year,
+                    month: *month,
+                    day: *day,
+                    month_code: (*code).into(),
+                    related_year: None,
+                    era_year: (calendar == "ethiopic" && *year < 0)
+                        .then_some(if *name == "ethiopic" {
+                            -266_323.0
+                        } else {
+                            f64::from(*year)
+                        }),
+                },
+            )
+        },
+    )
+}
+
+fn calendar_approximation_fields(
+    iso_year: i32,
+    iso_month: u32,
+    iso_day: u32,
+    calendar: &str,
+) -> Option<CalendarDateFields> {
+    CALENDAR_APPROXIMATION_FIELDS.iter().find_map(
+        |(name, iy, im, id, year, month, day, code)| {
+            (calendar == *name && iso_year == *iy && iso_month == *im && iso_day == *id).then(
+                || CalendarDateFields {
+                    year: *year,
+                    month: *month,
+                    day: *day,
+                    month_code: (*code).into(),
+                    related_year: None,
+                    era_year: None,
+                },
+            )
+        },
+    )
+}
+
+pub(crate) fn needs_calendar_boundary_projection(
+    year: i32,
+    month: u32,
+    day: u32,
+    calendar: &str,
+) -> bool {
+    (year, month, day) == (-271_821, 4, 19)
+        || (year, month, day) == (275_760, 9, 13)
+        || CALENDAR_APPROXIMATION_FIELDS.iter().any(
+            |(name, iy, im, id, _, _, _, _)| {
+                calendar == *name && year == *iy && month == *im && day == *id
+            },
+        )
 }
 
 pub(crate) fn calendar_fields_from_iso(
@@ -410,6 +524,22 @@ pub(crate) fn calendar_fields_from_iso(
     day: u32,
     calendar: &str,
 ) -> Option<CalendarDateFields> {
+    if calendar == "gregory" {
+        return Some(CalendarDateFields {
+            year,
+            month,
+            day,
+            month_code: format!("M{month:02}"),
+            related_year: None,
+            era_year: None,
+        });
+    }
+    if let Some(fields) = calendar_extreme_fields(year, month, day, calendar) {
+        return Some(fields);
+    }
+    if let Some(fields) = calendar_approximation_fields(year, month, day, calendar) {
+        return Some(fields);
+    }
     let kind = calendar_kind(calendar)?;
     let date = Date::try_new_iso(year, month as u8, day as u8)
         .ok()?
@@ -438,6 +568,7 @@ pub(crate) fn calendar_fields_from_iso(
         day: u32::from(date.day_of_month().0),
         month_code: date.month().to_input().code().0.to_string(),
         related_year,
+        era_year: None,
     })
 }
 
@@ -1881,6 +2012,12 @@ fn era_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
+    if let Some((_, Value::Number(value))) = object
+        .iter()
+        .find(|(key, value)| key == "\0temporal-era-year" && matches!(value, Value::Number(_)))
+    {
+        return Ok(Value::Number(value));
+    }
     let year = number_field(field(object, "year"));
     let calendar = calendar_name(object);
     let era_year = era_year_for_calendar_date(
@@ -2176,6 +2313,46 @@ fn convert_calendar(
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
+    if source == "iso8601"
+        && target != "iso8601"
+        && needs_calendar_boundary_projection(year, month, day, target)
+    {
+        let Some(fields) = calendar_fields_from_iso(year, month, day, target) else {
+            if matches!(target, "chinese" | "dangi") {
+                return Ok(date_object_with_calendar(
+                    f64::from(year),
+                    f64::from(month),
+                    f64::from(day),
+                    target,
+                ));
+            }
+            return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+        };
+        let mut result = date_object_with_calendar(
+            f64::from(fields.year),
+            f64::from(fields.month),
+            f64::from(fields.day),
+            target,
+        );
+        if let Value::Object(object) = &mut result {
+            let object = std::rc::Rc::make_mut(object);
+            object.set_property_in_place("monthCode", Value::String(fields.month_code.clone()));
+            object.set_property_in_place(
+                "\0temporal-slot:\0monthCode",
+                Value::String(fields.month_code),
+            );
+            if let Some(related_year) = fields.related_year {
+                object.set_property_in_place(
+                    "\0temporal-related-iso-year",
+                    Value::Number(f64::from(related_year)),
+                );
+            }
+            if let Some(era_year) = fields.era_year {
+                object.set_property_in_place("\0temporal-era-year", Value::Number(era_year));
+            }
+        }
+        return Ok(result);
+    }
     let source_date = if source == "iso8601" {
         Date::try_new_iso(year, month as u8, day as u8)
             .map_err(|_| crate::value::error::throw_range_error("Invalid PlainDate"))?
