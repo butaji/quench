@@ -28,7 +28,11 @@ pub(crate) fn construct_with_legacy_receiver(
             .ok_or_else(|| runtime_error("TypeError: missing Intl fallback symbol"))?;
         let receiver = set_property_preserving_identity(receiver, slot, slots);
         let key = fallback_symbol_key(&symbol)?;
-        return Ok(set_property_preserving_identity(&receiver, &key, initialized));
+        return Ok(set_property_preserving_identity(
+            &receiver,
+            &key,
+            initialized,
+        ));
     };
     let realm = receiver_realm.unwrap_or_else(|| crate::vm::current_context_or_default().realm());
     let slots = crate::execute::get_property(&initialized, slot);
@@ -36,14 +40,19 @@ pub(crate) fn construct_with_legacy_receiver(
         .ok_or_else(|| runtime_error("TypeError: missing Intl fallback symbol"))?;
     let receiver = set_property_preserving_identity(receiver, slot, slots);
     let key = fallback_symbol_key(&symbol)?;
-    Ok(set_property_preserving_identity(&receiver, &key, initialized))
+    Ok(set_property_preserving_identity(
+        &receiver,
+        &key,
+        initialized,
+    ))
 }
 
 fn set_property_preserving_identity(target: &Value, key: &str, value: Value) -> Value {
     let Value::Object(properties) = target else {
         return crate::builtins::set_property(target.clone(), key, value);
     };
-    let object = unsafe { &mut *(std::rc::Rc::as_ptr(properties) as *mut crate::value::ObjectData) };
+    let object =
+        unsafe { &mut *(std::rc::Rc::as_ptr(properties) as *mut crate::value::ObjectData) };
     let descriptor_value = value.clone();
     object.set_property_in_place(key, value);
     if key.starts_with("Symbol.IntlLegacyConstructedSymbol\0") {
