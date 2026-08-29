@@ -1633,12 +1633,16 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
-    let calendar_name = calendar_name_option(options)?;
+    let calendar_name_option_value = calendar_name_option(options)?;
+    let calendar_id = calendar_name(object);
     let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
-    if calendar_name == "always" {
-        result.push_str("[u-ca=iso8601]");
-    } else if calendar_name == "critical" {
-        result.push_str("[!u-ca=iso8601]");
+    match calendar_name_option_value.as_str() {
+        "always" => result.push_str(&format!("[u-ca={calendar_id}]")),
+        "critical" => result.push_str(&format!("[!u-ca={calendar_id}]")),
+        "auto" if calendar_id != "iso8601" => {
+            result.push_str(&format!("[u-ca={calendar_id}]"));
+        }
+        _ => {}
     }
     Ok(Value::String(result))
 }
