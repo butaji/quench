@@ -48,6 +48,11 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         Some(Value::StringUnits(_)) => crate::conversion::to_string(value.unwrap())?,
         _ => return Err(crate::value::error::throw_type_error("Invalid PlainDate")),
     };
+    let calendar_hint = text
+        .split_once("[u-ca=")
+        .and_then(|(_, rest)| rest.split(']').next())
+        .and_then(canonical_calendar_id)
+        .unwrap_or_else(|| "iso8601".into());
     if text.starts_with("-000000") || text.contains('−') || has_empty_time_designator(&text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
@@ -98,7 +103,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         let day = date[6..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let result = checked_date_object(year, month, day)?;
+        let result = checked_date_object(year, month, day, &calendar_hint)?;
         let _ = overflow_value(options)?;
         return Ok(result);
     }
@@ -117,12 +122,12 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         let day = date[9..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let result = checked_date_object(year, month, day)?;
+        let result = checked_date_object(year, month, day, &calendar_hint)?;
         let _ = overflow_value(options)?;
         return Ok(result);
     }
     let (year, month, day) = parse_date_parts(&parts)?;
-    let result = checked_date_object(year, month, day)?;
+    let result = checked_date_object(year, month, day, &calendar_hint)?;
     let _ = overflow_value(options)?;
     Ok(result)
 }
@@ -550,7 +555,7 @@ fn parse_date_parts(parts: &[&str]) -> Result<(i32, i32, i32), VmError> {
     ))
 }
 
-fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
+fn checked_date_object(year: i32, month: i32, day: i32, calendar: &str) -> Result<Value, VmError> {
     let year = f64::from(year);
     let month = f64::from(month);
     let day = f64::from(day);
@@ -565,5 +570,5 @@ fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError
     {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
-    Ok(date_object(year, month, day))
+    Ok(date_object_with_calendar(year, month, day, calendar))
 }
