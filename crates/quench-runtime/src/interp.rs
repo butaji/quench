@@ -12,6 +12,7 @@ struct Frame {
     regs: Vec<Slot>,
     dsts: Box<[u16]>,
     handlers: Vec<Box<[crate::hir::CatchClause]>>,
+    caught: Option<(u32, Vec<Slot>)>,
 }
 
 enum Step {
@@ -155,6 +156,7 @@ fn tail_values(
             regs: values,
             dsts,
             handlers: Vec::new(),
+            caught: None,
         };
     }
     Ok(())
@@ -234,6 +236,7 @@ fn new_frame(vm: &Instance, func: u32, args: &[Slot], dsts: Box<[u16]>) -> Resul
                 regs: Vec::new(),
                 dsts,
                 handlers: Vec::new(),
+                caught: None,
             });
         }
         _ => return Err(Failure::Trap(Trap::Unimplemented)),
@@ -246,6 +249,7 @@ fn new_frame(vm: &Instance, func: u32, args: &[Slot], dsts: Box<[u16]>) -> Resul
         regs,
         dsts,
         handlers: Vec::new(),
+        caught: None,
     })
 }
 
@@ -295,6 +299,15 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
         }
         Inst::ThrowRef { src } => {
             return throw_ref(vm, &frame.regs, *src);
+        }
+        Inst::Rethrow => {
+            return match &frame.caught {
+                Some((tag, args)) => Err(Failure::Exception {
+                    tag: *tag,
+                    args: args.clone(),
+                }),
+                None => Err(Failure::Trap(Trap::Unreachable)),
+            };
         }
         Inst::Gc { op, dst, args } => {
             crate::gc::step(vm, *op, *dst, args, &mut frame.regs)?;
@@ -613,6 +626,22 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
             c,
             lane,
         } => step_simd(regs, *op, *dst, *a, *b, *c, *lane),
+        Inst::Atomic {
+            op,
+            dst,
+            addr,
+            a,
+            b,
+            offset,
+            mem,
+            bytes,
+            wide,
+        } => {
+            crate::wasm_atomic::step(
+                vm, *op, *dst, *addr, *a, *b, *offset, *mem, *bytes, *wide, regs,
+            )?;
+            Ok(Step::Next)
+        }
         Inst::BoxToDynamic { dst, src } => {
             let boxed = regs[*src as usize]
                 .box_dynamic()
@@ -622,6 +651,7 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
         Inst::Gc { .. }
         | Inst::Throw { .. }
         | Inst::ThrowRef { .. }
+        | Inst::Rethrow
         | Inst::TryBegin { .. }
         | Inst::TryEnd => Ok(Step::Next),
         Inst::Guard { dst, src, kind } => {
@@ -756,20 +786,31 @@ fn take_catch(
 }
 
 fn catch_in(vm: &Instance, frame: &mut Frame, tag: u32, args: &[Slot]) -> bool {
-    for i in (0..frame.handlers.len()).rev() {
-        for catch in frame.handlers[i].iter() {
+    let mut i = frame.handlers.len() as i32 - 1;
+    while i >= 0 {
+        let idx = i as usize;
+        if let [c] = frame.handlers[idx].as_ref() {
+            if c.target & 0x8000_0000 != 0 {
+                let d = c.target & 0x7fff_ffff;
+                i -= d as i32 + 1;
+                continue;
+            }
+        }
+        for catch in frame.handlers[idx].iter() {
             if catch.tag.map(|t| vm.tag_id(t) == tag).unwrap_or(true) {
                 let mut payload = args.to_vec();
                 if catch.with_ref {
                     let r = crate::gc::alloc_exn(&mut vm.gc().borrow_mut(), tag, args.to_vec());
                     payload.push(Slot::Native(Native::Ref(r)));
                 }
+                frame.caught = Some((tag, args.to_vec()));
                 write_returns(&mut frame.regs, &catch.dsts, payload);
                 frame.pc = catch.target as usize;
-                frame.handlers.truncate(i);
+                frame.handlers.truncate(idx);
                 return true;
             }
         }
+        i -= 1;
     }
     false
 }

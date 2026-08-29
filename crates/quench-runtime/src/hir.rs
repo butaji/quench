@@ -351,6 +351,7 @@ pub enum Inst {
     ThrowRef {
         src: Reg,
     },
+    Rethrow,
     ReturnCallRef {
         type_idx: u32,
         func: Reg,
@@ -360,6 +361,33 @@ pub enum Inst {
         catches: Box<[CatchClause]>,
     },
     TryEnd,
+    Atomic {
+        op: AtomicOp,
+        dst: Reg,
+        addr: Reg,
+        a: Reg,
+        b: Reg,
+        offset: u64,
+        mem: u32,
+        bytes: u8,
+        wide: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AtomicOp {
+    Load,
+    Store,
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    Xchg,
+    Cmpxchg,
+    Wait,
+    Notify,
+    Fence,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
