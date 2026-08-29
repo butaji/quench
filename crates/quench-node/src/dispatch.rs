@@ -388,6 +388,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQ_END => crate::modules::http_client::req_end,
         CAP_HTTP_REQ_SET_HEADER => crate::modules::http_client::req_set_header,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_call,
+        CAP_HTTP_AGENT_GET_NAME => crate::modules::http_client::agent_get_name,
         CAP_HTTP_REQ_RESUME => crate::modules::http::request_resume,
         CAP_HTTP_REQ_DESTROY => crate::modules::http::request_destroy,
         CAP_HTTP_REQ_ABORT => crate::modules::http_client::req_abort,

@@ -56,10 +56,31 @@ pub struct ClientReq {
 
 pub fn agent_call(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(host_api::object(Vec::new()))
+    let Some(agent) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    for key in ["sockets", "freeSockets"] {
+        let pools = execute::get_property(agent, key);
+        for name in execute::own_enumerable_keys(&pools) {
+            let sockets = execute::get_property(&pools, &name);
+            for index in execute::own_enumerable_keys(&sockets) {
+                if let Some(socket) = match execute::get_property(&sockets, &index) {
+                    Value::Object(_) | Value::ObjectAlias(_) => {
+                        Some(execute::get_property(&sockets, &index))
+                    }
+                    _ => None,
+                } {
+                    crate::modules::net::socket_destroy(_state, Some(&socket), &[])?;
+                }
+            }
+            let (updated, _) = execute::delete_property(pools.clone(), &name);
+            execute::replace_value(&pools, &updated);
+        }
+    }
+    Ok(agent.clone())
 }
 
 pub fn agent_construct(
@@ -67,14 +88,58 @@ pub fn agent_construct(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     let mut object = crate::modules::events::new_emitter_object(state)?;
+    object = execute::set_property(object, "sockets", host_api::object(Vec::new()));
+    object = execute::set_property(object, "freeSockets", host_api::object(Vec::new()));
+    object = execute::set_property(object, "requests", host_api::object(Vec::new()));
+    object = execute::set_property(object, "options", host_api::object(Vec::new()));
     object = install_methods(
         object,
-        vec![(
-            "destroy".to_string(),
-            crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
-        )],
+        vec![
+            (
+                "destroy".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
+            ),
+            (
+                "getName".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_AGENT_GET_NAME),
+            ),
+        ],
     )?;
     Ok(object)
+}
+
+/// `agent.getName(options)` — stable pool key derived from connection facts.
+pub fn agent_get_name(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    let host = match execute::get_property(&options, "host") {
+        Value::String(value) if !value.is_empty() => value,
+        _ => match execute::get_property(&options, "hostname") {
+            Value::String(value) if !value.is_empty() => value,
+            _ => "localhost".into(),
+        },
+    };
+    let port = match execute::get_property(&options, "port") {
+        Value::String(value) => value,
+        Value::Number(value) if value.is_finite() => (value as i64).to_string(),
+        _ => String::new(),
+    };
+    let local = match execute::get_property(&options, "localAddress") {
+        Value::String(value) => value,
+        _ => String::new(),
+    };
+    let family = match execute::get_property(&options, "family") {
+        Value::Number(value) if value == 4.0 || value == 6.0 => format!(":{value}"),
+        _ => String::new(),
+    };
+    let socket_path = match execute::get_property(&options, "socketPath") {
+        Value::String(value) if !value.is_empty() => format!(":{value}"),
+        _ => String::new(),
+    };
+    Ok(Value::String(format!("{host}:{port}:{local}{family}{socket_path}")))
 }
 
 pub fn res_set_encoding(
@@ -521,6 +586,11 @@ pub fn req_end(
     let mut guard = state.borrow_mut();
     if let Some(req) = guard.http.clientreqs.get_mut(&id) {
         req.socket = Some(socket.clone());
+        set_request_property(Some(&req.req), "socket", socket.clone());
+        if let Some(agent) = req.agent.clone() {
+            let name = agent_name(&target, &agent);
+            add_agent_socket(&agent, &name, &socket);
+        }
     }
     if let Some(socket_id) = socket_id {
         guard.http.clients.insert(socket_id, id);
@@ -699,6 +769,18 @@ pub fn req_close(
         .clientreqs
         .get(&client_id)
         .and_then(|req| req.res.clone());
+    let agent = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .and_then(|req| req.agent.clone());
+    let target = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| req.target.clone());
     state
         .borrow_mut()
         .http
@@ -712,6 +794,22 @@ pub fn req_close(
             return Ok(Value::Undefined);
         }
         net::emit(state, &request, "close", Vec::new())?;
+    }
+    if let (Some(agent), Some(target)) = (agent.as_ref(), target.as_ref()) {
+        let name = agent_name(target, agent);
+        remove_agent_socket(agent, &name, socket);
+        let has_active = state.borrow().http.clientreqs.values().any(|req| {
+            req.agent
+                .as_ref()
+                .is_some_and(|candidate| execute::same_identity(candidate, agent))
+                && agent_name(&req.target, agent) == name
+                && !req.response_closed
+        });
+        if !has_active {
+            let pools = execute::get_property(agent, "sockets");
+            let (updated, _) = execute::delete_property(pools.clone(), &name);
+            execute::replace_value(&pools, &updated);
+        }
     }
     // A peer closing before the response completed is an aborted response,
     // not a normal end. Keep the response identity and signal as the single
@@ -751,6 +849,63 @@ pub fn req_close(
     Ok(Value::Undefined)
 }
 
+fn agent_name(target: &RequestTarget, agent: &Value) -> String {
+    let options = match target {
+        RequestTarget::Tcp { host, port } => host_api::object(vec![
+            (
+                "host".into(),
+                Value::String(if host == "127.0.0.1" {
+                    "localhost".into()
+                } else {
+                    host.clone()
+                }),
+            ),
+            ("port".into(), Value::Number(*port as f64)),
+        ]),
+        RequestTarget::Unix { path } => host_api::object(vec![(
+            "socketPath".into(),
+            Value::String(path.clone()),
+        )]),
+    };
+    execute::to_js_string(&execute::call(
+        &execute::get_property(agent, "getName"),
+        agent,
+        &[options],
+    ).unwrap_or(Value::String(String::new()))).unwrap_or_default()
+}
+
+fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
+    let pools = execute::get_property(agent, "sockets");
+    let list = match execute::get_property(&pools, name) {
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::get_property(&pools, name)
+        }
+        _ => {
+            let list = host_api::array(Vec::new());
+            execute::set_property_in_place(&pools, name, list.clone());
+            list
+        }
+    };
+    let length = match execute::get_property(&list, "length") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    execute::set_property_in_place(&list, &length.to_string(), socket.clone());
+    execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
+}
+
+fn remove_agent_socket(agent: &Value, name: &str, socket: &Value) {
+    let pools = execute::get_property(agent, "sockets");
+    let list = execute::get_property(&pools, name);
+    let keys = execute::own_enumerable_keys(&list);
+    for key in keys {
+        let value = execute::get_property(&list, &key);
+        if execute::same_identity(&value, socket) {
+            let _ = execute::set_property_in_place(&list, &key, Value::Undefined);
+        }
+    }
+}
+
 /// Response parser: buffer bytes, then stream `'data'` chunks.
 pub fn data_handler(
     state: &Rc<RefCell<HostState>>,
@@ -768,6 +923,15 @@ pub fn data_handler(
     match pending_head {
         Some(head) => {
             let res = build_incoming(state, &head)?;
+            if let Some(socket) = state
+                .borrow()
+                .http
+                .clientreqs
+                .get(&client_id)
+                .and_then(|req| req.socket.clone())
+            {
+                set_response_property(&res, "socket", socket);
+            }
             if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                 req.res = Some(res.clone());
             }

@@ -754,6 +754,10 @@ pub fn build() -> Value {
             "createConnection".into(),
             crate::host::capability(crate::registry::SPEC_NET_CONNECT),
         ),
+        (
+            "getName".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_AGENT_GET_NAME),
+        ),
     ]);
     let agent = quench_runtime::execute::set_property(agent, "prototype", agent_prototype);
     let mut module = crate::host::namespace_object(vec![
