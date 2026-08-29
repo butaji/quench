@@ -115,10 +115,7 @@ pub fn access(
     let op = super::fs::sync_op("access").ok_or(VmError::NotCallable)?;
     let result = op(state, None, leading);
     let error = super::fs::err_value(&result);
-    let callback = crate::modules::domain::current(state)
-        .and_then(|domain| crate::modules::domain::bind(state, Some(&domain), &[callback.clone()]).ok())
-        .unwrap_or(callback);
-    quench_runtime::execute::call(&callback, &Value::Undefined, &[error])?;
+    super::fs::defer_with_resource(state, &callback, vec![error], "FSREQCALLBACK")?;
     Ok(Value::Undefined)
 }
 

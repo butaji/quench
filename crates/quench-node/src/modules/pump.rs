@@ -548,15 +548,30 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
 
 fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let mut defer_ticks = false;
-    let queued: Vec<(Value, Vec<Value>)> = state
+    let queued: Vec<crate::modules::event_loop::Immediate> = state
         .borrow()
         .event_loop
         .immediates
         .borrow_mut()
         .drain(..)
         .collect();
-    for (cb, args) in queued {
-        defer_ticks |= call_guarded_report(state, &cb, &Value::Undefined, &args)?;
+    for task in queued {
+        if let Some(resource) = task.resource.as_ref() {
+            crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
+        }
+        let result = call_guarded_report(
+            state,
+            &task.callback,
+            &Value::Undefined,
+            &task.args,
+        );
+        if task.resource.is_some() {
+            crate::modules::async_hooks::resource_after(state, None, &[])?;
+        }
+        defer_ticks |= result?;
+        if let Some(resource) = task.resource.as_ref() {
+            crate::modules::async_hooks::resource_destroy(state, Some(resource), &[])?;
+        }
     }
     let mut ids: Vec<u64> = state
         .borrow()
