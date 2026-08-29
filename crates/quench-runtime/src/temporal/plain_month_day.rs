@@ -435,17 +435,54 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Missing month"));
     }
     let year_value = crate::execute::get_property_result(value, "year")?;
+    let era_value = crate::execute::get_property_result(value, "era")?;
+    let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+    let era_provided = !matches!(era_value, Value::Undefined);
+    let era_year_provided = !matches!(era_year_value, Value::Undefined);
+    if era_provided != era_year_provided {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
     let year_number = crate::conversion::to_number(&year_value)?;
     if !matches!(year_value, Value::Undefined) && !year_number.is_finite() {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainMonthDay",
         ));
     }
-    let year = if year_number.is_finite() {
+    let mut year = if year_number.is_finite() {
         year_number.trunc()
     } else {
         1972.0
     };
+    if era_provided
+        && crate::temporal::plain_date::era_for_calendar(&calendar_id, 0.0).is_some()
+    {
+        let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        let era = crate::temporal::plain_date::canonical_era_name(&calendar_id, &era)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+        let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+        let derived = crate::temporal::plain_date::derive_year_from_era(
+            &calendar_id,
+            era,
+            era_year,
+        )
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+        if !year_number.is_finite() {
+            year = derived;
+        } else if year != derived {
+            return Err(crate::value::error::throw_range_error("Conflicting era fields"));
+        }
+    }
+    if !year_number.is_finite()
+        && matches!(month_code, Value::Undefined)
+        && calendar_id != "iso8601"
+    {
+        return Err(crate::value::error::throw_type_error("Missing monthCode"));
+    }
     let reject = overflow_reject(options)?;
     let month = if let Some(month_code) = month_code_text.as_deref() {
         let parsed = parse_month_code(month_code)?;
