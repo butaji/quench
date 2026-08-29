@@ -372,22 +372,7 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn overflow_reject(options: Option<&Value>) -> Result<bool, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(false);
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    let value = crate::execute::get_property_result(options, "overflow")?;
-    if matches!(value, Value::Undefined) {
-        return Ok(false);
-    }
-    let text = crate::conversion::to_string(&value)?;
-    match text.as_str() {
-        "constrain" => Ok(false),
-        "reject" => Ok(true),
-        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
-    }
+    crate::temporal::options::reject_overflow(options)
 }
 
 fn fields(value: &Value) -> Result<(String, f64), VmError> {

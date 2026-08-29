@@ -111,11 +111,25 @@ pub(crate) fn execute(
         Builtin::IntlPluralRulesSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
-        Builtin::IntlDurationFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlDurationFormatSupportedLocalesOf => {
+            Some(duration_supported_locales_of(arguments))
+        }
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
     }
+}
+
+fn duration_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
+    let locales = requested_locales(arguments)?;
+    validate_supported_options(arguments.get(1))?;
+    Ok(make_array(
+        locales
+            .into_iter()
+            .filter(|locale| !locale.eq_ignore_ascii_case("zxx"))
+            .map(Value::String)
+            .collect(),
+    ))
 }
 
 fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
