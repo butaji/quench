@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vfs = require("node:vfs");
 
-const root = path.join(process.cwd(), "stage-2385-fstat");
+const root = path.join(process.cwd(), "tmp", "stage-2385-fstat");
 fs.mkdirSync(root, { recursive: true });
 const content = "a".repeat(8192) + "trailing data";
 fs.writeFileSync(path.join(root, "zero-stat.txt"), content);

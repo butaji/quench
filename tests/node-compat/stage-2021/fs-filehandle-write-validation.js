@@ -2,7 +2,8 @@ const assert = require("assert");
 const fs = require("fs");
 
 (async () => {
-  const path = "stage-2021-write.txt";
+  fs.mkdirSync("tmp", { recursive: true });
+  const path = "tmp/stage-2021-write.txt";
   const handle = await fs.promises.open(path, "w+");
   const invalid = [
     undefined,

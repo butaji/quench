@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vfs = require("node:vfs");
 
-const root = path.join(process.cwd(), "stage-2390-watch");
+const root = path.join(process.cwd(), "tmp", "stage-2390-watch");
 fs.mkdirSync(root, { recursive: true });
 const provider = vfs.create(new vfs.RealFSProvider(root));
 fs.writeFileSync(path.join(root, "file.txt"), "a");

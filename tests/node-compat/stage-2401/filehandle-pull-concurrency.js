@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const { text, bytes } = require("stream/iter");
 
-const root = fs.mkdtempSync(path.join(process.cwd(), "pull-concurrent-"));
+fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
+const root = fs.mkdtempSync(path.join(process.cwd(), "tmp", "pull-concurrent-"));
 const file = (name, data) => {
   const filename = path.join(root, name);
   fs.writeFileSync(filename, data);

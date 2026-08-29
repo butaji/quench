@@ -5,7 +5,8 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const link = path.join(process.cwd(), 'node-compat-exec-link');
+const link = path.join(process.cwd(), 'tmp', 'node-compat-exec-link');
+fs.mkdirSync(path.join(process.cwd(), 'tmp'), { recursive: true });
 try { fs.unlinkSync(link); } catch {}
 fs.symlinkSync(process.execPath, link);
 const result = childProcess.spawnSync(link, [__filename, 'child']);

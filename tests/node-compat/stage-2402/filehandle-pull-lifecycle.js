@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const { text } = require("stream/iter");
 
-const root = fs.mkdtempSync(path.join(process.cwd(), "pull-lifecycle-"));
+fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
+const root = fs.mkdtempSync(path.join(process.cwd(), "tmp", "pull-lifecycle-"));
 const make = (name, value) => {
   const file = path.join(root, name);
   fs.writeFileSync(file, value);

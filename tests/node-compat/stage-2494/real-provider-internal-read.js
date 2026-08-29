@@ -4,7 +4,7 @@ const path = require("path");
 const vfs = require("node:vfs");
 const { getVirtualFd } = require("internal/vfs/fd");
 
-const root = path.join(process.cwd(), "stage-2494-real-provider");
+const root = path.join(process.cwd(), "tmp", "stage-2494-real-provider");
 fs.mkdirSync(root, { recursive: true });
 fs.writeFileSync(path.join(root, "file.txt"), "internal read");
 
