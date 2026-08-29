@@ -1127,6 +1127,15 @@ mod stubs {
             } else {
                 super::parse_calendar_identifier(&calendar_value)?
             };
+            let era_value = crate::execute::get_property_result(value, "era")?;
+            if !matches!(era_value, Value::Undefined)
+                && !matches!(calendar.as_str(), "iso8601" | "chinese" | "dangi")
+            {
+                let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+                if super::plain_date::canonical_era_name(&calendar, &era).is_none() {
+                    return Err(crate::value::error::throw_range_error("Invalid era"));
+                }
+            }
             if month_code.is_some_and(|(_, leap)| leap)
                 && matches!(calendar.as_str(), "iso8601" | "gregory")
             {
