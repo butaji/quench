@@ -483,6 +483,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             return Err(crate::value::error::throw_range_error("Conflicting era fields"));
         }
     }
+    // PlainMonthDay uses a reference ISO year to validate calendar fields.  An
+    // explicitly supplied year outside Temporal's supported ISO range must
+    // fail before month/day constraint or calendar conversion work begins.
+    if !(-271_821.0..=275_760.0).contains(&year) {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainMonthDay",
+        ));
+    }
     if !year_number.is_finite()
         && calendar_id != "iso8601"
         && month_number.is_some()
