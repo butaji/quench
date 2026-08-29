@@ -29,6 +29,42 @@ pub(crate) fn construct_with_reference_calendar(
     construct_inner(year, month, Some(reference_iso_day), calendar)
 }
 
+pub(crate) fn construct_from_constructor(
+    year: f64,
+    month: f64,
+    reference_iso_day: Option<f64>,
+    calendar: &str,
+) -> Result<Value, VmError> {
+    if !matches!(calendar, "iso8601" | "gregory") {
+        let reference_day = reference_iso_day.unwrap_or(1.0);
+        let fields = crate::temporal::plain_date::calendar_fields_from_iso(
+            year as i32,
+            month as u32,
+            reference_day as u32,
+            calendar,
+        )
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainYearMonth"))?;
+        return Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![
+                ("year".into(), Value::Number(fields.year as f64)),
+                ("month".into(), Value::Number(fields.month as f64)),
+                ("monthCode".into(), Value::String(fields.month_code)),
+                ("calendarId".into(), Value::String(calendar.to_string())),
+                ("referenceISODay".into(), Value::Number(reference_day)),
+                ("\0temporal-plain-year-month".into(), Value::Boolean(true)),
+                (
+                    "\0prototype".into(),
+                    Value::Builtin(crate::ops::Builtin::TemporalPlainYearMonthPrototype),
+                ),
+            ]),
+        )));
+    }
+    match reference_iso_day {
+        Some(day) => construct_with_reference_calendar(year, month, day, calendar),
+        None => construct_with_calendar(year, month, calendar),
+    }
+}
+
 fn construct_inner(
     year: f64,
     month: f64,
@@ -313,6 +349,17 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
+        }
+        if let Some(day_text) = day_text {
+            let day = day_text.parse::<f64>().unwrap_or(0.0);
+            if !matches!(calendar_id.as_deref(), None | Some("iso8601") | Some("gregory")) {
+                return construct_from_constructor(
+                    year,
+                    month,
+                    Some(day),
+                    calendar_id.as_deref().unwrap_or("iso8601"),
+                );
+            }
         }
         let result =
             construct_with_calendar(year, month, calendar_id.as_deref().unwrap_or("iso8601"))?;
