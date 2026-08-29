@@ -870,13 +870,15 @@ fn compare_typed_arrays(
             return Ok(false);
         }
     }
-    let Some(left_bytes) = typed_array_bytes(left) else {
+    let Some((left_buffer, left_start, left_end)) = typed_array_bytes(left) else {
         return Ok(false);
     };
-    let Some(right_bytes) = typed_array_bytes(right) else {
+    let Some((right_buffer, right_start, right_end)) = typed_array_bytes(right) else {
         return Ok(false);
     };
-    if left_bytes != right_bytes {
+    let left_bytes = left_buffer.bytes.borrow();
+    let right_bytes = right_buffer.bytes.borrow();
+    if left_bytes.get(left_start..left_end) != right_bytes.get(right_start..right_end) {
         return Ok(false);
     }
     if strict {
@@ -920,7 +922,9 @@ fn partial_enumerable_symbols(left: &Value, right: &Value) -> Result<bool, VmErr
     Ok(true)
 }
 
-fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
+fn typed_array_bytes(
+    value: &Value,
+) -> Option<(&quench_runtime::value::ArrayBufferData, usize, usize)> {
     let (buffer, offset, length, element_size) = match value {
         Value::Float64Array(view) => (&view.buffer, view.byte_offset, view.length, 8),
         Value::Float32Array(view) => (&view.buffer, view.byte_offset, view.length, 4),
@@ -936,11 +940,7 @@ fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
         _ => return None,
     };
     let end = offset.checked_add(length.checked_mul(element_size)?)?;
-    buffer
-        .bytes
-        .borrow()
-        .get(offset..end)
-        .map(ToOwned::to_owned)
+    (end <= buffer.bytes.borrow().len()).then_some((buffer.as_ref(), offset, end))
 }
 
 /// Both sides must own the same enumerable symbol keys with equal values.
