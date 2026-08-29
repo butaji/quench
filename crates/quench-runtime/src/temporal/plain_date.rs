@@ -576,7 +576,17 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let left = date_parts(receiver)?;
     let right_value = from(other, None)?;
     let right = date_parts(Some(&right_value))?;
-    Ok(Value::Boolean(left == right))
+    let left_calendar = match receiver {
+        Some(Value::Object(object)) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
+    let right_calendar = match &right_value {
+        Value::Object(object) => calendar_name(object),
+        _ => "iso8601".into(),
+    };
+    let left_calendar = canonical_calendar_id(&left_calendar).unwrap_or(left_calendar);
+    let right_calendar = canonical_calendar_id(&right_calendar).unwrap_or(right_calendar);
+    Ok(Value::Boolean(left == right && left_calendar == right_calendar))
 }
 
 fn add(
