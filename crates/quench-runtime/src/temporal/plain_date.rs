@@ -2136,7 +2136,12 @@ fn with(
     if let Value::Object(object) = changes {
         let has_date_field = object
             .iter()
-            .any(|(key, _)| matches!(key.as_str(), "year" | "month" | "monthCode" | "day"));
+            .any(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "year" | "month" | "monthCode" | "day" | "era" | "eraYear"
+                )
+            });
         if !has_date_field {
             return Err(crate::value::error::throw_type_error("Invalid fields"));
         }
@@ -2154,7 +2159,33 @@ fn with(
     } else {
         Some(month_code_text(&month_code)?)
     };
-    let year = number_or_field(changes, "year", year)?;
+    let year_value = crate::execute::get_property_result(changes, "year")?;
+    let era_value = crate::execute::get_property_result(changes, "era")?;
+    let era_year_value = crate::execute::get_property_result(changes, "eraYear")?;
+    let year_provided = !matches!(year_value, Value::Undefined);
+    let era_provided = !matches!(era_value, Value::Undefined);
+    let era_year_provided = !matches!(era_year_value, Value::Undefined);
+    if !year_provided && era_provided != era_year_provided {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
+    let mut year = number_or_field(changes, "year", year)?;
+    if !year_provided && era_provided {
+        let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+        let era = canonical_era_name(&receiver_calendar, &era)
+            .ok_or_else(|| crate::value::error::throw_type_error("Calendar does not use eras"))?;
+        let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
+        if !era_year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+        }
+        year = derive_year_from_era(
+            &receiver_calendar,
+            era,
+            era_year,
+        )
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
+    }
     let primitive_options = options
         .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value));
     let overflow = if let Some(value) = options.filter(|value| !primitive_options) {
