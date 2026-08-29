@@ -529,7 +529,8 @@ pub fn req_end(
         set_request_property(Some(req_value), "finished", Value::Boolean(true));
     }
     let host = target_host(&target);
-    let head = request_head(&host, &method, &path, &headers, body.len(), omit_host);
+    let head_host = request_host(&target);
+    let head = request_head(&head_host, &method, &path, &headers, body.len(), omit_host);
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         let updated =
             execute::set_property(req.req.clone(), "_header", Value::String(head.clone()));
@@ -565,7 +566,7 @@ pub fn req_end(
             let options = host_api::object(option_props);
             let callback = host_api::object(Vec::new());
             let socket = execute::call(&connection, agent.as_ref().unwrap(), &[options, callback])?;
-            let mut bytes = request_head(&host, &method, &path, &headers, body.len(), omit_host).into_bytes();
+            let mut bytes = request_head(&request_host(&target), &method, &path, &headers, body.len(), omit_host).into_bytes();
             bytes.extend_from_slice(&body);
             if matches!(target, RequestTarget::Unix { .. }) {
                 state.borrow_mut().net.pending_writes.push((socket.clone(), bytes));
@@ -619,7 +620,7 @@ fn send_request(
         )?,
         RequestTarget::Unix { path } => net::connect_path(state, path)?,
     };
-    let head = request_head(&host, method, path, headers, body.len(), omit_host);
+    let head = request_head(&request_host(target), method, path, headers, body.len(), omit_host);
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
     if matches!(target, RequestTarget::Unix { .. }) {
@@ -632,6 +633,14 @@ fn send_request(
 
 fn target_host(target: &RequestTarget) -> String {
     match target {
+        RequestTarget::Tcp { host, .. } => host.clone(),
+        RequestTarget::Unix { .. } => "localhost".into(),
+    }
+}
+
+fn request_host(target: &RequestTarget) -> String {
+    match target {
+        RequestTarget::Tcp { host, port } if *port != 80 => format!("{host}:{port}"),
         RequestTarget::Tcp { host, .. } => host.clone(),
         RequestTarget::Unix { .. } => "localhost".into(),
     }
@@ -668,7 +677,13 @@ fn request_head(
     if !has_content_length && (body_len > 0 || default_empty_body(method)) {
         head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }
-    head.push_str("Connection: close\r\n\r\n");
+    if !headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("connection"))
+    {
+        head.push_str("Connection: keep-alive\r\n");
+    }
+    head.push_str("\r\n");
     head
 }
 
@@ -1358,7 +1373,7 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             // Legacy url.parse() exposes `host`/`path`, while WHATWG URL
             // exposes `hostname`/`pathname`/`search`; both are request facts.
             let raw_host = opt_first(&options, &["host", "hostname"])?
-                .unwrap_or_else(|| "127.0.0.1".to_string());
+                .unwrap_or_else(|| "localhost".to_string());
             let socket_path = opt(&options, "socketPath")?;
             let explicit_port = opt(&options, "port")?.and_then(|p| p.parse().ok());
             let (host, port) = split_host_port(&raw_host, explicit_port);
@@ -1395,6 +1410,13 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             }
             let mut headers: Vec<(String, String)> = Vec::new();
             if let Ok(hv) = execute::get_property_result(&options, "headers") {
+                if let Ok(host_header) = execute::get_property_result(&hv, "host") {
+                    if !matches!(host_header, Value::Undefined | Value::Null | Value::String(_)) {
+                        return Err(execute::type_error(
+                            "The \"options.headers.host\" property must be of type string",
+                        ));
+                    }
+                }
                 if matches!(hv, Value::Array(_)) {
                     for key in execute::own_enumerable_keys(&hv) {
                         let Ok(pair) = execute::get_property_result(&hv, &key) else {
@@ -1403,9 +1425,25 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                         let name = execute::get_property_result(&pair, "0")
                             .ok()
                             .and_then(|v| execute::to_js_string(&v).ok());
-                        let value = execute::get_property_result(&pair, "1")
-                            .ok()
-                            .and_then(|v| execute::to_js_string(&v).ok());
+                        let value = execute::get_property_result(&pair, "1").ok().and_then(|v| {
+                            if name.as_deref().is_some_and(|key| key.eq_ignore_ascii_case("cookie"))
+                                && matches!(v, Value::Array(_))
+                            {
+                                Some(
+                                    execute::own_enumerable_keys(&v)
+                                        .into_iter()
+                                        .filter_map(|key| {
+                                            execute::get_property_result(&v, &key)
+                                                .ok()
+                                                .and_then(|item| execute::to_js_string(&item).ok())
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("; "),
+                                )
+                            } else {
+                                execute::to_js_string(&v).ok()
+                            }
+                        });
                         if let (Some(name), Some(value)) = (name, value) {
                             headers.push((name, value));
                         }
@@ -1415,6 +1453,11 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                         let Ok(item) = execute::get_property_result(&hv, &key) else {
                             continue;
                         };
+                        if key.eq_ignore_ascii_case("host") && matches!(item, Value::Array(_)) {
+                            return Err(execute::type_error(
+                                "The \"options.headers.host\" property must be of type string",
+                            ));
+                        }
                         let value = if key.eq_ignore_ascii_case("cookie")
                             && matches!(item, Value::Array(_))
                         {
@@ -1432,6 +1475,14 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                         };
                         headers.push((key, value));
                     }
+                }
+            }
+            if !matches!(execute::get_property(&options, "headers"), Value::Array(_)) {
+                if let Some(auth) = opt(&options, "auth")? {
+                    headers.push((
+                        "Authorization".into(),
+                        format!("Basic {}", base64_encode(auth.as_bytes())),
+                    ));
                 }
             }
             let target = socket_path
@@ -1507,6 +1558,25 @@ fn is_http_token(method: &str) -> bool {
         && method.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
         })
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0] as usize;
+        let second = chunk.get(1).copied().unwrap_or(0) as usize;
+        let third = chunk.get(2).copied().unwrap_or(0) as usize;
+        output.push(TABLE[first >> 2] as char);
+        output.push(TABLE[((first & 3) << 4) | (second >> 4)] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((second & 15) << 2) | (third >> 6)] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 { TABLE[third & 63] as char } else { '=' });
+    }
+    output
 }
 
 fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {
