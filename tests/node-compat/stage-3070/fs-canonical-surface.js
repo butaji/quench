@@ -37,3 +37,27 @@ try { fs.accessSync(true); assert.fail('access boolean: no error'); } catch (err
   if (error.code !== 'ERR_INVALID_ARG_TYPE') assert.fail('access boolean: code=' + error.code);
   if (error.message !== 'The "path" argument must be of type string or an instance of Buffer or URL. Received type boolean (true)') assert.fail('access boolean: message=' + error.message);
 }
+const realpath = fs.realpathSync('tests/node/test/fixtures', { encoding: 'hex' });
+assert.strictEqual(realpath, Buffer.from(fs.realpathSync('tests/node/test/fixtures')).toString('hex'));
+const canonical = fs.realpathSync('tests/node/test/fixtures');
+assert.strictEqual(fs.realpathSync('tests/node/test/fixtures', 'hex'), Buffer.from(canonical).toString('hex'));
+const pathBuffer = Buffer.from(canonical);
+assert.strictEqual(fs.realpathSync(pathBuffer, { encoding: 'hex' }), pathBuffer.toString('hex'));
+fs.realpath('tests/node/test/fixtures', 'hex', (error, result) => {
+  assert.ifError(error);
+  assert.strictEqual(result, Buffer.from(canonical).toString('hex'));
+});
+for (const encoding of ['ascii', 'utf8', 'utf16le', 'ucs2', 'base64', 'binary', 'hex']) {
+  fs.realpath(pathBuffer, encoding, (error, result) => {
+    assert.ifError(error);
+    assert.deepStrictEqual(result, pathBuffer.toString(encoding), encoding + ' async buffer');
+  });
+}
+const encodings = ['ascii', 'utf8', 'utf16le', 'ucs2', 'base64', 'binary', 'hex'];
+for (const encoding of encodings) {
+  const expected = pathBuffer.toString(encoding);
+  assert.strictEqual(fs.realpathSync(canonical, { encoding }), expected, encoding + ' object');
+  assert.strictEqual(fs.realpathSync(canonical, encoding), expected, encoding + ' string');
+  assert.strictEqual(fs.realpathSync(pathBuffer, { encoding }), expected, encoding + ' buffer object');
+  assert.strictEqual(fs.realpathSync(pathBuffer, encoding), expected, encoding + ' buffer string');
+}
