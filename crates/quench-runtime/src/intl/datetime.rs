@@ -264,7 +264,17 @@ impl DateTimeOptions {
             return;
         }
         let keys = defaults.unwrap_or(&["year", "month", "day"]);
-        if !self.components.is_empty() || keys.iter().any(|key| self.contains(key)) {
+        if !self.components.is_empty() {
+            // Date/Time.prototype helpers add their own component defaults
+            // when the caller supplied only the opposite half (for example,
+            // toLocaleDateString({hour: "numeric"})). Preserve partial
+            // component options when at least one default component was
+            // explicitly requested.
+            if defaults.is_some() && keys.iter().all(|key| !self.contains(key)) {
+                for key in keys {
+                    self.set_component(key, "numeric".to_string());
+                }
+            }
             return;
         }
         for key in keys {
@@ -299,10 +309,6 @@ impl DateTimeOptions {
 
     fn build_object(&self) -> Value {
         let properties = vec![
-            (
-                "format".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormat),
-            ),
             (
                 "formatToParts".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatToParts),
