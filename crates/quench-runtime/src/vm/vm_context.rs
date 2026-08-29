@@ -144,18 +144,36 @@ thread_local! {
 }
 struct ContextGuard {
     previous: Option<Rc<VmContext>>,
+    installed: bool,
 }
 impl ContextGuard {
     fn install(context: &VmContext) -> Self {
+        let already_installed = CURRENT_CONTEXT.with(|current| {
+            current
+                .borrow()
+                .as_ref()
+                .is_some_and(|installed| std::ptr::eq(installed.as_ref(), context))
+        });
+        if already_installed {
+            return Self {
+                previous: None,
+                installed: false,
+            };
+        }
         let previous = CURRENT_CONTEXT.with(|current| {
             current.replace(Some(Rc::new(context.clone())))
         });
-        Self { previous }
+        Self {
+            previous,
+            installed: true,
+        }
     }
 }
 impl Drop for ContextGuard {
     fn drop(&mut self) {
-        CURRENT_CONTEXT.with(|current| current.replace(self.previous.take()));
+        if self.installed {
+            CURRENT_CONTEXT.with(|current| current.replace(self.previous.take()));
+        }
     }
 }
 
