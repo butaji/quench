@@ -450,8 +450,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Missing month"));
     }
     let year_value = crate::execute::get_property_result(value, "year")?;
-    let era_value = crate::execute::get_property_result(value, "era")?;
-    let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+    let (era_value, era_year_value) = if calendar_id == "iso8601" {
+        (Value::Undefined, Value::Undefined)
+    } else {
+        (
+            crate::execute::get_property_result(value, "era")?,
+            crate::execute::get_property_result(value, "eraYear")?,
+        )
+    };
     let era_provided = !matches!(era_value, Value::Undefined);
     let era_year_provided = !matches!(era_year_value, Value::Undefined);
     if era_provided != era_year_provided {
@@ -659,6 +665,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     let month = if let Some(month_code) = month_code_text.as_deref() {
         let parsed = parse_month_code(month_code)?;
+        if calendar_id == "iso8601"
+            && (month_code.ends_with('L') || !(1.0..=12.0).contains(&parsed))
+        {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
         if let Some(month_number) = month_number {
             let expected = if calendar_id != "iso8601" && year_number.is_finite() {
                 crate::temporal::plain_date::calendar_date_from_code(
