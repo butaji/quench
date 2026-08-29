@@ -2174,7 +2174,11 @@ mod stubs {
                     .strip_prefix('M')
                     .and_then(|value| value.parse::<f64>().ok())
                     .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
-                if month_provided && crate::conversion::to_number(&month)?.trunc() != code_number {
+                let calendar_id = crate::conversion::to_string(&property("calendarId")?)?;
+                if month_provided
+                    && calendar_id == "iso8601"
+                    && crate::conversion::to_number(&month)?.trunc() != code_number
+                {
                     return Err(crate::value::error::throw_range_error("Month mismatch"));
                 }
             }
@@ -2197,7 +2201,7 @@ mod stubs {
                         Ok(Value::Undefined)
                     )
                 });
-            if date_change && !matches!(calendar_id.as_str(), "iso8601" | "gregory") {
+            if date_change && calendar_id != "iso8601" {
                 let date_receiver = Value::Object(std::rc::Rc::new(
                     crate::value::ObjectData::new(vec![
                         (
@@ -2325,7 +2329,7 @@ mod stubs {
                 ],
             )));
             let result = if matches!(partial_offset, Value::Undefined)
-                && matches!(calendar_id.as_str(), "iso8601" | "gregory")
+                && calendar_id == "iso8601"
             {
                 let number = |name: &str| -> Result<i128, VmError> {
                     if name == "year" {
