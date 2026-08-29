@@ -4,7 +4,7 @@ use crate::{execute::VmError, value::Value};
 
 #[path = "plain_date_tail.rs"]
 mod plain_date_tail;
-use plain_date_tail::{date_object, date_object_with_calendar, number};
+use plain_date_tail::{date_object_with_calendar, number};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
