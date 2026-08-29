@@ -52,6 +52,7 @@ pub struct ClientReq {
     /// Raw body bytes received after the response head.
     pub response_received: usize,
     pub response_chunked_done: bool,
+    pub parse_error: bool,
 }
 
 pub fn agent_call(
@@ -215,6 +216,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             response_closed: false,
             response_received: 0,
             response_chunked_done: false,
+            parse_error: false,
         },
     );
     drop(guard);
@@ -939,6 +941,19 @@ pub fn data_handler(
     let (pending_head, head_parsed) = append_and_probe(state, client_id, &bytes);
     match pending_head {
         Some(head) => {
+            let raw_body = state
+                .borrow()
+                .http
+                .clientreqs
+                .get(&client_id)
+                .map(|req| req.buffer.clone())
+                .unwrap_or_default();
+            if let Some(error) = invalid_response_framing(&head, &raw_body) {
+                let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+                net::emit(state, &request, "error", vec![error])?;
+                net::socket_destroy(state, Some(socket), &[])?;
+                return Ok(Value::Undefined);
+            }
             let res = build_incoming(state, &head)?;
             if let Some(socket) = state
                 .borrow()
@@ -954,6 +969,9 @@ pub fn data_handler(
             }
             let req_value = client_value(state, client_id, true).unwrap_or(Value::Undefined);
             net::emit(state, &req_value, "response", vec![res])?;
+            if let Some(response) = client_value(state, client_id, false) {
+                net::emit(state, &response, "readable", Vec::new())?;
+            }
             flush_body(state, client_id)
         }
         None if head_parsed => {
@@ -964,6 +982,7 @@ pub fn data_handler(
                 }
             }
             if let Some(res) = client_value(state, client_id, false) {
+                net::emit(state, &res, "readable", Vec::new())?;
                 let body = response_body_bytes(&res, &bytes);
                 if !body.is_empty() {
                     net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
@@ -1056,6 +1075,35 @@ fn response_body_bytes(response: &Value, bytes: &[u8]) -> Vec<u8> {
     }
 }
 
+fn invalid_response_framing(head: &[u8], body: &[u8]) -> Option<Value> {
+    let text = String::from_utf8_lossy(head);
+    let has_length = text.lines().any(|line| {
+        line.split_once(':')
+            .is_some_and(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+    });
+    let has_encoding = text.lines().any(|line| {
+        line.split_once(':').is_some_and(|(key, value)| {
+            key.eq_ignore_ascii_case("transfer-encoding")
+                && value.to_ascii_lowercase().contains("chunked")
+        })
+    });
+    if !(has_length && has_encoding) {
+        return None;
+    }
+    let reason = "Transfer-Encoding can't be present with Content-Length";
+    let mut raw = head.to_vec();
+    raw.extend_from_slice(b"\r\n\r\n");
+    raw.extend_from_slice(body);
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(format!("Parse Error: {reason}"))],
+    );
+    let error = execute::set_property(error, "code", Value::String("HPE_INVALID_TRANSFER_ENCODING".into()));
+    let error = execute::set_property(error, "reason", Value::String(reason.into()));
+    let error = execute::set_property(error, "bytesParsed", Value::Number((head.len() + 4) as f64));
+    Some(execute::set_property(error, "rawPacket", crate::modules::buffer_proto::make_buffer(&raw)))
+}
+
 fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     let mut cursor = 0;
@@ -1132,6 +1180,15 @@ pub fn res_end_handler(
             .is_some_and(|value| value.eq_ignore_ascii_case("chunked")),
             _ => false,
         };
+        if expected.is_some_and(|expected| received > expected) {
+            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                req.parse_error = true;
+            }
+            let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+            net::emit(state, &request, "error", vec![invalid_response_constant()])?;
+            net::socket_destroy(state, Some(socket), &[])?;
+            return Ok(Value::Undefined);
+        }
         if expected.is_some_and(|expected| expected != received) || (chunked && !chunked_done) {
             return abort_incomplete_response(state, client_id, &res);
         }
@@ -1155,8 +1212,41 @@ pub fn res_end_handler(
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
         }
+    } else if let Some(error) = invalid_response_start(state, client_id) {
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+            req.parse_error = true;
+        }
+        let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+        net::emit(state, &request, "error", vec![error])?;
+        // A parser error is terminal for this connection.  Let the normal
+        // socket close transition release the request and server resources.
+        net::socket_destroy(state, Some(socket), &[])?;
     }
     Ok(Value::Undefined)
+}
+
+fn invalid_response_start(state: &Rc<RefCell<HostState>>, client_id: u64) -> Option<Value> {
+    let (parsed, raw) = state.borrow().http.clientreqs.get(&client_id).map(|req| {
+        (req.head_parsed, req.buffer.clone())
+    })?;
+    if parsed || raw.is_empty() || raw.starts_with(b"HTTP/") {
+        return None;
+    }
+    let error = invalid_response_constant();
+    Some(execute::set_property(
+        error,
+        "rawPacket",
+        crate::modules::buffer_proto::make_buffer(&raw),
+    ))
+}
+
+fn invalid_response_constant() -> Value {
+    let message = "Parse Error: Expected HTTP/, RTSP/ or ICE/";
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    execute::set_property(error, "code", Value::String("HPE_INVALID_CONSTANT".into()))
 }
 
 fn abort_incomplete_response(
@@ -1376,6 +1466,13 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
         Some(Value::String(url)) => http_url(url),
         Some(Value::Object(_) | Value::ObjectAlias(_)) => {
             let options = value.cloned().unwrap_or(Value::Undefined);
+            let parser_option = execute::get_property(&options, "insecureHTTPParser");
+            if !matches!(parser_option, Value::Undefined | Value::Null | Value::Boolean(_)) {
+                return Err(invalid_boolean_option_error(
+                    "options.insecureHTTPParser",
+                    &parser_option,
+                ));
+            }
             // Legacy url.parse() exposes `host`/`path`, while WHATWG URL
             // exposes `hostname`/`pathname`/`search`; both are request facts.
             let raw_host = opt_first(&options, &["host", "hostname"])?
@@ -1525,6 +1622,21 @@ fn is_array_value(value: &Value) -> bool {
 
 fn invalid_header_type_error() -> VmError {
     match execute::type_error("The \"options.headers.host\" property must be of type string") {
+        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
+            value,
+            "code",
+            Value::String("ERR_INVALID_ARG_TYPE".into()),
+        )),
+        other => other,
+    }
+}
+
+fn invalid_boolean_option_error(name: &str, value: &Value) -> VmError {
+    let rendered = execute::to_js_string(value).unwrap_or_default();
+    let error = execute::type_error(&format!(
+        "The \"{name}\" property must be of type boolean. Received type string (\"{rendered}\")"
+    ));
+    match error {
         VmError::Thrown(value) => VmError::Thrown(execute::set_property(
             value,
             "code",
