@@ -398,9 +398,6 @@
       if (st.decoder && st.buffer.length > 0 && !st.ended && !st.reading) {
         requestRead(stream);
       }
-      if (!st.objectMode && st.decoder && st.buffer.length > 1 && typeof Buffer !== "undefined") {
-        st.buffer = [Buffer.concat(st.buffer)];
-      }
       while (st.flowing && st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         if (st.decoder && typeof chunk !== "string") chunk = st.decoder.write(chunk);
@@ -455,7 +452,10 @@
           stream.readable = false;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
-            nextTick(() => stream.destroy());
+            // The end transition already runs at the terminal event-loop
+            // edge. Destroy here so close is observable before the next
+            // immediate, matching Node's autoDestroy ordering.
+            stream.destroy();
           }
         }
       }));
@@ -605,7 +605,7 @@
       return buffered < st.highWaterMark;
     }
 
-    unshift(chunk) {
+    unshift(chunk, encoding) {
       const st = this._readableState;
       if (chunk === null) return false;
       if (!st.objectMode && typeof chunk !== "string" &&
@@ -617,6 +617,9 @@
           typeof chunk.byteLength === "number" && chunk.byteLength === 0) return true;
       if (typeof chunk === "string" && chunk.length === 0) return true;
       if (st.ended) st.ended = false;
+      if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
+        chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
+      }
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
       st.unshiftedSinceRead = true;
       st.reading = st.readRequests > 0;
@@ -665,6 +668,9 @@
               st.readingMore = false;
               this.readable = false;
               this._emitter.emit("end");
+              if (st.autoDestroy && (!this._isDuplex || this._writableState?.finished)) {
+                this.destroy();
+              }
             }
           });
         }
