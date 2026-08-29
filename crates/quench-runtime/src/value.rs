@@ -555,6 +555,10 @@ pub(crate) struct AsyncForOfState {
     pub iterator: Value,
     pub dst: u16,
     pub await_dst: u16,
+    /// Body code offset when the loop body, rather than iterator.next(), is
+    /// suspended on an await. Zero means the next resume consumes an
+    /// iterator result.
+    pub body_pc: usize,
 }
 
 /// Canonical out-of-line attributes for an ordinary property.
