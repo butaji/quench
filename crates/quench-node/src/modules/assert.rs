@@ -19,6 +19,7 @@ use crate::registry::*;
 
 thread_local! {
     static ASSERTION_ERROR_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static ASSERTION_ERROR_CONSTRUCTOR: RefCell<Option<Value>> = const { RefCell::new(None) };
     static ASSERT_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
@@ -249,6 +250,11 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
+  if (typeof input.catch !== "function") {
+    const error = new TypeError("The promiseFn argument must be a Promise");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
   return Promise.resolve(input).then(
     () => Promise.reject(Object.assign(new Error(message || "Missing expected rejection"), {
       code: "ERR_ASSERTION", operator: "rejects"
@@ -301,15 +307,21 @@ fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
 }
 
 fn assertion_error_type() -> Value {
-    let prototype = assertion_error_prototype();
-    let constructor = crate::host::capability(SPEC_ASSERTION_ERROR_CONSTRUCTOR);
-    let _ = execute::set_callable_property(
-        &constructor,
-        "name",
-        Value::String("AssertionError".into()),
-    );
-    let _ = execute::set_callable_property(&constructor, "prototype", prototype);
-    constructor
+    ASSERTION_ERROR_CONSTRUCTOR.with(|slot| {
+        if let Some(constructor) = slot.borrow().as_ref() {
+            return constructor.clone();
+        }
+        let constructor = crate::host::capability(SPEC_ASSERTION_ERROR_CONSTRUCTOR);
+        let _ = execute::set_callable_property(
+            &constructor,
+            "name",
+            Value::String("AssertionError".into()),
+        );
+        let _ =
+            execute::set_callable_property(&constructor, "prototype", assertion_error_prototype());
+        *slot.borrow_mut() = Some(constructor.clone());
+        constructor
+    })
 }
 
 pub fn assertion_error_constructor(
@@ -370,6 +382,8 @@ pub fn assertion_error(
     expected: Value,
     generated: bool,
 ) -> VmError {
+    let constructor = assertion_error_type();
+    let prototype = quench_runtime::execute::get_property(&constructor, "prototype");
     let error = host_api::object(vec![
         (
             "name".to_string(),
@@ -389,11 +403,15 @@ pub fn assertion_error(
             Value::String(format!("AssertionError: {message}")),
         ),
         ("diff".to_string(), Value::String("simple".into())),
-        ("constructor".to_string(), assertion_error_type()),
+        ("constructor".to_string(), constructor.clone()),
+        ("\0prototype".to_string(), prototype),
     ]);
     VmError::Thrown(
-        quench_runtime::execute::set_prototype_of(&error, &assertion_error_prototype())
-            .unwrap_or(error),
+        quench_runtime::execute::set_prototype_of(
+            &error,
+            &quench_runtime::execute::get_property(&constructor, "prototype"),
+        )
+        .unwrap_or(error),
     )
 }
 
@@ -525,10 +543,10 @@ pub fn ok(
             };
             return format!("The expression evaluated to a falsy value:\n\n  {call}\n");
         }
-        format!(
-            "The expression evaluated to a falsy value:\n\n  assert.ok({})\n",
-            rendered(&arg(args, 0))
-        )
+        let argument = arg(args, 0);
+        let call = source_assertion_call(&argument)
+            .unwrap_or_else(|| format!("assert.ok({})", rendered(&argument)));
+        format!("The expression evaluated to a falsy value:\n\n  {call}\n")
     });
     Err(assertion_error(
         message,
@@ -537,6 +555,29 @@ pub fn ok(
         Value::Boolean(true),
         generated,
     ))
+}
+
+fn source_assertion_call(value: &Value) -> Option<String> {
+    let source = quench_runtime::vm::current_context();
+    let source = source.source_text()?;
+    let expected = rendered(value);
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find(".ok(") {
+        let start = cursor + relative;
+        let argument_start = start + 4;
+        let end = source[argument_start..].find(')')? + argument_start;
+        if source[argument_start..end].trim() == expected {
+            let line_start = source[..start]
+                .rfind([';', '\n', '{', '}'])
+                .map_or(0, |i| i + 1);
+            let call = source[line_start..=end].trim();
+            if !call.is_empty() {
+                return Some(call.to_string());
+            }
+        }
+        cursor = end + 1;
+    }
+    None
 }
 
 pub fn fail(

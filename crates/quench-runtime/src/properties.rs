@@ -168,6 +168,9 @@ pub(crate) fn execute_set_property(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
+    if try_plain_index_dynamic_write(registers, op)? {
+        return Ok(());
+    }
     let (object, key, src, strict) = set_property_parts(registers, op)?;
     let mut target = crate::execute::read_register(registers, object)?.clone();
     if matches!(
@@ -182,14 +185,49 @@ pub(crate) fn execute_set_property(
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
+    let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
+    if crate::typed_array_ops::is_view(&target) {
+        if crate::typed_array_ops::canonical_numeric_index(&key)
+            && !crate::typed_array_ops::is_index_key(&key)
+        {
+            crate::conversion::to_number(&value)?;
+            return Ok(());
+        }
+        if crate::typed_array_ops::is_index_key(&key) {
+            if let Some(result) = crate::typed_array_ops::set_property(&target, &key, &value) {
+                let updated = result?;
+                crate::execute::write_value(registers, object, updated);
+                return Ok(());
+            }
+        }
+    }
+    // Computed numeric writes are emitted as SetPropertyDynamic by the
+    // general reducer. Keep the proven packed-array path ahead of extensible
+    // and prototype checks, so each indexed append is constant work.
+    if let (crate::value::Value::Array(array), Some(index), crate::value::Value::Number(number)) = (
+        &target,
+        crate::arrays::array_index(&key).map(|index| index as usize),
+        &value,
+    ) {
+        if array.set_existing_f64(index, *number) || array.append_preallocated_f64(index, *number) {
+            return Ok(());
+        }
+    }
+    if let crate::value::Value::Object(object_data) = &target {
+        if crate::builtins::object_alias::plain_index_write(object_data, &key) {
+            let updated =
+                crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
+            crate::execute::write_value(registers, object, updated);
+            return Ok(());
+        }
+    }
     let rejects_new = {
         let _scope = crate::execution_trace::attribution_scope("SetN:reject_new");
         rejects_new_property(&target, &key)
     };
-    if rejects_new {
+    if rejects_new && key != "__proto__" {
         return write_failure(strict);
     }
-    let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
     }
@@ -203,6 +241,41 @@ pub(crate) fn execute_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:finish");
     finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn try_plain_index_dynamic_write(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<bool, crate::execute::VmError> {
+    let Op::SetPropertyDynamic {
+        object, key, src, ..
+    } = op
+    else {
+        return Ok(false);
+    };
+    let key_value = crate::execute::read_register(registers, *key)?;
+    let crate::value::Value::Number(number) = key_value else {
+        return Ok(false);
+    };
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+        return Ok(false);
+    }
+    let index = number as u64;
+    if index >= u64::from(u32::MAX) {
+        return Ok(false);
+    }
+    let target = crate::execute::read_register(registers, *object)?;
+    let crate::value::Value::Object(object_data) = &target else {
+        return Ok(false);
+    };
+    let key = index.to_string();
+    if !crate::builtins::object_alias::plain_index_write(object_data, &key) {
+        return Ok(false);
+    }
+    let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);
+    let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
+    crate::execute::write_value(registers, *object, updated);
+    Ok(true)
 }
 
 fn unwrap_assignment_value(value: &crate::value::Value) -> crate::value::Value {
@@ -221,32 +294,40 @@ pub(crate) fn execute_set_named_cached(
     strict: bool,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
-    if transition_index(cache.get()).is_some()
+    let target = crate::execute::read_register(registers, object)?;
+    let regexp_target = crate::regexp::has_regexp_internal_slot(&target);
+    if !regexp_target
+        && transition_index(cache.get()).is_some()
         && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
         return Ok(());
     }
-    let target = crate::execute::read_register(registers, object)?;
     let transition = named_write_source(&target, key);
-    if let crate::value::Value::Object(data) = &target {
-        if data.has_replacement() {
-            crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
-        } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-            if data.semantic_layout_id() != layout {
-                crate::execution_trace::event(
-                    crate::execution_trace::Event::NamedSetLayoutMismatch,
-                );
-            } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
-                crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
-                word.store_from_register(registers, usize::from(src))
-                    .ok_or(crate::execute::VmError::MissingReturn)?;
-                return Ok(());
+    if !regexp_target {
+        if let crate::value::Value::Object(data) = &target {
+            if data.has_replacement() {
+                crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
+            } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+                if data.semantic_layout_id() != layout {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedSetLayoutMismatch,
+                    );
+                } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedPropertySetHit,
+                    );
+                    word.store_from_register(registers, usize::from(src))
+                        .ok_or(crate::execute::VmError::MissingReturn)?;
+                    return Ok(());
+                } else {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedSetSlotNotCell,
+                    );
+                }
             } else {
-                crate::execution_trace::event(crate::execution_trace::Event::NamedSetSlotNotCell);
+                crate::execution_trace::event(crate::execution_trace::Event::NamedSetCacheEmpty);
             }
-        } else {
-            crate::execution_trace::event(crate::execution_trace::Event::NamedSetCacheEmpty);
         }
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetMiss);
@@ -321,6 +402,18 @@ fn finish_set_property(
             "Cannot convert a Symbol value to a string",
         ));
     }
+    if matches!(
+        target,
+        crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+    ) && key == "__proto__"
+    {
+        crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ObjectPrototypeSetProto,
+            std::slice::from_ref(&value),
+            Some(target),
+        )?;
+        return Ok(());
+    }
     let value = if process_env {
         crate::conversion::to_string(&value)
             .map(crate::value::Value::String)
@@ -348,9 +441,12 @@ fn finish_set_property(
     }
     let inherited_blocked = {
         let _scope = crate::execution_trace::attribution_scope("SetN:inherited");
-        inherited_write_blocked(target, key)
+        !own_data_property(target, key) && inherited_write_blocked(target, key)
     };
     if inherited_blocked {
+        return write_failure(strict);
+    }
+    if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
         return write_failure(strict);
     }
     if matches!(
@@ -636,8 +732,14 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
     if let crate::value::Value::BindingCell(cell) = &target {
         return object_is_extensible(&cell.borrow());
     }
+    if let Some(meta) = target.typed_array_meta() {
+        return meta.is_extensible();
+    }
     match &target {
         crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
+        crate::value::Value::Builtin(builtin) => {
+            !crate::builtins::builtin_is_non_extensible(*builtin)
+        }
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }
@@ -682,7 +784,13 @@ pub(crate) fn prevent_extensions(
         return Ok(target.clone());
     }
     if matches!(target, crate::value::Value::Proxy(_)) {
-        return crate::proxy::proxy_prevent_extensions(target);
+        let result = crate::proxy::proxy_prevent_extensions(target)?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy preventExtensions returned false",
+            ));
+        }
+        return Ok(target.clone());
     }
     let result = mark_non_extensible(target);
     crate::locals::replace_value(target, &result);
@@ -695,6 +803,10 @@ pub(crate) fn prevent_extensions(
 
 fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
     match target {
+        crate::value::Value::Builtin(builtin) => {
+            crate::builtins::mark_builtin_non_extensible(*builtin);
+            target.clone()
+        }
         crate::value::Value::Object(properties) => {
             let mut sealed = properties.as_ref().clone();
             push_non_extensible(&mut sealed);
@@ -714,6 +826,12 @@ fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
         }
         crate::value::Value::BoundFunction(bound) => {
             mark_properties(&mut bound.properties.borrow_mut());
+            target.clone()
+        }
+        target if target.typed_array_meta().is_some() => {
+            if let Some(meta) = target.typed_array_meta() {
+                meta.set_extensible(false);
+            }
             target.clone()
         }
         _ => target.clone(),
@@ -757,10 +875,45 @@ pub(crate) fn inherited_write_blocked(target: &crate::value::Value, key: &str) -
     {
         return true;
     }
-    matches!(
+    if matches!(
         crate::property_define::accessor(target, key, "writable"),
         Some(crate::value::Value::Boolean(false))
-    )
+    ) {
+        return true;
+    }
+    let mut prototype = crate::builtins::object::get_prototype_of(Some(target)).ok();
+    while let Some(value) = prototype {
+        if matches!(
+            value,
+            crate::value::Value::Null | crate::value::Value::Undefined
+        ) {
+            break;
+        }
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&value),
+            Some(&crate::value::Value::String(key.to_string())),
+        )
+        .ok();
+        if let Some(crate::value::Value::Object(fields)) = descriptor {
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .rev()
+                    .find_map(|(field, value)| (field == name).then_some(value.clone()))
+            };
+            if matches!(field("writable"), Some(crate::value::Value::Boolean(false))) {
+                return true;
+            }
+            if fields.iter().any(|(name, _)| name == "set")
+                && matches!(field("set"), Some(crate::value::Value::Undefined) | None)
+            {
+                return true;
+            }
+            return false;
+        }
+        prototype = crate::builtins::object::get_prototype_of(Some(&value)).ok();
+    }
+    false
 }
 fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
     if strict {

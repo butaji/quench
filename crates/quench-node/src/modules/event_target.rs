@@ -28,9 +28,20 @@ pub struct TargetId(pub u64);
 
 #[derive(Default)]
 pub struct EventTarget {
+    /// Whether this target exposes NodeEventTarget's EventEmitter-style
+    /// methods in addition to the DOM dispatch contract.
+    pub node: bool,
     /// Insertion-ordered `(type, listeners)` pairs.
     pub events: Vec<(String, Vec<Listener>)>,
     pub max: Option<usize>,
+    /// Whether the Node-style listener warning has already fired.
+    pub warned: bool,
+    /// Resource kind used for Node's observable warning label.
+    pub message_port: bool,
+}
+
+thread_local! {
+    static NODE_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 impl EventTarget {
@@ -95,53 +106,498 @@ fn is_abort_signal(value: &Value) -> bool {
 }
 
 pub fn new_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    allocate_target(state, false)
+}
+
+/// Construct the internal NodeEventTarget using the same target registry and
+/// listener records as EventTarget. Only the method surface differs.
+pub fn new_node_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    allocate_target(state, true)
+}
+
+fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, VmError> {
     let id = state.borrow_mut().targets.allocate();
-    let target = Rc::new(RefCell::new(EventTarget::default()));
+    let target = Rc::new(RefCell::new(EventTarget {
+        node,
+        ..EventTarget::default()
+    }));
     state.borrow_mut().targets.targets.insert(id, target);
     let object = crate::host::namespace_object_from_pairs(vec![(
         TARGET_ID_PROP.to_string(),
         Value::Number(id.0 as f64),
     )]);
-    install_target_props(object)
+    let prototype = if node {
+        NODE_PROTOTYPE
+            .with(|slot| slot.borrow().clone())
+            .unwrap_or_else(prototype)
+    } else {
+        let global = quench_runtime::vm::current_global_object();
+        execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype")
+    };
+    let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_prototype_of(&object, &prototype)?
+    } else {
+        object
+    };
+    Ok(object)
 }
 
-fn install_target_props(mut object: Value) -> Result<Value, VmError> {
-    for (key, value) in target_props() {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, key, descriptor)?;
+pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    let port1 = allocate_target(state, false)?;
+    let port2 = allocate_target(state, false)?;
+    for port in [&port1, &port2] {
+        if let Some(id) = target_id(port) {
+            if let Some(target) = state.borrow().targets.get(id) {
+                target.borrow_mut().message_port = true;
+            }
+        }
     }
-    Ok(object)
+    Ok(host_api::object(vec![
+        ("port1".into(), port1),
+        ("port2".into(), port2),
+    ]))
+}
+
+pub(crate) fn set_node_prototype(prototype: Value) {
+    NODE_PROTOTYPE.with(|slot| *slot.borrow_mut() = Some(prototype));
+}
+
+pub(crate) fn prototype() -> Value {
+    let mut prototype = host_api::object(Vec::new());
+    for (name, value) in target_props() {
+        prototype = execute::define_property(
+            prototype,
+            name,
+            host_api::object(vec![
+                ("value".into(), value),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        )
+        .expect("EventTarget prototype property definition");
+    }
+    execute::define_property(
+        prototype,
+        "Symbol.toStringTag",
+        host_api::object(vec![
+            ("value".into(), Value::String("EventTarget".into())),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )
+    .expect("EventTarget toStringTag definition")
 }
 
 fn target_props() -> Vec<(&'static str, Value)> {
     vec![
         (
             "addEventListener",
-            cap("event_target:addEventListener", 0x0113),
+            crate::host::capability(crate::registry::SPEC_TARGET_ADD),
+        ),
+        (
+            "dispatchEvent",
+            crate::host::capability(crate::registry::SPEC_TARGET_DISPATCH),
         ),
         (
             "removeEventListener",
-            cap("event_target:removeEventListener", 0x0114),
+            crate::host::capability(crate::registry::SPEC_TARGET_REMOVE),
         ),
-        ("dispatchEvent", cap("event_target:dispatchEvent", 0x0115)),
     ]
 }
 
-fn cap(name: &'static str, id: u16) -> Value {
-    crate::host::capability(crate::registry::NodeSpec::new(name, id))
+fn node_target(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Rc<RefCell<EventTarget>>, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(invalid_this());
+    };
+    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
+        return Err(invalid_this());
+    };
+    if !target.borrow().node {
+        return Err(invalid_this());
+    }
+    Ok(target)
+}
+
+fn node_register(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    once: bool,
+    node_event: bool,
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let event = type_arg(args)?;
+    let callback = callback_arg(args)?;
+    if matches!(callback, Value::Null | Value::Undefined) {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    let (count, limit, already_warned, inserted) = {
+        let mut target = target.borrow_mut();
+        if target
+            .listeners_of(&event)
+            .iter()
+            .any(|listener| same_listener(&listener.callback, &callback))
+        {
+            (
+                target.listeners_of(&event).len(),
+                target.max,
+                target.warned,
+                false,
+            )
+        } else {
+            target.entry(&event).push(Listener {
+                callback,
+                once,
+                capture: false,
+                node_event,
+                weak: false,
+                passive: false,
+                signal: None,
+            });
+            (
+                target.listeners_of(&event).len(),
+                target.max,
+                target.warned,
+                true,
+            )
+        }
+    };
+    let limit = limit.unwrap_or(10);
+    if inserted && count > limit && limit > 0 && !already_warned {
+        if let Some(target) = receiver
+            .and_then(target_id)
+            .and_then(|id| state.borrow().targets.get(id))
+        {
+            target.borrow_mut().warned = true;
+        }
+        warn_max_listeners(
+            state,
+            receiver.expect("validated receiver"),
+            &event,
+            count,
+            limit,
+        );
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Queue the one-per-target NodeEventTarget listener warning for process
+/// warning handlers. The warning is an Error instance with the observable
+/// `target`, `count`, and `type` fields Node exposes.
+fn warn_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    target: &Value,
+    event: &str,
+    count: usize,
+    limit: usize,
+) {
+    let label = if is_abort_signal(target) {
+        "[AbortSignal]"
+    } else if target_id(target)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| target.borrow().message_port)
+    {
+        "[MessagePort [EventTarget]]"
+    } else {
+        "EventTarget"
+    };
+    let message = format!(
+        "Possible EventTarget memory leak detected. {count} {event} listeners added to {label}. MaxListeners is {}. Use events.setMaxListeners() to increase limit",
+        limit
+    );
+    let warning = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let warning = execute::set_property(
+        warning,
+        "name",
+        Value::String("MaxListenersExceededWarning".into()),
+    );
+    let warning = execute::set_property(warning, "target", target.clone());
+    let warning = execute::set_property(warning, "count", Value::Number(count as f64));
+    let warning = execute::set_property(warning, "type", Value::String(event.into()));
+    // Deliver through the canonical process warning transition. This keeps
+    // EventTarget warnings on the same state machine as process.emitWarning,
+    // including listener identity and once-handler removal semantics.
+    let emitter = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(emitter, vec![Value::String("warning".into()), warning]);
+}
+
+pub fn node_add_event_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = node_register(state, receiver, args, once_option(args), true)?;
+    Ok(Value::Undefined)
+}
+
+pub fn node_on(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    node_register(state, receiver, args, false, false)
+}
+
+pub fn node_once(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    node_register(state, receiver, args, true, false)
+}
+
+pub fn node_remove_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = node_target(state, receiver)?;
+    remove_event_listener(state, receiver, args)?;
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn node_remove_all_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let event = match args.first() {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Undefined) | None => None,
+        _ => return Err(type_arg(args).unwrap_err()),
+    };
+    let mut target = target.borrow_mut();
+    if let Some(event) = event {
+        target.events.retain(|(name, _)| name != &event);
+    } else {
+        target.events.clear();
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn node_listener_count(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let event = type_arg(args)?;
+    let count = target.borrow().listeners_of(&event).len();
+    Ok(Value::Number(count as f64))
+}
+
+pub fn node_event_names(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let names = target
+        .borrow()
+        .events
+        .iter()
+        .filter(|(_, listeners)| !listeners.is_empty())
+        .map(|(name, _)| Value::String(name.clone()))
+        .collect();
+    Ok(host_api::array(names))
+}
+
+pub fn node_set_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let value = args.first().ok_or_else(missing_args)?;
+    let Value::Number(number) = value else {
+        return Err(invalid_arg_type(
+            "n",
+            "number",
+            value,
+            "The \"n\" argument must be a number.",
+        ));
+    };
+    if !number.is_finite() || *number < 0.0 {
+        return Err(invalid_arg_type(
+            "n",
+            "non-negative number",
+            value,
+            "The \"n\" argument must be a non-negative number.",
+        ));
+    }
+    target.borrow_mut().max = Some(*number as usize);
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn node_get_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let target = node_target(state, receiver)?;
+    let max = target.borrow().max.unwrap_or(10);
+    Ok(Value::Number(max as f64))
+}
+
+pub fn node_emit(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(invalid_this)?;
+    let target = node_target(state, Some(receiver))?;
+    let event = match args.first() {
+        Some(_) => type_arg(args)?,
+        None => {
+            return Err(invalid_arg_type(
+                "type",
+                "string",
+                &Value::Undefined,
+                "The \"type\" argument must be a string.",
+            ));
+        }
+    };
+    let detail = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let event_value = crate::dispatch_handlers::custom_event_new(
+        state,
+        &[
+            Value::String(event.clone()),
+            host_api::object(vec![("detail".into(), detail.clone())]),
+        ],
+    )?;
+    let snapshot = target.borrow().listeners_of(&event).to_vec();
+    let has_listeners = !snapshot.is_empty();
+    for listener in snapshot {
+        if listener.once {
+            let _ = remove_event_listener(
+                state,
+                Some(receiver),
+                &[Value::String(event.clone()), listener.callback.clone()],
+            );
+        }
+        let value = if listener.node_event {
+            event_value.clone()
+        } else {
+            detail.clone()
+        };
+        let result = if quench_runtime::is_callable(&listener.callback) {
+            execute::call(&listener.callback, receiver, &[value])
+        } else {
+            let handler = execute::get_property(&listener.callback, "handleEvent");
+            if quench_runtime::is_callable(&handler) {
+                execute::call(&handler, &listener.callback, &[value])
+            } else {
+                Ok(Value::Undefined)
+            }
+        };
+        match result {
+            Ok(Value::Promise(promise)) => {
+                let rejection =
+                    crate::host::capability(crate::registry::SPEC_EVENT_TARGET_REJECTION);
+                quench_runtime::promise_then(
+                    Some(&Value::Promise(promise)),
+                    &[Value::Undefined, rejection],
+                )?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                crate::modules::pump::handle_uncaught(state, error)?;
+                crate::modules::pump::run_uncaught(state)?;
+            }
+        }
+    }
+    Ok(Value::Boolean(has_listeners))
+}
+
+pub(crate) fn node_prototype() -> Value {
+    let mut prototype = host_api::object(Vec::new());
+    for (name, value) in [
+        (
+            "addEventListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ADD),
+        ),
+        (
+            "removeEventListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE),
+        ),
+        (
+            "dispatchEvent",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_DISPATCH),
+        ),
+        (
+            "on",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ON),
+        ),
+        (
+            "addListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ON),
+        ),
+        (
+            "once",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_ONCE),
+        ),
+        (
+            "off",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE),
+        ),
+        (
+            "removeListener",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE),
+        ),
+        (
+            "removeAllListeners",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_REMOVE_ALL),
+        ),
+        (
+            "listenerCount",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_LISTENER_COUNT),
+        ),
+        (
+            "eventNames",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_EVENT_NAMES),
+        ),
+        (
+            "setMaxListeners",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_SET_MAX),
+        ),
+        (
+            "getMaxListeners",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_GET_MAX),
+        ),
+        (
+            "emit",
+            crate::host::capability(crate::registry::SPEC_NODE_EVENT_TARGET_EMIT),
+        ),
+    ] {
+        execute::set_property_in_place(&prototype, name, value);
+    }
+    prototype
 }
 
 fn type_arg(args: &[Value]) -> Result<String, VmError> {
     match args.first() {
-        Some(Value::String(name)) => Ok(name.clone()),
-        _ => Err(execute::type_error(
-            "The \"type\" argument must be of type string",
+        Some(Value::String(name)) if !name.contains('\0') && !name.contains("ymbol") => {
+            Ok(name.clone())
+        }
+        Some(value) => Err(invalid_arg_type(
+            "type",
+            "string",
+            value,
+            "The \"type\" argument must be of type string.",
         )),
+        None => Err(missing_args()),
     }
 }
 
@@ -151,10 +607,86 @@ fn callback_arg(args: &[Value]) -> Result<Value, VmError> {
         Some(value) if quench_runtime::is_callable(value) || matches!(value, Value::Object(_)) => {
             Ok(value.clone())
         }
-        _ => Err(execute::type_error(
-            "The \"callback\" argument must be of type function",
+        Some(value) => Err(invalid_arg_type(
+            "callback",
+            "function",
+            value,
+            "The \"listener\" argument must be an instance of EventListener.",
         )),
+        None => Err(missing_args()),
     }
+}
+
+fn invalid_arg_type(_name: &str, _expected: &str, value: &Value, prefix: &str) -> VmError {
+    let received = match value {
+        Value::Null => " Received null".to_string(),
+        Value::Undefined => " Received undefined".to_string(),
+        Value::Boolean(value) => format!(" Received type boolean ({value})"),
+        Value::Number(value) => format!(" Received type number ({value})"),
+        Value::String(value) => format!(
+            " Received type string ({})",
+            crate::modules::util::inspect(&Value::String(value.clone()))
+        ),
+        value if quench_runtime::is_callable(value) => " Received function".to_string(),
+        Value::Object(_) => " Received an instance of Object".to_string(),
+        value => format!(" Received {}", crate::modules::util::inspect(value)),
+    };
+    coded_error(
+        quench_runtime::ops::Builtin::TypeError,
+        "ERR_INVALID_ARG_TYPE",
+        &format!("{prefix}{received}"),
+    )
+}
+
+fn invalid_this() -> VmError {
+    coded_error(
+        quench_runtime::ops::Builtin::TypeError,
+        "ERR_INVALID_THIS",
+        "Value of \"this\" must be an instance of EventTarget",
+    )
+}
+
+fn missing_args() -> VmError {
+    coded_error(
+        quench_runtime::ops::Builtin::TypeError,
+        "ERR_MISSING_ARGS",
+        "The \"type\" argument is required",
+    )
+}
+
+fn coded_error(builtin: quench_runtime::ops::Builtin, code: &str, message: &str) -> VmError {
+    let error = quench_runtime::builtins::error(builtin, &[Value::String(message.to_string())]);
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String(code.to_string()),
+    ))
+}
+
+fn queue_listener_warning(state: &Rc<RefCell<HostState>>, receiver: &Value) {
+    let warning = host_api::object(vec![
+        (
+            "name".into(),
+            Value::String("AddEventListenerArgumentTypeWarning".into()),
+        ),
+        (
+            "message".into(),
+            Value::String("The listener argument must be a function or an object".into()),
+        ),
+        ("target".into(), receiver.clone()),
+    ]);
+    state.borrow_mut().event_loop.queue_microtask(
+        crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
+        vec![Value::String("warning".into()), warning],
+    );
+}
+
+fn event_recursion() -> VmError {
+    coded_error(
+        quench_runtime::ops::Builtin::Error,
+        "ERR_EVENT_RECURSION",
+        "The event is already being dispatched",
+    )
 }
 
 fn same_listener(left: &Value, right: &Value) -> bool {
@@ -177,6 +709,12 @@ fn once_option(args: &[Value]) -> bool {
 fn passive_option(args: &[Value]) -> bool {
     args.get(2)
         .and_then(|v| execute::get_property_result(v, "passive").ok())
+        .is_some_and(|value| execute::is_truthy(&value))
+}
+
+fn capture_option(args: &[Value]) -> bool {
+    args.get(2)
+        .and_then(|v| execute::get_property_result(v, "capture").ok())
         .is_some_and(|value| execute::is_truthy(&value))
 }
 
@@ -228,9 +766,34 @@ pub fn add_event_listener(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver
+        .and_then(|value| target_id(value))
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_none()
+    {
+        return Err(invalid_this());
+    }
     let event = type_arg(args)?;
-    let callback = callback_arg(args)?;
+    // Node probes the options bag before validating the listener, so a
+    // passive getter is observable even when the listener is null.
+    let passive = passive_option(args);
+    let callback = match callback_arg(args) {
+        Ok(callback) => callback,
+        Err(error) => {
+            if let Some(receiver) = receiver {
+                queue_listener_warning(state, receiver);
+            }
+            return Err(error);
+        }
+    };
+    if matches!(callback, Value::Null | Value::Undefined) {
+        if let Some(receiver) = receiver {
+            queue_listener_warning(state, receiver);
+        }
+        return Ok(Value::Undefined);
+    }
     let signal = signal_option(args)?;
+    let capture = capture_option(args);
     if signal
         .as_ref()
         .is_some_and(|value| execute::is_truthy(&execute::get_property(value, "aborted")))
@@ -241,21 +804,67 @@ pub fn add_event_listener(
         .and_then(target_id)
         .and_then(|id| state.borrow().targets.get(id))
     else {
-        return Ok(Value::Undefined);
+        return Err(invalid_this());
     };
-    let mut guard = target.borrow_mut();
-    let existing = guard.listeners_of(&event);
-    if !existing
-        .iter()
-        .any(|listener| same_listener(&listener.callback, &callback))
-    {
-        guard.entry(&event).push(Listener {
-            callback,
-            once: once_option(args),
-            weak: weak_option(args, receiver.expect("validated receiver")),
-            passive: passive_option(args),
-            signal,
-        });
+    let weak = weak_option(args, receiver.expect("validated receiver"));
+    let (count, limit, should_warn, inserted) = {
+        let mut guard = target.borrow_mut();
+        let existing = guard.listeners_of(&event);
+        if existing.iter().any(|listener| {
+            same_listener(&listener.callback, &callback) && listener.capture == capture
+        }) {
+            (
+                existing.iter().filter(|listener| !listener.weak).count(),
+                guard
+                    .max
+                    .unwrap_or_else(|| state.borrow().emitters.default_max),
+                false,
+                false,
+            )
+        } else {
+            guard.entry(&event).push(Listener {
+                callback,
+                once: once_option(args),
+                capture,
+                node_event: false,
+                weak,
+                passive,
+                signal,
+            });
+            let count = guard
+                .listeners_of(&event)
+                .iter()
+                .filter(|listener| !listener.weak)
+                .count();
+            let limit = guard.max.unwrap_or_else(|| {
+                if is_abort_signal(receiver.expect("validated receiver")) {
+                    0
+                } else {
+                    state.borrow().emitters.default_max
+                }
+            });
+            let should_warn = count > limit && limit > 0 && !guard.warned;
+            if should_warn {
+                guard.warned = true;
+            }
+            (count, limit, should_warn, true)
+        }
+    };
+    if inserted && !weak {
+        execute::set_property_in_place(
+            receiver.expect("validated receiver"),
+            "\0quench:weak-listener",
+            Value::Boolean(true),
+        );
+    }
+    if inserted && should_warn {
+        warn_max_listeners(
+            state,
+            receiver.expect("validated receiver"),
+            &event,
+            count,
+            limit,
+        );
     }
     Ok(Value::Undefined)
 }
@@ -265,24 +874,89 @@ pub fn remove_event_listener(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver
+        .and_then(|value| target_id(value))
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_none()
+    {
+        return Err(invalid_this());
+    }
     let event = type_arg(args)?;
     let callback = callback_arg(args)?;
-    if let Some(target) = receiver
+    let Some(target) = receiver
         .and_then(target_id)
         .and_then(|id| state.borrow().targets.get(id))
+    else {
+        return Err(invalid_this());
+    };
     {
         let mut guard = target.borrow_mut();
         if let Some(index) = guard.events.iter().position(|(key, _)| key == &event) {
             let list = &mut guard.events[index].1;
-            if let Some(at) = list
-                .iter()
-                .position(|listener| execute::same_value(&listener.callback, &callback))
-            {
+            let capture = capture_option(args);
+            if let Some(at) = list.iter().position(|listener| {
+                execute::same_value(&listener.callback, &callback) && listener.capture == capture
+            }) {
                 list.remove(at);
+            }
+            if list.is_empty() {
+                if let Some(receiver) = receiver {
+                    execute::set_property_in_place(
+                        receiver,
+                        "\0quench:weak-listener",
+                        Value::Boolean(false),
+                    );
+                }
             }
         }
     }
     Ok(Value::Undefined)
+}
+
+pub fn replace_event_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    old: &Value,
+    replacement: &Value,
+) -> bool {
+    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
+        return false;
+    };
+    let mut guard = target.borrow_mut();
+    let Some(list) = guard
+        .events
+        .iter_mut()
+        .find(|(key, _)| key == event)
+        .map(|(_, listeners)| listeners)
+    else {
+        return false;
+    };
+    let Some(index) = list
+        .iter()
+        .position(|listener| execute::same_value(&listener.callback, old))
+    else {
+        return false;
+    };
+    list[index].callback = replacement.clone();
+    true
+}
+
+fn listener_is_registered(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    callback: &Value,
+) -> bool {
+    target_id(receiver)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| {
+            target
+                .borrow()
+                .listeners_of(event)
+                .iter()
+                .any(|listener| execute::same_value(&listener.callback, callback))
+        })
 }
 
 pub fn dispatch_event(
@@ -290,24 +964,35 @@ pub fn dispatch_event(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let (Some(receiver), Some(event)) = (receiver, args.first()) else {
-        return Err(execute::type_error(
-            "The \"event\" argument must be an instance of Event",
-        ));
+    let Some(receiver) = receiver else {
+        return Err(invalid_this());
+    };
+    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
+        return Err(invalid_this());
+    };
+    let Some(event) = args.first() else {
+        return Err(missing_args());
     };
     if !matches!(event, Value::Object(_))
         || matches!(execute::get_property(event, "type"), Value::Undefined)
     {
-        return Err(execute::type_error(
-            "The \"event\" argument must be an instance of Event",
+        return Err(invalid_arg_type(
+            "event",
+            "Event",
+            event,
+            "The \"event\" argument must be an instance of Event.",
         ));
     }
-    let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
-        return Ok(Value::Boolean(false));
-    };
     let Value::String(event_type) = execute::get_property(event, "type") else {
         return Ok(Value::Boolean(false));
     };
+    let event_identity = event.object_identity();
+    if let Some(identity) = event_identity {
+        let mut guard = state.borrow_mut();
+        if !guard.dispatching_events.insert(identity) {
+            return Err(event_recursion());
+        }
+    }
     if event_type == "abort" && is_abort_signal(receiver) {
         let mut host = state.borrow_mut();
         for target in host.targets.targets.values() {
@@ -329,16 +1014,11 @@ pub fn dispatch_event(
     execute::set_property_in_place(event, "currentTarget", receiver.clone());
     execute::set_property_in_place(event, "srcElement", receiver.clone());
     execute::set_property_in_place(event, "eventPhase", Value::Number(2.0));
-    let handler_name = format!("on{event_type}");
-    let handler = execute::get_property(receiver, &handler_name);
-    if quench_runtime::is_callable(&handler) {
-        if let Err(error) = execute::call(&handler, receiver, std::slice::from_ref(event)) {
-            crate::modules::pump::handle_uncaught(state, error)?;
-            crate::modules::pump::run_uncaught(state)?;
-        }
-    }
     for listener in &snapshot {
         if listener.weak {
+            continue;
+        }
+        if !listener_is_registered(state, receiver, &event_type, &listener.callback) {
             continue;
         }
         if listener
@@ -353,7 +1033,7 @@ pub fn dispatch_event(
             || event
                 .object_identity()
                 .is_some_and(|identity| state.borrow().stopped_events.contains(&identity));
-        if stopped && has_protected_listener && !protected {
+        if stopped && (!has_protected_listener || !protected) {
             continue;
         }
         if listener.once {
@@ -378,9 +1058,24 @@ pub fn dispatch_event(
         } else {
             Ok(Value::Undefined)
         };
-        if let Err(error) = result {
-            crate::modules::pump::handle_uncaught(state, error)?;
-            crate::modules::pump::run_uncaught(state)?;
+        match result {
+            Ok(Value::Promise(promise)) => {
+                // EventTarget reports rejected async listeners through the
+                // uncaught-exception channel, rather than as unhandled
+                // rejections.  Installing the rejection reaction here also
+                // records the promise as handled before the generic pump.
+                let rejection =
+                    crate::host::capability(crate::registry::SPEC_EVENT_TARGET_REJECTION);
+                quench_runtime::promise_then(
+                    Some(&Value::Promise(promise)),
+                    &[Value::Undefined, rejection],
+                )?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                crate::modules::pump::handle_uncaught(state, error)?;
+                crate::modules::pump::run_uncaught(state)?;
+            }
         }
         if !has_protected_listener
             && (execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
@@ -399,6 +1094,9 @@ pub fn dispatch_event(
     execute::set_property_in_place(event, "currentTarget", Value::Null);
     execute::set_property_in_place(event, "srcElement", Value::Null);
     execute::set_property_in_place(event, "target", receiver.clone());
+    if let Some(identity) = event_identity {
+        state.borrow_mut().dispatching_events.remove(&identity);
+    }
     Ok(Value::Boolean(!prevented))
 }
 

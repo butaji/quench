@@ -142,6 +142,8 @@ globalThis.__nodeFormat = (args) =>
     })
     .join(" ");
 globalThis.console = globalThis.console || {};
+globalThis.console._stdout ||= globalThis.process?.stdout;
+globalThis.console._stderr ||= globalThis.process?.stderr;
 const __nodeConsoleWrite = (line) => {
   if (globalThis.process?.stdout?.write) {
     globalThis.process.stdout.write(line + "\n");
@@ -217,12 +219,21 @@ const __nodeProcessKill = (pid, signal) => {
   }
   const cluster = globalThis.__nodeCluster;
   if (__nodeClusterKill(cluster, pid, signal)) return true;
-  return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM")) ?? true;
+  const kill = globalThis.__quench_kill;
+  if (typeof kill === "function") return kill(pid, String(signal || "SIGTERM"));
+  const alive = globalThis.__quench_node_pids || new Set();
+  if (!alive.has(pid)) {
+    const error = new Error("kill ESRCH");
+    error.code = "ESRCH";
+    throw error;
+  }
+  return true;
 };
 const __quenchOriginalCwdGet = globalThis.__quench_cwd_get;
 const __quenchDisplayCwd = () => __quenchOriginalCwdGet();
 globalThis.__quench_cwd_get = __quenchDisplayCwd;
-globalThis.process = {
+const __quenchProcessHost = globalThis.process;
+globalThis.process = Object.assign(__quenchProcessHost || {}, {
   env: new Proxy(
     {},
     {
@@ -281,6 +292,7 @@ globalThis.process = {
     }
   ),
   argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
+  argv0: globalThis.__quench_exec_path,
   execPath: globalThis.__quench_exec_path,
   pid: globalThis.__quench_pid,
   ppid: globalThis.__quench_ppid,
@@ -327,7 +339,6 @@ globalThis.process = {
     }
     return globalThis.__quench_chdir(path);
   },
-  exitCode: 0,
   exit: (code) => {
     if (globalThis.__quench_emitting_exit) return;
     process.exitCode = code;
@@ -421,5 +432,8 @@ globalThis.process = {
     }
     return [seconds, nanos];
   }
-};
+});
+if (!globalThis.process.argv0) globalThis.process.argv0 = globalThis.process.execPath;
+globalThis.console._stdout ||= globalThis.process?.stdout;
+globalThis.console._stderr ||= globalThis.process?.stderr;
 "#);

@@ -27,6 +27,13 @@ fn main() -> ExitCode {
     }
     if let Some(path) = args
         .iter()
+        .position(|arg| arg == "--one")
+        .and_then(|index| args.get(index + 1))
+    {
+        return run_one(PathBuf::from(path));
+    }
+    if let Some(path) = args
+        .iter()
         .position(|a| a == "--triage-one")
         .and_then(|i| args.get(i + 1))
     {
@@ -79,6 +86,7 @@ fn print_help() {
     println!();
     println!("usage:");
     println!("  run-parallel                         run the checked-in stage manifest");
+    println!("  run-parallel --one PATH               run one fixture");
     println!("  run-parallel --all [options]         run the recursive fixture inventory");
     println!("  run-parallel --triage [options]        print passing triage fixtures");
     println!();
@@ -86,6 +94,23 @@ fn print_help() {
     println!("  --filter NAME       restrict fixtures by filename");
     println!("  --timeout-secs N    isolate each fixture with an N-second timeout (default 30)");
     println!("  --results PATH      write machine-readable results and inventory hash");
+}
+
+fn run_one(path: PathBuf) -> ExitCode {
+    match quench_node_test::NodeTestRunner::new().run_file(&path) {
+        quench_node_test::NodeOutcome::Pass => {
+            println!("PASS {}", path.display());
+            ExitCode::SUCCESS
+        }
+        quench_node_test::NodeOutcome::Skip { reason } => {
+            println!("SKIP {}: {reason}", path.display());
+            ExitCode::SUCCESS
+        }
+        quench_node_test::NodeOutcome::Fail { reason } => {
+            println!("FAIL {}: {reason}", path.display());
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn manifest_names() -> Vec<String> {
@@ -228,13 +253,25 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
     }
     use std::io::Read;
     use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new(exe)
+    let mut command = Command::new(exe);
+    command
         .arg("--triage-one")
         .arg(path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let Ok(mut child) = command.spawn() else {
         return RunResult::Crash;
     };
     for _ in 0..timeout_secs.saturating_mul(20) {
@@ -259,6 +296,11 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
             Err(_) => return RunResult::Crash,
         }
     }
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
     let _ = child.kill();
     let _ = child.wait();
     RunResult::Timeout

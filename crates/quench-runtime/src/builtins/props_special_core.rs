@@ -533,6 +533,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
 
 fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
+    if builtin == TypedArrayPrototype && key == "slice" {
+        return Some(Value::Builtin(TypedArraySlice));
+    }
     if builtin == ArrayIteratorPrototype && key == "constructor" {
         return Some(Value::Builtin(Array));
     }

@@ -676,7 +676,7 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(result, Value::Undefined);
         // Generous wall-clock guard: this is evidence against pathological
-        // regressions, not a machine-specific performance target.
+        // compatibility failures, not a machine-specific performance target.
         assert!(
             elapsed < Duration::from_secs(2),
             "dispatch loop exceeded 2s budget: {elapsed:?} ({operation_count} ops)"

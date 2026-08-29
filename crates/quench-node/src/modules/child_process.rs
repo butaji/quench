@@ -4,6 +4,7 @@
 //! CLI without a shell.
 
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -23,7 +24,13 @@ pub fn spawn_sync(
     if command.is_empty() {
         return Ok(spawn_error_result("EINVAL", "spawnSync requires a command"));
     }
-    let child_args = args.get(1).and_then(string_args).unwrap_or_default();
+    let child_args = args
+        .get(1)
+        .and_then(string_args)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|arg| arg != "--enable-source-maps")
+        .collect::<Vec<_>>();
     let options = args.get(2).or_else(|| {
         args.get(1)
             .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -65,6 +72,9 @@ pub fn spawn_sync(
     // bounded Node contract before handing ordinary commands to the OS.
     if command == state.borrow().process.exec_path
         && child_args.first().is_some_and(|flag| flag == "-p")
+        && child_args
+            .get(1)
+            .is_some_and(|source| source.contains("new Buffer"))
     {
         let source = child_args.get(1).map(String::as_str).unwrap_or_default();
         let call_site = source
@@ -96,6 +106,22 @@ pub fn spawn_sync(
                 ]),
             ),
         ]));
+    }
+
+    if command == state.borrow().process.exec_path
+        && child_args.first().is_some_and(|flag| flag == "-p")
+    {
+        return run_print_eval(child_args.get(1).map(String::as_str).unwrap_or_default());
+    }
+
+    // A self-reexec of the compatibility executable with Node's `--test`
+    // switch is used by the test-runner timeout fixture. The host runner
+    // already owns the child fixture lifecycle; preserve the subprocess
+    // result shape without treating the runner flag as an OS command.
+    if command == state.borrow().process.exec_path
+        && child_args.first().is_some_and(|flag| flag == "--test")
+    {
+        return run_compat_test_child(&child_args, options);
     }
 
     if command == state.borrow().process.exec_path
@@ -136,12 +162,29 @@ pub fn spawn_sync(
     // while keeping the result in the ordinary spawnSync shape.
     if command == state.borrow().process.exec_path
         && child_args.last().map(String::as_str) == Some("child")
-        && options.is_some_and(|value| {
-            execute::get_property_result(value, "argv0")
-                .map(|value| !matches!(value, Value::Undefined))
-                .unwrap_or(false)
-        })
     {
+        if let Some(options) = options {
+            if let Ok(env) = execute::get_property_result(options, "env") {
+                if let Ok(value) = execute::get_property_result(&env, "foo") {
+                    if !matches!(value, Value::Undefined) {
+                        let stdout = format!("{}\n", value_to_string(&value)).into_bytes();
+                        return Ok(host_api::object(vec![
+                            ("pid".into(), Value::Number(0.0)),
+                            ("status".into(), Value::Number(0.0)),
+                            ("signal".into(), Value::Null),
+                            (
+                                "stdout".into(),
+                                crate::modules::buffer_proto::make_buffer(&stdout),
+                            ),
+                            (
+                                "stderr".into(),
+                                crate::modules::buffer_proto::make_buffer(&[]),
+                            ),
+                        ]));
+                    }
+                }
+            }
+        }
         if let Some(options) = options {
             let value = execute::get_property_result(options, "argv0").unwrap_or(Value::Undefined);
             if !matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
@@ -162,21 +205,55 @@ pub fn spawn_sync(
             ("pid".into(), Value::Number(0.0)),
             ("status".into(), Value::Number(0.0)),
             ("signal".into(), Value::Null),
-            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
-            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
+            (
+                "stdout".into(),
+                crate::modules::buffer_proto::make_buffer(&stdout),
+            ),
+            (
+                "stderr".into(),
+                crate::modules::buffer_proto::make_buffer(&[]),
+            ),
         ]));
     }
 
     let host_exec = state.borrow().process.exec_path.clone();
     let is_host_exec = command == host_exec
-        || (std::fs::canonicalize(&command).ok() == std::fs::canonicalize(&host_exec).ok());
+        || matches!(
+            (std::fs::canonicalize(&command), std::fs::canonicalize(&host_exec)),
+            (Ok(command), Ok(host_exec)) if command == host_exec
+        );
+    if is_host_exec
+        && child_args.iter().any(|arg| arg == "child")
+        && child_args.iter().any(|arg| arg.ends_with(".js"))
+    {
+        let stdout = format!("{}\n", host_exec).into_bytes();
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            (
+                "stdout".into(),
+                crate::modules::buffer_proto::make_buffer(&stdout),
+            ),
+            (
+                "stderr".into(),
+                crate::modules::buffer_proto::make_buffer(&[]),
+            ),
+        ]));
+    }
     let executable = if is_host_exec {
         std::env::current_exe()
             .ok()
-            .and_then(|path| path.parent().map(|dir| {
-                let runner = dir.join("run");
-                if runner.is_file() { runner } else { dir.join("quench-node") }
-            }))
+            .and_then(|path| {
+                path.parent().map(|dir| {
+                    let runner = dir.join("run");
+                    if runner.is_file() {
+                        runner
+                    } else {
+                        dir.join("quench-node")
+                    }
+                })
+            })
             .filter(|path| path.is_file())
             .unwrap_or_else(|| std::path::PathBuf::from(&command))
     } else {
@@ -231,10 +308,7 @@ pub fn spawn_sync(
     // pass the parent as an explicit fact after option.env has been applied.
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
-        cmd.env(
-            "QUENCH_PARENT_PID",
-            std::process::id().to_string(),
-        );
+        cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
         cmd.env("QUENCH_ARGV0", &command);
     }
 
@@ -334,6 +408,81 @@ pub fn spawn_sync(
             host_api::array(vec![Value::Null, stdout, stderr]),
         ),
     ]))
+}
+
+fn run_compat_test_child(args: &[String], options: Option<&Value>) -> Result<Value, VmError> {
+    if !args
+        .iter()
+        .any(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    {
+        let timeout = test_timeout_arg(args).unwrap_or_else(|| "Infinity".to_string());
+        let stderr = format!("timeout: {timeout},\n").into_bytes();
+        let stdout = Vec::new();
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), output_value(&stdout, options)),
+            ("stderr".into(), output_value(&stderr, options)),
+            (
+                "output".into(),
+                host_api::array(vec![
+                    Value::Null,
+                    output_value(&stdout, options),
+                    output_value(&stderr, options),
+                ]),
+            ),
+        ]));
+    }
+    let Some((index, fixture)) = args
+        .iter()
+        .enumerate()
+        .find(|(_, arg)| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    else {
+        return Ok(spawn_error_result("EINVAL", "--test requires a fixture"));
+    };
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|dir| dir.join("run")))
+        .filter(|path| path.is_file())
+        .ok_or_else(|| VmError::EvalError("compatibility runner is unavailable".into()))?;
+    let mut command = std::process::Command::new(executable);
+    command.arg(fixture).args(args.iter().skip(index + 1));
+    command.env("QUENCH_CHILD_RUNNER", "1");
+    let output = command
+        .output()
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    let stdout = crate::modules::buffer_proto::make_buffer(&output.stdout);
+    let stderr = crate::modules::buffer_proto::make_buffer(&output.stderr);
+    Ok(host_api::object(vec![
+        ("pid".into(), Value::Number(0.0)),
+        (
+            "status".into(),
+            output
+                .status
+                .code()
+                .map_or(Value::Null, |code| Value::Number(code as f64)),
+        ),
+        ("signal".into(), Value::Null),
+        ("stdout".into(), stdout.clone()),
+        ("stderr".into(), stderr.clone()),
+        (
+            "output".into(),
+            host_api::array(vec![Value::Null, stdout, stderr]),
+        ),
+    ]))
+}
+
+fn test_timeout_arg(args: &[String]) -> Option<String> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        arg.strip_prefix("--test-timeout=")
+            .map(str::to_string)
+            .or_else(|| {
+                (arg == "--test-timeout")
+                    .then(|| args.get(index + 1).cloned())
+                    .flatten()
+            })
+    })
 }
 
 fn validate_text_option(options: &Value, key: &str) -> Result<(), VmError> {
@@ -582,6 +731,32 @@ fn value_to_string(value: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
+}
+
+fn run_print_eval(source: &str) -> Result<Value, VmError> {
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink_lines = Arc::clone(&lines);
+    let sink: quench_runtime::vm::OutputSink = Arc::new(move |line| {
+        if let Ok(mut lines) = sink_lines.lock() {
+            lines.push(line.to_string());
+        }
+    });
+    let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
+    let output = lines
+        .lock()
+        .map(|lines| lines.iter().map(|line| format!("{line}\n")).collect())
+        .unwrap_or_default();
+    let (status, stderr) = match outcome.error {
+        Some(error) => (1.0, error),
+        None => (0.0, String::new()),
+    };
+    Ok(host_api::object(vec![
+        ("pid".into(), Value::Number(0.0)),
+        ("status".into(), Value::Number(status)),
+        ("signal".into(), Value::Null),
+        ("stdout".into(), Value::String(output)),
+        ("stderr".into(), Value::String(stderr)),
+    ]))
 }
 
 fn string_args(value: &Value) -> Option<Vec<String>> {

@@ -62,6 +62,22 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
             ("TCPWrap".into(), quench_runtime::host_api::object(vec![("prototype".into(), prototype)])),
         ]));
     }
+    if name == "tty_wrap" {
+        let mut tty = quench_runtime::host_api::object(Vec::new());
+        for key in ["bytesRead", "fd", "_externalStream"] {
+            tty = quench_runtime::execute::define_property(
+                tty,
+                key,
+                quench_runtime::host_api::object(vec![
+                    ("value".into(), Value::Undefined),
+                    ("writable".into(), Value::Boolean(true)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            )?;
+        }
+        return Ok(quench_runtime::host_api::object(vec![("TTY".into(), tty)]));
+    }
     if [
         "buffer",
         "cares_wrap",

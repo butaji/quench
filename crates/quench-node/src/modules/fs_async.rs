@@ -10,7 +10,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::fs::{async_args, defer, err_value, parse_options, path_arg};
+use super::fs::{async_args, defer, err_value, parse_mkdir_options, parse_options, path_arg};
 
 /// Run one async op: validate arguments synchronously (coded throws
 /// like Node), execute eagerly, then defer `cb(err, result)`.
@@ -20,11 +20,18 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
     if matches!(name, "rename" | "copyFile") {
         path_arg(leading.get(1))?;
     }
-    let options = parse_options(options_arg(name, leading))?;
+    let options = if name == "mkdir" {
+        parse_mkdir_options(options_arg(name, leading))?
+    } else {
+        parse_options(options_arg(name, leading))?
+    };
     if options.signal_aborted {
         defer(state, &callback, vec![super::fs_error::abort_error()]);
         return Ok(Value::Undefined);
     }
+    let first_created = (name == "mkdir" && options.recursive)
+        .then(|| first_missing_path(leading.first()))
+        .flatten();
     let op = super::fs::sync_op(name).ok_or(VmError::NotCallable)?;
     let result = op(state, None, leading);
     let error = err_value(&result);
@@ -32,8 +39,26 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
         Ok(v) => v,
         Err(_) => Value::Undefined,
     };
+    let value = first_created.map(Value::String).unwrap_or(value);
     defer(state, &callback, vec![error, value]);
     Ok(Value::Undefined)
+}
+
+fn first_missing_path(value: Option<&Value>) -> Option<String> {
+    let mut candidate = match value? {
+        Value::String(path) => std::path::PathBuf::from(path),
+        _ => return None,
+    };
+    if candidate.exists() {
+        return None;
+    }
+    while candidate
+        .parent()
+        .is_some_and(|parent| !parent.exists() && parent != std::path::Path::new(""))
+    {
+        candidate = candidate.parent()?.to_path_buf();
+    }
+    Some(candidate.to_string_lossy().into_owned())
 }
 
 /// Which argument position carries `options` for this op.

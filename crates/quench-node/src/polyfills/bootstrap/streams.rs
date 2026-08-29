@@ -124,8 +124,11 @@ globalThis.__nodeFs.ReadStream.prototype = Object.create(
 globalThis.__nodeFs.ReadStream.prototype.constructor =
   globalThis.__nodeFs.ReadStream;
 class NodeAbortSignal {
-  constructor(reason) {
-    this.aborted = false;
+  constructor(reason, internal) {
+    if (!internal) {
+      throw Object.assign(new TypeError("Illegal constructor"), { code: "ERR_ILLEGAL_CONSTRUCTOR" });
+    }
+    this._aborted = false;
     this.reason = reason;
     this.onabort = null;
     this._listeners = [];
@@ -148,7 +151,7 @@ class NodeAbortSignal {
     return event === "abort" ? this._listeners.length : 0;
   }
   throwIfAborted() {
-    if (this.aborted) throw this.reason;
+    if (this._aborted) throw this.reason;
   }
   dispatchEvent(event) {
     if (event?.type !== "abort") return true;
@@ -160,8 +163,8 @@ class NodeAbortSignal {
     if (reason === undefined) {
       reason = new DOMException("This operation was aborted", "AbortError");
     }
-    const signal = new NodeAbortSignal(reason);
-    signal.aborted = true;
+    const signal = new NodeAbortSignal(reason, true);
+    signal._aborted = true;
     return signal;
   }
   static any(signals) {
@@ -172,10 +175,10 @@ class NodeAbortSignal {
       throw Object.assign(new TypeError('The "signals" argument must be an instance of Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const values = Array.from(signals);
-    const combined = new NodeAbortSignal();
+    const combined = new NodeAbortSignal(undefined, true);
     const abort = (signal) => {
       if (combined.aborted) return;
-      combined.aborted = true;
+      combined._aborted = true;
       combined.reason = signal.reason;
       for (const value of values) {
         if (value !== signal) clearTimeout(value.__timeoutTimer);
@@ -199,11 +202,11 @@ class NodeAbortSignal {
     return combined;
   }
   static timeout(milliseconds) {
-    const signal = new NodeAbortSignal();
+    const signal = new NodeAbortSignal(undefined, true);
     signal.__timeoutTimer = setTimeout(() => {
       const reason = new Error("The operation was aborted due to timeout");
       reason.name = "TimeoutError";
-      signal.aborted = true;
+      signal._aborted = true;
       signal.reason = reason;
       const event = { type: "abort", target: signal };
       signal._listeners
@@ -218,10 +221,11 @@ class NodeAbortSignal {
 }
 class NodeAbortController {
   constructor() {
-    this.signal = new NodeAbortSignal();
+    this.signal = new NodeAbortSignal(undefined, true);
   }
   abort(reason) {
-    this.signal.aborted = true;
+    if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
+    this.signal._aborted = true;
     this.signal.reason = reason === undefined
       ? new DOMException("This operation was aborted", "AbortError")
       : reason;
@@ -238,6 +242,30 @@ class NodeAbortController {
     }
   }
 }
+Object.defineProperty(NodeAbortSignal.prototype, "aborted", {
+  get() {
+    if (!(this instanceof NodeAbortSignal)) throw new TypeError("Illegal invocation");
+    return this._aborted;
+  },
+});
+NodeAbortSignal.prototype[Symbol.toStringTag] = "AbortSignal";
+Object.defineProperty(
+  NodeAbortSignal.prototype,
+  Symbol.for("quench.event_target.events"),
+  {
+    configurable: true,
+    get() {
+      return new Map([["abort", { size: this._listeners.length }]]);
+    },
+  },
+);
+NodeAbortController.prototype[Symbol.toStringTag] = "AbortController";
+Object.defineProperty(NodeAbortController.prototype, "signal", {
+  get() {
+    if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
+    return this.signal;
+  },
+});
 globalThis.AbortSignal = NodeAbortSignal;
 globalThis.AbortController = NodeAbortController;
 globalThis.__nodeFs.open = (value, flags, mode, callback) => {

@@ -12,8 +12,10 @@ execution-trace = []
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 icu_collator = { version = "2.3", features = ["compiled_data"] }
+icu_casemap = { version = "2.2", features = ["compiled_data"] }
 icu_locale_core = "2.3"
 icu_provider = "2.3"
+icu_properties = { version = "2.3", features = ["compiled_data"] }
 num-bigint = "0.4"
 oxc = { version = "0.47", features = ["semantic"] }
 regress = { version = "0.12", features = ["utf16"] }
@@ -21,3 +23,4 @@ stacker = "0.1"
 serde_json = "1"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
+wasmparser = "0.247"
