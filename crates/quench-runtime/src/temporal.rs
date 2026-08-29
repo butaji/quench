@@ -1444,7 +1444,11 @@ mod stubs {
             let year = i32::try_from(year_number).map_err(|_| {
                 crate::value::error::throw_range_error("Invalid ZonedDateTime field")
             })?;
-            if month_code.is_some_and(|(month, _)| !(1..=12).contains(&month)) {
+            if month_code.is_some_and(|(month, _)| {
+                !(1..=12).contains(&month)
+                    && !(super::plain_date::calendar_supports_month13(&calendar_name)
+                        && month == 13)
+            }) {
                 return Err(crate::value::error::throw_range_error("Invalid monthCode"));
             }
             let month = if let Some((month_code, _)) = month_code {
@@ -1461,10 +1465,19 @@ mod stubs {
                 if month < 1 {
                     return Err(crate::value::error::throw_range_error("Invalid month"));
                 }
-                if overflow_mode == "reject" && month > 12 {
+                if overflow_mode == "reject"
+                    && month > 12
+                    && !(super::plain_date::calendar_has_month13(&calendar_name)
+                        && month == 13)
+                {
                     return Err(crate::value::error::throw_range_error("Invalid month"));
                 }
-                month.clamp(1, 12) as u32
+                let max_month = if super::plain_date::calendar_has_month13(&calendar_name) {
+                    13
+                } else {
+                    12
+                };
+                month.clamp(1, max_month) as u32
             };
             let month_code_text = month_code
                 .map(|(month, leap)| format!("M{month:02}{}", if leap { "L" } else { "" }));
@@ -1617,7 +1630,40 @@ mod stubs {
                 if let Value::Object(object) = &mut result {
                     let object = std::rc::Rc::make_mut(object);
                     object.set_property_in_place("year", Value::Number(year as f64));
-                    object.set_property_in_place("month", Value::Number(month as f64));
+                    if month_code_text.is_none()
+                        || !matches!(calendar.as_str(), "hebrew" | "chinese" | "dangi")
+                    {
+                        object.set_property_in_place("month", Value::Number(month as f64));
+                    } else if let Some(code) = month_code_text.as_deref() {
+                        if code.ends_with('L') {
+                            if let Ok(month) = code[1..3].parse::<u32>() {
+                                object.set_property_in_place(
+                                    "month",
+                                    Value::Number(f64::from(month + 1)),
+                                );
+                            }
+                        }
+                    } else if let Some(code) = month_code_text.as_deref() {
+                        let ordinal = if code.ends_with('L')
+                            && matches!(calendar.as_str(), "hebrew" | "chinese" | "dangi")
+                        {
+                            code[1..3].parse::<u32>().ok().map(|month| month + 1)
+                        } else {
+                            super::plain_date::calendar_date_from_code(
+                                year,
+                                code,
+                                day,
+                                &calendar,
+                            )
+                            .map(|(ordinal, _)| ordinal)
+                        };
+                        if let Some(ordinal) = ordinal {
+                            object.set_property_in_place(
+                                "month",
+                                Value::Number(f64::from(ordinal)),
+                            );
+                        }
+                    }
                     object.set_property_in_place("day", Value::Number(day as f64));
                     if let Some((month, leap)) = month_code {
                         object.set_property_in_place(
@@ -1643,10 +1689,28 @@ mod stubs {
                     object.set_property_in_place("year", Value::Number(year as f64));
                     object.set_property_in_place("month", Value::Number(month as f64));
                     object.set_property_in_place("day", Value::Number(day as f64));
-                    object.set_property_in_place(
-                        "monthCode",
-                        Value::String(month_code_text.unwrap_or_else(|| format!("M{month:02}"))),
-                    );
+                    if let Some(code) = month_code_text.as_deref() {
+                        if matches!(calendar.as_str(), "hebrew" | "chinese" | "dangi") {
+                            if let Ok(month) = code[1..3].parse::<u32>() {
+                                let hebrew_shift = calendar == "hebrew"
+                                    && matches!(year.rem_euclid(19), 0 | 3 | 6 | 8 | 11 | 14 | 17)
+                                    && month >= 6;
+                                object.set_property_in_place(
+                                    "month",
+                                    Value::Number(f64::from(month + u32::from(hebrew_shift))),
+                                );
+                            }
+                        }
+                    }
+                    if month_code_text.is_some() || calendar != "hebrew" {
+                        object.set_property_in_place(
+                            "monthCode",
+                            Value::String(
+                                month_code_text
+                                    .unwrap_or_else(|| format!("M{month:02}")),
+                            ),
+                        );
+                    }
                 }
             }
             if let Some((month, true)) = month_code {
@@ -3981,9 +4045,19 @@ mod stubs {
             )));
         }
         let year = crate::conversion::to_number(&property("year")?)?;
-        let month = crate::conversion::to_number(&property("month")?)?;
+        let mut month = crate::conversion::to_number(&property("month")?)?;
         let day = crate::conversion::to_number(&property("day")?)?;
         let calendar = property("calendarId")?;
+        let calendar_text = crate::conversion::to_string(&calendar).unwrap_or_default();
+        if let Value::String(code) = property("monthCode")? {
+            if code.ends_with('L')
+                && matches!(calendar_text.as_str(), "hebrew" | "chinese" | "dangi")
+            {
+                if let Ok(value) = code[1..3].parse::<u32>() {
+                    month = f64::from(value + 1);
+                }
+            }
+        }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainDate {
             return crate::temporal::plain_date::construct(&[
                 Value::Number(year),
