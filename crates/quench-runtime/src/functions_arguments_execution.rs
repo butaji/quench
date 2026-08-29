@@ -108,13 +108,7 @@ pub(crate) fn try_execute_specialized(
             crate::value::Value::Generator(generator) => generator,
             _ => unreachable!("generator creation must return a generator"),
         };
-        let completion = crate::generator::resume(
-            &generator,
-            crate::generator::Resume::Next(crate::value::Value::Undefined),
-        );
-        return Ok(Some(crate::promise::from_async_function_completion(
-            completion, generator,
-        )));
+        return Ok(Some(crate::promise::start_async_function(generator)));
     }
     // Compact numeric leaves stay on the ordinary proven-leaf path.
     if function.code.code().is_some_and(|code| {
