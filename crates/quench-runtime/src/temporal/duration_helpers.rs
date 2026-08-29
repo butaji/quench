@@ -225,8 +225,18 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         .filter(|value| !matches!(value, Value::Undefined))
         .map(|value| relative_date(value))
         .transpose()?;
-    let difference = if date_units(&left) || date_units(&right) {
-        duration_difference(&left, &right, date)?
+    let zoned_relative = relative_to.as_ref().and_then(zoned_relative_value);
+    let day_units = number_property(&left, "days") != 0.0
+        || number_property(&right, "days") != 0.0;
+    let difference = if date_units(&left)
+        || date_units(&right)
+        || day_units && zoned_relative.is_some()
+    {
+        if let Some(relative) = zoned_relative.as_ref() {
+            duration_difference_zoned(&left, &right, relative)?
+        } else {
+            duration_difference(&left, &right, date)?
+        }
     } else {
         exact_time_difference(&left, &right)
     };
@@ -234,6 +244,74 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(if difference < 0 { -1.0 } else { 1.0 }))
+}
+
+fn zoned_relative_value(value: &Value) -> Option<Value> {
+    if is_zoned(value) {
+        return Some(value.clone());
+    }
+    let candidate = match value {
+        Value::String(text) if text.contains('[') => true,
+        Value::Object(_) => crate::execute::get_property_result(value, "timeZone")
+            .ok()
+            .is_some_and(|value| !matches!(value, Value::Undefined)),
+        _ => false,
+    };
+    if !candidate {
+        return None;
+    }
+    crate::temporal::execute(
+        crate::ops::Builtin::TemporalZonedDateTimeFrom,
+        None,
+        std::slice::from_ref(value),
+    )?
+    .ok()
+}
+
+fn is_zoned(value: &Value) -> bool {
+    let resolved = crate::locals::resolved_replacement(value.clone());
+    matches!(
+        resolved,
+        Value::Object(ref object)
+            if object.iter().any(|(key, value)| {
+                key == "\0prototype"
+                    && matches!(
+                        value,
+                        Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+                    )
+            })
+    )
+}
+
+fn epoch_of(value: &Value) -> Result<i128, VmError> {
+    match crate::execute::get_property_result(value, "epochNanoseconds")? {
+        Value::BigInt(value) => value
+            .parse::<i128>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid epochNanoseconds")),
+        _ => Err(crate::value::error::throw_type_error(
+            "Invalid ZonedDateTime",
+        )),
+    }
+}
+
+fn duration_epoch_delta(duration: &Value, relative: &Value) -> Result<i128, VmError> {
+    let result = crate::temporal::execute(
+        crate::ops::Builtin::TemporalZonedDateTimeAdd,
+        Some(relative),
+        std::slice::from_ref(duration),
+    )
+    .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))??;
+    Ok(epoch_of(&result)? - epoch_of(relative)?)
+}
+
+fn duration_difference_zoned(
+    left: &Value,
+    right: &Value,
+    relative: &Value,
+) -> Result<i128, VmError> {
+    let left_delta = duration_epoch_delta(left, relative)?;
+    let right_delta = duration_epoch_delta(right, relative)?;
+    Ok(left_delta - right_delta)
 }
 
 fn relative_to_option(value: &Value) -> Result<Value, VmError> {
