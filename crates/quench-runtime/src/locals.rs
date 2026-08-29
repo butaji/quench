@@ -569,13 +569,13 @@ pub(crate) fn load_proven(
 }
 
 #[inline(always)]
-pub(crate) fn load_checked(
+fn load_checked_in(
+    environment: &Environment,
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     slot: u16,
     name: &str,
 ) -> Result<(), VmError> {
-    let environment = current();
     if environment.is_deleted_slot(slot) {
         return Err(crate::value::error::throw_reference_error(&format!(
             "Cannot access deleted binding '{name}'"
@@ -589,6 +589,24 @@ pub(crate) fn load_checked(
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     environment.load_into(registers, dst, slot);
     Ok(())
+}
+
+pub(crate) fn load_checked(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let fast = CURRENT_ENVIRONMENT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .map(|environment| load_checked_in(environment, registers, dst, slot, name))
+    });
+    if let Some(result) = fast {
+        return result;
+    }
+    load_checked_in(&current(), registers, dst, slot, name)
 }
 
 pub(crate) fn update(
