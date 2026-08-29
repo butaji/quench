@@ -52,13 +52,19 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if month_code_override.is_none() || calendar == "iso8601" || calendar == "gregory" {
         if month_code_override.is_none() && calendar != "iso8601" && calendar != "gregory" {
             let date = crate::temporal::plain_date::construct(&date_arguments)?;
-            fields[1] = crate::execute::get_property_result(&date, "month")
-                .ok()
-                .and_then(|value| match value {
-                    Value::Number(value) => Some(value),
-                    _ => None,
-                })
-                .unwrap_or(fields[1]);
+            if !crate::temporal::plain_year_month::calendar_edge_month_number(
+                &calendar,
+                fields[0] as i32,
+                fields[1] as u32,
+            ) {
+                fields[1] = crate::execute::get_property_result(&date, "month")
+                    .ok()
+                    .and_then(|value| match value {
+                        Value::Number(value) => Some(value),
+                        _ => None,
+                    })
+                    .unwrap_or(fields[1]);
+            }
             month_code_from_calendar = crate::execute::get_property_result(&date, "monthCode")
                 .ok()
                 .and_then(|value| match value {
@@ -2398,6 +2404,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     if let Some(code) = month_code_text_value.clone() {
         if !matches!(calendar_id.as_str(), "iso8601" | "gregory") {
+            let edge_fields = crate::temporal::plain_year_month::calendar_edge_month_fields(
+                &calendar_id,
+                numeric[0] as i32,
+                numeric[1] as u32,
+                &code,
+            );
             let (ordinal, canonical) = crate::temporal::plain_date::calendar_date_from_code(
                 numeric[0] as i32,
                 &code,
@@ -2414,10 +2426,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 Some((ordinal, code.clone()))
             })
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
-            if present[1] && numeric[1] != ordinal as f64 {
+            if present[1] && numeric[1] != ordinal as f64 && !edge_fields {
                 return Err(crate::value::error::throw_range_error("Month mismatch"));
             }
-            numeric[1] = ordinal as f64;
+            if !edge_fields {
+                numeric[1] = ordinal as f64;
+            }
             month_code_text_value = Some(canonical);
         }
     }
@@ -2426,7 +2440,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     if overflow == "constrain" {
         if present[1] {
-            let max_month = if crate::temporal::plain_date::calendar_supports_month13(&calendar_id) {
+            let max_month = if crate::temporal::plain_date::calendar_supports_month13(&calendar_id)
+                || crate::temporal::plain_year_month::calendar_edge_month_number(
+                    &calendar_id,
+                    numeric[0] as i32,
+                    numeric[1] as u32,
+                )
+            {
                 13.0
             } else {
                 12.0
@@ -2440,10 +2460,27 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             let max_day = month_code_text_value
                 .as_deref()
                 .and_then(|code| {
-                    crate::temporal::plain_date::calendar_days_in_month_for_code(
-                        numeric[0] as i32,
-                        code,
+                    crate::temporal::plain_year_month::calendar_edge_day(
                         &calendar_id,
+                        numeric[0] as i32,
+                        numeric[1] as u32,
+                        code,
+                    )
+                })
+                .or_else(|| {
+                    month_code_text_value.as_deref().and_then(|code| {
+                        crate::temporal::plain_date::calendar_days_in_month_for_code(
+                            numeric[0] as i32,
+                            code,
+                            &calendar_id,
+                        )
+                    })
+                })
+                .or_else(|| {
+                    crate::temporal::plain_year_month::calendar_edge_day_for_month(
+                        &calendar_id,
+                        numeric[0] as i32,
+                        numeric[1] as u32,
                     )
                 })
                 .unwrap_or_else(|| days_in_month(numeric[0] as i32, numeric[1] as u32));

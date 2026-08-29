@@ -63,13 +63,27 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let month_valid = (1.0..=12.0).contains(&month)
         || (month == 13.0
             && calendar_has_month13(&calendar_name)
-            && calendar_date(year as i32, 13, day as u32, &calendar_name).is_some());
-    if !(-271_821.0..=275_760.0).contains(&year) || !month_valid || !(1.0..=max_day).contains(&day)
-    {
+            && (calendar_date(year as i32, 13, day as u32, &calendar_name).is_some()
+                || crate::temporal::plain_year_month::calendar_edge_month_number(
+                    &calendar_name,
+                    year as i32,
+                    13,
+                )));
+    let in_year_range = if matches!(calendar_name.as_str(), "iso8601" | "gregory") {
+        (-271_821.0..=275_760.0).contains(&year)
+    } else {
+        crate::temporal::plain_year_month::calendar_year_in_supported_range(
+            &calendar_name,
+            year as i32,
+        )
+    };
+    if !in_year_range || !month_valid || !(1.0..=max_day).contains(&day) {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
-    if (year == -271_821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
+    if matches!(calendar_name.as_str(), "iso8601" | "gregory")
+        && ((year == -271_821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
         || (year == 275_760.0 && (month > 9.0 || month == 9.0 && day > 13.0))
+        )
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }

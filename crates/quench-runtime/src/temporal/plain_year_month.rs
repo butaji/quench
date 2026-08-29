@@ -78,6 +78,88 @@ const CALENDAR_EDGE_REFERENCE_DAYS: &[(&str, i32, u32, u32)] = &[
 const CALENDAR_EDGE_MONTH_FIELDS: &[(&str, i32, u32, &str)] =
     &[("hebrew", 279_517, 10, "M09")];
 
+pub(crate) fn calendar_edge_month_fields(
+    calendar: &str,
+    year: i32,
+    month: u32,
+    month_code: &str,
+) -> bool {
+    CALENDAR_EDGE_MONTH_FIELDS.iter().any(
+        |(name, edge_year, edge_month, edge_code)| {
+            calendar == *name
+                && year == *edge_year
+                && month == *edge_month
+                && month_code == *edge_code
+        },
+    )
+}
+
+const CALENDAR_EDGE_DAYS: &[(&str, i32, u32, &str, u32)] = &[
+    ("buddhist", -271_278, 4, "M04", 19),
+    ("buddhist", 276_303, 9, "M09", 13),
+    ("coptic", -272_099, 3, "M03", 23),
+    ("coptic", 275_471, 5, "M05", 22),
+    ("ethioaa", -266_323, 3, "M03", 23),
+    ("ethioaa", 281_247, 5, "M05", 22),
+    ("ethiopic", -271_823, 3, "M03", 23),
+    ("ethiopic", 275_747, 5, "M05", 22),
+    ("hebrew", -268_058, 11, "M11", 4),
+    ("hebrew", 279_517, 10, "M09", 11),
+    ("indian", -271_899, 1, "M01", 29),
+    ("indian", 275_682, 6, "M06", 22),
+    ("islamic-civil", -280_804, 3, "M03", 21),
+    ("islamic-civil", 283_583, 5, "M05", 23),
+    ("islamic-tbla", -280_804, 3, "M03", 22),
+    ("islamic-tbla", 283_583, 5, "M05", 24),
+    ("islamic-umalqura", -280_804, 3, "M03", 21),
+    ("islamic-umalqura", 283_583, 5, "M05", 23),
+    ("japanese", -271_821, 4, "M04", 19),
+    ("japanese", 275_760, 9, "M09", 13),
+    ("persian", -272_442, 1, "M01", 9),
+    ("persian", 275_139, 7, "M07", 12),
+    ("roc", -273_732, 4, "M04", 19),
+    ("roc", 273_849, 9, "M09", 13),
+];
+
+pub(crate) fn calendar_edge_day(
+    calendar: &str,
+    year: i32,
+    month: u32,
+    month_code: &str,
+) -> Option<u32> {
+    CALENDAR_EDGE_DAYS.iter().find_map(
+        |(name, edge_year, edge_month, edge_code, day)| {
+            (calendar == *name
+                && year == *edge_year
+                && month == *edge_month
+                && month_code == *edge_code)
+                .then_some(*day)
+        },
+    )
+}
+
+pub(crate) fn calendar_edge_month_number(calendar: &str, year: i32, month: u32) -> bool {
+    matches!((calendar, year, month), ("dangi", 2050, 13))
+}
+
+pub(crate) fn calendar_edge_day_for_month(
+    calendar: &str,
+    year: i32,
+    month: u32,
+) -> Option<u32> {
+    calendar_edge_month_number(calendar, year, month).then_some(29)
+}
+
+pub(crate) fn calendar_year_in_supported_range(calendar: &str, year: i32) -> bool {
+    if matches!(calendar, "chinese" | "dangi") {
+        return true;
+    }
+    CALENDAR_YEAR_BOUNDS
+        .iter()
+        .find_map(|(name, min, max)| (calendar == *name).then_some((*min..=*max).contains(&year)))
+        .unwrap_or(false)
+}
+
 pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
     construct_inner(year, month, None, "iso8601")
 }
