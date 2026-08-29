@@ -198,7 +198,7 @@ fn finish_named_call(
             destination,
             callee,
             receiver,
-            arguments.to_vec(),
+            arguments.to_vec().into(),
         )));
     }
     let value = execute_named_callee(

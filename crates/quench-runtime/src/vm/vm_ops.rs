@@ -54,7 +54,7 @@ pub(crate) fn take_call_continuation(
     destination: u16,
     callee: Value,
     receiver: Value,
-    arguments: Vec<Value>,
+    arguments: crate::completion::CallArguments,
 ) -> crate::completion::Completion {
     crate::completion::Completion::Call(crate::completion::CallContinuation {
         callee,
@@ -485,8 +485,8 @@ pub(crate) fn collect_call_arguments(
     registers: &crate::register_file::RegisterFile,
     args: &[u16],
     spreads: &[bool],
-) -> Result<Vec<Value>, VmError> {
-    let mut arguments = Vec::with_capacity(args.len());
+) -> Result<crate::completion::CallArguments, VmError> {
+    let mut arguments = crate::completion::CallArguments::with_capacity(args.len());
     for (i, index) in args.iter().enumerate() {
         push_argument_value(
             &mut arguments,
@@ -499,7 +499,7 @@ pub(crate) fn collect_call_arguments(
 }
 
 fn push_argument_value(
-    arguments: &mut Vec<Value>,
+    arguments: &mut crate::completion::CallArguments,
     value: Value,
     is_spread: bool,
 ) -> Result<(), VmError> {

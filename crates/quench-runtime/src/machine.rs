@@ -1872,7 +1872,7 @@ impl Machine {
         let continuation = crate::completion::CallContinuation {
             callee,
             receiver,
-            arguments,
+            arguments: arguments.into(),
             caller_code: self.code,
             caller_pc: self.pc,
             caller_registers: self.take_registers(),
@@ -2461,7 +2461,7 @@ mod tests {
                 Ok(Completion::TailCall(TailCallRequest {
                     callee: Value::Undefined,
                     receiver: Value::Undefined,
-                    arguments: Vec::new(),
+                    arguments: Vec::new().into(),
                 }))
             })
             .unwrap();
