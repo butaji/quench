@@ -381,11 +381,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 "EventTarget",
                 crate::registry::SPEC_EVENT_TARGET_NEW,
             );
-            let event = global_constructor_or_capability(
-                &global,
-                "Event",
-                crate::registry::SPEC_EVENT,
-            );
+            let event =
+                global_constructor_or_capability(&global, "Event", crate::registry::SPEC_EVENT);
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
