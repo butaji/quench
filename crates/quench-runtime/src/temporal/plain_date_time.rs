@@ -2435,8 +2435,15 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             continue;
         }
         if name == "monthCode" {
-            month_code_text_value = Some(month_code_text(&field)?);
-            month_code_value = Some(crate::conversion::to_number(&month_code_number(&field)?)?);
+            let code = month_code_text(&field)?;
+            let number = code
+                .strip_suffix('L')
+                .unwrap_or(&code)
+                .strip_prefix('M')
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(f64::NAN);
+            month_code_text_value = Some(code);
+            month_code_value = Some(Value::Number(number));
             continue;
         }
         let index = match name {
@@ -2538,7 +2545,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     let overflow = from_overflow_option(options)?;
-    if let Some(month_code) = month_code_value {
+    if let Some(Value::Number(month_code)) = month_code_value {
         if !(1.0..=13.0).contains(&month_code) {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
