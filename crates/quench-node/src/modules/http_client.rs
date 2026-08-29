@@ -192,6 +192,8 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         )
     });
     let (req, id) = build_req_object(state)?;
+    set_request_property(Some(&req), "path", Value::String(opts.path.clone()));
+    set_request_property(Some(&req), "method", Value::String(opts.method.clone()));
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
         id,
@@ -1369,15 +1371,21 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                 Value::String(value) => value,
                 other => return Err(invalid_method_type_error(&other)),
             };
+            let method = if method.is_empty() {
+                "GET".to_string()
+            } else {
+                method
+            };
             if !is_http_token(&method) {
                 return Err(invalid_method_error(&method));
             }
             let path = match opt(&options, "path")? {
-                Some(path) => path,
+                Some(path) if !path.is_empty() => path,
                 None => {
                     let pathname = opt(&options, "pathname")?.unwrap_or_else(|| "/".to_string());
                     format!("{pathname}{}", opt(&options, "search")?.unwrap_or_default())
                 }
+                Some(_) => "/".to_string(),
             };
             if path
                 .chars()

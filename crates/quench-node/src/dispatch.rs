@@ -602,6 +602,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_NET_BLOCK_LIST => crate::modules::net::block_list_construct,
         CAP_HTTP_SERVER => http_create_server_construct,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
+        CAP_HTTP_CLIENT_REQUEST => crate::modules::http_client::request,
         CAP_HTTP_INCOMING => crate::modules::http::incoming_construct,
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_READLINE => readline_create_interface,
