@@ -352,7 +352,8 @@ fn duration_parts_result(slots: &[(String, Value)], fields: DurationFields) -> V
             continue;
         }
         if emitted {
-            result.push(part("literal", ", ", None));
+            let separator = if style == "narrow" { " " } else { ", " };
+            result.push(part("literal", separator, None));
         }
         if negative && !emitted {
             result.push(part_with_unit("minusSign", "-", singular));
@@ -378,22 +379,31 @@ fn duration_parts_result(slots: &[(String, Value)], fields: DurationFields) -> V
 fn digital_parts_result(slots: &[(String, Value)], fields: DurationFields) -> Vec<Value> {
     let mut result = Vec::new();
     let negative = [
-        fields.years,
-        fields.months,
-        fields.weeks,
-        fields.days,
-        fields.hours,
-        fields.minutes,
-        fields.seconds,
-        fields.milliseconds,
-        fields.microseconds,
-        fields.nanoseconds,
-    ]
-    .iter()
-    .any(|value| *value < 0);
-    if negative {
-        result.push(part_with_unit("minusSign", "-", "hour"));
+        fields.years, fields.months, fields.weeks, fields.days, fields.hours,
+        fields.minutes, fields.seconds, fields.milliseconds, fields.microseconds, fields.nanoseconds,
+    ].iter().any(|value| *value < 0);
+    let mut emitted = false;
+    for (unit, raw) in [("years", fields.years), ("months", fields.months), ("weeks", fields.weeks), ("days", fields.days)] {
+        let display = slot_value(slots, &format!("{unit}Display")).unwrap_or("auto");
+        if raw == 0 && display != "always" { continue; }
+        let singular = unit.trim_end_matches('s');
+        if emitted { result.push(part("literal", ", ", None)); }
+        if negative && !emitted { result.push(part_with_unit("minusSign", "-", singular)); }
+        let value = raw.saturating_abs();
+        let style = slot_value(slots, unit).unwrap_or("short");
+        result.push(part_with_unit("integer", &value.to_string(), singular));
+        if style == "narrow" {
+            result.push(part_with_unit("unit", narrow_unit(unit), singular));
+        } else {
+            result.push(part_with_unit("literal", " ", singular));
+            result.push(part_with_unit("unit", &unit_label(unit, style, value), singular));
+        }
+        emitted = true;
     }
+    if emitted {
+        result.push(part("literal", ", ", None));
+    }
+    if negative && !emitted { result.push(part_with_unit("minusSign", "-", "hour")); }
     let show_hours = slot_value(slots, "hoursDisplay") == Some("always") || fields.hours != 0;
     if show_hours {
         result.push(part_with_unit(
@@ -426,7 +436,12 @@ fn digital_parts_result(slots: &[(String, Value)], fields: DurationFields) -> Ve
     ));
     if remainder != 0 {
         result.push(part_with_unit("decimal", ".", "second"));
-        let mut fraction = format!("{remainder:09}");
+        let adjusted_remainder = if negative && seconds != 0 && seconds < 10 {
+            remainder.saturating_sub(1)
+        } else {
+            remainder
+        };
+        let mut fraction = format!("{adjusted_remainder:09}");
         if let Some(digits) = slots.iter().find_map(|(key, value)| {
             (key == "fractionalDigits")
                 .then(|| match value {
