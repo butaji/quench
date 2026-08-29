@@ -809,7 +809,7 @@ mod stubs {
             )?;
             let offset_mode = option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
             let _overflow_mode = option_string("overflow", &["constrain", "reject"], "constrain")?;
-            let (_calendar_annotation, timezone_annotation) = super::parse_iso_annotations(text)?;
+            let (calendar_annotation, timezone_annotation) = super::parse_iso_annotations(text)?;
             let has_z = text.split('[').next().unwrap_or(text).contains('Z');
             let date_time = text
                 .split('[')
@@ -961,10 +961,10 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
-            return Ok(super::zoned_record(
+            return Ok(super::zoned_record_with_calendar(
                 epoch,
                 timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                calendar_annotation.unwrap_or_else(|| "iso8601".into()),
             ));
         }
         if !super::is_zoned_receiver(value, 0) {
@@ -1122,9 +1122,11 @@ mod stubs {
                 }
             }
             let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
-            if !matches!(calendar_value, Value::Undefined) {
-                super::parse_calendar_identifier(&calendar_value)?;
-            }
+            let calendar = if matches!(calendar_value, Value::Undefined) {
+                "iso8601".to_string()
+            } else {
+                super::parse_calendar_identifier(&calendar_value)?
+            };
             let timezone = super::parse_timezone_identifier(&timezone_value)?;
             let offset = validated_offset;
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
@@ -1161,10 +1163,10 @@ mod stubs {
                     ));
                 }
             }
-            return Ok(super::zoned_record(
+            return Ok(super::zoned_record_with_calendar(
                 epoch,
                 timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                calendar,
             ));
         }
         let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
@@ -1629,7 +1631,8 @@ mod stubs {
                 let timezone = super::parse_timezone_identifier(&crate::value::Value::String(timezone_text))?;
                 let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
                 if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 { return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds")); }
-                super::zoned_record(epoch, timezone, crate::ops::Builtin::TemporalZonedDateTimePrototype)
+                let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                super::zoned_record_with_calendar(epoch, timezone, calendar)
             } else {
                 zoned_from(Some(&field_value), Some(&option_value))?
             };
@@ -1831,10 +1834,11 @@ mod stubs {
                 return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
             }
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-            return Ok(super::zoned_record(
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            return Ok(super::zoned_record_with_calendar(
                 epoch,
                 timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                calendar,
             ));
         }
         if matches!(
@@ -2043,10 +2047,11 @@ mod stubs {
                         ));
                     }
                     let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-                    return Ok(super::zoned_record(
+                    let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                    return Ok(super::zoned_record_with_calendar(
                         epoch,
                         timezone,
-                        crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                        calendar,
                     ));
                 }
                 None => return Err(crate::value::error::throw_range_error("Invalid date")),
@@ -2116,10 +2121,11 @@ mod stubs {
                         ));
                     }
                     let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-                    return Ok(super::zoned_record(
+                    let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                    return Ok(super::zoned_record_with_calendar(
                         epoch,
                         timezone,
-                        crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                        calendar,
                     ));
                 }
                 None => return Err(crate::value::error::throw_range_error("Invalid date")),
@@ -2151,10 +2157,11 @@ mod stubs {
                 return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
             }
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-            return Ok(super::zoned_record(
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            return Ok(super::zoned_record_with_calendar(
                 epoch,
                 timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                calendar,
             ));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeStartOfDay {
@@ -2202,10 +2209,11 @@ mod stubs {
                     .zip(scale.iter())
                     .map(|(value, scale)| *value as i128 * scale)
                     .sum::<i128>();
-            return Ok(super::zoned_record(
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            return Ok(super::zoned_record_with_calendar(
                 midnight,
                 timezone,
-                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                calendar,
             ));
         }
         if matches!(
@@ -2973,11 +2981,13 @@ mod stubs {
         let year = crate::conversion::to_number(&property("year")?)?;
         let month = crate::conversion::to_number(&property("month")?)?;
         let day = crate::conversion::to_number(&property("day")?)?;
+        let calendar = property("calendarId")?;
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainDate {
             return crate::temporal::plain_date::construct(&[
                 Value::Number(year),
                 Value::Number(month),
                 Value::Number(day),
+                calendar,
             ]);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainTime {
@@ -2991,7 +3001,7 @@ mod stubs {
             ]);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainDateTime {
-            return crate::temporal::plain_date_time::construct(&[
+            let mut result = crate::temporal::plain_date_time::construct(&[
                 Value::Number(year),
                 Value::Number(month),
                 Value::Number(day),
@@ -3001,7 +3011,11 @@ mod stubs {
                 property("millisecond")?,
                 property("microsecond")?,
                 property("nanosecond")?,
-            ]);
+            ])?;
+            if let Value::Object(object) = &mut result {
+                std::rc::Rc::make_mut(object).set_property_in_place("calendarId", calendar);
+            }
+            return Ok(result);
         }
         let mut year = year as i32;
         let mut month = month as u32;
