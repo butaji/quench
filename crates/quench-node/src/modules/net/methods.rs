@@ -12,6 +12,8 @@ use crate::host::HostState;
 
 use super::*;
 
+const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
+
 /// `net.createServer([connectionListener])` — a server object backed by
 /// an emitter; the listener, if given, registers for `'connection'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -26,7 +28,7 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     if let Some(options) = args
         .first()
-        .filter(|value| matches!(value, Value::Object(_)))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         let fd = execute::get_property(options, "fd");
         if let Value::String(_) = fd {
@@ -114,7 +116,7 @@ fn connect_with_receiver(
     }
     if let Some(options) = args
         .first()
-        .filter(|value| matches!(value, Value::Object(_)))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         let auto_select_family = execute::get_property(options, "autoSelectFamily");
         if !matches!(auto_select_family, Value::Undefined | Value::Boolean(_)) {
@@ -216,7 +218,7 @@ fn connect_with_receiver(
     let (port, host) = connect_target(state, args)?;
     if let Some(options) = args
         .first()
-        .filter(|value| matches!(value, Value::Object(_)))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         let block_list = execute::get_property(options, "blockList");
         let address = host.as_deref().unwrap_or(LOCAL_HOST);
@@ -337,7 +339,7 @@ fn connect_target(
     args: &[Value],
 ) -> Result<(u16, Option<String>), VmError> {
     match args.first() {
-        Some(Value::Object(_)) => {
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => {
             let options = args.first().cloned().unwrap_or(Value::Undefined);
             let port_value = execute::get_property_result(&options, "port")?;
             if matches!(port_value, Value::Undefined) {
@@ -346,6 +348,7 @@ fn connect_target(
             let port = parse_port(&port_value)?;
             let host = execute::get_property_result(&options, "host")
                 .ok()
+                .filter(|value| !matches!(value, Value::Undefined | Value::Null))
                 .and_then(|v| execute::to_js_string(&v).ok());
             Ok((port, host))
         }
@@ -523,7 +526,7 @@ fn listen_target(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<(u16, Option<String>), VmError> {
-    if matches!(args.first(), Some(Value::Object(_))) {
+    if matches!(args.first(), Some(Value::Object(_) | Value::ObjectAlias(_))) {
         return connect_target(state, args);
     }
     let value = args.first().cloned().unwrap_or(Value::Number(0.0));
@@ -806,6 +809,88 @@ pub fn socket_set_keep_alive(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `socket.setTimeout(msecs[, callback])` shares the host timer registry.
+pub fn socket_set_timeout(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let timeout = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value,
+        Some(Value::Number(_)) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(
+                "The \"timeout\" value is out of range".into(),
+            ))
+        }
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"timeout\" argument must be a number".into(),
+            ))
+        }
+    };
+    if let Value::Object(_) | Value::ObjectAlias(_) = receiver {
+        if let Some(timer) = timeout_timer(&receiver) {
+            crate::modules::timers::clear_timeout(state, &[timer])?;
+        }
+        execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, Value::Undefined);
+        execute::set_property_in_place(&receiver, "timeout", Value::Number(timeout));
+        if timeout > 0.0 {
+            if let Some(callback) = args.get(1) {
+                if !quench_runtime::is_callable(callback) {
+                    return Err(crate::modules::buffer_enc::invalid_arg_type(
+                        "The \"callback\" argument must be a function".into(),
+                    ));
+                }
+                let once = crate::host::capability(crate::registry::SPEC_EVENTS_ONCE);
+                execute::call(
+                    &once,
+                    &receiver,
+                    &[Value::String("timeout".into()), callback.clone()],
+                )?;
+            }
+            let callback = quench_runtime::host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_NET_SOCKET_TIMEOUT_FIRE.cap,
+                    ),
+                },
+                vec![receiver.clone()],
+            );
+            let timer = crate::modules::timers::set_timeout(
+                state,
+                &[callback, Value::Number(timeout)],
+            )?;
+            execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, timer);
+        }
+    }
+    Ok(receiver)
+}
+
+pub fn socket_timeout_fire(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(socket) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    execute::set_property_in_place(socket, SOCKET_TIMEOUT_PROP, Value::Undefined);
+    crate::modules::events::method_emit(
+        state,
+        Some(socket),
+        &[Value::String("timeout".into())],
+    )
+}
+
+fn timeout_timer(socket: &Value) -> Option<Value> {
+    match execute::get_property(socket, SOCKET_TIMEOUT_PROP) {
+        Value::Undefined | Value::Null => None,
+        timer => Some(timer),
+    }
 }
 
 /// `socket.setEncoding(encoding)` — decode `'data'` chunks to strings.
