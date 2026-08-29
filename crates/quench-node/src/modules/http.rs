@@ -466,7 +466,10 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
             ("method".to_string(), Value::String(method)),
             ("url".to_string(), Value::String(url)),
             ("httpVersion".to_string(), Value::String(version)),
-            ("headers".to_string(), host_api::object(headers)),
+            (
+                "headers".to_string(),
+                execute::set_prototype_of(&host_api::object(headers), &Value::Null)?,
+            ),
             (
                 "resume".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_RESUME),
