@@ -742,6 +742,26 @@ pub(crate) fn defer(state: &Rc<RefCell<HostState>>, cb: &Value, args: Vec<Value>
     state.borrow().event_loop.queue_immediate(callback, args);
 }
 
+pub(crate) fn defer_with_resource(
+    state: &Rc<RefCell<HostState>>,
+    cb: &Value,
+    args: Vec<Value>,
+    resource_type: &str,
+) -> Result<(), VmError> {
+    let resource = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::String(resource_type.into())],
+    )?;
+    let callback = crate::modules::domain::current(state)
+        .and_then(|domain| crate::modules::domain::bind(state, Some(&domain), &[cb.clone()]).ok())
+        .unwrap_or_else(|| cb.clone());
+    state
+        .borrow()
+        .event_loop
+        .queue_immediate_with_resource(callback, args, Some(resource));
+    Ok(())
+}
+
 /// Split `args` into `(leading, callback)` for the async family: the
 /// callback is always the last argument.
 pub(crate) fn async_args(args: &[Value]) -> Result<(&[Value], Value), VmError> {
