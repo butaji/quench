@@ -725,8 +725,12 @@ fn zoned_record_with_calendar(
         crate::ops::Builtin::TemporalZonedDateTimePrototype,
     );
     if let crate::value::Value::Object(object) = &mut record {
-        std::rc::Rc::make_mut(object)
-            .set_property_in_place("calendarId", crate::value::Value::String(calendar));
+        let object = std::rc::Rc::make_mut(object);
+        if calendar != "iso8601" {
+            object.set_property_in_place("weekOfYear", crate::value::Value::Undefined);
+            object.set_property_in_place("yearOfWeek", crate::value::Value::Undefined);
+        }
+        object.set_property_in_place("calendarId", crate::value::Value::String(calendar));
     }
     record
 }
@@ -820,9 +824,6 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeWith
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
-        }
-        if builtin == crate::ops::Builtin::TemporalPlainMonthDayFrom {
-            return Some(plain_month_day_from(arguments.first()));
         }
         if builtin == crate::ops::Builtin::TemporalPlainYearMonthFrom {
             return Some(plain_year_month_from(arguments.first()));
@@ -1546,6 +1547,10 @@ mod stubs {
                 return Ok(Value::Number(24.0));
             }
             crate::ops::Builtin::TemporalZonedDateTimeWeekOfYearGetter => {
+                let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                if calendar != "iso8601" {
+                    return Ok(Value::Undefined);
+                }
                 let year = crate::conversion::to_number(&property("year")?)? as i32;
                 let month = crate::conversion::to_number(&property("month")?)? as u32;
                 let day = crate::conversion::to_number(&property("day")?)? as u32;
@@ -1555,6 +1560,10 @@ mod stubs {
                 return Ok(Value::Number(week));
             }
             crate::ops::Builtin::TemporalZonedDateTimeYearOfWeekGetter => {
+                let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+                if calendar != "iso8601" {
+                    return Ok(Value::Undefined);
+                }
                 let year = crate::conversion::to_number(&property("year")?)? as i32;
                 let month = crate::conversion::to_number(&property("month")?)? as u32;
                 let day = crate::conversion::to_number(&property("day")?)? as u32;
@@ -1579,12 +1588,22 @@ mod stubs {
                 }
                 _ => false,
             };
+            let calendar_equal = match (
+                property("calendarId"),
+                crate::execute::get_property_result(&other, "calendarId"),
+            ) {
+                (Ok(Value::String(left)), Ok(Value::String(right))) => {
+                    let left = super::plain_date::canonical_calendar_id(&left).unwrap_or(left);
+                    let right = super::plain_date::canonical_calendar_id(&right).unwrap_or(right);
+                    left == right
+                }
+                _ => false,
+            };
             return Ok(Value::Boolean(
                 timezone_equal
                     && property("epochNanoseconds").ok()
                         == crate::execute::get_property_result(&other, "epochNanoseconds").ok()
-                    && property("calendarId").ok()
-                        == crate::execute::get_property_result(&other, "calendarId").ok(),
+                    && calendar_equal,
             ));
         }
         if matches!(

@@ -653,8 +653,16 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let other = from(other, None)?;
+    let receiver_calendar = crate::conversion::to_string(&field(Some(receiver), "calendarId")?)?;
+    let other_calendar = crate::conversion::to_string(&field(Some(&other), "calendarId")?)?;
+    let receiver_calendar = crate::temporal::plain_date::canonical_calendar_id(&receiver_calendar)
+        .unwrap_or(receiver_calendar);
+    let other_calendar = crate::temporal::plain_date::canonical_calendar_id(&other_calendar)
+        .unwrap_or(other_calendar);
     Ok(Value::Boolean(
-        values(receiver)? == values(&other)? && reference_day(receiver) == reference_day(&other),
+        values(receiver)? == values(&other)?
+            && reference_day(receiver) == reference_day(&other)
+            && receiver_calendar == other_calendar,
     ))
 }
 
