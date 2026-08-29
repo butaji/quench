@@ -170,6 +170,14 @@ fn convert_import_spec(spec: &str) -> Option<String> {
     let spec = spec.trim();
     let rest = spec.trim_end_matches(';').trim();
     let rest = strip_import_with_clause(rest);
+    // Side-effect imports have no binding clause.  Lower them to the same
+    // host module request as bound imports so an async-module fallback can
+    // execute the complete module body without leaving `import` syntax in a
+    // function scope.
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        let module = rest.trim_matches(|c| c == '"' || c == '\'');
+        return Some(format!("require({module:?});"));
+    }
     let from_index = rest.rfind(" from ")?;
     let (left, right) = rest.split_at(from_index);
     let right = &right[" from ".len()..];
