@@ -574,6 +574,12 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
                 if !valid_offset(&offset) {
                     return Err(crate::value::error::throw_range_error("Invalid offset"));
                 }
+                let timezone = crate::execute::get_property_result(value, "timeZone")?;
+                if let Value::String(timezone) = timezone {
+                    if timezone.contains('/') {
+                        validate_property_offset_match(value, &offset, &timezone)?;
+                    }
+                }
             }
             date
         }
@@ -811,6 +817,10 @@ fn validate_relative_string(text: &str) -> Result<(), VmError> {
 }
 
 fn validate_offset_match(text: &str) -> Result<(), VmError> {
+    let date = text
+        .split_once(['T', 't'])
+        .map(|(date, _)| date)
+        .unwrap_or("");
     let Some((_, time)) = text.split_once(['T', 't']) else {
         return Ok(());
     };
@@ -823,20 +833,30 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
             let offset = &base[sign..];
             let supplied_seconds = offset_seconds(offset);
             let clock = &base[..sign];
-            if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(clock, "%Y-%m-%dT%H:%M:%S")
+            let clock = if clock.matches(':').count() == 1 {
+                format!("{clock}:00")
+            } else {
+                clock.to_string()
+            };
+            let local = format!("{date}T{clock}");
+            if let Ok(date_time) =
+                chrono::NaiveDateTime::parse_from_str(&local, "%Y-%m-%dT%H:%M:%S")
             {
-                let epoch = date_time.and_utc().timestamp();
-                {
-                    if let Ok(zone) = annotation.parse::<chrono_tz::Tz>() {
-                        let actual_seconds = zone
-                            .timestamp_opt(epoch, 0)
-                            .single()
-                            .map(|date| date.offset().fix().local_minus_utc());
-                        if actual_seconds != Some(supplied_seconds) {
-                            return Err(crate::value::error::throw_range_error(
-                                "Offset does not match time zone",
-                            ));
+                if let Ok(zone) = annotation.parse::<chrono_tz::Tz>() {
+                    let local = zone.from_local_datetime(&date_time);
+                    let candidates = [local.earliest(), local.latest()];
+                    let matches = candidates.iter().flatten().any(|date| {
+                        let actual = date.offset().fix().local_minus_utc();
+                        if offset.matches(':').count() > 1 {
+                            actual == supplied_seconds
+                        } else {
+                            (f64::from(actual) / 60.0).round() as i32 == supplied_seconds / 60
                         }
+                    });
+                    if !matches {
+                        return Err(crate::value::error::throw_range_error(
+                            "Offset does not match time zone",
+                        ));
                     }
                 }
             }
@@ -850,6 +870,35 @@ fn validate_offset_match(text: &str) -> Result<(), VmError> {
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_property_offset_match(
+    value: &Value,
+    supplied: &str,
+    timezone: &str,
+) -> Result<(), VmError> {
+    let year = integer_property(value, "year")? as i32;
+    let month = integer_property(value, "month")? as u32;
+    let day = integer_property(value, "day")? as u32;
+    let hour = integer_property(value, "hour")? as u32;
+    let minute = integer_property(value, "minute")? as u32;
+    let second = integer_property(value, "second")? as u32;
+    let Some(local) = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|date| date.and_hms_opt(hour, minute, second))
+    else {
+        return Ok(());
+    };
+    let actual = timezone.parse::<chrono_tz::Tz>().ok().and_then(|zone| {
+        zone.from_local_datetime(&local)
+            .earliest()
+            .map(|date| date.offset().fix().local_minus_utc())
+    });
+    if actual != Some(offset_seconds(supplied)) {
+        return Err(crate::value::error::throw_range_error(
+            "Offset does not match time zone",
+        ));
     }
     Ok(())
 }
