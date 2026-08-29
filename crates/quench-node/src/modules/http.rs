@@ -18,6 +18,7 @@ use crate::modules::net;
 pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
+pub(crate) const INCOMING_CLOSE_PENDING_PROP: &str = "\0quench:http:incoming:close-pending";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 
 pub struct HttpState {
@@ -723,10 +724,24 @@ pub fn incoming_destroy(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    execute::set_property_in_place(receiver, "aborted", Value::Boolean(true));
+    if matches!(execute::get_property(receiver, "destroyed"), Value::Boolean(true)) {
+        return Ok(receiver.clone());
+    }
+    let error = _args.first().cloned();
+    execute::set_property_in_place(receiver, "destroyed", Value::Boolean(true));
+    execute::set_property_in_place(receiver, "errored", error.clone().unwrap_or(Value::Null));
+    execute::set_property_in_place(receiver, INCOMING_CLOSE_PENDING_PROP, Value::Boolean(true));
     let signal = execute::get_property(receiver, "signal");
     if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
         abort_http_signal(state, &signal)?;
+    }
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .push((receiver.clone(), "close".into(), Vec::new()));
+    if let Some(error) = error {
+        net::emit(state, receiver, "error", vec![error])?;
     }
     Ok(receiver.clone())
 }

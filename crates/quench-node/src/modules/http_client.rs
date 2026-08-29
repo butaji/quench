@@ -1361,6 +1361,12 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         ("readable".to_string(), Value::Boolean(true)),
         ("aborted".to_string(), Value::Boolean(false)),
         ("destroyed".to_string(), Value::Boolean(false)),
+        ("errored".to_string(), Value::Null),
+        ("closed".to_string(), Value::Boolean(false)),
+        (
+            crate::modules::http::INCOMING_CLOSE_PENDING_PROP.to_string(),
+            Value::Boolean(false),
+        ),
     ];
     install_methods(res, props)
 }
