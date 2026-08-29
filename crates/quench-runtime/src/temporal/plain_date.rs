@@ -821,7 +821,7 @@ fn timezone_identifier(value: &Value) -> Result<String, VmError> {
         if text.starts_with(['+', '-']) && is_fixed_timezone(&text) {
             return Ok(text);
         }
-        if text.contains('T') {
+        if crate::temporal::looks_like_datetime_identifier(&text) {
             let base = text.split('[').next().unwrap_or(&text);
             if let Some(annotation) = text
                 .split('[')
@@ -856,7 +856,7 @@ fn timezone_identifier(value: &Value) -> Result<String, VmError> {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         }
         if !text.is_empty()
-            && !text.contains('T')
+            && !crate::temporal::looks_like_datetime_identifier(&text)
             && !text
                 .chars()
                 .all(|character| character.is_ascii_digit() || ".,:+-".contains(character))
