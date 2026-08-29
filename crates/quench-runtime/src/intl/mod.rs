@@ -238,7 +238,7 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
-    if arguments.is_empty() {
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
         return Ok(make_array(Vec::new()));
     }
     let locales = resolve_locales(arguments)?;
@@ -270,7 +270,8 @@ pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmErro
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             resolve_locale_list(&crate::construct::to_object(locales)?)
         }
-        Value::String(_) => Ok(vec![canonicalize(&crate::conversion::to_string(locales)?)?]),
+        Value::String(value) => Ok(vec![canonicalize(value)?]),
+        Value::StringUnits(value) => Ok(vec![canonicalize(&String::from_utf16_lossy(value))?]),
         locales if crate::value::is_object(locales) => {
             if let Some(tag) = locale_object_tag(locales) {
                 Ok(vec![canonicalize(&tag)?])
