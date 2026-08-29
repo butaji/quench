@@ -637,7 +637,7 @@ mod tests {
                             crate::completion::TailCallRequest {
                                 callee: Value::Undefined,
                                 receiver: Value::Undefined,
-                                arguments: Vec::new(),
+                                arguments: Vec::new().into(),
                             },
                         ))
                     }
