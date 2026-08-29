@@ -42,6 +42,7 @@ impl FsState {
 #[derive(Default)]
 pub(crate) struct FsOptions {
     pub encoding: Option<String>,
+    pub buffer: Option<Value>,
     pub flag: Option<String>,
     pub mode: Option<u32>,
     pub recursive: bool,
@@ -497,6 +498,10 @@ pub fn promises_open(
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ),
         ),
         (
+            "readFile".into(),
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_READFILE),
+        ),
+        (
             "close".into(),
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
@@ -537,6 +542,33 @@ pub fn file_handle_close(
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
     Ok(settle(close_sync(state, None, &[Value::Number(fd as f64)])))
+}
+
+pub fn file_handle_read_file(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let path = state
+        .borrow()
+        .fs
+        .descriptors
+        .get(&fd)
+        .map(|descriptor| descriptor.path.clone())
+        .ok_or_else(|| {
+            crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
+        })?;
+    let result = crate::modules::fs_sync::read_file_sync(
+        state,
+        None,
+        &[
+            Value::String(path),
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ],
+    );
+    Ok(settle(result))
 }
 
 fn decode_percent_path(path: &str) -> Result<String, VmError> {
@@ -628,6 +660,10 @@ fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> 
 
 fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), VmError> {
     let get = |key: &str| quench_runtime::vm::get_property(object, key);
+    let buffer = get("buffer");
+    if !matches!(buffer, Value::Undefined) {
+        options.buffer = Some(buffer);
+    }
     if let Value::String(encoding) = get("encoding") {
         if encoding.eq_ignore_ascii_case("buffer") {
             options.encoding = Some("buffer".into());

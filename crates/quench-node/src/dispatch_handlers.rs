@@ -1230,6 +1230,14 @@ pub fn internal_binding(
             ),
         ]));
     }
+    if name == "fs" {
+        // `internalBinding('fs')` is the fd/stat side of the same fs state;
+        // expose the canonical host capability instead of a second JS table.
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "fstat".to_string(),
+            crate::host::capability(crate::registry::SPEC_FS_FSTAT_SYNC),
+        )]));
+    }
     if name == "os" {
         if let Some(binding) = state.borrow().os_binding.clone() {
             return Ok(binding);
