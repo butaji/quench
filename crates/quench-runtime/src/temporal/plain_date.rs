@@ -887,11 +887,17 @@ pub(crate) fn calendar_difference_fields(
 ) -> Option<(i64, i64, i64, i64)> {
     let left = left_code
         .as_deref()
-        .and_then(|code| calendar_date_for_code(left.0 as i32, code, left.2 as u32, calendar))
+        .and_then(|code| {
+            let date = calendar_date_for_code(left.0 as i32, code, left.2 as u32, calendar)?;
+            (date.month().to_input().code().0 == code).then_some(date)
+        })
         .or_else(|| calendar_date(left.0 as i32, left.1 as u32, left.2 as u32, calendar))?;
     let right = right_code
         .as_deref()
-        .and_then(|code| calendar_date_for_code(right.0 as i32, code, right.2 as u32, calendar))
+        .and_then(|code| {
+            let date = calendar_date_for_code(right.0 as i32, code, right.2 as u32, calendar)?;
+            (date.month().to_input().code().0 == code).then_some(date)
+        })
         .or_else(|| calendar_date(right.0 as i32, right.1 as u32, right.2 as u32, calendar))?;
     let largest_unit = match largest {
         "year" | "years" => DateDurationUnit::Years,
@@ -901,7 +907,14 @@ pub(crate) fn calendar_difference_fields(
     };
     let mut options = DateDifferenceOptions::default();
     options.largest_unit = Some(largest_unit);
-    let duration = left.try_until_with_options(&right, options).ok()?;
+    let duration = match left.try_until_with_options(&right, options) {
+        Ok(duration) => duration,
+        Err(_) => {
+            let mut duration = right.try_until_with_options(&left, options).ok()?;
+            duration.is_negative = !duration.is_negative;
+            duration
+        }
+    };
     let nonzero = duration.years != 0
         || duration.months != 0
         || duration.weeks != 0
@@ -1570,6 +1583,8 @@ fn to_zoned_date_time(
     } else {
         (argument.clone(), Value::Undefined)
     };
+    let explicit_plain_time = crate::value::is_object(argument)
+        && !matches!(time_value, Value::Undefined);
     let timezone = timezone_identifier(&timezone)?;
     let time = if matches!(time_value, Value::Undefined) {
         crate::temporal::plain_time::construct(&[])?
@@ -1598,8 +1613,10 @@ fn to_zoned_date_time(
         + i128::from(minute) * 60_000_000_000
         + i128::from(second) * 1_000_000_000
         + i128::from(nanos);
-    let mut epoch = day_delta * 86_400_000_000_000 + time_nanos - fixed_timezone_offset(&timezone);
-    if time_nanos == 0 {
+    let local_epoch = day_delta * 86_400_000_000_000 + time_nanos;
+    let mut epoch = local_epoch
+        - crate::temporal::timezone_offset_nanos(&timezone, local_epoch);
+    if time_nanos == 0 && !explicit_plain_time {
         if let Some(start) = crate::temporal::timezone_start_of_day_epoch(&timezone, epoch) {
             epoch = start;
         }

@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, LocalResult, Offset, TimeZone};
+use chrono::{Datelike, Duration, LocalResult, NaiveDateTime, Offset, TimeZone};
 
 pub(crate) mod duration;
 pub(crate) mod instant;
@@ -46,8 +46,12 @@ pub(crate) fn zoned_construct(
             let calendar = parse_calendar_identifier(value)?;
             if let crate::value::Value::String(_) | crate::value::Value::StringUnits(_) = value {
                 let text = crate::conversion::to_string(value)?;
-                let date_like = text.chars().filter(|ch| *ch == '-').count() >= 2
-                    || (text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit()));
+                let date_like = text
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-'))
+                    && (text.chars().filter(|ch| *ch == '-').count() >= 2
+                        || (text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit())));
                 if date_like && !text.eq_ignore_ascii_case("iso8601") {
                     return Err(crate::value::error::throw_range_error("Invalid calendar"));
                 }
@@ -183,7 +187,7 @@ fn fixed_offset_nanos(timezone: &str) -> i128 {
     sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
 }
 
-fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
+pub(crate) fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
     let fixed = fixed_offset_nanos(timezone);
     if fixed != 0 || timezone.starts_with(['+', '-']) {
         return fixed;
@@ -199,6 +203,53 @@ fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
         .and_then(|zone| zone.timestamp_opt(seconds, nanos).single())
         .map(|date| i128::from(date.offset().fix().local_minus_utc()) * 1_000_000_000)
         .unwrap_or(0)
+}
+
+pub(crate) fn timezone_local_epoch(
+    timezone: &str,
+    local_epoch: i128,
+    disambiguation: &str,
+) -> i128 {
+    let fixed = fixed_offset_nanos(timezone);
+    if fixed != 0 || timezone.starts_with(['+', '-']) {
+        return local_epoch - fixed;
+    }
+    let Some(seconds) = i64::try_from(local_epoch.div_euclid(1_000_000_000)).ok() else {
+        return local_epoch;
+    };
+    let nanos = local_epoch.rem_euclid(1_000_000_000) as u32;
+    let Some(local) = NaiveDateTime::from_timestamp_opt(seconds, nanos) else {
+        return local_epoch;
+    };
+    let Some(zone) = timezone.parse::<chrono_tz::Tz>().ok() else {
+        return local_epoch;
+    };
+    match zone.from_local_datetime(&local) {
+        LocalResult::Single(value) => i128::from(value.timestamp()) * 1_000_000_000 + i128::from(value.timestamp_subsec_nanos()),
+        LocalResult::Ambiguous(first, second) => {
+            if disambiguation == "reject" {
+                return i128::MIN;
+            }
+            let earlier = first.timestamp().min(second.timestamp());
+            let later = first.timestamp().max(second.timestamp());
+            let selected = if disambiguation == "later" { later } else { earlier };
+            i128::from(selected) * 1_000_000_000 + i128::from(nanos)
+        }
+        LocalResult::None => {
+            if disambiguation == "reject" {
+                return i128::MIN;
+            }
+            let before = timezone_offset_nanos(timezone, local_epoch - 86_400_000_000_000);
+            let after = timezone_offset_nanos(timezone, local_epoch + 86_400_000_000_000);
+            let before_epoch = local_epoch - before;
+            let after_epoch = local_epoch - after;
+            if disambiguation == "earlier" {
+                before_epoch.min(after_epoch)
+            } else {
+                before_epoch.max(after_epoch)
+            }
+        }
+    }
 }
 
 pub(crate) fn timezone_start_of_day_epoch(timezone: &str, epoch: i128) -> Option<i128> {
