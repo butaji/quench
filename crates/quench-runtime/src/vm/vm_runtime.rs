@@ -422,7 +422,7 @@ fn run_instruction(
             }
             let object = registers.read_object(usize::from(instruction.b));
             let global_like = object.as_ref().is_some_and(|object| {
-                crate::vm::current_global_object().object_identity() == Some(object.identity())
+                crate::vm::current_global_identity() == Some(object.identity())
                     || object
                         .hot_properties()
                         .names()
