@@ -267,6 +267,7 @@ fn run_get(module: Option<wast::token::Id<'_>>, global: &str, store: &Store) -> 
         Some(Ok(slot)) => Outcome::Values(vec![slot]),
         Some(Err(InvokeError::MissingExport)) | None => Outcome::Missing,
         Some(Err(InvokeError::Unimplemented)) => Outcome::Unimplemented,
+        Some(Err(InvokeError::TypeMismatch)) => Outcome::Trap("type mismatch"),
         Some(Err(InvokeError::Failure(failure))) => Outcome::Trap(failure.message()),
         Some(Err(InvokeError::Unlinkable(message))) => Outcome::Trap(message),
     }
@@ -282,6 +283,7 @@ fn run_wat(wat: &mut Wat<'_>, store: &Store, features: WasmFeatures) -> Outcome 
         Err(InvokeError::Failure(failure)) => Outcome::Trap(failure.message()),
         Err(InvokeError::Unlinkable(message)) => Outcome::Trap(message),
         Err(InvokeError::Unimplemented) => Outcome::Unimplemented,
+        Err(InvokeError::TypeMismatch) => Outcome::Trap("type mismatch"),
         Err(InvokeError::MissingExport) => Outcome::Missing,
     }
 }
@@ -310,6 +312,7 @@ fn run_invoke(invoke: &WastInvoke<'_>, store: &mut Store) -> Outcome {
         }
         Err(InvokeError::Failure(failure)) => Outcome::Trap(failure.message()),
         Err(InvokeError::Unimplemented) => Outcome::Unimplemented,
+        Err(InvokeError::TypeMismatch) => Outcome::Trap("type mismatch"),
         Err(InvokeError::MissingExport) => Outcome::Missing,
         Err(InvokeError::Unlinkable(message)) => Outcome::Trap(message),
     }

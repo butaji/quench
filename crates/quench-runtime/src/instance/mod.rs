@@ -5,10 +5,14 @@ mod const_eval;
 mod link;
 mod registry;
 
+#[cfg(test)]
+mod tests;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::fast::Fast;
 use crate::hir::{Export, FuncSig, HeapKind, HirModule, Kind, RefType, Ty};
 use crate::interp;
 use crate::mir::MirFunc;
@@ -21,6 +25,10 @@ pub const MAX_CALL_DEPTH: usize = 10_240;
 #[derive(Clone, Debug, PartialEq)]
 pub enum InvokeError {
     Failure(Failure),
+    /// The embedder supplied values that do not match the exported function
+    /// signature.  WebAssembly invocation is typed even when the host API
+    /// performs the check dynamically.
+    TypeMismatch,
     Unimplemented,
     MissingExport,
     Unlinkable(&'static str),
@@ -30,6 +38,7 @@ impl InvokeError {
     pub fn message(&self) -> &'static str {
         match self {
             Self::Failure(failure) => failure.message(),
+            Self::TypeMismatch => "type mismatch",
             Self::Unimplemented => "unimplemented",
             Self::MissingExport => "unknown export",
             Self::Unlinkable(message) => message,
@@ -293,6 +302,10 @@ impl Instance {
         args: &[Slot],
         depth: usize,
     ) -> Result<Vec<Slot>, InvokeError> {
+        let sig = self.func_sig(index).ok_or(InvokeError::Unimplemented)?;
+        if !args_match(&sig.params, args) {
+            return Err(InvokeError::TypeMismatch);
+        }
         match self.inner.funcs.get(index as usize) {
             Some(Func::Unsupported) | None => Err(InvokeError::Unimplemented),
             Some(Func::Host(_)) => Ok(Vec::new()),
@@ -329,6 +342,29 @@ impl Instance {
             Func::Unsupported => Some(Func::Unsupported),
         }
     }
+}
+
+fn args_match(params: &[Kind], args: &[Slot]) -> bool {
+    params.len() == args.len()
+        && params.iter().zip(args).all(|(kind, value)| {
+            matches!(
+                (kind, value),
+                (
+                    Kind::I32,
+                    Slot::Native(Native::I32(_)) | Slot::Fast(Fast::I32(_)),
+                )
+                    | (Kind::I64, Slot::Native(Native::I64(_)))
+                    | (Kind::F32, Slot::Native(Native::F32(_)))
+                    | (
+                        Kind::F64,
+                        Slot::Native(Native::F64(_))
+                            | Slot::Fast(Fast::I32(_))
+                            | Slot::Fast(Fast::Number(_)),
+                    )
+                    | (Kind::V128, Slot::Native(Native::V128(_)))
+                    | (Kind::Ref, Slot::Native(Native::Ref(_)))
+            )
+        })
 }
 
 impl Memory {
