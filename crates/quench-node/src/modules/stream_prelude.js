@@ -510,6 +510,7 @@
     }
 
     resume() {
+      if (this.destroyed) return this;
       const state = this._readableState;
       state.paused = false;
       state.flowing = true;
