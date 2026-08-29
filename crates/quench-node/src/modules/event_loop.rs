@@ -10,7 +10,13 @@ use quench_runtime::value::Value;
 
 pub struct EventLoop {
     pub microtasks: RefCell<Vec<Microtask>>,
-    pub immediates: RefCell<Vec<(Value, Vec<Value>)>>,
+    pub immediates: RefCell<Vec<Immediate>>,
+}
+
+pub struct Immediate {
+    pub callback: Value,
+    pub args: Vec<Value>,
+    pub resource: Option<Value>,
 }
 
 pub struct Microtask {
@@ -105,7 +111,20 @@ impl EventLoop {
     }
 
     pub fn queue_immediate(&self, cb: Value, args: Vec<Value>) {
-        self.immediates.borrow_mut().push((cb, args));
+        self.queue_immediate_with_resource(cb, args, None);
+    }
+
+    pub fn queue_immediate_with_resource(
+        &self,
+        cb: Value,
+        args: Vec<Value>,
+        resource: Option<Value>,
+    ) {
+        self.immediates.borrow_mut().push(Immediate {
+            callback: cb,
+            args,
+            resource,
+        });
     }
 
     pub fn drain_microtasks<F>(&self, mut call: F)
@@ -132,8 +151,8 @@ impl EventLoop {
             if snapshot.is_empty() {
                 break;
             }
-            for (cb, args) in snapshot {
-                let _ = call(&cb, &args);
+            for task in snapshot {
+                let _ = call(&task.callback, &task.args);
             }
         }
     }
