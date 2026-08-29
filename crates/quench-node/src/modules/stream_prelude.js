@@ -1836,7 +1836,9 @@
       const destroy = this._destroy;
       nextTick(() => {
         const finish = (destroyError) => {
-          const endError = destroyError || stream._writableState.errored;
+          // A custom _destroy callback controls completion: callback() means
+          // the destruction succeeded and suppresses the original error.
+          const endError = destroyError;
           if (endError) completeEndCallbacks(stream._writableState, endError);
         if (endError && !stream._writableState.errorEmitted) {
           stream._writableState.errorEmitted = true;
