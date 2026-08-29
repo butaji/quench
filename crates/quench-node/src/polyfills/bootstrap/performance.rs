@@ -1,6 +1,10 @@
 //! Polyfill: `performance`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __nodePerformanceEntries = [];
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __nodeStartedAt = Date.now();
+const __nodePerformanceEntries = [];
+const __nodePerformanceMarks = new Map();
+const __nodePerformanceObservers = new Set();
 const __nodePerformance = {
   now: () => Date.now() - __nodeStartedAt,
   timeOrigin: __nodeStartedAt,
@@ -70,14 +74,52 @@ const __nodePerformance = {
     __nodePerformanceEntries.filter(
       (entry) => entry.entryType === String(entryType),
     ),
-  timerify: (functionToWrap) => {
+  timerify: (functionToWrap, options) => {
     if (typeof functionToWrap !== "function") {
-      throw new TypeError('The "fn" argument must be a function');
+      const error = new TypeError('The "fn" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
     }
-    const wrapped = (...args) => functionToWrap(...args);
+    if (options?.histogram !== undefined &&
+        (typeof options.histogram !== "object" || options.histogram === null ||
+         typeof options.histogram.record !== "function")) {
+      const error = new TypeError('The "options.histogram" argument must be an instance of RecordableHistogram');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const wrapped = function (...args) {
+      const startTime = __nodePerformance.now();
+      let result;
+      if (new.target) {
+        result = Reflect.construct(functionToWrap, args, new.target);
+      } else {
+        result = Reflect.apply(functionToWrap, this, args);
+      }
+      const entry = {
+        name: functionToWrap.name,
+        entryType: "function",
+        startTime,
+        duration: Math.max(0, __nodePerformance.now() - startTime),
+      };
+      if (options?.histogram) {
+        options.histogram.record(Math.max(1, entry.duration));
+      }
+      args.forEach((value, index) => { entry[index] = value; });
+      __nodePerformanceEntries.push(entry);
+      for (const observer of __nodePerformanceObservers) {
+        if (observer.entryTypes.includes("function")) {
+          queueMicrotask(() => observer.callback({ getEntries: () => [entry] }));
+        }
+      }
+      return result;
+    };
     Object.defineProperty(wrapped, "name", {
       configurable: true,
-      value: functionToWrap.name,
+      value: `timerified ${functionToWrap.name}`,
+    });
+    Object.defineProperty(wrapped, "length", {
+      configurable: true,
+      value: functionToWrap.length,
     });
     return wrapped;
   },
@@ -86,18 +128,40 @@ const __nodePerformance = {
 class NodePerformanceObserver {
   constructor(callback) {
     this.callback = callback;
+    this.entryTypes = [];
   }
-  observe() {}
-  disconnect() {}
+  observe(options = {}) {
+    this.entryTypes = options.entryTypes || [];
+    __nodePerformanceObservers.add(this);
+  }
+  disconnect() {
+    __nodePerformanceObservers.delete(this);
+  }
   takeRecords() {
     return [];
   }
 }
-globalThis.__nodePerfHooks = {
+const __nodePerfHooks = {
   performance: __nodePerformance,
   timerify: __nodePerformance.timerify,
   PerformanceObserver: NodePerformanceObserver,
+  createHistogram: () => ({
+    max: 0,
+    record(value) {
+      this.max = Math.max(this.max, Number(value));
+    },
+  }),
 };
+Object.defineProperty(globalThis, "__nodePerfHooks", {
+  configurable: true,
+  enumerable: false,
+  value: __nodePerfHooks,
+});
+Object.defineProperty(globalThis, "performance", {
+  configurable: true,
+  enumerable: false,
+  value: __nodePerformance,
+});
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {
@@ -106,4 +170,5 @@ Object.setPrototypeOf = (object, prototype) => {
   }
   return __nodeSetPrototypeOf(object, prototype);
 };
-"#);
+"#
+);
