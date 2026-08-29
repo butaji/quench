@@ -1,7 +1,11 @@
 // Worker adapter: execute worker files in a separate quench-node process.
 // The synchronous launch is intentional: it gives the small embedding a real
 // isolated VM while preserving deterministic event delivery to the parent.
-var proc = process;
+var proc = globalThis.process || process;
+var workerOutput = function (line) {
+  var stream = (proc && proc.stdout) || (globalThis.process && globalThis.process.stdout);
+  if (stream && typeof stream.write === 'function') stream.write(line);
+};
 var workerArgs = proc.argv || [];
 var workerEnv = (proc.env && proc.env.QUENCH_WORKER) || globalThis.__quench_worker_mode;
 var workerArgData = null;
@@ -36,7 +40,7 @@ function workerPortProxy(token) {
   var port = {
     __quench_port: token,
     postMessage: function (value) {
-      proc.stdout.write('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: encodeWorkerData(value, [], []) }) + '\n');
+      workerOutput('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: encodeWorkerData(value, [], []) }) + '\n');
     },
     close: function () {}
   };
@@ -110,7 +114,7 @@ var parentPort = workerEnv ? emitter({
   _closed: false,
   postMessage: function (value) {
     if (this._closed) throw new Error('Cannot post message after closing parentPort');
-    proc.stdout.write('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(encodeWorkerData(value, [], [])) + '\n');
+    workerOutput('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(encodeWorkerData(value, [], [])) + '\n');
   },
   close: function () {
     if (!this._closed) {
