@@ -1,22 +1,31 @@
-//! Quench's runtime starts here and stays deliberately small.
+//! One runtime, three IR subsets of common HIR: NativeIR | FastIR | DynamicIR.
 //!
-//! OXC owns syntax, scopes, and symbols. The runtime will consume queried
-//! facts and execute only residual operations produced by the reducer.
+//! Frontends emit typed-register HIR. NIR, FIR, and DIR are filters on that
+//! one instruction set, not three IRs. Native is proven, Fast is guarded,
+//! Dynamic is resolved at run time. Box and guard are the only crossings.
+//! Specialise derives a (possibly mixed) HIR program; wasm enters as NIR.
 //!
-//! The frozen direction is:
-//!
-//! `source -> OXC -> ProgramDb facts -> partial evaluator -> residual Ops -> VM`
-//!
-//! This crate is a pure JavaScript runtime. External runners provide source
-//! text and consume execution results through the public contract; runner
-//! policy and source fixtures do not belong here.
-//!
-//! The first implementation should establish the semantic kernel and the
-//! compact representations (`Value`, `HeapRef`, `Shape`, `Frame`, `Code`,
-//! `Fact`, and `Continuation`) before adding breadth.
+//! Dynamic follows QuickJS: tagged JSValue (INT fast path), atoms, shared
+//! shapes, Runtime/Context, RC plus a cycle pass, stack bytecode with a
+//! compile-time max stack. Native is Arena (unboxed INT/float, linear memory).
+//! Fast/Dynamic are GC. There is no guest interpreter and no per-language
+//! object type.
 
 pub mod build_profile;
+mod bulk;
+pub mod dynamic;
+pub mod fast;
+pub mod hir;
+pub mod hir_gc;
+pub mod gc;
 mod host_jobs;
+pub mod instance;
+pub mod interp;
+pub mod layer;
+pub mod mir;
+pub mod native;
+pub mod slot;
+pub mod unwind;
 pub use host_jobs::install_host_job_pump;
 
 mod arrays;

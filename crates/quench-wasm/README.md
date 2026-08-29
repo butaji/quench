@@ -1,10 +1,7 @@
 # quench-wasm
 
-`quench-wasm` is Quench's WebAssembly execution boundary. It compiles and
-instantiates Wasm modules with Wasmi, invokes typed numeric exports through an
-owned store, and runs WAST directives through the same Wasmi conformance
-implementation used by the test runner.
+`quench-wasm` is Quench's Wasm frontend. It parses and validates modules with
+third-party `wast` / `wasmparser`, and scores each wast directive. It does not
+instantiate or execute Wasm; that belongs to `quench-runtime`.
 
-JavaScript host adapters can use `Engine::javascript()` to evaluate source
-through `quench-runtime`; the two machines remain separate and the bridge is
-explicit at the host boundary.
+This crate does not execute Wasm and does not depend on `quench-runtime`.
