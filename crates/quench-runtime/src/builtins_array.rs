@@ -553,6 +553,27 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         publish_array_replacement(&original, &values);
         return Value::Array(values);
     }
+    // Existing plain object-valued dense slots must retain the complete
+    // backing range. Rebuilding from the canonical snapshot avoids the
+    // lossy materialization edge in the generic COW setter while preserving
+    // the array's observable indexed contents and length.
+    if index < values.logical_len()
+        && index < values.physical_len()
+        && values.descriptor(key).is_none()
+        && values.property(key).is_none()
+    {
+        let mut data = values.as_ref().clone();
+        data.set_index(index, value);
+        let updated = Value::Array(Rc::new(data));
+        publish_array_replacement(
+            &original,
+            match &updated {
+                Value::Array(next) => next,
+                _ => unreachable!(),
+            },
+        );
+        return updated;
+    }
     let existing_number = values.set_existing_number(index, &value);
     let appended_number = !existing_number && values.append_preallocated_number(index, &value);
     if existing_number || appended_number {
