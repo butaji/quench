@@ -395,6 +395,14 @@ impl SlotWord {
     }
 
     #[inline(always)]
+    pub(crate) fn with_value<R>(&self, use_value: impl FnOnce(&Value) -> R) -> R {
+        // The decoded value owns any payload it needs. End the slot borrow
+        // before arbitrary consumers can update a related object view.
+        let value = self.load();
+        use_value(&value)
+    }
+
+    #[inline(always)]
     pub(crate) fn number(&self) -> Option<f64> {
         // SAFETY: this is a read-only tag inspection during single-threaded
         // realm execution and exposes no reference to the slot payload.

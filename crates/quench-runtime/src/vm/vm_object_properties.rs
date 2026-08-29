@@ -37,9 +37,8 @@ fn object_prototype_property(
     key: &str,
 ) -> Value {
     properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))
+        .physical_slot_for_name("\0prototype")
+        .and_then(|slot| properties.hot_properties().slot_value(slot))
         .map_or(Value::Undefined, |prototype| {
             get_property_with_receiver(&prototype, key, receiver).unwrap_or(Value::Undefined)
         })
@@ -50,27 +49,47 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
-    if key == "format" { eprintln!("DEBUG object_property {:?}", properties.iter().collect::<Vec<_>>()); }
-    let is_global = realm::id_for_global(properties).is_some()
+    // A global object may be copy-on-write replaced while a callback still
+    // carries its earlier representative. Resolve that identity before
+    // checking virtual host globals; otherwise host-provided bindings vanish
+    // only across async boundaries while ordinary own properties survive.
+    let properties = match crate::locals::resolved_replacement(Value::Object(properties.clone())) {
+        Value::Object(current) => current,
+        _ => properties.clone(),
+    };
+    let is_global = realm::id_for_global(&properties).is_some()
         || GLOBAL_OBJECT.with(|global| {
             global
                 .borrow()
                 .as_ref()
-                .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-        });
+                .is_some_and(|candidate| Rc::ptr_eq(candidate, &properties))
+        })
+        // Global replacements preserve semantic identity while changing the
+        // Rc representative. Async callbacks can retain that representative;
+        // classify it by identity so virtual host globals remain visible.
+        || crate::vm::is_global_object(&Value::Object(properties.clone()));
     if is_global {
         if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
+            if crate::vm::current_context_or_default().host_value_is_persistent(key) {
+                // Persistent virtual bindings are published on first read so
+                // callbacks can observe them after the installing frame.
+                let _ = crate::execute::set_property_in_place(
+                    &Value::Object(properties.clone()),
+                    key,
+                    value.clone(),
+                );
+            }
             return value;
         }
     }
-    if let Some(value) = direct_object_property(properties, key) {
+    if let Some(value) = direct_object_property(&properties, key) {
         return value;
     }
-    let inherited = object_prototype_property(receiver, properties, key);
+    let inherited = object_prototype_property(receiver, &properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
     }
-    object_builtin_property(properties, key)
+    object_builtin_property(&properties, key)
 }
 
 fn object_builtin_property(properties: &crate::value::ObjectData, key: &str) -> Value {
@@ -79,16 +98,13 @@ fn object_builtin_property(properties: &crate::value::ObjectData, key: &str) -> 
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
     let deleted_key = crate::builtins::deleted_key(key);
-    let mut direct = None;
-    for (name, value) in properties.iter().rev() {
-        if name == &deleted_key {
-            return Some(Value::Undefined);
-        }
-        if direct.is_none() && name == key {
-            direct = Some(value);
-        }
+    if properties.physical_slot_for_name(&deleted_key).is_some() {
+        return Some(Value::Undefined);
     }
-    if let Some(value) = direct {
+    if let Some(value) = properties
+        .physical_slot_for_name(key)
+        .and_then(|slot| properties.hot_properties().slot_value(slot))
+    {
         if matches!(value, Value::Null)
             && crate::vm::global_builtin_exists(key)
             && global_object_property(properties, key).is_some()
@@ -134,8 +150,9 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
 
 fn null_prototype_value(properties: &crate::value::ObjectData) -> Option<Value> {
     properties
-        .iter()
-        .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null))
+        .physical_slot_for_name("\0prototype")
+        .and_then(|slot| properties.hot_properties().slot_value(slot))
+        .is_some_and(|value| matches!(value, Value::Null))
         .then_some(Value::Undefined)
 }
 
@@ -152,7 +169,10 @@ fn global_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     .then(|| global_property(properties, key, None))
 }
 
-pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+pub(crate) fn boxed_string_property(
+    properties: &Rc<crate::value::ObjectData>,
+    key: &str,
+) -> Option<Value> {
     let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
     else {
         return None;
@@ -217,9 +237,7 @@ fn global_property(
         return value;
     }
     if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
-        let token = Value::HostCapability(Rc::new(
-            crate::value::HostCapabilityValue::new(binding),
-        ));
+        let token = Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
         if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(1)) {
             return Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue::new(
                 binding.realm,
@@ -238,6 +256,13 @@ fn global_property(
             )
         },
     )
+}
+
+pub(crate) fn global_object_static_property(
+    properties: &Rc<crate::value::ObjectData>,
+    key: &str,
+) -> Value {
+    global_property(properties, key, realm::id_for_global(properties))
 }
 
 fn current_host_capability(kind: HostCapabilityKind) -> Value {

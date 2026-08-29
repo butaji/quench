@@ -1,6 +1,6 @@
 fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
-    let value = crate::locals::resolved_replacement(dereference_binding(value));
-    let constructor = crate::locals::resolved_replacement(dereference_binding(constructor));
+    let value = dereference_binding(value);
+    let constructor = dereference_binding(constructor);
     if !crate::value::is_object(&constructor) {
         return Err(type_error("Right-hand side of instanceof is not an object"));
     }
@@ -19,10 +19,9 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if (matches!(crate::execute::get_property(&constructor, "name"), Value::String(name) if name == "DOMException")
         || intrinsic_builtin(&constructor) == Some(Builtin::Error))
         && matches!(
-            crate::execute::get_property(&value, "\0domexception"),
-            Value::Boolean(true)
-        )
-    {
+        crate::execute::get_property(&value, "\0domexception"),
+        Value::Boolean(true)
+    ) {
         return Ok(true);
     }
     if let Some(result) = builtin_instanceof(&value, &constructor) {
@@ -69,10 +68,12 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
     match value {
         Value::Builtin(builtin) => Some(*builtin),
-        Value::BoundFunction(bound) => match &bound.target {
-            Value::Builtin(builtin) => Some(*builtin),
-            _ => None,
-        },
+        Value::BoundFunction(bound) if crate::vm::realm::is_intrinsic(bound) => {
+            let Value::Builtin(builtin) = &bound.target else {
+                return None;
+            };
+            Some(*builtin)
+        }
         _ => None,
     }
 }
@@ -175,79 +176,14 @@ pub(crate) fn function_has_instance(
 }
 
 fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
-    if crate::regexp::has_regexp_internal_slot(value)
-        && matches!(
-            crate::execute::get_property_result(constructor, "name"),
-            Ok(Value::String(name)) if name == "RegExp"
-        )
-    {
-        return Ok(true);
-    }
-    if let Some(result) = boxed_primitive_instance(value, constructor) {
-        return Ok(result);
-    }
-    if let Value::BoundFunction(bound) = constructor {
-        if let Some(builtin) = intrinsic_builtin(&bound.target) {
-            if let Some(prototype_builtin) = crate::builtin_meta::instance_prototype(builtin) {
-                let prototype = crate::vm::realm_intrinsic_for(bound.realm, prototype_builtin);
-                if crate::value::is_object(&prototype) {
-                    return Ok(prototype_chain_contains(value, &prototype)?);
-                }
-            }
-        }
-        // Bound functions have no own `prototype`; OrdinaryHasInstance
-        // delegates to their target instead of treating that absence as an
-        // invalid prototype. This also preserves subclass and cross-realm
-        // identity through arbitrarily nested binds.
-        if crate::conversion::is_callable(&bound.target) {
-            return ordinary_instanceof(value, &bound.target);
-        }
-        let prototype = crate::execute::get_property_result(constructor, "prototype")?;
-        if !crate::value::is_object(&prototype) {
-            return Err(type_error("Function has non-object prototype"));
-        }
-        return Ok(prototype_chain_contains(value, &prototype)?);
-    }
     let prototype = crate::execute::get_property_result(constructor, "prototype")?;
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype)?
+    Ok(prototype_chain_contains(value, &prototype)
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
-}
-
-fn boxed_primitive_instance(value: &Value, constructor: &Value) -> Option<bool> {
-    let Value::Object(properties) = value else {
-        return None;
-    };
-    let builtin = intrinsic_builtin(constructor)?;
-    let expected = match builtin {
-        Builtin::Boolean if properties.iter().any(|(key, _)| key == "_value") => {
-            Builtin::BooleanPrototype
-        }
-        Builtin::Number if properties.iter().any(|(key, _)| key == "_value") => {
-            Builtin::NumberPrototype
-        }
-        Builtin::String if properties.iter().any(|(key, _)| key == "_value") => {
-            Builtin::StringPrototype
-        }
-        _ => return None,
-    };
-    let actual = properties
-        .iter()
-        .rev()
-        .find_map(|(key, value)| (key == "\0prototype").then_some(value))?;
-    // Boxed primitive subclasses inherit the intrinsic prototype through the
-    // subclass prototype object. Check the complete chain rather than only
-    // comparing the immediate prototype's realm.
-    let expected_realm = crate::vm::intrinsic_realm(constructor, builtin);
-    let expected = crate::vm::realm_intrinsic_for(
-        expected_realm.unwrap_or(crate::ops::RealmId::ROOT),
-        expected,
-    );
-    Some(prototype_chain_contains(value, &expected).unwrap_or(false))
 }
 
 fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {
@@ -291,14 +227,7 @@ fn error_constructor_builtin(value: &Value) -> Option<Builtin> {
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
-    let prototype = intrinsic_builtin(&prototype).or_else(|| match prototype {
-        Value::BoundFunction(bound) => match bound.target {
-            Value::Builtin(builtin) => Some(builtin),
-            _ => None,
-        },
-        _ => None,
-    })?;
-    match prototype {
+    match intrinsic_builtin(&prototype)? {
         Builtin::ErrorPrototype => Some(Builtin::Error),
         Builtin::RangeErrorPrototype => Some(Builtin::RangeError),
         Builtin::ReferenceErrorPrototype => Some(Builtin::ReferenceError),
@@ -339,40 +268,18 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
-    let mut current = if matches!(value, Value::Proxy(_)) {
-        Some(crate::builtins::object::get_prototype_of(Some(value))?)
-    } else {
-        internal_prototype(value)
-    };
+fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
+    let mut current = internal_prototype(value);
     for _ in 0..1_024 {
         let Some(prototype) = current else {
-            return Ok(false);
+            return false;
         };
-        if same_intrinsic_value(&prototype, expected) {
-            return Ok(true);
+        if crate::builtins::same_value(Some(&prototype), Some(expected)) {
+            return true;
         }
-        current = if matches!(prototype, Value::Proxy(_)) {
-            Some(crate::builtins::object::get_prototype_of(Some(&prototype))?)
-        } else {
-            internal_prototype(&prototype)
-        };
+        current = internal_prototype(&prototype);
     }
-    Ok(false)
-}
-
-fn same_intrinsic_value(left: &Value, right: &Value) -> bool {
-    if crate::builtins::same_value(Some(left), Some(right)) {
-        return true;
-    }
-    let (Some(left_builtin), Some(right_builtin)) =
-        (intrinsic_builtin(left), intrinsic_builtin(right))
-    else {
-        return false;
-    };
-    left_builtin == right_builtin
-        && crate::vm::intrinsic_realm(left, left_builtin)
-            == crate::vm::intrinsic_realm(right, right_builtin)
+    false
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {

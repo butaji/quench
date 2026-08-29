@@ -116,7 +116,7 @@ pub(crate) fn execute_shape_kernel_word(
     function: &crate::value::FunctionValue,
     receiver: &crate::value::ObjectData,
 ) -> Option<f64> {
-    let ShapeKernelPlan::NestedArrayLength(plan) = cached_shape_kernel_fact(function)? else {
+    let ShapeKernelPlan::NestedArrayLength(plan) = cached_shape_kernel_fact(function)?? else {
         return None;
     };
     let code = function.code.code()?;
@@ -260,100 +260,6 @@ fn execute_state_bitwise(
     Some(crate::value::Value::Undefined)
 }
 
-fn state_bitwise_word_transition(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-    object: &crate::value::ObjectData,
-    operator: crate::ops::BinaryOp,
-) -> Option<(*const crate::register_file::SlotWord, f64)> {
-    let ShapeKernelPlan::StateBitwise(plan) = shape_kernel_fact(function)? else {
-        return None;
-    };
-    if plan.operator != operator {
-        return None;
-    }
-    let name = function
-        .code
-        .code()?
-        .metadata_at(plan.state_pc)?
-        .name
-        .as_deref()?;
-    let state = writable_own_word(object, name)?;
-    let current = exact_i32(state.number()?)?;
-    let mask = exact_i32(function.captures.get_number(plan.mask_slot)?)?;
-    let next = match operator {
-        crate::ops::BinaryOp::BitwiseOr => current | mask,
-        crate::ops::BinaryOp::BitwiseAnd => current & mask,
-        _ => return None,
-    };
-    Some((std::ptr::from_ref(state), f64::from(next)))
-}
-
-struct SchedulerSuspendWordTransition {
-    state: *const crate::register_file::SlotWord,
-    next_state: f64,
-    current: crate::value::Value,
-}
-
-impl SchedulerSuspendWordTransition {
-    fn execute(self) -> crate::value::Value {
-        // SAFETY: admission retains `current`, proves its ordinary own state
-        // word, and performs no shape mutation before this store.
-        unsafe { &*self.state }.store(crate::value::Value::Number(self.next_state));
-        self.current
-    }
-}
-
-fn scheduler_suspend_word_transition(
-    callee: &crate::value::Value,
-    scheduler: &crate::value::Value,
-) -> Option<SchedulerSuspendWordTransition> {
-    let crate::value::Value::Function(suspend) = callee else {
-        return None;
-    };
-    let code = match_scheduler_suspend(suspend)?;
-    let crate::value::Value::Object(scheduler) = scheduler else {
-        return None;
-    };
-    let current = crate::vm::get_named_cached_object(scheduler, &code.metadata_at(1)?.named_cache)?;
-    let crate::value::Value::Object(current_object) = &current else {
-        return None;
-    };
-    if current_object.has_replacement() {
-        return None;
-    }
-    let mark = cached_shape_method(&current, code, 2)?;
-    let crate::value::Value::Function(mark) = mark else {
-        return None;
-    };
-    let (state, next_state) =
-        state_bitwise_word_transition(&mark, current_object, crate::ops::BinaryOp::BitwiseOr)?;
-    Some(SchedulerSuspendWordTransition {
-        state,
-        next_state,
-        current,
-    })
-}
-
-fn match_scheduler_suspend(
-    function: &crate::value::FunctionValue,
-) -> Option<crate::machine::CodeView<'_>> {
-    let code = function.code.code()?;
-    if function.params != 0 || function.code.capture_slots().len() != 1 || code.len() != 8 {
-        return None;
-    }
-    let ops: [_; 8] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
-    (is_local_load(ops[0])
-        && (ops[1].opcode, ops[1].b) == (crate::ir::Opcode::GetN, ops[0].a)
-        && (ops[2].opcode, ops[2].flags, ops[2].b) == (crate::ir::Opcode::CallN, 0, ops[1].a)
-        && is_local_load(ops[3])
-        && (ops[4].opcode, ops[4].b) == (crate::ir::Opcode::GetN, ops[3].a)
-        && (ops[5].opcode, ops[5].a) == (crate::ir::Opcode::Return, ops[4].a)
-        && named(code, 1, "currentTcb")
-        && named(code, 2, "markAsSuspended")
-        && named(code, 4, "currentTcb"))
-    .then_some(code)
-}
-
 #[inline(always)]
 fn cached_shape_number(
     object: &crate::value::ObjectData,
@@ -378,7 +284,7 @@ fn shape_kernel_fact(
     function: &std::rc::Rc<crate::value::FunctionValue>,
 ) -> Option<ShapeKernelPlan> {
     if let Some(plan) = cached_shape_kernel_fact(function) {
-        return Some(plan);
+        return plan;
     }
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
     let plan = match_state_predicate(function)
@@ -403,7 +309,13 @@ fn shape_kernel_fact(
     plan
 }
 
-fn cached_shape_kernel_fact(function: &crate::value::FunctionValue) -> Option<ShapeKernelPlan> {
+/// `None` means the function has not been classified. `Some(None)` is a
+/// proven negative fact: its immutable code has no supported shape plan.
+/// Keeping those states distinct prevents every ordinary interpreted call
+/// from re-running the complete matcher ladder.
+fn cached_shape_kernel_fact(
+    function: &crate::value::FunctionValue,
+) -> Option<Option<ShapeKernelPlan>> {
     let pointer = function as *const crate::value::FunctionValue;
     let index = (pointer as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
     SHAPE_KERNEL_FACTS.with(|facts| {
@@ -411,7 +323,6 @@ fn cached_shape_kernel_fact(function: &crate::value::FunctionValue) -> Option<Sh
         let cached = facts.get(index)?.as_ref()?;
         (cached.function.as_ptr() == pointer)
             .then_some(cached.plan)
-            .flatten()
     })
 }
 

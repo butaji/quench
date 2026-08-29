@@ -56,6 +56,59 @@ pub(crate) fn get_named_property_result(
     Ok(result)
 }
 
+pub(crate) fn get_global_named_property_result(
+    value: &Value,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Result<Value, VmError> {
+    let Value::Object(object) = value else {
+        return get_property_result(value, key);
+    };
+    if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+        if !object.has_replacement()
+            && object.semantic_layout_id() == layout
+            && slot == GLOBAL_STATIC_SLOT
+        {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+            return Ok(crate::vm::global_object_static_property(object, key));
+        }
+    }
+    if let Some(value) = get_named_cached_object(object, cache) {
+        return Ok(global_placeholder_value(property_value(&value), key));
+    }
+    let result = get_property_result(value, key)?;
+    if let Some(slot) = cacheable_own_slot_with_placeholder(value, key) {
+        cache.set(crate::machine::pack_named_cache(
+            object.semantic_layout_id(),
+            slot,
+        ));
+    } else if cacheable_global_static(object, key) {
+        cache.set(crate::machine::pack_named_cache(
+            object.semantic_layout_id(),
+            GLOBAL_STATIC_SLOT,
+        ));
+    }
+    Ok(result)
+}
+
+fn cacheable_global_static(object: &crate::value::ObjectData, key: &str) -> bool {
+    crate::globals::builtin(key).is_some()
+        && object.physical_slot_for_name(key).is_none()
+        && object
+            .physical_slot_for_name(&crate::builtins::deleted_key(key))
+            .is_none()
+        && object
+            .physical_slot_for_name(&crate::builtins::descriptor_key(key))
+            .is_none()
+}
+
+fn global_placeholder_value(value: Value, key: &str) -> Value {
+    if matches!(value, Value::Null) {
+        return crate::vm::global_builtin_value(key).unwrap_or(value);
+    }
+    value
+}
+
 /// Resolve an already-proven object word without constructing an owning
 /// `Value::Object`. A cache miss deliberately returns to complete semantics.
 #[inline(always)]
@@ -360,6 +413,28 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
         return None;
     }
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
+        return None;
+    }
+    u32::try_from(slot).ok()
+}
+
+fn cacheable_own_slot_with_placeholder(value: &Value, key: &str) -> Option<u32> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    if object
+        .physical_slot_for_name(&crate::builtins::deleted_key(key))
+        .is_some()
+    {
+        return None;
+    }
+    let slot = object.physical_slot_for_name(key)?;
+    let descriptor_key = crate::builtins::descriptor_key(key);
+    if object
+        .physical_slot_for_name(&descriptor_key)
+        .and_then(|slot| object.hot_properties().slot_value(slot))
+        .is_some_and(|value| accessor_descriptor(&value))
+    {
         return None;
     }
     u32::try_from(slot).ok()
