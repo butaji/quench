@@ -125,6 +125,24 @@ pub(crate) fn execute_registered(
     }
     let metadata_window = code.operand_window_at(pc);
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
+    // A registered one-argument call has the same physical shape as the
+    // compact leaf call. Let the callee's immutable word fact decide whether
+    // it is the capture-free numeric leaf; otherwise continue through the
+    // complete receiver-aware method path below.
+    if instruction.flags == 1 {
+        let argument = metadata_window
+            .and_then(|window| (window.len() == 1).then_some(window[0]))
+            .unwrap_or(instruction.a.saturating_sub(1));
+        if let Some(result) = crate::functions::execute_word_leaf_call(
+            registers,
+            instruction.a,
+            instruction.c,
+            Some(argument),
+        ) {
+            result?;
+            return Ok(None);
+        }
+    }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
     crate::execution_trace::call_method(
