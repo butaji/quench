@@ -470,7 +470,6 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         };
         match timer.kind {
             TimerKind::Timeout => {
-                timer.active = false;
                 super::timers::mark_destroyed(timer);
                 (
                     timer.callback.clone(),
@@ -526,6 +525,9 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         }
     }
     if destroy && !converted {
+        if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
+            super::timers::mark_destroyed(&timer);
+        }
         crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     result
