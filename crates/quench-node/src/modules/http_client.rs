@@ -30,6 +30,7 @@ pub struct ClientReq {
     pub body: Vec<u8>,
     pub req: Value,
     pub agent: Option<Value>,
+    pub omit_host: bool,
     pub socket: Option<Value>,
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
@@ -84,6 +85,12 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .then(|| execute::get_property(options, "agent"))
             .filter(|value| !matches!(value, Value::Undefined | Value::Null))
     });
+    let omit_host = args.first().is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "headers"),
+            Value::Array(_)
+        )
+    });
     let (req, id) = build_req_object(state)?;
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
@@ -97,6 +104,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             body: Vec::new(),
             req: req.clone(),
             agent,
+            omit_host,
             socket: None,
             buffer: Vec::new(),
             res: None,
@@ -279,7 +287,7 @@ pub fn req_end(
             req_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (host, port, method, path, headers, body, agent) = {
+    let (host, port, method, path, headers, body, agent, omit_host) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -295,12 +303,13 @@ pub fn req_end(
             req.headers.clone(),
             req.body.clone(),
             req.agent.clone(),
+            req.omit_host,
         )
     };
     if let Some(req_value) = receiver {
         set_request_property(Some(req_value), "finished", Value::Boolean(true));
     }
-    let head = request_head(&host, &method, &path, &headers, body.len());
+    let head = request_head(&host, &method, &path, &headers, body.len(), omit_host);
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         let updated =
             execute::set_property(req.req.clone(), "_header", Value::String(head.clone()));
@@ -316,7 +325,7 @@ pub fn req_end(
             ]);
             let callback = host_api::object(Vec::new());
             let socket = execute::call(&connection, agent.as_ref().unwrap(), &[options, callback])?;
-            let mut bytes = request_head(&host, &method, &path, &headers, body.len()).into_bytes();
+            let mut bytes = request_head(&host, &method, &path, &headers, body.len(), omit_host).into_bytes();
             bytes.extend_from_slice(&body);
             let payload = host_api::bytes(&bytes);
             let write = execute::get_property(&socket, "write");
@@ -329,7 +338,7 @@ pub fn req_end(
             }
             socket
         }
-        None => send_request(state, &host, port, &method, &path, &headers, &body)?,
+        None => send_request(state, &host, port, &method, &path, &headers, &body, omit_host)?,
     };
     let socket_id = net::net_id(&socket);
     let mut guard = state.borrow_mut();
@@ -352,12 +361,13 @@ fn send_request(
     path: &str,
     headers: &[(String, String)],
     body: &[u8],
+    omit_host: bool,
 ) -> Result<Value, VmError> {
     let socket = net::connect(
         state,
         &[Value::Number(port as f64), Value::String(host.to_string())],
     )?;
-    let head = request_head(host, method, path, headers, body.len());
+    let head = request_head(host, method, path, headers, body.len(), omit_host);
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
     let payload = host_api::bytes(&payload);
@@ -371,8 +381,12 @@ fn request_head(
     path: &str,
     headers: &[(String, String)],
     body_len: usize,
+    omit_host: bool,
 ) -> String {
-    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n");
+    let mut head = format!("{method} {path} HTTP/1.1\r\n");
+    if !omit_host {
+        head.push_str(&format!("Host: {host}\r\n"));
+    }
     for (key, value) in headers {
         head.push_str(&format!("{key}: {value}\r\n"));
     }
@@ -796,6 +810,9 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             let explicit_port = opt(&options, "port")?.and_then(|p| p.parse().ok());
             let (host, port) = split_host_port(&raw_host, explicit_port);
             let method = opt(&options, "method")?.unwrap_or_else(|| "GET".to_string());
+            if !is_http_token(&method) {
+                return Err(invalid_method_error(&method));
+            }
             let path = match opt(&options, "path")? {
                 Some(path) => path,
                 None => {
@@ -867,6 +884,28 @@ fn unescaped_path_error() -> VmError {
         other => return other,
     };
     VmError::Thrown(error)
+}
+
+fn invalid_method_error(method: &str) -> VmError {
+    let error = execute::type_error(&format!(
+        "Method must be a valid HTTP token [\"{method}\"]"
+    ));
+    let error = match error {
+        VmError::Thrown(value) => execute::set_property(
+            execute::set_property(value, "code", Value::String("ERR_INVALID_HTTP_TOKEN".into())),
+            "name",
+            Value::String("TypeError".into()),
+        ),
+        other => return other,
+    };
+    VmError::Thrown(error)
+}
+
+fn is_http_token(method: &str) -> bool {
+    !method.is_empty()
+        && method.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
+        })
 }
 
 fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {
