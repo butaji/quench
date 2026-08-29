@@ -4396,6 +4396,33 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
+            if smallest == "day" {
+                let start = super::timezone_start_of_day_epoch(&timezone, epoch)
+                    .unwrap_or(epoch - 86_400_000_000_000);
+                let next =
+                    super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
+                        .unwrap_or(start + 86_400_000_000_000);
+                let length = (next - start).max(1);
+                let elapsed = (epoch - start).clamp(0, length);
+                let round_up = match mode.as_str() {
+                    "trunc" | "floor" => false,
+                    "ceil" | "expand" => elapsed != 0,
+                    "halfExpand" | "halfCeil" => elapsed * 2 >= length,
+                    "halfFloor" | "halfTrunc" => elapsed * 2 > length,
+                    "halfEven" => elapsed * 2 > length,
+                    _ => {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid roundingMode",
+                        ))
+                    }
+                };
+                let rounded = if round_up { next } else { start };
+                return Ok(super::zoned_record_with_calendar(
+                    rounded, timezone, calendar,
+                ));
+            }
             let offset = match property("offsetNanoseconds")? {
                 Value::Number(value) => value as i128,
                 _ => 0,
@@ -4432,8 +4459,6 @@ mod stubs {
                     "Invalid epochNanoseconds",
                 ));
             }
-            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
-            let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             return Ok(super::zoned_record_with_calendar(
                 rounded, timezone, calendar,
             ));
