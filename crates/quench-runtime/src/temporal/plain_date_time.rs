@@ -955,14 +955,13 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     let calendar = crate::temporal::parse_calendar_identifier(calendar)?;
     let mut values = fields(receiver)?;
     let source_calendar = object_property_string(Some(receiver), "calendarId");
-    if calendar == "iso8601"
-        && source_calendar.as_deref() == Some("roc")
-        && let Some(related_year) = object_property_number(
+    if calendar == "iso8601" && source_calendar.as_deref() == Some("roc") {
+        if let Some(related_year) = object_property_number(
             Some(receiver),
             "\0temporal-related-iso-year",
-        )
-    {
-        values[0] = f64::from(related_year);
+        ) {
+            values[0] = f64::from(related_year);
+        }
     }
     if object_property_string(Some(receiver), "calendarId").as_deref() == Some(&calendar) {
         let mut arguments = values.iter().copied().map(Value::Number).collect::<Vec<_>>();
