@@ -29,11 +29,14 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::CommonFsNextdir) => {
                     let name = match arguments.first() {
                         Some(_) => arguments.first().map(safe_value_string).unwrap_or_default(),
-                        None => format!("copy_{}", NODE_COPY_SEQUENCE.with(|seq| {
-                            let n = seq.get();
-                            seq.set(n + 1);
-                            n
-                        })),
+                        None => format!(
+                            "copy_{}",
+                            NODE_COPY_SEQUENCE.with(|seq| {
+                                let n = seq.get();
+                                seq.set(n + 1);
+                                n
+                            })
+                        ),
                     };
                     Ok(Value::String(format!("{}/{}", tmpdir_base(), name)))
                 }
