@@ -1833,12 +1833,23 @@ fn with(
     if overflow != "constrain" && overflow != "reject" {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
-    if !matches!(month_code, Value::Undefined)
-        && month != Value::Undefined
-        && matches!(receiver_calendar.as_str(), "iso8601" | "gregory")
-        && month_number_value.unwrap_or_default() != month_code_number_value.unwrap_or_default()
-    {
-        return Err(crate::value::error::throw_range_error("Month mismatch"));
+    if !matches!(month_code, Value::Undefined) && month != Value::Undefined {
+        let expected = match (&month_code, receiver_calendar.as_str()) {
+            (Value::String(code), calendar) if !matches!(calendar, "iso8601" | "gregory") => {
+                crate::temporal::plain_date::calendar_date_from_code(
+                    values[0] as i32,
+                    code,
+                    values[2] as u32,
+                    calendar,
+                )
+                .map(|(ordinal, _)| ordinal as f64)
+                .unwrap_or_else(|| month_code_number_value.unwrap_or_default())
+            }
+            _ => month_code_number_value.unwrap_or_default(),
+        };
+        if month_number_value.unwrap_or_default() != expected {
+            return Err(crate::value::error::throw_range_error("Month mismatch"));
+        }
     }
     if !recognized {
         return Err(crate::value::error::throw_type_error(
