@@ -15,6 +15,7 @@ use crate::modules::net;
 
 /// Hidden property mapping a ClientRequest object to its state.
 const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
+const CLIENT_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
@@ -808,14 +809,17 @@ pub fn req_close(
     };
     crate::modules::http::abort_server_signal(state, socket)?;
     let Some(client_id) = client_id_for_socket(state, socket) else {
-        let request = state.borrow().http.conns.values().find_map(|conn| {
-            conn.req.clone().filter(|req| {
-                !matches!(execute::get_property(req, crate::modules::http::REQ_CLOSE_PROP), Value::Boolean(true))
-            })
-        });
-        if let Some(request) = request {
+        let requests = state.borrow().http.conns.values()
+            .flat_map(|conn| conn.requests.iter().cloned())
+            .collect::<Vec<_>>();
+        for request in requests {
+            if matches!(execute::get_property(&request, crate::modules::http::REQ_CLOSE_PROP), Value::Boolean(true)) {
+                continue;
+            }
             execute::set_property_in_place(&request, crate::modules::http::REQ_CLOSE_PROP, Value::Boolean(true));
             net::emit(state, &request, "close", Vec::new())?;
+            let resource = execute::get_property(&request, crate::modules::http::REQ_ASYNC_RESOURCE_PROP);
+            crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
         }
         return Ok(Value::Undefined);
     };
@@ -856,6 +860,8 @@ pub fn req_close(
             return Ok(Value::Undefined);
         }
         net::emit(state, &request, "close", Vec::new())?;
+        let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
+        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     if let (Some(agent), Some(target)) = (agent.as_ref(), target.as_ref()) {
         let name = agent_name(target, agent);
@@ -1288,6 +1294,8 @@ pub fn res_end_handler(
             let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
+            let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
+            crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
         }
         let pooled = state
             .borrow()
@@ -1373,6 +1381,10 @@ fn abort_incomplete_response(
 
 fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
     let mut object = crate::modules::events::new_emitter_object(state)?;
+    let async_resource = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::String("HTTPCLIENTREQUEST".into())],
+    )?;
     let id = {
         let mut guard = state.borrow_mut();
         let id = guard.http.next_client;
@@ -1411,6 +1423,7 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
                 CLIENT_CLOSE_PENDING_PROP.to_string(),
                 Value::Boolean(false),
             ),
+            (CLIENT_ASYNC_RESOURCE_PROP.to_string(), async_resource),
         ],
     )?;
     Ok((object, id))
