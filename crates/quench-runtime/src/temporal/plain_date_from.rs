@@ -9,7 +9,23 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
             });
             if let [Some(year), Some(month), Some(day)] = hidden {
                 let _ = overflow_value(options)?;
-                return construct(&[year, month, day]);
+                let is_plain_date = object.iter().any(|(key, value)| {
+                    key == "\0temporal-plain-date"
+                        && value == Value::Boolean(true)
+                        || key == "\0prototype"
+                            && value == Value::Builtin(
+                                crate::ops::Builtin::TemporalPlainDatePrototype,
+                            )
+                });
+                if is_plain_date {
+                    return Ok(value.clone());
+                }
+                let calendar = object
+                    .iter()
+                    .find(|(key, _)| key == "calendarId")
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(|| Value::String("iso8601".into()));
+                return construct(&[year, month, day, calendar]);
             }
             let direct = ["year", "month", "day"].map(|name| {
                 object
@@ -34,7 +50,12 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
             if temporal_date {
                 if let [Some(year), Some(month), Some(day)] = direct {
                     let _ = overflow_value(options)?;
-                    return construct(&[year, month, day]);
+                    let calendar = object
+                        .iter()
+                        .find(|(key, _)| key == "calendarId")
+                        .map(|(_, value)| value.clone())
+                        .unwrap_or_else(|| Value::String("iso8601".into()));
+                    return construct(&[year, month, day, calendar]);
                 }
             }
         }
