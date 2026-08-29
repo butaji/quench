@@ -843,7 +843,7 @@ pub(crate) fn execute(
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let valid_receiver = receiver.is_some_and(|value| {
         matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
-            (key == "\0temporal-plain-date" && value == &Value::Boolean(true))
+            (key == "\0temporal-plain-date" && value == Value::Boolean(true))
                 || (key == "\0prototype"
                     && matches!(value, Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)))
         }))
