@@ -3,10 +3,13 @@ const assert = require("assert");
 const common = require("../../tests/node/test/common");
 const fs = require("fs");
 const tmpdir = require("../../tests/node/test/common/tmpdir");
+const tick = require("../../tests/node/test/common/tick");
 
 tmpdir.refresh();
 assert.strictEqual(typeof tmpdir.hasEnoughSpace, "function");
 assert.strictEqual(tmpdir.hasEnoughSpace(2 ** 31 - 1), false);
+assert.strictEqual(typeof tick, "function");
+tick(1, () => {});
 common.printSkipMessage("space probe");
 
 const path = tmpdir.resolve("readfile-abort.txt");

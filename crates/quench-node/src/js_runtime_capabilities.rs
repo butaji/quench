@@ -399,6 +399,7 @@ impl CapabilityName {
     const CommonMustCallAtLeast: u16 = 1705;
     const CommonSkip: u16 = 1706;
     const CommonPrintSkipMessage: u16 = 1707;
+    const CommonTick: u16 = 1708;
     const FsWriteAsync: u16 = 1520;
     const FsReadAsync: u16 = 1521;
     const FsWritePromise: u16 = 1522;
