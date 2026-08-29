@@ -190,7 +190,11 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         let era_year = if matches!(era_year, Value::Undefined) {
             None
         } else {
-            Some(crate::conversion::to_number(&era_year)?.trunc())
+            let value = crate::conversion::to_number(&era_year)?.trunc();
+            if !value.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+            }
+            Some(value)
         };
         year = match (era_name, era_year) {
             (Some(era), Some(value)) => derive_year_from_era(calendar_name, era, value)
@@ -283,8 +287,11 @@ pub(crate) fn canonical_era_name(calendar: &str, era: &str) -> Option<&'static s
         "buddhist" if era == "be" => Some("be"),
         "hebrew" if era == "am" => Some("am"),
         value if value.starts_with("islamic") && era == "ah" => Some("ah"),
+        value if value.starts_with("islamic") && era == "bh" => Some("bh"),
         "persian" if era == "ap" => Some("ap"),
-        "coptic" | "ethiopic" if era == "am" => Some("am"),
+        "coptic" if era == "am" => Some("am"),
+        "ethiopic" if era == "am" => Some("am"),
+        "ethiopic" if era == "aa" => Some("aa"),
         "ethioaa" if era == "aa" => Some("aa"),
         "indian" if era == "shaka" => Some("shaka"),
         "roc" if era == "roc" => Some("roc"),
@@ -294,12 +301,17 @@ pub(crate) fn canonical_era_name(calendar: &str, era: &str) -> Option<&'static s
 }
 
 pub(crate) fn derive_year_from_era(calendar: &str, era: &str, era_year: f64) -> Option<f64> {
-    if !era_year.is_finite() || era_year < 1.0 {
+    if !era_year.is_finite() {
         return None;
     }
     match (calendar, era) {
         ("gregory" | "japanese", "bce") => Some(1.0 - era_year),
         ("gregory" | "japanese", "ce") => Some(era_year),
+        ("ethiopic", "aa") => Some(era_year - 5500.0),
+        ("roc", "broc") => Some(1.0 - era_year),
+        ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "bh") => {
+            Some(1.0 - era_year)
+        }
         _ => Some(era_year),
     }
 }
