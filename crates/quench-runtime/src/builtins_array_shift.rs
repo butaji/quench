@@ -1,6 +1,4 @@
-pub(crate) fn array_shift(
-    receiver: Option<&Value>,
-) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn array_shift(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.shift called on null or undefined",
@@ -9,15 +7,25 @@ pub(crate) fn array_shift(
     let receiver = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&receiver)?;
     if length == 0 {
-        let updated = crate::properties::assign_set_property(
-            &receiver,
-            "length",
-            Value::Number(0.0),
-        )?;
+        let updated =
+            crate::properties::assign_set_property(&receiver, "length", Value::Number(0.0))?;
         crate::locals::replace_value(&receiver, &updated);
         return Ok(Value::Undefined);
     }
-    let first = crate::execute::get_property_result(&receiver, "0")?;
+    if let Value::Array(array) = &receiver {
+        if array.is_packed_ordinary() {
+            let first = array.first().unwrap_or(Value::Undefined);
+            let mut values = array.snapshot();
+            values.remove(0);
+            let updated = Value::array(values);
+            crate::locals::replace_value(&receiver, &updated);
+            return Ok(first);
+        }
+    }
+    let first = match &receiver {
+        Value::Array(array) => array.first().unwrap_or(Value::Undefined),
+        _ => crate::execute::get_property_result(&receiver, "0")?,
+    };
     let mut target = crate::locals::resolved_replacement(receiver.clone());
     for index in 1..length {
         let from = index.to_string();

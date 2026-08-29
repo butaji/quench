@@ -326,6 +326,7 @@ fn is_intl_prototype(builtin: Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormatPrototype
             | Builtin::IntlSegmenterPrototype
             | Builtin::IntlDisplayNamesPrototype
+            | Builtin::IntlDurationFormatPrototype
     )
 }
 
