@@ -221,6 +221,7 @@
       closeEmitted: false,
       encoding: options.encoding ? validateEncoding(options.encoding) : null,
       decoder: options.encoding ? new StringDecoder(options.encoding) : null,
+      decoderEnded: false,
       awaitDrainWriters: null,
       pipeCount: 0,
       autoDestroy: options.autoDestroy !== false,
@@ -298,6 +299,15 @@
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
         !st.endScheduled && (st.flowing ||
           (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
+      if (st.decoder && !st.decoderEnded) {
+        st.decoderEnded = true;
+        const tail = st.decoder.end();
+        if (tail !== "") {
+          st.buffer.push(tail);
+          flowReadable(stream);
+          return;
+        }
+      }
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
@@ -464,6 +474,13 @@
 
     read(size) {
       const st = this._readableState;
+      // Node uses read(0) as a non-consuming pull probe.  It may invoke
+      // _read() to populate the buffer, but must leave every queued chunk
+      // available for the subsequent read/flow transition.
+      if (size === 0) {
+        if (!st.ended && !st.reading) requestRead(this);
+        return null;
+      }
       if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
@@ -492,6 +509,14 @@
             while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
           }
         }
+        if (chunk === "" && st.decoder) {
+          if (st.ended && !st.decoderEnded) {
+            st.decoderEnded = true;
+            chunk = st.decoder.end();
+          } else if (!st.ended) {
+            return this.read(size);
+          }
+        }
         return chunk;
       }
       if (!st.ended && !st.reading) {
@@ -513,6 +538,14 @@
             while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
           }
         }
+        if (chunk === "" && st.decoder) {
+          if (st.ended && !st.decoderEnded) {
+            st.decoderEnded = true;
+            chunk = st.decoder.end();
+          } else if (!st.ended) {
+            return this.read(size);
+          }
+        }
         return chunk;
       }
       finishIfEnded();
@@ -524,6 +557,7 @@
       const st = this._readableState;
       st.encoding = validateEncoding(encoding || "utf8");
       st.decoder = new StringDecoder(st.encoding);
+      st.decoderEnded = false;
       if (st.buffer.length > 0 && typeof Buffer !== "undefined") {
         const buffered = Buffer.concat(st.buffer);
         st.buffer = [];
