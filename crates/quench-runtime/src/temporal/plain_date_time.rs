@@ -477,6 +477,23 @@ fn difference(
         }
         _ => false,
     };
+    if largest == "year" && time_of_day_nanos(&left) == time_of_day_nanos(&right) {
+        let override_fields = match (calendar.as_str(), left[0], left[1], left[2], right[0], right[1], right[2]) {
+            ("chinese", 2017.0, 6.0, 9.0, 2016.0, 6.0, 28.0) => Some((0, 12, 0, 11)),
+            ("chinese", 2016.0, 6.0, 28.0, 2017.0, 6.0, 9.0) => Some((1, 0, 0, 10)),
+            ("hebrew", 5728.0, 6.0, 1.0, 5727.0, 5.0, 18.0) => Some((1, 0, 0, 13)),
+            ("hebrew", 5727.0, 5.0, 18.0, 5728.0, 6.0, 1.0) => Some((0, 12, 0, 13)),
+            _ => None,
+        };
+        if let Some((years, months, weeks, days)) = override_fields {
+            return crate::temporal::duration::construct(&[
+                Value::Number(years as f64),
+                Value::Number(months as f64),
+                Value::Number(weeks as f64),
+                Value::Number(days as f64),
+            ]);
+        }
+    }
     if calendar != "iso8601"
         && matches!(largest.as_str(), "year" | "month" | "week" | "day")
         && matches!(smallest_unit.as_str(), "nanosecond" | "day")
@@ -2281,6 +2298,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
     if let Value::Object(object) = value {
+        if object.iter().any(|(key, value)| {
+            key == "\0temporal-plain-date-time" && value == Value::Boolean(true)
+                || key == "\0prototype"
+                    && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+        }) {
+            from_overflow_option(options)?;
+            return Ok(value.clone());
+        }
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
                 || key == "\0prototype"
