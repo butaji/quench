@@ -29,6 +29,7 @@ pub struct ClientReq {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub req: Value,
+    pub agent: Option<Value>,
     pub socket: Option<Value>,
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
@@ -78,6 +79,11 @@ fn response_data(response: &Value, bytes: &[u8]) -> Value {
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
+    let agent = args.first().and_then(|options| {
+        matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+            .then(|| execute::get_property(options, "agent"))
+            .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+    });
     let (req, id) = build_req_object(state)?;
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
@@ -90,6 +96,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             headers: opts.4,
             body: Vec::new(),
             req: req.clone(),
+            agent,
             socket: None,
             buffer: Vec::new(),
             res: None,
@@ -272,7 +279,7 @@ pub fn req_end(
             req_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (host, port, method, path, headers, body) = {
+    let (host, port, method, path, headers, body, agent) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -287,6 +294,7 @@ pub fn req_end(
             req.path.clone(),
             req.headers.clone(),
             req.body.clone(),
+            req.agent.clone(),
         )
     };
     if let Some(req_value) = receiver {
@@ -298,7 +306,31 @@ pub fn req_end(
             execute::set_property(req.req.clone(), "_header", Value::String(head.clone()));
         execute::replace_value(&req.req, &updated);
     }
-    let socket = send_request(state, &host, port, &method, &path, &headers, &body)?;
+    let socket = match agent.as_ref().and_then(custom_connection) {
+        Some(connection) => {
+            let options = host_api::object(vec![
+                ("host".into(), Value::String(host.clone())),
+                ("hostname".into(), Value::String(host.clone())),
+                ("port".into(), Value::Number(port as f64)),
+                ("path".into(), Value::String(path.clone())),
+            ]);
+            let callback = host_api::object(Vec::new());
+            let socket = execute::call(&connection, agent.as_ref().unwrap(), &[options, callback])?;
+            let mut bytes = request_head(&host, &method, &path, &headers, body.len()).into_bytes();
+            bytes.extend_from_slice(&body);
+            let payload = host_api::bytes(&bytes);
+            let write = execute::get_property(&socket, "write");
+            if quench_runtime::is_callable(&write) {
+                execute::call(&write, &socket, &[payload])?;
+            }
+            let resume = execute::get_property(&socket, "resume");
+            if quench_runtime::is_callable(&resume) {
+                execute::call(&resume, &socket, &[])?;
+            }
+            socket
+        }
+        None => send_request(state, &host, port, &method, &path, &headers, &body)?,
+    };
     let socket_id = net::net_id(&socket);
     let mut guard = state.borrow_mut();
     if let Some(req) = guard.http.clientreqs.get_mut(&id) {
@@ -363,24 +395,38 @@ fn default_empty_body(method: &str) -> bool {
 
 fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<(), VmError> {
     let data_cap = crate::host::capability(crate::registry::SPEC_HTTP_RESDATA);
-    crate::modules::events::method_on(
-        state,
-        Some(socket),
-        &[Value::String("data".to_string()), data_cap],
-    )?;
+    subscribe_event(state, socket, "data", data_cap)?;
     let end_cap = crate::host::capability(crate::registry::SPEC_HTTP_RESEND);
-    crate::modules::events::method_on(
-        state,
-        Some(socket),
-        &[Value::String("end".to_string()), end_cap],
-    )?;
+    subscribe_event(state, socket, "end", end_cap)?;
     let close_cap = crate::host::capability(crate::registry::SPEC_HTTP_REQCLOSE);
-    crate::modules::events::method_on(
-        state,
-        Some(socket),
-        &[Value::String("close".to_string()), close_cap],
-    )?;
+    subscribe_event(state, socket, "close", close_cap)?;
     Ok(())
+}
+
+fn subscribe_event(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+    event: &str,
+    listener: Value,
+) -> Result<(), VmError> {
+    if net::net_id(socket).is_some() {
+        crate::modules::events::method_on(
+            state,
+            Some(socket),
+            &[Value::String(event.to_string()), listener],
+        )
+        .map(|_| ())
+    } else {
+        let on = execute::get_property(socket, "on");
+        if quench_runtime::is_callable(&on) {
+            execute::call(
+                &on,
+                socket,
+                &[Value::String(event.to_string()), listener],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// Socket close completes the corresponding ClientRequest lifecycle.
@@ -389,10 +435,10 @@ pub fn req_close(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(socket_id) = receiver.and_then(net::net_id) else {
+    let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some(client_id) = state.borrow().http.clients.get(&socket_id).copied() else {
+    let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
     let request = state
@@ -413,10 +459,10 @@ pub fn data_handler(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(socket_id) = receiver.and_then(net::net_id) else {
+    let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some(client_id) = state.borrow().http.clients.get(&socket_id).copied() else {
+    let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
     let bytes = chunk_bytes(args.first());
@@ -433,7 +479,10 @@ pub fn data_handler(
         }
         None if head_parsed => {
             if let Some(res) = client_value(state, client_id, false) {
-                net::emit(state, &res, "data", vec![response_data(&res, &bytes)])?;
+                let body = response_body_bytes(&res, &bytes);
+                if !body.is_empty() {
+                    net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
+                }
             }
             Ok(())
         }
@@ -496,10 +545,60 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
     };
     if let Some(res) = res {
         if !rest.is_empty() {
-            net::emit(state, &res, "data", vec![response_data(&res, &rest)])?;
+            let body = response_body_bytes(&res, &rest);
+            if !body.is_empty() {
+                net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
+            }
         }
     }
     Ok(())
+}
+
+fn response_body_bytes(response: &Value, bytes: &[u8]) -> Vec<u8> {
+    let chunked = execute::get_property_result(response, "headers")
+        .ok()
+        .and_then(|headers| execute::get_property_result(&headers, "transfer-encoding").ok())
+        .and_then(|value| execute::to_js_string(&value).ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("chunked"));
+    if chunked {
+        decode_chunked(bytes)
+    } else {
+        bytes.to_vec()
+    }
+}
+
+fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let Some(line_end) = bytes[cursor..].windows(2).position(|pair| pair == b"\r\n") else {
+            break;
+        };
+        let line_end = cursor + line_end;
+        let Ok(size) = usize::from_str_radix(
+            String::from_utf8_lossy(&bytes[cursor..line_end])
+                .split(';')
+                .next()
+                .unwrap_or(""),
+            16,
+        ) else {
+            break;
+        };
+        cursor = line_end + 2;
+        if cursor + size > bytes.len() {
+            break;
+        }
+        if size == 0 {
+            break;
+        }
+        output.extend_from_slice(&bytes[cursor..cursor + size]);
+        cursor += size;
+        if bytes.get(cursor..cursor + 2) != Some(b"\r\n") {
+            break;
+        }
+        cursor += 2;
+    }
+    output
 }
 
 /// Socket `'end'` → the response's `'end'`.
@@ -508,10 +607,10 @@ pub fn res_end_handler(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(socket_id) = receiver.and_then(net::net_id) else {
+    let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some(client_id) = state.borrow().http.clients.get(&socket_id).copied() else {
+    let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
     let res = {
@@ -590,6 +689,26 @@ fn client_id(receiver: Option<&Value>) -> Option<u64> {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
     }
+}
+
+fn custom_connection(agent: &Value) -> Option<Value> {
+    let method = execute::get_property(agent, "createConnection");
+    quench_runtime::is_callable(&method).then_some(method)
+}
+
+fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Option<u64> {
+    if let Some(id) = net::net_id(socket) {
+        if let Some(client_id) = state.borrow().http.clients.get(&id).copied() {
+            return Some(client_id);
+        }
+    }
+    state
+        .borrow()
+        .http
+        .clientreqs
+        .iter()
+        .find(|(_, req)| req.socket.as_ref().is_some_and(|value| execute::same_identity(value, socket)))
+        .map(|(id, _)| *id)
 }
 
 fn set_request_property(receiver: Option<&Value>, key: &str, value: Value) {
