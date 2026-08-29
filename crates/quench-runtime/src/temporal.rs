@@ -1203,6 +1203,19 @@ mod stubs {
                 if !crate::value::is_object(options) {
                     return Err(crate::value::error::throw_type_error("Invalid options"));
                 }
+                let validate_option = |name: &str, allowed: &[&str]| -> Result<(), VmError> {
+                    let value = crate::execute::get_property_result(options, name)?;
+                    if !matches!(value, Value::Undefined) {
+                        let value = crate::conversion::to_string(&value)?;
+                        if !allowed.contains(&value.as_str()) {
+                            return Err(crate::value::error::throw_range_error("Invalid Temporal option"));
+                        }
+                    }
+                    Ok(())
+                };
+                validate_option("disambiguation", &["compatible", "earlier", "later", "reject"])?;
+                validate_option("offset", &["prefer", "use", "ignore", "reject"])?;
+                validate_option("overflow", &["constrain", "reject"])?;
             }
             let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
             let epoch = match epoch {
