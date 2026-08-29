@@ -6,6 +6,7 @@
 
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
+    "performance" => performance,
     "support" => support,
     "dns" => dns,
     "dgram-head" => dgram_head,

@@ -516,13 +516,17 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             ),
         ])),
         "zlib" => Some(crate::modules::zlib::build()),
-        "perf_hooks" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "performance".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "perf_hooks:performance",
-                0x1800,
-            )),
-        )])),
+        "perf_hooks" => {
+            let hooks = quench_runtime::execute::get_property(
+                &quench_runtime::vm::current_global_object(),
+                "__nodePerfHooks",
+            );
+            if !matches!(hooks, Value::Undefined) {
+                Some(hooks)
+            } else {
+                Some(crate::host::namespace_object_from_pairs(vec![]))
+            }
+        }
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "cluster" => {
             if let Some(module) = state.borrow().cluster.module() {
