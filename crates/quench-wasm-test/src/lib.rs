@@ -398,6 +398,10 @@ mod tests {
             "memory-multi.wast",
             "proposals/wide-arithmetic/wide-arithmetic.wast",
             "proposals/custom-page-sizes/custom-page-sizes.wast",
+            "proposals/threads/atomic.wast",
+            "proposals/threads/memory.wast",
+            "proposals/threads/imports.wast",
+            "proposals/threads/exports.wast",
         ] {
             let report = suite.run_file(root.join(rel));
             for result in &report.results {
@@ -455,6 +459,9 @@ mod tests {
             "try_table.wast",
             "tag.wast",
             "extern.wast",
+            "legacy/try_catch.wast",
+            "legacy/throw.wast",
+            "legacy/rethrow.wast",
         ] {
             let report = suite.run_file(root.join(rel));
             for result in &report.results {

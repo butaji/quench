@@ -13,6 +13,7 @@
 
 pub mod build_profile;
 mod bulk;
+mod wasm_atomic;
 pub mod dynamic;
 pub mod fast;
 pub mod hir;
