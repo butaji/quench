@@ -2042,12 +2042,23 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         };
         format!(".{text}")
     };
-    let calendar_suffix = if calendar_name == "always" {
-        "[u-ca=iso8601]".into()
-    } else if calendar_name == "critical" {
-        "[!u-ca=iso8601]".into()
-    } else {
-        String::new()
+    let calendar_id = match receiver {
+        Value::Object(object) => object
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "calendarId").then(|| match value {
+                    Value::String(value) => value.to_ascii_lowercase(),
+                    _ => "iso8601".into(),
+                })
+            })
+            .unwrap_or_else(|| "iso8601".into()),
+        _ => "iso8601".into(),
+    };
+    let calendar_suffix = match calendar_name.as_str() {
+        "always" => format!("[u-ca={calendar_id}]"),
+        "critical" => format!("[!u-ca={calendar_id}]"),
+        "auto" if calendar_id != "iso8601" => format!("[u-ca={calendar_id}]"),
+        _ => String::new(),
     };
     let year = year_text(values[0] as i32);
     let text = if omit_seconds {
