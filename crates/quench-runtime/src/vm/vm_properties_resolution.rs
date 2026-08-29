@@ -370,6 +370,7 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if key == "format" { eprintln!("DEBUG get format value {:?} receiver {:?}", value, receiver); }
     if matches!(value, Value::Builtin(crate::ops::Builtin::RegExp))
         && crate::builtins::object::is_regexp_legacy_accessor(key)
     {
@@ -520,6 +521,17 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
         }
     }
     let own = own?;
+    if key == "format"
+        && matches!(
+            own,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        // Reading Intl's format accessor must capture the formatter receiver.
+        return None;
+    }
     if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
@@ -1161,6 +1173,9 @@ fn is_intl_number_format_property(property: &Value) -> bool {
 }
 
 pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
+    if matches!(property, Value::Builtin(Builtin::IntlNumberFormatFormat)) {
+        eprintln!("DEBUG bind nf receiver {:?}", receiver);
+    }
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)

@@ -1,0 +1,10 @@
+var nf = new Intl.NumberFormat();
+print(typeof nf);
+print(nf.format(123));
+var nf = new Intl.NumberFormat();
+var f = nf.format;
+print(typeof f);
+print(f.length);
+print(f.name);
+print(Object.getOwnPropertyNames(f).join(','));
+print(f(123));
