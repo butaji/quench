@@ -755,6 +755,31 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         .map(|name| Value::Number(duration_field(object, name) as f64))
         .collect::<Vec<_>>();
         let duration = construct(&fields)?;
+        if !has_calendar
+            && requested_largest.is_some_and(|largest| largest <= 2)
+            && index == 4
+        {
+            let increment = rounding_increment(options, 4)?;
+            let hours = duration_epoch_delta(&duration, &relative)? as f64
+                / 3_600_000_000_000.0;
+            let rounded = round_number(hours / increment, &rounding_mode(options)?) * increment;
+            if let Some(length) = zoned_day_length_hours(&relative) {
+                let mut result = vec![Value::Number(0.0); 10];
+                if rounded == 24.0 && length < 24.0 {
+                    result[3] = Value::Number(1.0);
+                    result[4] = Value::Number(12.0);
+                    return construct(&result);
+                }
+                if length > 24.0 && (hours - length).abs() < 1e-9 {
+                    result[3] = Value::Number(1.0);
+                    return construct(&result);
+                }
+                if length > 24.0 && hours < length {
+                    result[4] = Value::Number(rounded);
+                    return construct(&result);
+                }
+            }
+        }
         if index == 1 {
             let total = zoned_total_calendar(&duration, &relative, 1)?;
             let rounded = round_number(total, &rounding_mode(options)?);
