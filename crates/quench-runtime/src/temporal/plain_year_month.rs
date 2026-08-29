@@ -242,7 +242,11 @@ fn construct_inner(
                 (f64::from(*min_year)..=f64::from(*max_year)).contains(&year)
             })
     };
-    if !year.is_finite() || !year_in_range || !(1.0..=13.0).contains(&month) {
+    if !year.is_finite()
+        || !year_in_range
+        || !(1.0..=13.0).contains(&month)
+        || (iso_calendar && month > 12.0)
+    {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
         ));
@@ -639,8 +643,16 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         Some(parse_month_code(&text)?)
     };
     let mut year_value = crate::execute::get_property_result(value, "year")?;
-    let era_value = crate::execute::get_property_result(value, "era")?;
-    let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+    // ISO fields do not have eras.  Avoid probing these properties entirely;
+    // besides being cheaper this preserves Temporal's observable get order.
+    let (era_value, era_year_value) = if calendar_name == "iso8601" {
+        (Value::Undefined, Value::Undefined)
+    } else {
+        (
+            crate::execute::get_property_result(value, "era")?,
+            crate::execute::get_property_result(value, "eraYear")?,
+        )
+    };
     let era_provided = !matches!(era_value, Value::Undefined);
     let era_year_provided = !matches!(era_year_value, Value::Undefined);
     if era_provided != era_year_provided {
@@ -1141,8 +1153,14 @@ fn with(
         month_code_text = Some(text.clone());
         Some(parse_month_code(&text)?)
     };
-    let era_value = crate::execute::get_property_result(changes, "era")?;
-    let era_year_value = crate::execute::get_property_result(changes, "eraYear")?;
+    let (era_value, era_year_value) = if receiver_calendar == "iso8601" {
+        (Value::Undefined, Value::Undefined)
+    } else {
+        (
+            crate::execute::get_property_result(changes, "era")?,
+            crate::execute::get_property_result(changes, "eraYear")?,
+        )
+    };
     let year_value = crate::execute::get_property_result(changes, "year")?;
     let year_provided = !matches!(year_value, Value::Undefined);
     let era_provided = !matches!(era_value, Value::Undefined);
