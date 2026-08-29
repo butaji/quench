@@ -986,6 +986,11 @@ mod stubs {
                 Ok(number.trunc() as i128)
             };
             let calendar_value = crate::execute::get_property_result(value, "calendar")?;
+            let calendar_name = if matches!(calendar_value, Value::Undefined) {
+                "iso8601".to_string()
+            } else {
+                super::parse_calendar_identifier(&calendar_value)?
+            };
             let day_value = crate::execute::get_property_result(value, "day")?;
             if matches!(day_value, Value::Undefined) {
                 return Err(crate::value::error::throw_type_error("Missing ZonedDateTime field"));
@@ -1054,7 +1059,28 @@ mod stubs {
             let second_value = crate::execute::get_property_result(value, "second")?;
             let second_number = if matches!(second_value, Value::Undefined) { 0 } else { finite_integer(&second_value)? };
             let timezone_value = crate::execute::get_property_result(value, "timeZone")?;
-            let year_value = crate::execute::get_property_result(value, "year")?;
+            let era_value = crate::execute::get_property_result(value, "era")?;
+            let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+            let mut year_value = crate::execute::get_property_result(value, "year")?;
+            if matches!(year_value, Value::Undefined)
+                && !matches!(era_value, Value::Undefined)
+                && !matches!(era_year_value, Value::Undefined)
+            {
+                let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
+                let era = super::plain_date::canonical_era_name(&calendar_name, &era)
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid era"))?;
+                let era_year = crate::conversion::to_number(&era_year_value)?.trunc();
+                if !era_year.is_finite() {
+                    return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+                }
+                let year = super::plain_date::derive_year_from_era(
+                    &calendar_name,
+                    era,
+                    era_year,
+                )
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing year"))?;
+                year_value = Value::Number(year);
+            }
             if matches!(year_value, Value::Undefined) {
                 return Err(crate::value::error::throw_type_error("Missing ZonedDateTime field"));
             }
@@ -1130,12 +1156,7 @@ mod stubs {
                 }
             }
             let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
-            let calendar = if matches!(calendar_value, Value::Undefined) {
-                "iso8601".to_string()
-            } else {
-                super::parse_calendar_identifier(&calendar_value)?
-            };
-            let era_value = crate::execute::get_property_result(value, "era")?;
+            let calendar = calendar_name;
             if !matches!(era_value, Value::Undefined)
                 && !matches!(calendar.as_str(), "iso8601" | "chinese" | "dangi")
             {
