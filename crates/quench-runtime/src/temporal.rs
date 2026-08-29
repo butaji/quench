@@ -851,8 +851,6 @@ fn parse_iso_annotations(
                     ));
                 }
             } else {
-                let canonical = crate::temporal::plain_date::canonical_calendar_id(value)
-                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
                 if calendar.is_some() {
                     if critical || calendar_critical {
                         return Err(crate::value::error::throw_range_error("Invalid calendar"));
@@ -861,6 +859,8 @@ fn parse_iso_annotations(
                     rest = &after[end + 1..];
                     continue;
                 }
+                let canonical = crate::temporal::plain_date::canonical_calendar_id(value)
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid calendar"))?;
                 calendar = Some(canonical);
                 calendar_critical |= critical;
             }
