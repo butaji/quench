@@ -825,9 +825,6 @@ mod stubs {
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
-        if builtin == crate::ops::Builtin::TemporalPlainMonthDayFrom {
-            return Some(plain_month_day_from(arguments.first()));
-        }
         if builtin == crate::ops::Builtin::TemporalPlainYearMonthFrom {
             return Some(plain_year_month_from(arguments.first()));
         }
@@ -1591,12 +1588,22 @@ mod stubs {
                 }
                 _ => false,
             };
+            let calendar_equal = match (
+                property("calendarId"),
+                crate::execute::get_property_result(&other, "calendarId"),
+            ) {
+                (Ok(Value::String(left)), Ok(Value::String(right))) => {
+                    let left = super::plain_date::canonical_calendar_id(&left).unwrap_or(left);
+                    let right = super::plain_date::canonical_calendar_id(&right).unwrap_or(right);
+                    left == right
+                }
+                _ => false,
+            };
             return Ok(Value::Boolean(
                 timezone_equal
                     && property("epochNanoseconds").ok()
                         == crate::execute::get_property_result(&other, "epochNanoseconds").ok()
-                    && property("calendarId").ok()
-                        == crate::execute::get_property_result(&other, "calendarId").ok(),
+                    && calendar_equal,
             ));
         }
         if matches!(
