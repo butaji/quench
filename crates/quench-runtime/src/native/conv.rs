@@ -118,34 +118,40 @@ impl ConvOp {
 }
 
 fn trunc_i32(x: f64, signed: bool) -> Result<i32, Trap> {
-    if !x.is_finite() {
+    if x.is_nan() {
         return Err(Trap::InvalidConversion);
+    }
+    if !x.is_finite() {
+        return Err(Trap::IntegerOverflow);
     }
     let t = x.trunc();
     if signed {
         if !(i32::MIN as f64..=i32::MAX as f64).contains(&t) {
-            return Err(Trap::InvalidConversion);
+            return Err(Trap::IntegerOverflow);
         }
         Ok(t as i32)
     } else if !(0.0..=u32::MAX as f64).contains(&t) {
-        Err(Trap::InvalidConversion)
+        Err(Trap::IntegerOverflow)
     } else {
         Ok(t as u32 as i32)
     }
 }
 
 fn trunc_i64(x: f64, signed: bool) -> Result<i64, Trap> {
-    if !x.is_finite() {
+    if x.is_nan() {
         return Err(Trap::InvalidConversion);
+    }
+    if !x.is_finite() {
+        return Err(Trap::IntegerOverflow);
     }
     let t = x.trunc();
     if signed {
         if t < i64::MIN as f64 || t >= i64::MAX as f64 + 1.0 {
-            return Err(Trap::InvalidConversion);
+            return Err(Trap::IntegerOverflow);
         }
         Ok(t as i64)
     } else if t < 0.0 || t >= u64::MAX as f64 + 1.0 {
-        Err(Trap::InvalidConversion)
+        Err(Trap::IntegerOverflow)
     } else {
         Ok(t as u64 as i64)
     }
