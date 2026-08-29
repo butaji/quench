@@ -4738,7 +4738,10 @@ mod stubs {
             microsecond = (fraction / 1_000 % 1_000) as u32;
             nanosecond = (fraction % 1_000) as u32;
         }
-        if !timezone.starts_with(['+', '-']) && matches!(calendar_text.as_str(), "iso8601" | "gregory") {
+        if (smallest.is_some() || precision != usize::MAX)
+            && !timezone.starts_with(['+', '-'])
+            && matches!(calendar_text.as_str(), "iso8601" | "gregory")
+        {
             let local_days = super::plain_date::date_serial(year as f64, month as f64, day as f64)
                 - super::plain_date::date_serial(1970.0, 1.0, 1.0);
             let local_epoch = local_days as i128 * 86_400_000_000_000
