@@ -420,86 +420,8 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
         field(&target, "month")? as f64,
         field(&target, "day")? as f64,
     );
-    if unit == 1 {
-        let mut whole = ((end.0 - start.0) * 12.0 + end.1 - start.1)
-            - f64::from((end.2 < start.2) as u8);
-        let initial_anchor = zoned_target(
-            &construct(&[
-                Value::Number(0.0),
-                Value::Number(whole),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-            ])?,
-            relative,
-        )?;
-        let initial_day = field(&initial_anchor, "day")?;
-        let initial_date = (field(&initial_anchor, "year")?, field(&initial_anchor, "month")?);
-        let residual = crate::temporal::plain_date::date_serial(end.0, end.1, end.2)
-            - crate::temporal::plain_date::date_serial(initial_date.0, initial_date.1, initial_day);
-        if residual.abs() >= 28 {
-            whole += residual.signum() as f64;
-        }
-        {
-            let years = (whole / 12.0).trunc() as i64;
-            let months = whole as i64 % 12;
-            let whole = years as i128 * 12 + months as i128;
-            let anchor = construct(&[
-                Value::Number(0.0),
-                Value::Number(whole as f64),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-            ])?;
-            let anchor = zoned_target(&anchor, relative)?;
-            let anchor_date = (
-                field(&anchor, "year")?,
-                field(&anchor, "month")?,
-                field(&anchor, "day")?,
-            );
-            let residual_days = match (
-                chrono::NaiveDate::from_ymd_opt(end.0 as i32, end.1 as u32, end.2 as u32),
-                chrono::NaiveDate::from_ymd_opt(
-                    anchor_date.0 as i32,
-                    anchor_date.1 as u32,
-                    anchor_date.2 as u32,
-                ),
-            ) {
-                (Some(end), Some(anchor)) => (end - anchor).num_days() as f64,
-                _ => 0.0,
-            };
-            let clock = |value: &Value| -> Result<f64, VmError> {
-                Ok(field(value, "hour")?
-                    + field(value, "minute")? / 60.0
-                    + field(value, "second")? / 3_600.0
-                    + field(value, "millisecond")? / 3_600_000.0
-                    + field(value, "microsecond")? / 3_600_000_000.0
-                    + field(value, "nanosecond")? / 3_600_000_000_000.0)
-            };
-            let span = crate::temporal::plain_date::days_in_month_for_record(
-                end.0 as i32,
-                end.1 as u32,
-            ) as f64;
-            return Ok(whole as f64
-                + (residual_days + (clock(&target)? - clock(&anchor)?) / 24.0) / span);
-        }
-    }
     let whole = if unit == 0 {
-        let mut years = (end.0 - start.0) as i64;
-        if (end.1, end.2) < (start.1, start.2) {
-            years -= 1;
-        }
-        years as f64
+        field(duration, "years")?
     } else {
         field(duration, "years")? * 12.0 + field(duration, "months")?
     };
@@ -529,26 +451,9 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
         field(&anchor, "month")? as f64,
         field(&anchor, "day")? as f64,
     );
-    let residual_days = match (
-        chrono::NaiveDate::from_ymd_opt(end.0 as i32, end.1 as u32, end.2 as u32),
-        chrono::NaiveDate::from_ymd_opt(
-            anchor_date.0 as i32,
-            anchor_date.1 as u32,
-            anchor_date.2 as u32,
-        ),
-    ) {
-        (Some(end), Some(anchor)) => (end - anchor).num_days() as f64,
-        _ => 0.0,
-    };
-    let clock = |value: &Value| -> Result<f64, VmError> {
-        Ok(field(value, "hour")?
-            + field(value, "minute")? / 60.0
-            + field(value, "second")? / 3_600.0
-            + field(value, "millisecond")? / 3_600_000.0
-            + field(value, "microsecond")? / 3_600_000_000.0
-            + field(value, "nanosecond")? / 3_600_000_000_000.0)
-    };
-    let residual_days = residual_days + (clock(&target)? - clock(&anchor)?) / 24.0;
+    let residual_days = (crate::temporal::plain_date::date_serial(end.0, end.1, end.2)
+        - crate::temporal::plain_date::date_serial(anchor_date.0, anchor_date.1, anchor_date.2))
+        as f64;
     let span =
         crate::temporal::plain_date::days_in_month_for_record(end.0 as i32, end.1 as u32) as f64;
     if unit == 0 {
@@ -630,39 +535,6 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
     }
     if matches!(value, Value::Undefined) {
         return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
-    }
-    // Temporal objects carry their ISO date fields in hidden slots. Read those
-    // slots directly so observable accessors installed by user code are never
-    // consulted while converting a branded relativeTo value.
-    let resolved_value = crate::locals::resolved_replacement(value.clone());
-    if let Value::Object(object) = &resolved_value {
-        let iso_calendar = object.iter().any(|(key, value)| {
-            key == "calendarId" && matches!(value, Value::String(id) if id == "iso8601")
-        });
-        let branded = object.iter().any(|(key, value)| {
-            key == "\0prototype"
-                && matches!(
-                    value,
-                    Value::Builtin(
-                        crate::ops::Builtin::TemporalPlainDatePrototype
-                            | crate::ops::Builtin::TemporalPlainDateTimePrototype
-                            | crate::ops::Builtin::TemporalZonedDateTimePrototype
-                    )
-                )
-        });
-        if iso_calendar && branded {
-            let slot = |name: &str| {
-                object
-                    .iter()
-                    .find(|(key, _)| key == &format!("\0temporal-slot:\0{name}"))
-                    .and_then(|(_, value)| crate::conversion::to_number(&value).ok())
-            };
-            if let (Some(year), Some(month), Some(day)) =
-                (slot("year"), slot("month"), slot("day"))
-            {
-                return Ok((year as i32, month as u32, day as u32));
-            }
-        }
     }
     if matches!(
         value,
