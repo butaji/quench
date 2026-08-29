@@ -243,7 +243,12 @@
   // ---- Readable ----
 
   function initReadable(stream, options) {
-    if (!stream._emitter) stream._emitter = new EventEmitter();
+    if (!stream._emitter) {
+      const captureRejections = options.captureRejections;
+      stream._emitter = new EventEmitter({
+        captureRejections: captureRejections === undefined ? false : captureRejections
+      });
+    }
     stream._emitter.__quenchOwner = stream;
     const state = {
       objectMode: !!options.objectMode,
@@ -1173,7 +1178,12 @@
   }
 
   function initWritable(stream, options) {
-    if (!stream._emitter) stream._emitter = new EventEmitter();
+    if (!stream._emitter) {
+      const captureRejections = options.captureRejections;
+      stream._emitter = new EventEmitter({
+        captureRejections: captureRejections === undefined ? false : captureRejections
+      });
+    }
     stream._emitter.__quenchOwner = stream;
     stream._writableState = {
       objectMode: !!options.objectMode,
@@ -1485,6 +1495,12 @@
           });
           return;
         }
+        // Node publishes backpressure relief before invoking the write
+        // callback. A callback is allowed to enqueue the next write, so
+        // deriving this fact first preserves one drain notification per
+        // emptied write rather than collapsing adjacent writes.
+        const drained = st.pending.length === 0 && st.buffered <= st.highWaterMark;
+        if (drained) this._emitter.emit("drain");
         if (callback) callback();
         if (st.pending.length) {
           const pending = st.pending.splice(0);
@@ -1533,7 +1549,7 @@
           st.ended = wasEnded;
           return;
         }
-        if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
+        if (!drained && st.buffered <= st.highWaterMark) this._emitter.emit("drain");
         finishWritable(this);
       };
       try {
