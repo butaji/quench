@@ -296,13 +296,18 @@ mod call_argument_tests {
         let mut arguments = CallArguments::new();
         arguments.push(Value::Number(1.0));
         arguments.push(Value::Boolean(true));
-        assert_eq!(arguments.as_slice(), &[Value::Number(1.0), Value::Boolean(true)]);
+        assert_eq!(
+            arguments.as_slice(),
+            &[Value::Number(1.0), Value::Boolean(true)]
+        );
         assert_eq!(arguments.clone().into_vec(), arguments.as_slice());
     }
 
     #[test]
     fn spill_arguments_preserve_order_and_values() {
-        let values = (0..6).map(|value| Value::Number(value as f64)).collect::<Vec<_>>();
+        let values = (0..6)
+            .map(|value| Value::Number(value as f64))
+            .collect::<Vec<_>>();
         let arguments: CallArguments = values.clone().into();
         assert_eq!(arguments.as_slice(), values.as_slice());
         assert_eq!(arguments.clone().into_vec(), values);
