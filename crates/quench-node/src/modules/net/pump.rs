@@ -95,6 +95,7 @@ fn accept_one(
         stream: Some(stream),
         js: object.clone(),
         state: SocketState::Open,
+        refed: true,
         server_id: Some(server_id),
         write_buf: Vec::new(),
         bytes_read: 0,

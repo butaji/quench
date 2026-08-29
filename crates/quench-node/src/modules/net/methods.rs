@@ -60,6 +60,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             stream: None,
             js: object.clone(),
             state: SocketState::Open,
+            refed: true,
             server_id: None,
             write_buf: Vec::new(),
             bytes_read: 0,
@@ -431,6 +432,7 @@ fn connect_with_receiver(
         stream: Some(stream),
         js: object.clone(),
         state: SocketState::Open,
+        refed: true,
         server_id: None,
         write_buf: Vec::new(),
         bytes_read: 0,
@@ -1000,18 +1002,28 @@ pub fn socket_destroy(
 }
 
 pub fn socket_unref(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(id) = receiver.and_then(net_id) {
+        if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+            socket.borrow_mut().refed = false;
+        }
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 pub fn socket_ref(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(id) = receiver.and_then(net_id) {
+        if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+            socket.borrow_mut().refed = true;
+        }
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
