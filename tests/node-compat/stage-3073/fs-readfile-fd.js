@@ -12,3 +12,13 @@ try {
 } finally {
   fs.closeSync(fd);
 }
+
+const asyncFd = fs.openSync(path, "r");
+new Promise((resolve, reject) => {
+  fs.readFile(asyncFd, "utf8", (error, value) =>
+    error ? reject(error) : resolve(value)
+  );
+}).then((value) => {
+  assert.strictEqual(value, content.toString("utf8"));
+  fs.closeSync(asyncFd);
+});
