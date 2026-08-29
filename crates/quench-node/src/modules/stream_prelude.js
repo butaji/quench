@@ -29,7 +29,9 @@
       if (name === "data" && this._readableState) {
         // A readable listener keeps a zero-HWM stream in manual-read mode.
         const manualRead = this._readableState.highWaterMark === 0 &&
-          this.listenerCount("readable") > 0;
+          this.listenerCount("readable") > 0 ||
+          (this._readableState.readableListening &&
+            this._readableState.readableListenerTurnPending);
         if (!manualRead) this.resume();
         // The first data listener starts pulling before the next promise
         // checkpoint, matching Node's lazy activation contract.
@@ -85,7 +87,9 @@
       this._emitter.once(name, wrapper);
       if (name === "data" && this._readableState) {
         const manualRead = this._readableState.highWaterMark === 0 &&
-          this.listenerCount("readable") > 0;
+          this.listenerCount("readable") > 0 ||
+          (this._readableState.readableListening &&
+            this._readableState.readableListenerTurnPending);
         if (!manualRead) this.resume();
         if (!manualRead && !this._readableState.reading && !this._readableState.ended) {
           requestRead(this);
@@ -308,7 +312,12 @@
       endEmitted: false,
       endScheduled: false,
       emittedReadable: false,
-      readableEofPending: false,
+      // Number of terminal readable notifications still observable after
+      // buffered EOF data is consumed. Node exposes two follow-up readable
+      // turns (data-at-EOF, then empty-EOF) before end.
+      readableEofPending: 0,
+      readableEofReadScheduled: false,
+      unshiftedSinceRead: false,
       readableListenerTurnPending: false,
       errored: null,
       errorEmitted: false,
@@ -370,6 +379,7 @@
   function flowReadable(stream) {
     const st = stream._readableState;
     st.resumeScheduled = false;
+    st.readableEofReadScheduled = false;
     if (st.resumeEventPending) {
       st.resumeEventPending = false;
       stream._emitter.emit("resume");
@@ -378,9 +388,8 @@
         (st.buffer.length > 0 || st.ended) && !st.emittedReadable) {
       st.emittedReadable = true;
       st.needReadable = false;
-      if (st.ended && st.buffer.length === 0) {
+      if (st.ended && st.buffer.length === 0 && st.readableEofPending === 0) {
         st.readingMore = false;
-        st.readableEofPending = false;
       }
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
@@ -436,6 +445,7 @@
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
         if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+            st.readableEofPending === 0 && !st.readableEofReadScheduled &&
             (st.flowing || stream.listenerCount("readable") > 0 ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
@@ -565,10 +575,8 @@
       if (chunk === null) {
         st.ended = true;
         st.needReadable = false;
-        if (st.buffer.length > 0 &&
-            (this._isDuplex || !st.readableListenerTurnPending) &&
-            this.listenerCount("readable") > 0) {
-          st.readableEofPending = true;
+        if (st.buffer.length > 0 && this.listenerCount("readable") > 0) {
+          st.readableEofPending = st.unshiftedSinceRead ? 2 : 0;
         }
         if (this._isDuplex && !this.allowHalfOpen &&
             !this._writableState.ended && !this._writableState.finished) {
@@ -610,10 +618,14 @@
       if (typeof chunk === "string" && chunk.length === 0) return true;
       if (st.ended) st.ended = false;
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
+      st.unshiftedSinceRead = true;
       st.reading = st.readRequests > 0;
       if (this.listenerCount("readable") > 0 && !st.flowing && st.needReadable) {
         st.emittedReadable = false;
-        flowReadable(this);
+        // `emitReadable` is next-tick even for unshift: the caller may still
+        // push EOF in the same turn, and the readable callback must observe
+        // the final ended/reading state.
+        scheduleFlow(this);
       } else {
         scheduleFlow(this);
       }
@@ -624,9 +636,11 @@
       const st = this._readableState;
       const scheduleReadableIfNeeded = () => {
         if (st.buffer.length === 0 && st.ended &&
-            st.readableEofPending && this.listenerCount("readable") > 0 &&
+            st.readableEofPending > 0 && !st.readableEofReadScheduled &&
+            this.listenerCount("readable") > 0 &&
             !st.endEmitted) {
-          st.readableEofPending = false;
+          st.readableEofPending -= 1;
+          st.readableEofReadScheduled = true;
           scheduleFlow(this);
         }
       };
@@ -643,7 +657,8 @@
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
           if (!this._isTransform && size > 0) st.emittedReadable = true;
           nextTick(() => {
-            if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+            if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+                st.readableEofPending === 0 && !st.readableEofReadScheduled) {
               st.endEmitted = true;
               st.needReadable = false;
               st.reading = false;
@@ -661,6 +676,17 @@
           if (!st.reading) requestRead(this);
           return null;
         }
+        // Node starts the next pull before removing a buffered chunk when
+        // the resulting length falls below the high-water mark.  The
+        // callback can observe `state.reading` during the data event, so the
+        // pull must precede extraction rather than follow emission.
+        if (!st.ended && !st.reading) {
+          const buffered = readableBufferLength(st);
+          const requested = size > 0 ? size : buffered;
+          if (st.needReadable || buffered - requested < st.highWaterMark) {
+            requestRead(this);
+          }
+        }
         let chunk;
         chunk = takeReadableChunk(st, size);
         st.reading = st.readRequests > 0;
@@ -672,13 +698,14 @@
         scheduleReadableIfNeeded();
         st.dataEmitted = true;
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
-        if (st.buffer.length === 0 && !st.ended && !st.reading &&
-            st.highWaterMark !== 0) {
+        if (st.buffer.length === 0 && !st.ended) {
           st.needReadable = this.listenerCount("readable") > 0;
-          st.reading = true;
-          requestRead(this);
-          if (st.decoder && !st.objectMode) {
-            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          if (!st.reading && st.highWaterMark !== 0) {
+            st.reading = true;
+            requestRead(this);
+            if (st.decoder && !st.objectMode) {
+              while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+            }
           }
         }
         if (chunk === "" && st.decoder) {
@@ -696,6 +723,13 @@
         requestRead(this);
       }
       if (st.buffer.length > 0) {
+        if (!st.ended && !st.reading) {
+          const buffered = readableBufferLength(st);
+          const requested = size > 0 ? size : buffered;
+          if (st.needReadable || buffered - requested < st.highWaterMark) {
+            requestRead(this);
+          }
+        }
         let chunk = takeReadableChunk(st, size);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
@@ -706,11 +740,14 @@
         scheduleReadableIfNeeded();
         st.dataEmitted = true;
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-          if (st.decoder && !st.objectMode) {
-            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+        if (st.buffer.length === 0 && !st.ended) {
+          st.needReadable = this.listenerCount("readable") > 0;
+          if (!st.reading) {
+            st.reading = true;
+            requestRead(this);
+            if (st.decoder && !st.objectMode) {
+              while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+            }
           }
         }
         if (chunk === "" && st.decoder) {
