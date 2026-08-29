@@ -250,6 +250,7 @@
       });
     }
     stream._emitter.__quenchOwner = stream;
+    stream._captureRejections = options.captureRejections === true;
     const state = {
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
@@ -1190,6 +1191,7 @@
       });
     }
     stream._emitter.__quenchOwner = stream;
+    stream._captureRejections = options.captureRejections === true;
     stream._writableState = {
       objectMode: !!options.objectMode,
       writable: options.writable === false ? false : undefined,
@@ -1500,11 +1502,20 @@
           });
           return;
         }
+        if (this.destroyed && st.ending && !callback) {
+          const destroyedError = Object.assign(
+            new Error("Cannot call write after a stream was destroyed"),
+            { code: "ERR_STREAM_DESTROYED" }
+          );
+          completeEndCallbacks(st, destroyedError);
+          return;
+        }
         // Node publishes backpressure relief before invoking the write
         // callback. A callback is allowed to enqueue the next write, so
         // deriving this fact first preserves one drain notification per
         // emptied write rather than collapsing adjacent writes.
-        const drained = st.pending.length === 0 && st.buffered <= st.highWaterMark;
+        const drained = (!this.destroyed || this._captureRejections) &&
+          st.pending.length === 0 && st.buffered <= st.highWaterMark;
         if (drained) this._emitter.emit("drain");
         if (callback) callback();
         if (st.pending.length) {
@@ -1554,7 +1565,10 @@
           st.ended = wasEnded;
           return;
         }
-        if (!drained && st.buffered <= st.highWaterMark) this._emitter.emit("drain");
+        if ((!this.destroyed || this._captureRejections) &&
+            !drained && st.buffered <= st.highWaterMark) {
+          this._emitter.emit("drain");
+        }
         finishWritable(this);
       };
       try {
