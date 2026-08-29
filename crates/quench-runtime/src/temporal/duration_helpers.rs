@@ -546,8 +546,13 @@ fn validate_relative_string(text: &str) -> Result<(), VmError> {
     if text.is_empty() {
         return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
     }
-    if text.contains("[u-ca=") && !text.contains("[u-ca=iso8601]") {
-        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    if let Some(value) = text
+        .split_once("[u-ca=")
+        .and_then(|(_, rest)| rest.split(']').next())
+    {
+        if !crate::temporal::plain_date::is_supported_calendar_name(value) {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
     }
     if text.starts_with("-000000-") {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
