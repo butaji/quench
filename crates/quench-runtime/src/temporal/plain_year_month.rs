@@ -334,10 +334,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         let year = crate::conversion::to_number(&field(Some(value), "year")?)?;
         let month = crate::conversion::to_number(&field(Some(value), "month")?)?;
         let day = crate::conversion::to_number(&field(Some(value), "referenceISODay")?)?;
+        let calendar = crate::conversion::to_string(&field(Some(value), "calendarId")?)?;
         if year == -271_821.0 && month == 4.0 && day == 1.0 {
-            return construct(year, month);
+            return construct_with_calendar(year, month, &calendar);
         }
-        return construct_with_reference(year, month, day);
+        return construct_with_reference_calendar(year, month, day, &calendar);
     }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     validate_property_calendar(&calendar)?;
@@ -959,9 +960,18 @@ fn difference(
     options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
-    let left =
-        values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
-    let right = values(&from(other, None)?)?;
+    let receiver = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
+    let left = values(receiver)?;
+    let right_value = from(other, None)?;
+    let left_calendar = crate::conversion::to_string(&field(Some(receiver), "calendarId")?)?;
+    let right_calendar = crate::conversion::to_string(&field(Some(&right_value), "calendarId")?)?;
+    if left_calendar != right_calendar {
+        return Err(crate::value::error::throw_range_error(
+            "Calendars must match",
+        ));
+    }
+    let right = values(&right_value)?;
     let (largest, smallest, increment, rounding_mode) = difference_options(options)?;
     let total = ((right.0 - left.0) * 12.0 + right.1 - left.1) * direction;
     if total != 0.0 && increment > 12.0 {
