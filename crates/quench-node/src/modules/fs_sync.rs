@@ -118,6 +118,10 @@ fn read_bytes(path: &str, options: &FsOptions) -> Result<Value, VmError> {
         std::fs::read(Path::new(path))
             .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?
     };
+    decode_bytes(bytes, options)
+}
+
+fn decode_bytes(bytes: Vec<u8>, options: &FsOptions) -> Result<Value, VmError> {
     let target = if let Some(buffer) = options.buffer.clone() {
         if quench_runtime::is_callable(&buffer) {
             quench_runtime::execute::call(
@@ -198,10 +202,31 @@ fn view_parts(
 }
 
 pub fn read_file_sync(
-    _s: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if matches!(args.first(), Some(Value::Number(_))) {
+        let fd = super::fs::descriptor_arg(args.first())?;
+        let options = parse_options(args.get(1))?;
+        let bytes = {
+            let mut host = state.borrow_mut();
+            let descriptor = host.fs.descriptors.get_mut(&fd).ok_or_else(|| {
+                crate::modules::fs_error::fs_error(
+                    "read",
+                    None,
+                    &std::io::Error::from_raw_os_error(9),
+                )
+            })?;
+            let mut bytes = Vec::new();
+            descriptor
+                .file
+                .read_to_end(&mut bytes)
+                .map_err(|e| super::fs_error::fs_error("read", Some(&descriptor.path), &e))?;
+            bytes
+        };
+        return decode_bytes(bytes, &options);
+    }
     let (path, options) = split(args)?;
     read_bytes(&path, &options)
 }
