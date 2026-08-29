@@ -923,24 +923,50 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     }
     let calendar = crate::temporal::parse_calendar_identifier(calendar)?;
     let values = fields(receiver)?;
-    let month_code = format!("M{:02}", values[1] as u32);
-    let properties = NAMES
-        .iter()
-        .copied()
-        .zip(values)
-        .map(|(name, value)| (name.into(), Value::Number(value)))
-        .chain([
-            ("monthCode".into(), Value::String(month_code)),
-            ("calendarId".into(), Value::String(calendar)),
-            (
-                "\0prototype".into(),
-                Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
-            ),
-        ])
-        .collect();
-    Ok(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(properties),
-    )))
+    if object_property_string(Some(receiver), "calendarId").as_deref() == Some(&calendar) {
+        let mut arguments = values.iter().copied().map(Value::Number).collect::<Vec<_>>();
+        arguments.push(Value::String(calendar));
+        return construct(&arguments);
+    }
+    if !crate::temporal::plain_date::needs_calendar_boundary_projection(
+        values[0] as i32,
+        values[1] as u32,
+        values[2] as u32,
+        &calendar,
+    ) {
+        let month_code = format!("M{:02}", values[1] as u32);
+        let properties = NAMES
+            .iter()
+            .copied()
+            .zip(values)
+            .map(|(name, value)| (name.into(), Value::Number(value)))
+            .chain([
+                ("monthCode".into(), Value::String(month_code)),
+                ("calendarId".into(), Value::String(calendar)),
+                (
+                    "\0prototype".into(),
+                    Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
+                ),
+            ])
+            .collect();
+        return Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(properties),
+        )));
+    }
+    let date = crate::temporal::plain_date::construct_from_iso(&[
+        Value::Number(values[0]),
+        Value::Number(values[1]),
+        Value::Number(values[2]),
+        Value::String(calendar.clone()),
+    ])?;
+    let date_year = crate::execute::get_property_result(&date, "year")?;
+    let date_month = crate::execute::get_property_result(&date, "month")?;
+    let date_day = crate::execute::get_property_result(&date, "day")?;
+    let month_code = crate::execute::get_property_result(&date, "monthCode")?;
+    let mut arguments = vec![date_year, date_month, date_day];
+    arguments.extend(values[3..].iter().copied().map(Value::Number));
+    arguments.extend([Value::String(calendar), month_code]);
+    construct(&arguments)
 }
 
 fn epoch_nanos(values: &[f64]) -> i128 {
@@ -1155,6 +1181,9 @@ fn calendar_getter(
             .map_or(Value::Undefined, |value| Value::String(value.into()))
         }
         crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => {
+            if let Some(value) = object_property_number(receiver, "\0temporal-era-year") {
+                return Ok(Value::Number(f64::from(value)));
+            }
             let related_year = if calendar == "japanese" {
                 object_property_number(receiver, "\0temporal-related-iso-year")
                     .unwrap_or(year)
