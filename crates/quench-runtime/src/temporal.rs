@@ -1585,8 +1585,7 @@ mod stubs {
             }
             let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
             let calendar = calendar_name;
-            if !year_was_provided
-                && !matches!(era_value, Value::Undefined)
+            if !matches!(era_value, Value::Undefined)
                 && !matches!(calendar.as_str(), "iso8601" | "chinese" | "dangi")
             {
                 let era = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
