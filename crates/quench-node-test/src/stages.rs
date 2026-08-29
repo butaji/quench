@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::reader::NodeFixture;
 
-const STAGE_SPEC: &str = include_str!("../../../STAGES.md");
+const STAGE_SPEC: &str = include_str!("../../../docs/NODE-STAGES.md");
 
 /// One canonical stage entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
