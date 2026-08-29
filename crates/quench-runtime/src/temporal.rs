@@ -1727,13 +1727,31 @@ mod stubs {
             ) {
                 super::plain_date::date_serial(year as f64, month as f64, day as f64)
             } else if let Some(code) = month_code_text.as_deref() {
-                super::plain_date::calendar_date_serial_for_code(
-                    year as f64,
-                    code,
-                    day as f64,
-                    &calendar,
-                )
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?
+                if matches!(calendar.as_str(), "iso8601" | "gregory") {
+                    super::plain_date::date_serial(year as f64, month as f64, day as f64)
+                } else {
+                    let serial = super::plain_date::calendar_date_serial_for_code(
+                        year as f64,
+                        code,
+                        day as f64,
+                        &calendar,
+                    );
+                    serial
+                        .or_else(|| {
+                            (!code.ends_with('L')).then(|| {
+                                super::plain_date::calendar_date_serial(
+                                    year as f64,
+                                    month as f64,
+                                    day as f64,
+                                    &calendar,
+                                )
+                            })
+                        })
+                        .flatten()
+                        .ok_or_else(|| {
+                            crate::value::error::throw_range_error("Invalid monthCode")
+                        })?
+                }
             } else {
                 super::plain_date::calendar_date_serial(
                     year as f64,
@@ -1793,6 +1811,12 @@ mod stubs {
                         || !matches!(calendar.as_str(), "hebrew" | "chinese" | "dangi")
                     {
                         object.set_property_in_place("month", Value::Number(month as f64));
+                        if month_code_text.is_none() {
+                            object.set_property_in_place(
+                                "monthCode",
+                                Value::String(format!("M{month:02}")),
+                            );
+                        }
                     } else if let Some(code) = month_code_text.as_deref() {
                         if code.ends_with('L') {
                             if let Ok(month) = code[1..3].parse::<u32>() {
