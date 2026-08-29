@@ -35,16 +35,19 @@ const readFile = (options) =>
   });
 
 const scenario = common.mustCall(async () => {
-  assert.deepStrictEqual(
-    fs.readFileSync(path, { buffer: Buffer.alloc(content.length + 16, 0x78) }),
-    content
-  );
+  const syncBuffer = Buffer.alloc(content.length + 16, 0x78);
+  const syncValue = fs.readFileSync(path, { buffer: syncBuffer });
+  assert.deepStrictEqual(syncValue, syncBuffer.subarray(0, content.length));
+  assert.deepStrictEqual(syncValue, content);
+  assert(syncBuffer.subarray(content.length).every((byte) => byte === 0x78));
+  const syncEncodedBuffer = Buffer.alloc(content.length + 16);
   assert.strictEqual(
-    fs.readFileSync(path, {
-      buffer: Buffer.alloc(content.length + 16),
-      encoding: "utf8"
-    }),
+    fs.readFileSync(path, { buffer: syncEncodedBuffer, encoding: "utf8" }),
     content.toString()
+  );
+  assert.deepStrictEqual(
+    syncEncodedBuffer.subarray(0, content.length),
+    content
   );
   let size;
   assert.deepStrictEqual(
@@ -58,27 +61,33 @@ const scenario = common.mustCall(async () => {
   );
   assert.strictEqual(size, content.length);
 
-  assert.deepStrictEqual(
-    await readFile({ buffer: Buffer.alloc(content.length + 16, 0x78) }),
-    content
-  );
+  const asyncBuffer = Buffer.alloc(content.length + 16, 0x78);
+  const asyncValue = await readFile({ buffer: asyncBuffer });
+  assert.deepStrictEqual(asyncValue, asyncBuffer.subarray(0, content.length));
+  assert.deepStrictEqual(asyncValue, content);
+  assert(asyncBuffer.subarray(content.length).every((byte) => byte === 0x78));
+  const asyncEncodedBuffer = Buffer.alloc(content.length + 16);
   assert.strictEqual(
-    await readFile({
-      encoding: "utf8",
-      buffer: Buffer.alloc(content.length + 16)
-    }),
+    await readFile({ encoding: "utf8", buffer: asyncEncodedBuffer }),
     content.toString()
   );
+  assert.deepStrictEqual(
+    asyncEncodedBuffer.subarray(0, content.length),
+    content
+  );
   size = undefined;
+  let asyncFactoryBuffer;
   assert.deepStrictEqual(
     await readFile({
       buffer(fileSize) {
         size = fileSize;
-        return Buffer.alloc(fileSize + 8);
+        asyncFactoryBuffer = Buffer.alloc(fileSize + 8);
+        return asyncFactoryBuffer;
       }
     }),
-    content
+    asyncFactoryBuffer.subarray(0, content.length)
   );
+  assert.deepStrictEqual(asyncFactoryBuffer.subarray(0, content.length), content);
   assert.strictEqual(size, content.length);
 
   assert.throws(

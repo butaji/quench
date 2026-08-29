@@ -16,6 +16,9 @@ impl QuenchNodeHost {
                     let name = arguments.first().map(safe_value_string).unwrap_or_default();
                     Ok(Value::String(format!("{}/{}", tmpdir_base(), name)))
                 }
+                HostCapabilityKind::Custom(CapabilityName::TmpdirHasEnoughSpace) => {
+                    Ok(Value::Boolean(false))
+                }
                 HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl) => {
                     let name = arguments.first().map(safe_value_string).unwrap_or_default();
                     Ok(quench_runtime::host_api::object(vec![(
