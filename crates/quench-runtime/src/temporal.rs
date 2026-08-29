@@ -2153,12 +2153,12 @@ mod stubs {
             if !matches!(partial_offset, Value::Undefined) {
                 fields.push(("offset".to_string(), partial_offset.clone()));
             }
-            let _disambiguation = option_string(
+            let disambiguation = option_string(
                 "disambiguation",
                 &["compatible", "earlier", "later", "reject"],
                 "compatible",
             )?;
-            let _offset =
+            let offset_mode =
                 option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
             let overflow = option_string("overflow", &["constrain", "reject"], "constrain")?;
             if overflow != "constrain" && overflow != "reject" {
@@ -2315,7 +2315,14 @@ mod stubs {
                 object.set_property_in_place("calendar", Value::String(calendar_id.clone()));
             }
             let option_value = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-                vec![("overflow".to_string(), Value::String(overflow.clone()))],
+                vec![
+                    ("overflow".to_string(), Value::String(overflow.clone())),
+                    (
+                        "disambiguation".to_string(),
+                        Value::String(disambiguation.clone()),
+                    ),
+                    ("offset".to_string(), Value::String(offset_mode)),
+                ],
             )));
             let result = if matches!(partial_offset, Value::Undefined)
                 && matches!(calendar_id.as_str(), "iso8601" | "gregory")
@@ -2430,7 +2437,12 @@ mod stubs {
                     .unwrap_or_else(|| "UTC".into());
                 let timezone =
                     super::parse_timezone_identifier(&crate::value::Value::String(timezone_text))?;
-                let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+                let epoch = super::timezone_local_epoch(&timezone, local_epoch, &disambiguation);
+                if epoch == i128::MIN {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid ZonedDateTime",
+                    ));
+                }
                 if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
                     return Err(crate::value::error::throw_range_error(
                         "Invalid epochNanoseconds",
