@@ -14,8 +14,13 @@
       const wrapper = (...args) => fn.apply(this, args);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.on(name, wrapper);
+      let deliveredLateError = false;
       if (name === "error" && this.destroyed && this._destroyError) {
         this._emitter.removeListener(name, wrapper);
+        deliveredLateError = true;
+        this._destroyErrorEmitted = true;
+        if (this._readableState) this._readableState.errorEmitted = true;
+        if (this._writableState) this._writableState.errorEmitted = true;
         fn.call(this, this._destroyError);
       } else if (name === "close" && this.destroyed && this._destroyClosePending) {
         this._emitter.removeListener(name, wrapper);
@@ -50,7 +55,7 @@
       if (name === "end" && this.readable !== false &&
           this._readableState && this._readableState.endEmitted) {
         nextTick(() => fn.call(this));
-      } else if (name === "error" && this._destroyErrorEmitted) {
+      } else if (name === "error" && this._destroyErrorEmitted && !deliveredLateError) {
         nextTick(() => fn.call(this, this._destroyError));
       } else if (name === "close" && this._destroyCloseEmitted) {
         nextTick(() => fn.call(this));
@@ -210,8 +215,14 @@
       completed = true;
       stream._constructing = false;
       if (error) {
-        if (stream._readableState) stream._readableState.errored = error;
-        if (stream._writableState) stream._writableState.errored = error;
+        if (stream._readableState) {
+          stream._readableState.errored = error;
+          stream._readableState.errorEmitted = true;
+        }
+        if (stream._writableState) {
+          stream._writableState.errored = error;
+          stream._writableState.errorEmitted = true;
+        }
         nextTick(() => stream._emitter.emit("error", error));
         return;
       }
@@ -233,6 +244,7 @@
 
   function initReadable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
+    stream._emitter.__quenchOwner = stream;
     const state = {
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
@@ -248,7 +260,9 @@
       readableEofPending: false,
       readableListenerTurnPending: false,
       errored: null,
+      errorEmitted: false,
       closeEmitted: false,
+      autoDestroying: false,
       encoding: options.encoding ? validateEncoding(options.encoding) : null,
       decoder: options.encoding ? new StringDecoder(options.encoding) : null,
       decoderEnded: false,
@@ -280,9 +294,16 @@
       else options.signal.addEventListener("abort", abort, { once: true });
     }
     if (options.autoDestroy !== false) {
-      stream._emitter.on("error", () => {
-        if (!stream.destroyed) stream.destroy();
-      });
+      const autoDestroyErrorListener = () => {
+        if (stream._readableState?.autoDestroying || stream._writableState?.autoDestroying) return;
+        if (!stream.destroyed) {
+          if (stream._readableState) stream._readableState.autoDestroying = true;
+          if (stream._writableState) stream._writableState.autoDestroying = true;
+          stream.destroy();
+        }
+      };
+      autoDestroyErrorListener.__quenchInternal = true;
+      stream._emitter.on("error", autoDestroyErrorListener);
     }
   }
 
@@ -1105,8 +1126,9 @@
         stream._readableState.closeEmitted = true;
         stream.closed = true;
         const endError = destroy ? destroyError : error;
-        if (endError) {
+        if (endError && !stream._readableState.errorEmitted) {
           stream._readableState.errored = endError;
+          stream._readableState.errorEmitted = true;
           stream._destroyError = endError;
           stream._destroyErrorEmitted = true;
           stream._emitter.emit("error", endError);
@@ -1152,6 +1174,7 @@
 
   function initWritable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
+    stream._emitter.__quenchOwner = stream;
     stream._writableState = {
       objectMode: !!options.objectMode,
       writable: options.writable === false ? false : undefined,
@@ -1174,6 +1197,7 @@
       final: options.final || null,
       endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
+      autoDestroying: false,
       destroyed: false
     };
     stream._writableState.getBuffer = function () {
@@ -1185,9 +1209,16 @@
     if (options.writev) stream._writev = options.writev;
     if (options.destroy) stream._destroy = options.destroy;
     if (options.autoDestroy !== false) {
-      stream._emitter.on("error", () => {
-        if (!stream.destroyed) stream.destroy();
-      });
+      const autoDestroyErrorListener = () => {
+        if (stream._readableState?.autoDestroying || stream._writableState?.autoDestroying) return;
+        if (!stream.destroyed) {
+          if (stream._readableState) stream._readableState.autoDestroying = true;
+          if (stream._writableState) stream._writableState.autoDestroying = true;
+          stream.destroy();
+        }
+      };
+      autoDestroyErrorListener.__quenchInternal = true;
+      stream._emitter.on("error", autoDestroyErrorListener);
     }
   }
 
@@ -1620,11 +1651,11 @@
         const finish = (destroyError) => {
           const endError = destroyError || stream._writableState.errored;
           if (endError) completeEndCallbacks(stream._writableState, endError);
-          if (destroyError && !stream._writableState.errorEmitted) {
+        if (endError && !stream._writableState.errorEmitted) {
           stream._writableState.errorEmitted = true;
-          stream._destroyError = destroyError;
+          stream._destroyError = endError;
           stream._destroyErrorEmitted = true;
-          stream._emitter.emit("error", destroyError);
+          stream._emitter.emit("error", endError);
         }
         stream._destroyCloseEmitted = true;
         stream._emitter.emit("close");
