@@ -287,6 +287,33 @@ pub(crate) fn calendar_days_in_month_for_code(
     calendar_date_for_code(year, code, 1, calendar).map(|date| u32::from(date.days_in_month()))
 }
 
+pub(crate) fn calendar_month_code_for_date(
+    year: i32,
+    month: u32,
+    day: u32,
+    calendar: &str,
+) -> Option<String> {
+    calendar_date(year, month, day, calendar)
+        .map(|date| date.month().to_input().code().0.to_string())
+}
+
+pub(crate) fn calendar_month_code_for_ordinal(
+    year: i32,
+    ordinal: u32,
+    day: u32,
+    calendar: &str,
+) -> Option<String> {
+    (1..=12).find_map(|month| {
+        [format!("M{month:02}"), format!("M{month:02}L")]
+            .into_iter()
+            .find_map(|code| {
+                calendar_date_from_code(year, &code, day, calendar)
+                    .filter(|(actual, _)| *actual == ordinal)
+                    .map(|(_, canonical)| canonical)
+            })
+    })
+}
+
 pub(crate) fn calendar_day_of_year_for_code(
     year: i32,
     code: &str,
@@ -321,9 +348,31 @@ pub(crate) fn calendar_reference_iso_year_for_code(
     day: u32,
     calendar: &str,
 ) -> Option<i32> {
-    (1932..=1972)
+    let historical = (1932..=1972)
         .rev()
-        .find(|year| calendar_iso_date_for_code(*year, code, day, calendar).is_some())
+        .find(|year| calendar_iso_date_for_code(*year, code, day, calendar).is_some());
+    if historical.is_some() {
+        return historical;
+    }
+    if matches!(calendar, "chinese" | "dangi") {
+        // ICU cannot reverse-project every documented lunisolar reference
+        // month (notably the rare 30-day leap months and post-1972 months),
+        // so retain the Test262/Temporal reference-year table as data.
+        let year = match (code, day) {
+            ("M03L", 30) => 1955,
+            ("M04L", 30) => 1944,
+            ("M05L", 30) => 1952,
+            ("M06L", 30) => 1941,
+            ("M07L", 30) => 1938,
+            ("M09L", 1 | 29) => 2014,
+            ("M10L", 1 | 29) => 1984,
+            ("M11L", 1) => 2033,
+            ("M11L", 29) => 2034,
+            _ => return None,
+        };
+        return Some(year);
+    }
+    None
 }
 
 pub(crate) struct CalendarDateFields {
