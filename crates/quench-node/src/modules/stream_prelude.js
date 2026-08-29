@@ -1135,6 +1135,13 @@
   ReadableClass.prototype.destroyed = false;
   Readable.from = ReadableClass.from;
 
+  function Stream(options) {
+    if (!(this instanceof Stream)) return new Stream(options || {});
+    initReadable(this, Object.assign({}, options || {}, { autoDestroy: false }));
+  }
+  Stream.prototype = Object.create(Readable.prototype);
+  Stream.prototype.constructor = Stream;
+
   function writableChunkLength(stream, chunk) {
     if (stream._writableState.objectMode) return 1;
     if (typeof chunk === "string") return chunk.length;
@@ -2061,13 +2068,19 @@
     return { readable, writable };
   };
 
+  Stream.Readable = Readable;
+  Stream.Writable = Writable;
+  Stream.Duplex = DuplexCompat;
+  Stream.Transform = Transform;
+  Stream.PassThrough = PassThrough;
+
   return {
     Readable,
     Writable,
     Duplex: DuplexCompat,
     Transform,
     PassThrough,
-    Stream: Readable,
+    Stream,
     duplexPair,
     destroy,
     finished,
