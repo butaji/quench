@@ -47,6 +47,7 @@ test-stream-events-prepend.js
 test-stream-readable-default-encoding.js
 test-stream-readable-data.js
 test-stream-readable-readable.js
+test-stream-readable-hwm-0-no-flow-data.js
 test-stream-readable-ended.js
 test-stream-readable-emit-readable-short-stream.js
 test-stream-once-readable-pipe.js
