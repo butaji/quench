@@ -542,6 +542,7 @@ pub const SPEC_NET_SET_ASF_TIMEOUT: NodeSpec =
 // net socket / server methods (dispatched with the JS receiver).
 pub const SPEC_NET_SERVER_LISTEN: NodeSpec = NodeSpec::new("net:server:listen", 0x1007);
 pub const SPEC_NET_SERVER_CLOSE: NodeSpec = NodeSpec::new("net:server:close", 0x1008);
+pub const SPEC_NET_SERVER_CLOSE_IDLE: NodeSpec = NodeSpec::new("net:server:closeIdleConnections", 0x1018);
 pub const SPEC_NET_SERVER_ADDRESS: NodeSpec = NodeSpec::new("net:server:address", 0x1009);
 pub const SPEC_NET_SERVER_UNREF: NodeSpec = NodeSpec::new("net:server:unref", 0x1014);
 pub const SPEC_NET_SERVER_REF: NodeSpec = NodeSpec::new("net:server:ref", 0x1015);

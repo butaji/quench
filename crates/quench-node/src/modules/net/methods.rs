@@ -654,22 +654,47 @@ pub fn server_close(
         server.listening = false;
         server.closed = true;
     }
-    let sockets: Vec<Value> = state
-        .borrow()
+    // Closing a server stops new accepts but leaves established connections
+    // alive. Their ordinary EOF/close transitions are what release the
+    // server and allow the registered close callback to fire.
+    super::set_server_listening(&receiver, false)?;
+    add_listener_cb(state, &receiver, args.first(), "close")?;
+    Ok(receiver)
+}
+
+/// `server.closeIdleConnections()` — terminate established idle sockets
+/// without changing the listening state. Active request/response sockets are
+/// left to their normal completion path.
+pub fn server_close_idle(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let Some(id) = net_id(&receiver) else {
+        return Ok(receiver);
+    };
+    let host = state.borrow();
+    let idle: Vec<Value> = host
         .net
         .sockets
         .values()
         .filter_map(|socket| {
             let socket = socket.borrow();
-            (socket.server_id == Some(id) && socket.state != SocketState::Closed)
-                .then(|| socket.js.clone())
+            let is_idle = socket.server_id == Some(id)
+                && socket.state != SocketState::Closed
+                && host
+                    .http
+                    .conns
+                    .get(&socket.id)
+                    .is_some_and(|conn| conn.response_done);
+            is_idle.then(|| socket.js.clone())
         })
         .collect();
-    for socket in sockets {
+    drop(host);
+    for socket in idle {
         socket_destroy(state, Some(&socket), &[])?;
     }
-    super::set_server_listening(&receiver, false)?;
-    add_listener_cb(state, &receiver, args.first(), "close")?;
     Ok(receiver)
 }
 

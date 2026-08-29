@@ -413,6 +413,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SET_ASF_TIMEOUT => net_set_asf_timeout,
         CAP_NET_SERVER_LISTEN => crate::modules::net::server_listen,
         CAP_NET_SERVER_CLOSE => crate::modules::net::server_close,
+        CAP_NET_SERVER_CLOSE_IDLE => crate::modules::net::server_close_idle,
         CAP_NET_SERVER_ADDRESS => crate::modules::net::server_address,
         CAP_NET_SERVER_UNREF => crate::modules::net::server_unref,
         CAP_NET_SERVER_REF => crate::modules::net::server_ref,
