@@ -1601,8 +1601,14 @@ mod stubs {
                 finite_integer(&second_value)?
             };
             let timezone_value = crate::execute::get_property_result(value, "timeZone")?;
-            let era_value = crate::execute::get_property_result(value, "era")?;
-            let era_year_value = crate::execute::get_property_result(value, "eraYear")?;
+            let (era_value, era_year_value) = if calendar_name == "iso8601" {
+                (Value::Undefined, Value::Undefined)
+            } else {
+                (
+                    crate::execute::get_property_result(value, "era")?,
+                    crate::execute::get_property_result(value, "eraYear")?,
+                )
+            };
             let mut year_value = crate::execute::get_property_result(value, "year")?;
             let year_was_provided = !matches!(year_value, Value::Undefined);
             if matches!(year_value, Value::Undefined)
@@ -4905,11 +4911,23 @@ mod stubs {
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             if smallest == "day" {
+                let local_midnight = || -> Option<i128> {
+                    let year = crate::conversion::to_number(&property("year").ok()?).ok()? as f64;
+                    let month = crate::conversion::to_number(&property("month").ok()?).ok()? as f64;
+                    let day = crate::conversion::to_number(&property("day").ok()?).ok()? as f64;
+                    Some((super::plain_date::date_serial(year, month, day)
+                        - super::plain_date::date_serial(1970.0, 1.0, 1.0))
+                        as i128
+                        * 86_400_000_000_000)
+                };
                 let start = super::timezone_start_of_day_epoch(&timezone, epoch)
-                    .unwrap_or(epoch - 86_400_000_000_000);
-                let next =
-                    super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
-                        .unwrap_or(start + 86_400_000_000_000);
+                    .or_else(|| local_midnight().map(|local| local - super::timezone_offset_nanos(&timezone, local)));
+                let Some(start) = start else {
+                    return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
+                };
+                let next = super::timezone_start_of_day_epoch(&timezone, start + 36 * 3_600_000_000_000)
+                    .or_else(|| local_midnight().map(|local| local + 86_400_000_000_000 - super::timezone_offset_nanos(&timezone, local + 86_400_000_000_000)))
+                    .unwrap_or(start + 86_400_000_000_000);
                 let length = (next - start).max(1);
                 let elapsed = (epoch - start).clamp(0, length);
                 let round_up = match mode.as_str() {
