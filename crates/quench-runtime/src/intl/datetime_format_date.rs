@@ -19,11 +19,7 @@ pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) 
     let has_time = has_hour || has_minute || has_second;
     let time_zone = lookup_slot_string(slots, "timeZone");
     let is_utc = time_zone.as_deref() == Some("UTC") || time_zone.is_none();
-    let comps = if is_utc {
-        crate::date::chrono_utils::utc_components(number)
-    } else {
-        crate::date::chrono_utils::local_components(number)
-    };
+    let comps = zone_components(time_zone.as_deref(), number);
     let (year, month, day, hour, minute, second, ms) = comps?;
     if !has_year && !has_month && !has_day && !has_weekday {
         return has_time.then(|| {
@@ -45,6 +41,55 @@ pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) 
     let mut text = time_str;
     append_fractional(&mut text, slots, ms);
     Some(format!("{date_str}, {text}"))
+}
+
+fn zone_components(
+    time_zone: Option<&str>,
+    number: f64,
+) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
+    if let Some(offset) = time_zone.and_then(parse_zone_offset_minutes) {
+        return crate::date::chrono_utils::utc_components(number + f64::from(offset) * 60_000.0);
+    }
+    if time_zone == Some("UTC") || time_zone.is_none() {
+        crate::date::chrono_utils::utc_components(number)
+    } else if let Some(zone) = time_zone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        let whole = number.trunc() as i64;
+        let seconds = whole.div_euclid(1_000);
+        let millis = whole.rem_euclid(1_000) as u32;
+        let instant = DateTime::<Utc>::from_timestamp(seconds, millis * 1_000_000)?;
+        let local = instant.with_timezone(&zone);
+        Some((
+            local.year(),
+            local.month(),
+            local.day(),
+            local.hour(),
+            local.minute(),
+            local.second(),
+            local.nanosecond() / 1_000_000,
+        ))
+    } else {
+        crate::date::chrono_utils::local_components(number)
+    }
+}
+
+fn parse_zone_offset_minutes(value: &str) -> Option<i32> {
+    let sign = match value.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let value = &value[1..];
+    let (hours, minutes) = value.split_once(':').map_or_else(
+        || match value.len() {
+            2 => Some((&value[..2], "00")),
+            4 => Some((&value[..2], &value[2..])),
+            _ => None,
+        },
+        |parts| Some(parts),
+    )?;
+    let hours = hours.parse::<i32>().ok()?;
+    let minutes = minutes.parse::<i32>().ok()?;
+    (hours <= 23 && minutes <= 59).then_some(sign * (hours * 60 + minutes))
 }
 
 /// Format Temporal plain values directly from their calendar fields. Unlike
@@ -82,7 +127,7 @@ pub(crate) fn temporal_date_format_result(
     if date_str.is_empty() {
         Some(time_str)
     } else {
-        Some(format!("{date_str} {time_str}"))
+        Some(format!("{date_str}, {time_str}"))
     }
 }
 
@@ -195,6 +240,12 @@ fn compose_date_string_with_weekday(
         && day_style.is_some()
     {
         return format!("{}/{}/{}", parts[0], parts[1], parts[2]);
+    }
+    if !month_is_name && month_style.is_some() && day_style.is_some() && year_style.is_none() {
+        return format!("{}/{}", month_str.unwrap_or_default(), day_str.unwrap_or_default());
+    }
+    if !month_is_name && month_style.is_some() && year_style.is_some() && day_style.is_none() {
+        return format!("{}/{}", month_str.unwrap_or_default(), year_str.unwrap_or_default());
     }
     let mut out = String::new();
     let mut first = true;

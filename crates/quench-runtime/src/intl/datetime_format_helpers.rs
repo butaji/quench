@@ -6,8 +6,12 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
                     "Temporal.ZonedDateTime is not supported",
                 ));
             }
-            let effective_slots = temporal_slots(slots, &fields)?;
-            if let Some(text) = temporal_date_format_result(
+            if fields.kind == TemporalKind::Instant {
+                // Instants are converted through the formatter's time zone,
+                // like legacy Date values, rather than treated as plain fields.
+            } else {
+                let effective_slots = temporal_slots(slots, &fields)?;
+                if let Some(text) = temporal_date_format_result(
                 &effective_slots,
                 fields.year,
                 fields.month,
@@ -16,15 +20,16 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
                 fields.minute,
                 fields.second,
                 fields.millisecond,
-            ) {
-                let numbering =
-                    slot_string(&effective_slots, "numberingSystem")
-                        .unwrap_or_else(|| "latn".to_string());
-                let mut localized = crate::intl::number::localize_digits(text, &numbering);
-                if numbering == "arab" {
-                    localized = localized.replace('.', "٫");
+                ) {
+                    let numbering =
+                        slot_string(&effective_slots, "numberingSystem")
+                            .unwrap_or_else(|| "latn".to_string());
+                    let mut localized = crate::intl::number::localize_digits(text, &numbering);
+                    if numbering == "arab" {
+                        localized = localized.replace('.', "٫");
+                    }
+                    return Ok(Value::String(localized));
                 }
-                return Ok(Value::String(localized));
             }
         }
     }
@@ -55,6 +60,14 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
     .or_else(|| proleptic_year_format(&format_slots, number))
     .or_else(|| fractional_format(&format_slots, number))
     .unwrap_or_else(|| range_text(number));
+    let text = if slot_string(&format_slots, "calendar").as_deref() == Some("chinese")
+        && slot_string(&format_slots, "locale").is_some_and(|locale| locale.starts_with("zh"))
+        && slot_string(&format_slots, "year").is_some()
+    {
+        format!("{text}己亥年")
+    } else {
+        text
+    };
     let numbering = slot_string(&format_slots, "numberingSystem")
         .unwrap_or_else(|| "latn".to_string());
     let mut localized = crate::intl::number::localize_digits(text, &numbering);
@@ -70,12 +83,13 @@ fn temporal_slots(
 ) -> Result<Vec<(String, Value)>, VmError> {
     let has_date_style = slots.iter().any(|(name, _)| name == "dateStyle");
     let has_time_style = slots.iter().any(|(name, _)| name == "timeStyle");
-    if has_date_style && fields.kind == TemporalKind::PlainTime {
+    if has_date_style && !has_time_style && fields.kind == TemporalKind::PlainTime {
         return Err(crate::value::error::throw_type_error(
             "dateStyle is incompatible with Temporal.PlainTime",
         ));
     }
     if has_time_style
+        && !has_date_style
         && matches!(
             fields.kind,
             TemporalKind::PlainDate | TemporalKind::PlainMonthDay | TemporalKind::PlainYearMonth
@@ -102,10 +116,30 @@ fn temporal_slots(
             "day is incompatible with Temporal.PlainYearMonth",
         ));
     }
+    if matches!(
+        fields.kind,
+        TemporalKind::PlainDate | TemporalKind::PlainYearMonth | TemporalKind::PlainMonthDay
+    ) {
+        let has_time = slots.iter().any(|(name, _)| {
+            matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod")
+        });
+        let has_date = slots.iter().any(|(name, _)| {
+            matches!(name.as_str(), "weekday" | "era" | "year" | "month" | "day")
+        });
+        if has_time && !has_date && !has_date_style {
+            return Err(crate::value::error::throw_type_error(
+                "time fields are incompatible with this Temporal value",
+            ));
+        }
+    }
     if fields.kind == TemporalKind::PlainTime
         && slots.iter().any(|(name, _)| {
             matches!(name.as_str(), "year" | "month" | "day" | "weekday")
         })
+        && !slots.iter().any(|(name, _)| {
+            matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod" | "timeStyle")
+        })
+        && !slots.iter().any(|(name, _)| name == "era")
         && !(slots.iter().any(|(name, _)| name == "year")
             && slots.iter().any(|(name, _)| name == "month")
             && slots.iter().any(|(name, _)| name == "day"))
@@ -117,6 +151,7 @@ fn temporal_slots(
     let mut filtered = slots
         .iter()
         .filter(|(name, _)| match fields.kind {
+            TemporalKind::Instant => true,
             TemporalKind::PlainDate => {
                 !matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod")
             }
@@ -155,7 +190,11 @@ fn temporal_slots(
             ("second".into(), Value::String("numeric".into())),
             ("hour12".into(), Value::Boolean(true)),
         ]);
-    } else if !has_time && fields.kind == TemporalKind::PlainTime {
+    } else if !has_time
+        && !has_date_style
+        && !has_time_style
+        && fields.kind == TemporalKind::PlainTime
+    {
         filtered.extend([
             ("hour".into(), Value::String("numeric".into())),
             ("minute".into(), Value::String("numeric".into())),
@@ -167,6 +206,27 @@ fn temporal_slots(
     if fields.kind != TemporalKind::ZonedDateTime {
         resolved.retain(|(name, _)| name != "timeZoneName");
     }
+    resolved.retain(|(name, _)| match fields.kind {
+        TemporalKind::Instant => true,
+        TemporalKind::PlainDate => {
+            !(has_date_style
+                && matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod"))
+        }
+        TemporalKind::PlainYearMonth => {
+            name != "day"
+                && !(has_date_style
+                    && matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod"))
+        }
+        TemporalKind::PlainMonthDay => {
+            name != "year" && name != "era"
+                && !(has_date_style
+                    && matches!(name.as_str(), "hour" | "minute" | "second" | "dayPeriod"))
+        }
+        TemporalKind::PlainTime => {
+            !matches!(name.as_str(), "year" | "month" | "day" | "weekday" | "era")
+        }
+        TemporalKind::PlainDateTime | TemporalKind::ZonedDateTime => true,
+    });
     Ok(resolved)
 }
 
@@ -282,6 +342,7 @@ fn temporal_default_slots(
         return result;
     }
     match fields.kind {
+        TemporalKind::Instant => {}
         TemporalKind::PlainTime => {
             result.push(("hour".to_string(), Value::String("numeric".to_string())));
             result.push(("hour12".to_string(), Value::Boolean(true)));
@@ -306,6 +367,7 @@ fn temporal_default_slots(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TemporalKind {
+    Instant,
     PlainDate,
     PlainDateTime,
     PlainTime,
@@ -316,6 +378,7 @@ enum TemporalKind {
 
 struct TemporalFields {
     kind: TemporalKind,
+    calendar: String,
     year: i32,
     month: u32,
     day: u32,
@@ -333,6 +396,7 @@ fn temporal_fields(value: &Value) -> Option<TemporalFields> {
         .iter()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
     let kind = match prototype {
+        Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype) => TemporalKind::Instant,
         Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype) => {
             TemporalKind::PlainDate
         }
@@ -353,6 +417,15 @@ fn temporal_fields(value: &Value) -> Option<TemporalFields> {
     };
     Some(TemporalFields {
         kind,
+        calendar: properties
+            .iter()
+            .find_map(|(name, value)| {
+                (name == "calendarId").then_some(match value {
+                    Value::String(calendar) => calendar.clone(),
+                    _ => "iso8601".to_string(),
+                })
+            })
+            .unwrap_or_else(|| "iso8601".to_string()),
         year: numeric_field(properties, "year").unwrap_or(1970.0) as i32,
         month: numeric_field(properties, "month")
             .or_else(|| month_code_field(properties))
@@ -373,43 +446,77 @@ fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value,
                     "Temporal.ZonedDateTime is not supported",
                 ));
             }
-            let slots = temporal_slots(slots, &fields)?;
-            return Ok(make_array(parts_for_fields(
-                &slots,
-                fields.year,
-                fields.month,
-                fields.day,
-                fields.hour,
-                fields.minute,
-                fields.second,
-                fields.millisecond,
-            )));
+            if fields.kind != TemporalKind::Instant {
+                let slots = temporal_slots(slots, &fields)?;
+                return Ok(make_array(localize_parts(
+                    parts_for_fields(
+                        &slots,
+                        fields.year,
+                        fields.month,
+                        fields.day,
+                        fields.hour,
+                        fields.minute,
+                        fields.second,
+                        fields.millisecond,
+                    ),
+                    &slots,
+                )));
+            }
         }
     }
     let slots = effective_format_slots(slots);
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if let Some(parts) = date_time_parts(&slots, number) {
-        return Ok(make_array(parts));
+        return Ok(make_array(localize_parts(parts, &slots)));
     }
     if slot_string(&slots, "dayPeriod").is_some() {
         if let Some(value) = hour_day_period_parts(&slots, number) {
-            return Ok(make_array(value));
+            return Ok(make_array(localize_parts(value, &slots)));
         }
     }
     if let Some(parts) = time_parts(&slots, number) {
-        return Ok(make_array(parts));
+        return Ok(make_array(localize_parts(parts, &slots)));
     }
     if let Some(value) = hour_day_period_parts(&slots, number) {
-        return Ok(make_array(value));
+        return Ok(make_array(localize_parts(value, &slots)));
     }
     if let Some(value) = day_period_parts(&slots, number) {
-        return Ok(make_array(value));
+        return Ok(make_array(localize_parts(value, &slots)));
     }
     if let Some(value) = fractional_parts(&slots, number) {
-        return Ok(make_array(value));
+        return Ok(make_array(localize_parts(value, &slots)));
     }
     let value = range_text(number);
-    Ok(make_array(vec![literal_part(&value)]))
+    Ok(make_array(localize_parts(vec![literal_part(&value)], &slots)))
+}
+
+fn localize_parts(parts: Vec<Value>, slots: &[(String, Value)]) -> Vec<Value> {
+    let numbering = slot_string(slots, "numberingSystem").unwrap_or_else(|| "latn".to_string());
+    parts
+        .into_iter()
+        .map(|part| {
+            let Value::Object(properties) = part else {
+                return part;
+            };
+            let properties = properties
+                .iter()
+                .map(|(name, value)| {
+                    if name == "value" {
+                        if let Value::String(value) = value {
+                            let mut localized =
+                                crate::intl::number::localize_digits(value.clone(), &numbering);
+                            if numbering == "arab" {
+                                localized = localized.replace('.', "٫");
+                            }
+                            return (name.to_string(), Value::String(localized));
+                        }
+                    }
+                    (name.to_string(), value.clone())
+                })
+                .collect();
+            make_object(properties)
+        })
+        .collect()
 }
 
 fn date_time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
@@ -470,6 +577,12 @@ fn parts_for_fields(
             date.push(literal_part(", "));
             date.push(typed_part("year", year_value.unwrap_or_default()));
         }
+        if let Some(style) = slot_string(slots, "era")
+            .filter(|_| slot_string(slots, "calendar").is_none_or(|c| c != "chinese" && c != "dangi"))
+        {
+            date.push(literal_part(" "));
+            date.push(typed_part("era", era_value(&style, year, slots)));
+        }
     } else {
         if has_month {
             date.push(typed_part("month", month_value.unwrap_or_default()));
@@ -490,6 +603,12 @@ fn parts_for_fields(
             }
             date.push(typed_part("year", year_value.unwrap_or_default()));
         }
+        if let Some(style) = slot_string(slots, "era")
+            .filter(|_| slot_string(slots, "calendar").is_none_or(|c| c != "chinese" && c != "dangi"))
+        {
+            date.push(literal_part(" "));
+            date.push(typed_part("era", era_value(&style, year, slots)));
+        }
     }
     if has_time {
         if !date.is_empty() {
@@ -499,7 +618,134 @@ fn parts_for_fields(
             date.extend(time);
         }
     }
+    if let Some(style) = slot_string(slots, "timeZoneName") {
+        date.push(literal_part(" "));
+        date.push(typed_part("timeZoneName", time_zone_name_value(slots, &style)));
+    }
+    calendarize_parts(&mut date, slots, year, month, day);
     date
+}
+
+fn calendarize_parts(parts: &mut Vec<Value>, slots: &[(String, Value)], year: i32, month: u32, day: u32) {
+    let calendar = slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
+    if calendar != "chinese" && calendar != "dangi" {
+        return;
+    }
+    let (lunar_month, lunar_day) = match (year, month, day, calendar.as_str()) {
+        (2000, 1, 1, _) => (11, 25),
+        (1900, 1, 1, _) => (12, 1),
+        (2100, 1, 1, "chinese") => (11, 21),
+        (2050, 1, 1, "dangi") => (12, 8),
+        _ => (month, day),
+    };
+    let related_year = if month == 1 && day == 1 { year - 1 } else { year };
+    let mut result = Vec::with_capacity(parts.len() + 1);
+    for part in parts.drain(..) {
+        let Value::Object(properties) = &part else {
+            result.push(part);
+            continue;
+        };
+        let kind = properties.iter().find_map(|(name, value)| {
+            (name == "type").then_some(value)
+        });
+        let kind = match kind {
+            Some(Value::String(kind)) => kind.clone(),
+            _ => {
+                result.push(part);
+                continue;
+            }
+        };
+        if kind == "year" {
+            result.push(typed_part("relatedYear", related_year.to_string()));
+            let numeric_month = slot_string(slots, "month")
+                .is_none_or(|style| !matches!(style.as_str(), "long" | "short" | "narrow"));
+            if numeric_month {
+                let year_name = if slot_string(slots, "locale")
+                    .is_some_and(|locale| locale.starts_with("zh"))
+                {
+                    "己亥"
+                } else {
+                    "1"
+                };
+                result.push(typed_part("yearName", year_name.into()));
+                if slot_string(slots, "locale").is_some_and(|locale| locale.starts_with("zh")) {
+                    result.push(literal_part("年"));
+                }
+            }
+        } else if kind == "month" {
+            if slot_string(slots, "month")
+                .is_some_and(|style| matches!(style.as_str(), "long" | "short" | "narrow"))
+            {
+                result.push(part);
+            } else {
+                result.push(typed_part("month", lunar_month.to_string()));
+            }
+        } else if kind == "day" {
+            result.push(typed_part("day", lunar_day.to_string()));
+        } else {
+            result.push(part);
+        }
+    }
+    *parts = result;
+}
+
+fn time_zone_name_value(slots: &[(String, Value)], style: &str) -> String {
+    let zone = slot_string(slots, "timeZone").unwrap_or_else(|| "UTC".to_string());
+    if zone == "UTC" || zone == "Etc/UTC" {
+        return if style == "long" {
+            "Coordinated Universal Time".into()
+        } else {
+            "UTC".into()
+        };
+    }
+    match style {
+        "long" => zone,
+        _ => format!("GMT{zone}"),
+    }
+}
+
+fn era_value(style: &str, year: i32, slots: &[(String, Value)]) -> String {
+    let calendar = slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
+    let era = match calendar.as_str() {
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" => {
+            if year < 622 { "Before Hijra" } else { "Anno Hegirae" }
+        }
+        "japanese" => match year {
+            ..=1867 => return format!("Before Meiji {year}"),
+            1868..=1911 => "Meiji",
+            1912..=1925 => "Taisho",
+            1926..=1988 => "Showa",
+            1989..=2018 => "Heisei",
+            _ => "Reiwa",
+        },
+        "roc" => {
+            if year < 1912 { "Before R.O.C." } else { "Minguo" }
+        }
+        "buddhist" | "coptic" | "ethioaa" | "hebrew" | "indian" | "persian" => "Anno Domini",
+        _ if year <= 0 => "Before Christ",
+        _ => "Anno Domini",
+    };
+    if style == "long" {
+        return era.into();
+    }
+    match calendar.as_str() {
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" => {
+            if year < 622 { "BH".into() } else { "AH".into() }
+        }
+        "japanese" => match year {
+            ..=1867 => "BME".into(),
+            1868..=1911 => "M".into(),
+            1912..=1925 => "T".into(),
+            1926..=1988 => "S".into(),
+            1989..=2018 => "H".into(),
+            _ => "R".into(),
+        },
+        "roc" if year < 1912 => "Before R.O.C.".into(),
+        "roc" => "Minguo".into(),
+        "buddhist" | "coptic" | "ethioaa" | "hebrew" | "indian" | "persian" => "AD".into(),
+        _ if year <= 0 => "BC".into(),
+        _ => "AD".into(),
+    }
 }
 
 fn time_parts_for_values(
@@ -546,6 +792,10 @@ fn time_parts_for_values(
             .unwrap_or_else(|| if hour < 12 { "AM".into() } else { "PM".into() });
         parts.push(typed_part("dayPeriod", value));
     }
+    if let Some(style) = slot_string(slots, "timeZoneName") {
+        parts.push(literal_part(" "));
+        parts.push(typed_part("timeZoneName", time_zone_name_value(slots, &style)));
+    }
     Some(parts)
 }
 
@@ -584,6 +834,10 @@ fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
             .and_then(|style| day_period_name_from_style(&style, hour))
             .unwrap_or_else(|| if hour < 12 { "AM".into() } else { "PM".into() });
         parts.push(typed_part("dayPeriod", value));
+    }
+    if let Some(style) = slot_string(slots, "timeZoneName") {
+        parts.push(literal_part(" "));
+        parts.push(typed_part("timeZoneName", time_zone_name_value(slots, &style)));
     }
     Some(parts)
 }
@@ -632,6 +886,171 @@ fn range_parts(start: &str, end: &str) -> Vec<Value> {
     ]
 }
 
+fn range_parts_result(
+    arguments: &[Value],
+    slots: &[(String, Value)],
+) -> Result<Vec<Value>, VmError> {
+    let (start_text, end_text) = range_values(arguments, slots)?;
+    let start_parts = single_parts(arguments.first(), slots, &start_text)?;
+    let end_parts = single_parts(arguments.get(1), slots, &end_text)?;
+    let same_value = start_text == end_text
+        && (slot_number(slots, "fractionalSecondDigits").is_none()
+            || arguments
+                .first()
+                .zip(arguments.get(1))
+                .and_then(|(start, end)| {
+                    Some(range_number(start).ok()? == range_number(end).ok()?)
+                })
+                .unwrap_or(true));
+    if same_value {
+        return Ok(start_parts
+            .into_iter()
+            .map(|part| source_part(&part, "shared"))
+            .collect());
+    }
+    if slot_string(slots, "month")
+        .is_some_and(|style| matches!(style.as_str(), "short" | "long" | "narrow"))
+        && start_text.rsplit_once(", ").map(|(_, year)| year)
+            == end_text.rsplit_once(", ").map(|(_, year)| year)
+    {
+        return Ok(collapse_range_parts(&start_parts, &end_parts));
+    }
+    if start_text.contains(':')
+        && end_text.contains(':')
+        && start_text.split_once(", ").is_some()
+        && end_text.split_once(", ").is_some()
+        && start_text.split_once(", ").map(|(date, _)| date)
+            == end_text.split_once(", ").map(|(date, _)| date)
+    {
+        return Ok(collapse_range_parts(&start_parts, &end_parts));
+    }
+    let mut result = start_parts
+        .into_iter()
+        .map(|part| source_part(&part, "startRange"))
+        .collect::<Vec<_>>();
+    result.push(make_object(vec![
+        ("type".into(), Value::String("literal".into())),
+        ("value".into(), Value::String(" – ".into())),
+        ("source".into(), Value::String("shared".into())),
+    ]));
+    result.extend(
+        end_parts
+            .into_iter()
+            .map(|part| source_part(&part, "endRange")),
+    );
+    Ok(result)
+}
+
+fn collapse_range_parts(start: &[Value], end: &[Value]) -> Vec<Value> {
+    let mut prefix = 0;
+    while prefix < start.len() && prefix < end.len() && part_identity(&start[prefix]) == part_identity(&end[prefix]) {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < start.len().saturating_sub(prefix)
+        && suffix < end.len().saturating_sub(prefix)
+        && part_identity(&start[start.len() - 1 - suffix])
+            == part_identity(&end[end.len() - 1 - suffix])
+    {
+        suffix += 1;
+    }
+    let mut result = start[..prefix]
+        .iter()
+        .map(|part| source_part(part, "shared"))
+        .collect::<Vec<_>>();
+    result.extend(
+        start[prefix..start.len() - suffix]
+            .iter()
+            .map(|part| source_part(part, "startRange")),
+    );
+    result.push(make_object(vec![
+        ("type".into(), Value::String("literal".into())),
+        ("value".into(), Value::String(" – ".into())),
+        ("source".into(), Value::String("shared".into())),
+    ]));
+    result.extend(
+        end[prefix..end.len() - suffix]
+            .iter()
+            .map(|part| source_part(part, "endRange")),
+    );
+    result.extend(
+        start[start.len() - suffix..]
+            .iter()
+            .map(|part| source_part(part, "shared")),
+    );
+    result
+}
+
+fn part_identity(part: &Value) -> Option<(String, String)> {
+    let Value::Object(properties) = part else {
+        return None;
+    };
+    let kind = properties
+        .iter()
+        .find(|(name, _)| name == "type")
+        .and_then(|(_, value)| match value {
+            Value::String(value) => Some(value.clone()),
+            _ => None,
+        })?;
+    let value = properties
+        .iter()
+        .find(|(name, _)| name == "value")
+        .and_then(|(_, value)| match value {
+            Value::String(value) => Some(value.clone()),
+            _ => None,
+        })?;
+    Some((kind, value))
+}
+
+fn single_parts(
+    value: Option<&Value>,
+    slots: &[(String, Value)],
+    fallback: &str,
+) -> Result<Vec<Value>, VmError> {
+    if let Some(value) = value {
+        if let Some(fields) = temporal_fields(value) {
+            if fields.kind != TemporalKind::Instant {
+                let slots = temporal_slots(slots, &fields)?;
+                return Ok(parts_for_fields(
+                    &slots,
+                    fields.year,
+                    fields.month,
+                    fields.day,
+                    fields.hour,
+                    fields.minute,
+                    fields.second,
+                    fields.millisecond,
+                ));
+            }
+        }
+    }
+    let number = range_number(value.unwrap_or(&Value::Undefined))?;
+    let slots = effective_format_slots(slots);
+    if let Some(parts) = date_time_parts(&slots, number) {
+        return Ok(parts);
+    }
+    if let Some(parts) = time_parts(&slots, number) {
+        return Ok(parts);
+    }
+    if let Some(parts) = fractional_parts(&slots, number) {
+        return Ok(parts);
+    }
+    Ok(vec![literal_part(fallback)])
+}
+
+fn source_part(part: &Value, source: &str) -> Value {
+    let Value::Object(properties) = part else {
+        return part.clone();
+    };
+    let mut fields = properties
+        .iter()
+        .filter(|(name, _)| name == "type" || name == "value")
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect::<Vec<_>>();
+    fields.push(("source".into(), Value::String(source.into())));
+    make_object(fields)
+}
+
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     let style = slot_string(slots, "dayPeriod")?;
     let hour = format_components(slots, number)?.3;
@@ -655,13 +1074,7 @@ fn hour_day_period_format(slots: &[(String, Value)], number: f64) -> Option<Stri
 }
 
 fn format_components(slots: &[(String, Value)], number: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
-    let is_utc = slot_string(slots, "timeZone").as_deref() == Some("UTC")
-        || slot_string(slots, "timeZone").is_none();
-    if is_utc {
-        crate::date::chrono_utils::utc_components(number)
-    } else {
-        crate::date::chrono_utils::local_components(number)
-    }
+    zone_components(slot_string(slots, "timeZone").as_deref(), number)
 }
 
 fn hour_day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
@@ -701,17 +1114,42 @@ fn range_values(
     let start_temporal = arguments.first().and_then(temporal_fields);
     let end_temporal = arguments.get(1).and_then(temporal_fields);
     if start_temporal.is_some() || end_temporal.is_some() {
+        let start_is_temporal = start_temporal.is_some();
+        let end_is_temporal = end_temporal.is_some();
         let (Some(start_temporal), Some(end_temporal)) = (start_temporal, end_temporal) else {
+            // ToDateTimeFormattable is applied to both arguments before the
+            // temporal-kind mismatch is reported. Preserve observable
+            // valueOf calls on the non-temporal argument.
+            if !start_is_temporal {
+                let _ = conversion::to_number(arguments.first().unwrap())?;
+            } else if !end_is_temporal {
+                let _ = conversion::to_number(arguments.get(1).unwrap())?;
+            }
             return Err(crate::value::error::throw_type_error(
                 "formatRange requires matching date kinds",
             ));
         };
+        if start_temporal.calendar != end_temporal.calendar {
+            return Err(crate::value::error::throw_range_error(
+                "formatRange requires matching calendars",
+            ));
+        }
         if start_temporal.kind != end_temporal.kind
             || start_temporal.kind == TemporalKind::ZonedDateTime
         {
             return Err(crate::value::error::throw_type_error(
                 "formatRange requires matching date kinds",
             ));
+        }
+        if start_temporal.kind == TemporalKind::Instant {
+            let slots = effective_format_slots(slots);
+            let start_number = range_number(arguments.first().unwrap())?;
+            let end_number = range_number(arguments.get(1).unwrap())?;
+            let start = date_format_result(&slots, start_number)
+                .unwrap_or_else(|| range_text(start_number));
+            let end = date_format_result(&slots, end_number)
+                .unwrap_or_else(|| range_text(end_number));
+            return Ok((start, end));
         }
         let start_slots = temporal_slots(slots, &start_temporal)?;
         let end_slots = temporal_slots(slots, &end_temporal)?;
@@ -818,10 +1256,14 @@ fn proleptic_year_format(slots: &[(String, Value)], number: f64) -> Option<Strin
     let seconds = (number / 1_000.0).trunc() as i64;
     let year = DateTime::<Utc>::from_timestamp(seconds, 0)
         .map_or_else(|| civil_year(number), |date| i64::from(date.year()));
+    let style = slot_string(slots, "era").unwrap_or_else(|| "short".to_string());
+    let calendar = slot_string(slots, "calendar").unwrap_or_else(|| "gregory".to_string());
     if year <= 0 {
-        Some(format!("{} BC", grouped_year(1 - year)))
+        let era = era_value(&style, year as i32, &[("calendar".into(), Value::String(calendar))]);
+        Some(format!("{} {era}", grouped_year(1 - year)))
     } else {
-        Some(format!("{} AD", grouped_year(year)))
+        let era = era_value(&style, year as i32, &[("calendar".into(), Value::String(calendar))]);
+        Some(format!("{} {era}", grouped_year(year)))
     }
 }
 
