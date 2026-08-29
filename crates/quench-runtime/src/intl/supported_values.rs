@@ -28,7 +28,14 @@ const CALENDARS: &[&str] = &[
 ];
 
 pub(crate) fn supported_collations() -> Vec<Value> {
-    strings(&["default"])
+    strings(&[
+        "compat", "dict", "emoji", "eor", "phonebk", "pinyin", "stroke", "trad", "unihan",
+        "zhuyin",
+    ])
+}
+
+pub(crate) fn is_supported_currency(value: &str) -> bool {
+    CURRENCIES.contains(&value)
 }
 
 const CURRENCIES: &[&str] = &[
