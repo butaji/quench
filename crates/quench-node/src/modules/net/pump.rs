@@ -177,6 +177,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             install_methods(js.clone(), net_info_props(peer, Some(local)))?;
         }
         set_socket_state(&js, false, false, "open");
+        crate::modules::http_client::apply_deferred_request_timeout(state, &js)?;
         emit(state, &js, "connect", Vec::new())?;
     }
     for (sock, bytes) in events.datas {
