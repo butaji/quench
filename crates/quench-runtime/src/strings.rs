@@ -30,7 +30,7 @@ pub(crate) fn hash_str(value: &str) -> u64 {
 pub(crate) fn hash_value(value: &Value) -> Option<u64> {
     match value {
         Value::String(value) => Some(hash_str(value)),
-        Value::StringUnits(value) => Some(value.cached_hash(hash_units)),
+        Value::StringUnits(value) => Some(hash_units(value)),
         _ => None,
     }
 }
@@ -98,29 +98,8 @@ mod hash_tests {
         units_add_fits_limit, units_fit_limit, ShortStringLayout, StringEncoding,
         StringSourceEncoding, Value, MAX_STRING_BYTES, SHORT_STRING_MAX_UNITS,
     };
-    use crate::value::StringUnitsData;
-
-    // The immutable UTF-16 owner lazily computes its hash once and shares the
-    // cached result across clones without changing semantic string contents.
     #[test]
-    fn utf16_hash_cache_is_lazy_and_shared() {
-        let data = StringUnitsData::new(vec![0xD800, 0x0061]);
-        let calls = std::cell::Cell::new(0);
-        let first = data.cached_hash(|units| {
-            calls.set(calls.get() + 1);
-            hash_units(units)
-        });
-        let second = data.cached_hash(|_| {
-            calls.set(calls.get() + 1);
-            0
-        });
-        assert_eq!(first, hash_units(&[0xD800, 0x0061]));
-        assert_eq!(second, first);
-        assert_eq!(calls.get(), 1);
-    }
-
-    #[test]
-    fn canonical_hash_uses_owned_value_and_shared_cache_lifecycle() {
+    fn canonical_hash_uses_owned_value() {
         let value = super::from_units(vec![0xD800, 0x0061]);
         let expected = hash_units(&[0xD800, 0x0061]);
         assert_eq!(super::hash_value(&value), Some(expected));
@@ -140,7 +119,7 @@ mod hash_tests {
         assert_eq!(hash_units(&units), hash_units(&units));
     }
     // Well-formed UTF-8 strings derive directly from their canonical buffer;
-    // lone-surrogate strings use the owner-local cache above.
+    // lone-surrogate strings retain their exact UTF-16 units.
     #[test]
     fn utf8_hash_matches_utf16_hash_without_buffer() {
         let value = "héllo";
