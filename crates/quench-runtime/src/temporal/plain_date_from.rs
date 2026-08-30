@@ -640,22 +640,15 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
-    let mut seen = false;
-    for annotation in text.split('[').skip(1) {
-        let Some(value) = ["u-ca=", "!u-ca="]
-            .iter()
-            .find_map(|prefix| annotation.strip_prefix(prefix))
-            .and_then(|value| value.split(']').next())
-        else {
-            continue;
-        };
-        if seen {
-            continue;
-        }
-        seen = true;
-        return !crate::temporal::plain_date::is_supported_calendar_name(value);
-    }
-    false
+    text.split('[')
+        .skip(1)
+        .find_map(|annotation| {
+            ["u-ca=", "!u-ca="]
+                .iter()
+                .find_map(|prefix| annotation.strip_prefix(prefix))
+                .and_then(|value| value.split(']').next())
+        })
+        .is_some_and(|value| !crate::temporal::plain_date::is_supported_calendar_name(value))
 }
 
 fn has_time_junk(text: &str) -> bool {
