@@ -186,6 +186,19 @@ fn index_arg(value: Option<&Value>, name: &str, default: usize) -> Result<usize,
     }
 }
 
+fn io_length_arg(value: Option<&Value>, default: usize) -> Result<usize, VmError> {
+    let length = index_arg(value, "length", default)?;
+    const MAX_IO_LENGTH: usize = i32::MAX as usize;
+    if length > MAX_IO_LENGTH {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "length",
+            ">= 0 && <= 2147483647",
+            &crate::modules::buffer_enc::fmt_num(length as f64),
+        ));
+    }
+    Ok(length)
+}
+
 pub(crate) fn open_options(flags: &str) -> Result<std::fs::OpenOptions, VmError> {
     let mut options = std::fs::OpenOptions::new();
     match flags {
@@ -297,9 +310,8 @@ pub fn read_sync(
 ) -> Result<Value, VmError> {
     let fd = descriptor_arg(args.first())?;
     let offset = index_arg(args.get(2), "offset", 0)?;
-    let length = index_arg(
+    let length = io_length_arg(
         args.get(3),
-        "length",
         io_view(args.get(1))?.3.saturating_sub(offset),
     )?;
     let (value, buffer, target) = io_range(args.get(1), offset, length)?;
@@ -337,9 +349,8 @@ pub fn write_sync(
 ) -> Result<Value, VmError> {
     let fd = descriptor_arg(args.first())?;
     let offset = index_arg(args.get(2), "offset", 0)?;
-    let length = index_arg(
+    let length = io_length_arg(
         args.get(3),
-        "length",
         io_view(args.get(1))?.3.saturating_sub(offset),
     )?;
     let (_, buffer, target) = io_range(args.get(1), offset, length)?;
