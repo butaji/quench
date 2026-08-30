@@ -1570,7 +1570,39 @@ let __quenchHttpModule;
             : `type ${typeof value} (${String(value)})`;
         throw Object.assign(new TypeError(`The "options.method" property must be of type string. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
       }
-      const request = attachHttpSignal(new NodeIncomingMessage());
+      const request = new NodeIncomingMessage();
+      const initialHeaderLines = [];
+      if (Array.isArray(options.headers)) {
+        for (let index = 0; index + 1 < options.headers.length; index += 2) {
+          const name = String(options.headers[index]);
+          const value = options.headers[index + 1];
+          initialHeaderLines.push(
+            `${name}: ${Array.isArray(value)
+              ? value.join(name.toLowerCase() === "cookie" ? "; " : ", ")
+              : String(value)}`
+          );
+        }
+      } else if (options.headers && typeof options.headers === "object") {
+        for (const [name, value] of Object.entries(options.headers)) {
+          initialHeaderLines.push(
+            `${name}: ${Array.isArray(value)
+              ? value.join(name.toLowerCase() === "cookie" ? "; " : ", ")
+              : String(value)}`
+          );
+        }
+      }
+      const headerState = {
+        value: `${options.method || "GET"} ${pathname || "/"} HTTP/1.1\r\n${initialHeaderLines.join("\r\n")}\r\n\r\n`
+      };
+      Object.defineProperty(request, "_header", {
+        configurable: true,
+        enumerable: true,
+        get: () => headerState.value,
+        set: (value) => {
+          headerState.value = value;
+        }
+      });
+      attachHttpSignal(request);
       Object.setPrototypeOf(request, NodeClientRequest.prototype);
       request.destroy = (error) => {
         if (request.destroyed) return request;
@@ -1706,7 +1738,12 @@ let __quenchHttpModule;
             request.headers[key] && key === "cookie"
               ? `${request.headers[key]}; ${normalized}`
               : normalized;
-          request.rawHeaders.push(String(name), String(value));
+          request.rawHeaders.push(
+            String(name),
+            Array.isArray(value)
+              ? value.join(name.toLowerCase() === "cookie" ? "; " : ", ")
+              : String(value)
+          );
         }
       } else if (options.headers && typeof options.headers === "object") {
         for (const [name, value] of Object.entries(options.headers)) {
@@ -1731,8 +1768,26 @@ let __quenchHttpModule;
           String(options.auth)
         ).toString("base64")}`;
       }
+      const renderHeader = () => {
+        const lines = [];
+        for (let index = 0; index + 1 < request.rawHeaders.length; index += 2) {
+          lines.push(`${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}`);
+        }
+        return `${request.method} ${request.path} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
+      };
       request.setHeader = (name, value) => {
-        request.headers[String(name).toLowerCase()] = value;
+        const key = String(name).toLowerCase();
+        const normalized = Array.isArray(value)
+          ? value.join(key === "cookie" ? "; " : ", ")
+          : String(value);
+        request.headers[key] = normalized;
+        for (let index = request.rawHeaders.length - 2; index >= 0; index -= 2) {
+          if (request.rawHeaders[index].toLowerCase() === key) {
+            request.rawHeaders.splice(index, 2);
+          }
+        }
+        request.rawHeaders.push(String(name), normalized);
+        request._header = renderHeader();
         return request;
       };
       request.getHeader = (name) => request.headers[String(name).toLowerCase()];
@@ -1766,7 +1821,14 @@ let __quenchHttpModule;
         return request;
       };
       request.removeHeader = (name) => {
-        delete request.headers[String(name).toLowerCase()];
+        const key = String(name).toLowerCase();
+        delete request.headers[key];
+        for (let index = request.rawHeaders.length - 2; index >= 0; index -= 2) {
+          if (request.rawHeaders[index].toLowerCase() === key) {
+            request.rawHeaders.splice(index, 2);
+          }
+        }
+        request._header = renderHeader();
         return request;
       };
       request.timeout = 0;

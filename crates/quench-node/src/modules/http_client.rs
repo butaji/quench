@@ -87,13 +87,38 @@ pub fn agent_call(
 
 pub fn agent_construct(
     state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    let option = |name: &str| execute::get_property(&options, name);
     let mut object = crate::modules::events::new_emitter_object(state)?;
     object = execute::set_property(object, "sockets", host_api::object(Vec::new()));
     object = execute::set_property(object, "freeSockets", host_api::object(Vec::new()));
     object = execute::set_property(object, "requests", host_api::object(Vec::new()));
-    object = execute::set_property(object, "options", host_api::object(Vec::new()));
+    object = execute::set_property(object, "options", options.clone());
+    object = execute::set_property(object, "keepAlive", match option("keepAlive") {
+        Value::Boolean(value) => Value::Boolean(value),
+        _ => Value::Boolean(false),
+    });
+    object = execute::set_property(object, "keepAliveMsecs", match option("keepAliveMsecs") {
+        Value::Number(value) => Value::Number(value),
+        _ => Value::Number(1000.0),
+    });
+    object = execute::set_property(object, "maxSockets", match option("maxSockets") {
+        Value::Number(value) => Value::Number(value),
+        _ => Value::Number(f64::INFINITY),
+    });
+    object = execute::set_property(object, "maxTotalSockets", match option("maxTotalSockets") {
+        Value::Number(value) => Value::Number(value),
+        _ => Value::Number(f64::INFINITY),
+    });
+    object = execute::set_property(object, "scheduling", match option("scheduling") {
+        Value::String(value) => Value::String(value),
+        _ => Value::String("lifo".into()),
+    });
+    object = execute::set_property(object, "defaultPort", Value::Number(80.0));
+    object = execute::set_property(object, "protocol", Value::String("http:".into()));
+    object = execute::set_property(object, "totalSocketCount", Value::Number(0.0));
     object = install_methods(
         object,
         vec![
@@ -307,6 +332,54 @@ pub fn req_abort(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    let queued = {
+        let mut guard = state.borrow_mut();
+        let Some(current) = guard.http.clientreqs.get(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
+        match current.agent.as_ref() {
+            None => false,
+            Some(agent) => {
+                let max = match execute::get_property(agent, "maxSockets") {
+                    Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                    _ => usize::MAX,
+                };
+                if max == usize::MAX {
+                    false
+                } else {
+                    let active = guard
+                        .http
+                        .clientreqs
+                        .values()
+                        .filter(|request| {
+                            request.socket.is_some()
+                                && !request.response_closed
+                                && !request.aborted
+                                && request.agent.as_ref().is_some_and(|candidate| {
+                                    execute::same_identity(candidate, agent)
+                                        && agent_name(&request.target, agent)
+                                            == agent_name(&current.target, agent)
+                                })
+                        })
+                        .count();
+                    if active >= max {
+                        if !guard.http.agent_pending.contains(&id) {
+                            guard.http.agent_pending.push(id);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+    };
+    if queued {
+        if let Some(request) = receiver {
+            set_request_property(Some(request), "finished", Value::Boolean(true));
+        }
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     let (request, socket, target) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
@@ -565,9 +638,7 @@ pub fn req_end(
     let head_host = request_host(&target);
     let head = request_head(&head_host, &method, &path, &headers, body.len(), omit_host);
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
-        let updated =
-            execute::set_property(req.req.clone(), "_header", Value::String(head.clone()));
-        execute::replace_value(&req.req, &updated);
+        set_request_property(Some(&req.req), "_header", Value::String(head.clone()));
     }
     let custom = agent.as_ref().and_then(custom_connection).filter(|_| {
         let Some(agent) = agent.as_ref() else { return false; };
@@ -884,6 +955,7 @@ pub fn req_close(
             let (updated, _) = execute::delete_property(pools.clone(), &name);
             execute::replace_value(&pools, &updated);
         }
+        drain_agent_pending(state, agent, &name);
     }
     // A peer closing before the response completed is an aborted response,
     // not a normal end. Keep the response identity and signal as the single
@@ -921,6 +993,36 @@ pub fn req_close(
         }
     }
     Ok(Value::Undefined)
+}
+
+fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str) {
+    let pending = {
+        let mut guard = state.borrow_mut();
+        let position = guard.http.agent_pending.iter().position(|id| {
+            guard.http.clientreqs.get(id).is_some_and(|request| {
+                request.agent.as_ref().is_some_and(|candidate| {
+                    execute::same_identity(candidate, agent)
+                        && agent_name(&request.target, agent) == name
+                })
+            })
+        });
+        position.and_then(|index| {
+            guard.http.agent_pending.get(index).copied().map(|id| {
+                guard.http.agent_pending.remove(index);
+                id
+            })
+        })
+    };
+    let Some(id) = pending else { return; };
+    let request = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .map(|request| request.req.clone());
+    let Some(request) = request else { return; };
+    set_request_property(Some(&request), "finished", Value::Boolean(false));
+    let _ = req_end(state, Some(&request), &[]);
 }
 
 fn agent_name(target: &RequestTarget, agent: &Value) -> String {
@@ -1309,8 +1411,10 @@ pub fn res_end_handler(
             .http
             .clientreqs
             .get(&client_id)
-            .and_then(|request| request.agent.as_ref())
-            .is_some();
+        .and_then(|request| request.agent.as_ref())
+            .is_some_and(|agent| {
+                matches!(execute::get_property(agent, "keepAlive"), Value::Boolean(true))
+            });
         if pooled {
             // Idle HTTP agent sockets are retained for reuse but do not keep
             // the process alive. A later request refs the socket when reused.
