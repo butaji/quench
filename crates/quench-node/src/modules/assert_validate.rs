@@ -233,6 +233,9 @@ fn validate_callable(
         if expected_name == "Error" && is_error_instance(error) {
             return Ok(Value::Undefined);
         }
+        if expected_name == "DOMException" && is_error_instance(error) {
+            return Ok(Value::Undefined);
+        }
         if expected_name == "AssertionError"
             && is_error_instance(error)
             && matches!(name_of(error).as_str(), "Error" | "AssertionError")
@@ -288,6 +291,8 @@ fn is_error_instance(value: &Value) -> bool {
                     | quench_runtime::ops::Builtin::SyntaxErrorPrototype
                     | quench_runtime::ops::Builtin::URIErrorPrototype
                     | quench_runtime::ops::Builtin::AggregateErrorPrototype
+                    | quench_runtime::ops::Builtin::SuppressedErrorPrototype
+                    | quench_runtime::ops::Builtin::DOMExceptionPrototype
             )
         ) {
             return true;
@@ -299,6 +304,9 @@ fn is_error_instance(value: &Value) -> bool {
 
 fn is_error_constructor(expected: &Value) -> bool {
     use quench_runtime::ops::Builtin;
+    if name_of(expected) == "DOMException" {
+        return true;
+    }
     let mut proto = execute::get_property(expected, "prototype");
     for _ in 0..8 {
         proto = match &proto {
@@ -311,7 +319,8 @@ fn is_error_constructor(expected: &Value) -> bool {
                 | Builtin::SyntaxErrorPrototype
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
-                | Builtin::SuppressedErrorPrototype,
+                | Builtin::SuppressedErrorPrototype
+                | Builtin::DOMExceptionPrototype,
             ) => return true,
             Value::Object(_) => match execute::get_prototype_of(&proto) {
                 Ok(next) => next,

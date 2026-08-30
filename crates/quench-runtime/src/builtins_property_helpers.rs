@@ -285,34 +285,6 @@ fn ordinary_own_descriptor(
     ]))))
 }
 
-fn validate_descriptor_kind(descriptor: &[(String, Value)]) -> Result<(), crate::execute::VmError> {
-    let accessor = descriptor
-        .iter()
-        .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
-    let data = descriptor
-        .iter()
-        .any(|(name, _)| matches!(name.as_str(), "value" | "writable"));
-    if accessor && data {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid property descriptor",
-        ));
-    }
-    for field in ["get", "set"] {
-        let Some(value) = descriptor
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == field).then_some(value))
-        else {
-            continue;
-        };
-        if !matches!(value, Value::Undefined) && !crate::conversion::is_callable(value) {
-            return Err(crate::value::error::throw_type_error(
-                "Accessor descriptor must be callable",
-            ));
-        }
-    }
-    Ok(())
-}
 fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
     let descriptor_key = descriptor_key(key);
     if let Value::Object(properties) = result {

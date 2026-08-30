@@ -49,6 +49,28 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
+    if properties
+        .iter()
+        .any(|(name, value)| name == "\0domexception" && matches!(value, Value::Boolean(true)))
+    {
+        let internal = match key {
+            "name" => "\0domexception_name",
+            "message" => "\0domexception_message",
+            "code" => "\0domexception_code",
+            _ => return object_property_without_domexception(properties, receiver, key),
+        };
+        if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == internal) {
+            return value.clone();
+        }
+    }
+    object_property_without_domexception(properties, receiver, key)
+}
+
+fn object_property_without_domexception(
+    properties: &Rc<crate::value::ObjectData>,
+    receiver: &Value,
+    key: &str,
+) -> Value {
     // A global object may be copy-on-write replaced while a callback still
     // carries its earlier representative. Resolve that identity before
     // checking virtual host globals; otherwise host-provided bindings vanish
@@ -118,7 +140,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                     crate::ops::Builtin::IntlDateTimeFormatFormat
                         | crate::ops::Builtin::IntlNumberFormatFormat,
                 )
-        )
+            )
         {
             return Some(crate::vm::bind_receiver_property(
                 value.clone(),
@@ -172,12 +194,16 @@ pub(crate) fn boxed_string_property(
     properties: &Rc<crate::value::ObjectData>,
     key: &str,
 ) -> Option<Value> {
-    let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
-    else {
+    let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") else {
         return None;
     };
-    if crate::conversion::is_symbol_string(&value) {
+    if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
         return None;
+    }
+    if let Value::String(ref text) = value {
+        if crate::conversion::is_symbol_string(text.as_str()) {
+            return None;
+        }
     }
     if crate::builtins::builtin_prototype_property_is_removed(
         crate::ops::Builtin::StringPrototype,
@@ -186,7 +212,7 @@ pub(crate) fn boxed_string_property(
         return None;
     }
     let receiver = Value::Object(properties.clone());
-    match crate::vm::get_property_with_receiver(&Value::String(value.clone()), key, &receiver) {
+    match crate::vm::get_property_with_receiver(&value, key, &receiver) {
         Ok(Value::Undefined) | Err(_) => None,
         Ok(indexed) => Some(indexed),
     }

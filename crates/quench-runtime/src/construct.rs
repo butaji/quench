@@ -501,7 +501,7 @@ fn construct_builtin(
             "TypedArray is not directly constructible",
         ));
     }
-    if is_error_builtin(builtin) {
+    if crate::builtin_meta::is_error_constructor(builtin) {
         return construct_error(&builtin, arguments);
     }
     if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) {

@@ -253,6 +253,7 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::EvalError
                 | Builtin::URIError
                 | Builtin::TypeError
+                | Builtin::DOMException
         ))
     .then_some(match builtin {
         Builtin::RangeError => Builtin::RangeErrorPrototype,
@@ -261,6 +262,7 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
         Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
         Builtin::EvalError => Builtin::EvalErrorPrototype,
         Builtin::URIError => Builtin::URIErrorPrototype,
+        Builtin::DOMException => Builtin::DOMExceptionPrototype,
         _ => Builtin::ErrorPrototype,
     })
     .or_else(|| {
