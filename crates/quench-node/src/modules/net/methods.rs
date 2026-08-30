@@ -291,6 +291,15 @@ fn connect_with_receiver(
             }
             let _ = state.borrow_mut().net.pending_lookups.pop();
             let result = callback_result.unwrap_or(result);
+            if !matches!(execute::get_property(&result, "0"), Value::Undefined | Value::Null) {
+                let error = execute::get_property(&result, "0");
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((lookup_socket.clone(), error));
+                return Ok(lookup_socket);
+            }
             // A custom lookup's result shape is part of the API contract:
             // `all: false` returns one address string, while `all: true`
             // returns an array of `{ address, family }` records. Reject any
