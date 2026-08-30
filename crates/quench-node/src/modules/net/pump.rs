@@ -99,7 +99,20 @@ fn accept_one(
     let (object, id) = new_net_object(state, socket_props())?;
     let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
-    let object = install_methods(object, net_info_props(peer, local))?;
+    // Path-backed listeners use the same bounded transport internally, but
+    // retain pipe observables at the JS boundary: unix sockets do not expose
+    // TCP remoteAddress/remoteFamily/localAddress fields.
+    let is_pipe = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .is_some_and(|server| server.borrow().path.is_some());
+    let object = if is_pipe {
+        object
+    } else {
+        install_methods(object, net_info_props(peer, local))?
+    };
     set_socket_state(&object, false, false, "open");
     let socket = Rc::new(RefCell::new(NetSocket {
         id,
