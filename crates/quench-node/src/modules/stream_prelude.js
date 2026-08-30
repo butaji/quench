@@ -1121,8 +1121,8 @@
 
   function sliceCount(count) {
     const number = Number(count);
-    if (!Number.isFinite(number) && number !== Infinity) return 0;
-    if (number < 0) {
+    if (Number.isNaN(number)) return 0;
+    if (number < 0 || number === -Infinity) {
       const error = new RangeError("The count argument must be non-negative");
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -1138,6 +1138,17 @@
   }
 
   function sliceReadable(stream, count, drop, options) {
+    if (options !== undefined && (options === null || typeof options !== "object")) {
+      const error = new TypeError("The options argument must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (options?.signal !== undefined &&
+        (!options.signal || typeof options.signal.addEventListener !== "function")) {
+      const error = new TypeError("The signal argument must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const limit = sliceCount(count);
     const signal = options?.signal;
     const slice = {
