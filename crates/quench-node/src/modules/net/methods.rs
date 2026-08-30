@@ -127,7 +127,10 @@ fn validate_connect_options(options: &Value) -> Result<(), VmError> {
         }
     }
     let host = execute::get_property(options, "host");
-    if !matches!(host, Value::Undefined | Value::Null | Value::String(_) | Value::StringUnits(_)) {
+    if !matches!(
+        host,
+        Value::Undefined | Value::Null | Value::String(_) | Value::StringUnits(_)
+    ) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
@@ -139,14 +142,16 @@ fn validate_connect_options(options: &Value) -> Result<(), VmError> {
         _ => None,
     };
     if host_text.is_some_and(|host| host.contains('\0')) {
-            return Err(VmError::Thrown(host_api::object(vec![
-                ("name".into(), Value::String("TypeError".into())),
-                ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-                (
-                    "message".into(),
-                    Value::String("The property 'options.host' must be a string without null bytes.".into()),
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+            (
+                "message".into(),
+                Value::String(
+                    "The property 'options.host' must be a string without null bytes.".into(),
                 ),
-            ])));
+            ),
+        ])));
     }
     Ok(())
 }
@@ -172,7 +177,10 @@ pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value,
             let (object, _) = new_net_object(state, socket_props())?;
             let error = host_api::object(vec![
                 ("name".into(), Value::String("Error".into())),
-                ("message".into(), Value::String(format!("connect ENOENT {path}"))),
+                (
+                    "message".into(),
+                    Value::String(format!("connect ENOENT {path}")),
+                ),
                 ("code".into(), Value::String("ENOENT".into())),
                 ("syscall".into(), Value::String("connect".into())),
             ]);
@@ -197,10 +205,7 @@ pub fn connect_existing(
 /// Resume a custom lookup that completed from a later event-loop turn.
 /// Lookup completion is data-driven: the saved socket/options are consumed,
 /// validated once, and then fed back into the ordinary connect path.
-pub fn complete_lookup(
-    state: &Rc<RefCell<HostState>>,
-    result: Value,
-) -> Result<Value, VmError> {
+pub fn complete_lookup(state: &Rc<RefCell<HostState>>, result: Value) -> Result<Value, VmError> {
     let pending = state.borrow_mut().net.pending_lookups.remove(0);
     let error = execute::get_property(&result, "0");
     if !matches!(error, Value::Undefined | Value::Null) {
@@ -211,10 +216,15 @@ pub fn complete_lookup(
             .push((pending.socket.clone(), error));
         return Ok(pending.socket);
     }
-    let Some(address) = custom_lookup_address(&pending.options, &result).ok().flatten() else {
+    let Some(address) = custom_lookup_address(&pending.options, &result)
+        .ok()
+        .flatten()
+    else {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
-            &[Value::String("Invalid IP address: lookup returned an invalid address".into())],
+            &[Value::String(
+                "Invalid IP address: lookup returned an invalid address".into(),
+            )],
         );
         let error = execute::set_property(
             error,
@@ -232,7 +242,11 @@ pub fn complete_lookup(
     state.borrow_mut().net.pending_events.push((
         pending.socket.clone(),
         "lookup".into(),
-        vec![Value::Null, Value::String(address.clone()), family.unwrap_or(Value::Undefined)],
+        vec![
+            Value::Null,
+            Value::String(address.clone()),
+            family.unwrap_or(Value::Undefined),
+        ],
     ));
     let options = execute::set_property(
         execute::set_property(pending.options, "lookup", Value::Undefined),
@@ -252,9 +266,10 @@ fn connect_with_receiver(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let mut lookup_address = None;
-    if let Some(path) = args.first().filter(|value| {
-        matches!(value, Value::String(_) | Value::StringUnits(_))
-    }) {
+    if let Some(path) = args
+        .first()
+        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+    {
         let path = execute::to_js_string(path)?;
         if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
             return connect_path(state, &path);
@@ -313,11 +328,15 @@ fn connect_with_receiver(
             } else {
                 options.clone()
             };
-            state.borrow_mut().net.pending_lookups.push(super::PendingLookup {
-                socket: lookup_socket.clone(),
-                options: lookup_options.clone(),
-                args: args.to_vec(),
-            });
+            state
+                .borrow_mut()
+                .net
+                .pending_lookups
+                .push(super::PendingLookup {
+                    socket: lookup_socket.clone(),
+                    options: lookup_options.clone(),
+                    args: args.to_vec(),
+                });
             state.borrow_mut().net.lookup_in_call = true;
             let result = match execute::call(
                 &lookup,
@@ -343,7 +362,10 @@ fn connect_with_receiver(
             }
             let _ = state.borrow_mut().net.pending_lookups.pop();
             let result = callback_result.unwrap_or(result);
-            if !matches!(execute::get_property(&result, "0"), Value::Undefined | Value::Null) {
+            if !matches!(
+                execute::get_property(&result, "0"),
+                Value::Undefined | Value::Null
+            ) {
                 let error = execute::get_property(&result, "0");
                 state
                     .borrow_mut()
@@ -365,14 +387,20 @@ fn connect_with_receiver(
                 let (object, _) = new_net_object(state, socket_props())?;
                 let error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::Error,
-                    &[Value::String("Invalid IP address: lookup returned an invalid address".into())],
+                    &[Value::String(
+                        "Invalid IP address: lookup returned an invalid address".into(),
+                    )],
                 );
                 let error = execute::set_property(
                     error,
                     "code",
                     Value::String("ERR_INVALID_IP_ADDRESS".into()),
                 );
-                state.borrow_mut().net.pending_errors.push((object.clone(), error));
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((object.clone(), error));
                 return Ok(object);
             }
             lookup_address = lookup_address_for(&result);
@@ -524,19 +552,21 @@ fn connect_with_receiver(
         configure_onread(&object, options);
         let no_delay = execute::get_property(options, "noDelay");
         if execute::is_truthy(&no_delay) {
-            execute::set_property_in_place(
-                &object,
-                super::NO_DELAY_PROP,
-                Value::Boolean(true),
-            );
+            execute::set_property_in_place(&object, super::NO_DELAY_PROP, Value::Boolean(true));
         }
         if let Value::Boolean(value) = execute::get_property(options, "allowHalfOpen") {
             execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(value));
         }
     }
     let handle = host_api::object(vec![
-        ("setNoDelay".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-        ("setKeepAlive".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        (
+            "setNoDelay".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "setKeepAlive".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
     ]);
     execute::set_property_in_place(&object, "_handle", handle);
     let local = stream.local_addr().ok();
@@ -563,17 +593,28 @@ fn connect_with_receiver(
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
     add_listener_cb(state, &object, args.last(), "connect", true)?;
-    if let Some(options) = args.first().filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
         let signal = execute::get_property(options, "signal");
         if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
-            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
-                state.borrow_mut().net.pending_errors.push((object.clone(), abort_error()));
+            if matches!(
+                execute::get_property(&signal, "aborted"),
+                Value::Boolean(true)
+            ) {
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((object.clone(), abort_error()));
             } else {
                 let listener = host_api::bound_capability_with_arguments(
                     crate::host::capability_ref(crate::registry::SPEC_NET_SOCKET_ABORT),
                     vec![object.clone()],
                 );
-                let listener_options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
+                let listener_options =
+                    host_api::object(vec![("once".into(), Value::Boolean(true))]);
                 crate::modules::event_target::add_event_listener(
                     state,
                     Some(&signal),
@@ -598,11 +639,11 @@ pub fn socket_abort(
     // `AbortSignal` dispatch is synchronous, but net errors are delivered on
     // the next loop turn so listeners attached immediately after `abort()`
     // still observe the failure (the Node contract used by Agent tests).
-    state
-        .borrow_mut()
-        .net
-        .pending_events
-        .push((socket.clone(), "error".into(), vec![abort_error()]));
+    state.borrow_mut().net.pending_events.push((
+        socket.clone(),
+        "error".into(),
+        vec![abort_error()],
+    ));
     socket_destroy(state, Some(socket), &[])
 }
 
@@ -842,9 +883,11 @@ pub fn server_listen(
         add_listener_cb(state, &receiver, args.first(), "listening", true)?;
         return Ok(receiver);
     }
-    if let Some(path) = args.first().filter(|value| {
-        matches!(value, Value::String(_) | Value::StringUnits(_))
-    }).and_then(|value| execute::to_js_string(value).ok()) {
+    if let Some(path) = args
+        .first()
+        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+        .and_then(|value| execute::to_js_string(value).ok())
+    {
         if path.starts_with('/') || path.parse::<u16>().is_err() {
             if path.starts_with('/')
                 && Path::new(&path)
@@ -1150,16 +1193,8 @@ pub fn socket_write(
     // until the pump's connect transition flushes the queue.
     let flushed = !connecting && try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
-    super::set_socket_property(
-        &receiver,
-        "bufferSize",
-        Value::Number(pending as f64),
-    );
-    super::set_socket_property(
-        &receiver,
-        "writableLength",
-        Value::Number(pending as f64),
-    );
+    super::set_socket_property(&receiver, "bufferSize", Value::Number(pending as f64));
+    super::set_socket_property(&receiver, "writableLength", Value::Number(pending as f64));
     let high_water_mark = match execute::get_property(&guard.js, "writableHighWaterMark") {
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 16_384,
@@ -1171,7 +1206,10 @@ pub fn socket_write(
     let callback = args
         .get(1)
         .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)));
+        .or_else(|| {
+            args.get(2)
+                .filter(|value| quench_runtime::is_callable(value))
+        });
     if let Some(callback) = callback {
         if connecting {
             crate::modules::events::method_once(
@@ -1224,22 +1262,18 @@ pub fn socket_end(
     // whose host entry is being retired observe the same transition.
     if !connecting {
         execute::set_property_in_place(receiver, "writable", Value::Boolean(false));
-        execute::set_property_in_place(
-            receiver,
-            "readyState",
-            Value::String("readOnly".into()),
-        );
+        execute::set_property_in_place(receiver, "readyState", Value::String("readOnly".into()));
     }
     let mut queue_finish = false;
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
         // A socket can be observed through an event-delivery alias after its
         // host entry has already been retired. Preserve the public half-close
         // transition on that receiver instead of silently leaving it open.
-        state.borrow_mut().net.pending_events.push((
-            receiver.clone(),
-            "finish".into(),
-            Vec::new(),
-        ));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "finish".into(), Vec::new()));
         return Ok(receiver.clone());
     };
     let mut guard = sock.borrow_mut();
@@ -1258,27 +1292,19 @@ pub fn socket_end(
     guard.state = SocketState::Closing;
     try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
-    super::set_socket_property(
-        receiver,
-        "bufferSize",
-        Value::Number(pending as f64),
-    );
-    super::set_socket_property(
-        receiver,
-        "writableLength",
-        Value::Number(pending as f64),
-    );
+    super::set_socket_property(receiver, "bufferSize", Value::Number(pending as f64));
+    super::set_socket_property(receiver, "writableLength", Value::Number(pending as f64));
     if pending == 0 {
         if let Some(stream) = guard.stream.as_mut() {
             let _ = stream.shutdown(Shutdown::Write);
         }
     }
     if queue_finish {
-        state.borrow_mut().net.pending_events.push((
-            receiver.clone(),
-            "finish".into(),
-            Vec::new(),
-        ));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "finish".into(), Vec::new()));
     }
     let _ = state;
     Ok(receiver.clone())
@@ -1303,9 +1329,11 @@ pub fn socket_destroy(
         execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, Value::Undefined);
     }
     let mut emit_close = false;
+    let mut bytes_read = 0;
     let socket_entry = state.borrow().net.sockets.get(&id).cloned();
     if let Some(sock) = socket_entry {
         let mut guard = sock.borrow_mut();
+        bytes_read = guard.bytes_read;
         let error = args.first().cloned();
         let was_closed = guard.state == SocketState::Closed;
         if guard.state != SocketState::Closed {
@@ -1326,6 +1354,8 @@ pub fn socket_destroy(
     if emit_close {
         set_socket_state(&receiver, true, false, "closed");
         super::replace_socket_property(&receiver, "pending", Value::Boolean(true));
+        super::set_socket_bytes_read(&receiver, bytes_read);
+        super::replace_socket_property(&receiver, "_handle", Value::Null);
         crate::modules::http_client::mark_socket_destroyed_in_agents(state, &receiver);
         // Node delivers socket close on the next loop turn, allowing a
         // listener attached immediately after `destroy()` to observe it.
@@ -1433,10 +1463,18 @@ pub fn socket_set_timeout(
         // maps. Resolve the host-owned net record first so timeout state and
         // timer identity are cleared on the canonical socket object.
         let target = net_id(&receiver)
-            .and_then(|id| state.borrow().net.sockets.get(&id).map(|socket| socket.borrow().js.clone()))
+            .and_then(|id| {
+                state
+                    .borrow()
+                    .net
+                    .sockets
+                    .get(&id)
+                    .map(|socket| socket.borrow().js.clone())
+            })
             .unwrap_or_else(|| receiver.clone());
         let socket_id = net_id(&target);
-        let tracked_timer = socket_id.and_then(|id| state.borrow_mut().net.timeout_timers.remove(&id));
+        let tracked_timer =
+            socket_id.and_then(|id| state.borrow_mut().net.timeout_timers.remove(&id));
         if let Some(timer) = tracked_timer {
             crate::modules::timers::clear_timeout(state, &[timer])?;
         }
@@ -1471,7 +1509,11 @@ pub fn socket_set_timeout(
             let timer =
                 crate::modules::timers::set_timeout(state, &[callback, Value::Number(timeout)])?;
             if let Some(id) = socket_id {
-                state.borrow_mut().net.timeout_timers.insert(id, timer.clone());
+                state
+                    .borrow_mut()
+                    .net
+                    .timeout_timers
+                    .insert(id, timer.clone());
             }
             execute::set_property_in_place(&target, SOCKET_TIMEOUT_PROP, timer);
         }
@@ -1492,7 +1534,10 @@ pub fn socket_timeout_fire(
     };
     execute::set_property_in_place(socket, SOCKET_TIMEOUT_PROP, Value::Undefined);
     if crate::modules::http::is_idle_socket(state, socket)
-        && !matches!(execute::get_property(socket, "destroyed"), Value::Boolean(true))
+        && !matches!(
+            execute::get_property(socket, "destroyed"),
+            Value::Boolean(true)
+        )
     {
         socket_destroy(state, Some(socket), &[])?;
     }

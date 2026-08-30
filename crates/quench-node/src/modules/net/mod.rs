@@ -25,11 +25,11 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    complete_lookup, connect, connect_existing, connect_path, create_server, server_address, server_close,
-    server_close_idle, server_listen, server_ref, server_unref, socket_address, socket_construct,
-    socket_abort, socket_destroy, socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
-    socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_timeout_fire,
-    socket_unref, socket_write,
+    complete_lookup, connect, connect_existing, connect_path, create_server, server_address,
+    server_close, server_close_idle, server_listen, server_ref, server_unref, socket_abort,
+    socket_address, socket_construct, socket_destroy, socket_end, socket_pause, socket_ref,
+    socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
+    socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -191,10 +191,7 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
             ("bytesWritten".to_string(), Value::Number(0.0)),
             ("bufferSize".to_string(), Value::Number(0.0)),
             ("writableLength".to_string(), Value::Number(0.0)),
-            (
-                "writableHighWaterMark".to_string(),
-                Value::Number(16_384.0),
-            ),
+            ("writableHighWaterMark".to_string(), Value::Number(16_384.0)),
             ("pending".to_string(), Value::Boolean(true)),
             ("connecting".to_string(), Value::Boolean(false)),
             (
@@ -241,16 +238,21 @@ pub(crate) fn replace_socket_property(socket: &Value, key: &str, value: Value) {
 }
 
 pub(crate) fn update_socket_counters(socket: &NetSocket) {
-    execute::set_property_in_place(
-        &socket.js,
-        "bytesRead",
-        Value::Number(socket.bytes_read as f64),
-    );
+    set_socket_bytes_read(&socket.js, socket.bytes_read);
     execute::set_property_in_place(
         &socket.js,
         "bytesWritten",
         Value::Number(socket.bytes_written as f64),
     );
+}
+
+pub(crate) fn set_socket_bytes_read(socket: &Value, bytes: u64) {
+    let value = Value::Number(bytes as f64);
+    execute::set_property_in_place(socket, "bytesRead", value.clone());
+    let handle = execute::get_property(socket, "_handle");
+    if matches!(handle, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_property_in_place(&handle, "bytesRead", value);
+    }
 }
 
 fn allocate_id(state: &Rc<RefCell<HostState>>) -> u64 {
@@ -362,7 +364,10 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         // The host write queue already provides cork semantics; expose the
         // pair as stable no-op calls so callers can bracket vectorized writes.
         ("cork", Value::Builtin(quench_runtime::ops::Builtin::Object)),
-        ("uncork", Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        (
+            "uncork",
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
     ]
 }
 
@@ -477,7 +482,11 @@ fn try_flush(guard: &mut std::cell::RefMut<'_, NetSocket>) -> bool {
     let mut stream = guard.stream.take();
     let written = stream
         .as_mut()
-        .map(|stream| stream.write(&guard.write_buf[guard.write_offset..]).unwrap_or(0))
+        .map(|stream| {
+            stream
+                .write(&guard.write_buf[guard.write_offset..])
+                .unwrap_or(0)
+        })
         .unwrap_or(0);
     guard.stream = stream;
     if written > 0 {
@@ -485,8 +494,7 @@ fn try_flush(guard: &mut std::cell::RefMut<'_, NetSocket>) -> bool {
         if guard.write_offset == guard.write_buf.len() {
             guard.write_buf.clear();
             guard.write_offset = 0;
-        } else if guard.write_offset >= 64 * 1024
-            && guard.write_offset * 2 >= guard.write_buf.len()
+        } else if guard.write_offset >= 64 * 1024 && guard.write_offset * 2 >= guard.write_buf.len()
         {
             let offset = guard.write_offset;
             guard.write_buf.drain(..offset);

@@ -175,7 +175,10 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             install_methods(js.clone(), net_info_props(peer, Some(local)))?;
         }
         set_socket_state(&js, false, false, "open");
-        if matches!(execute::get_property(&js, super::NO_DELAY_PROP), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&js, super::NO_DELAY_PROP),
+            Value::Boolean(true)
+        ) {
             super::socket_set_no_delay(state, Some(&js), &[Value::Boolean(true)])?;
         }
         crate::modules::http_client::apply_deferred_request_timeout(state, &js)?;
@@ -183,6 +186,19 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     for (sock, bytes) in events.datas {
         let js = sock.borrow().js.clone();
+        let visible_read = match execute::get_property(&js, "bytesRead") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value,
+            _ => 0.0,
+        };
+        super::replace_socket_property(
+            &js,
+            "bytesRead",
+            Value::Number(visible_read + bytes.len() as f64),
+        );
+        super::set_socket_bytes_read(
+            &js,
+            (visible_read as u64).saturating_add(bytes.len() as u64),
+        );
         // A parser-detached HTTP agent socket has no public `data` listener;
         // any bytes arriving while it is in freeSockets are unsolicited and
         // poison the next response. Destroy it before dispatching stream data.
@@ -206,7 +222,9 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             if consumed < bytes.len() {
                 // A callback may pause the socket. Retain unread bytes until
                 // resume makes the same onread source available again.
-                sock.borrow_mut().read_buf.extend_from_slice(&bytes[consumed..]);
+                sock.borrow_mut()
+                    .read_buf
+                    .extend_from_slice(&bytes[consumed..]);
             }
         } else {
             emit(state, &js, "data", vec![arg])?;
@@ -234,11 +252,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     Ok(())
 }
 
-fn emit_onread(
-    socket: &Value,
-    bytes: &[u8],
-    callback: &Value,
-) -> Result<usize, VmError> {
+fn emit_onread(socket: &Value, bytes: &[u8], callback: &Value) -> Result<usize, VmError> {
     let mut offset = 0;
     while offset < bytes.len() {
         let source = execute::get_property(socket, ONREAD_BUFFER_PROP);
@@ -267,14 +281,13 @@ fn emit_onread(
             }
             _ => unreachable!(),
         }
-        let result = execute::call(
-            callback,
-            socket,
-            &[Value::Number(count as f64), buffer],
-        )?;
+        let result = execute::call(callback, socket, &[Value::Number(count as f64), buffer])?;
         offset += count;
         if matches!(result, Value::Boolean(false))
-            || matches!(execute::get_property(socket, ONREAD_PAUSED_PROP), Value::Boolean(true))
+            || matches!(
+                execute::get_property(socket, ONREAD_PAUSED_PROP),
+                Value::Boolean(true)
+            )
         {
             break;
         }
@@ -300,7 +313,10 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         if guard.state == SocketState::Closed {
             continue;
         }
-        if matches!(execute::get_property(&guard.js, ONREAD_PAUSED_PROP), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&guard.js, ONREAD_PAUSED_PROP),
+            Value::Boolean(true)
+        ) {
             continue;
         }
         if !guard.read_buf.is_empty() {
@@ -309,7 +325,10 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
             continue;
         }
         if guard.read_eof
-            && matches!(execute::get_property(&guard.js, ONREAD_EOF_PROP), Value::Boolean(true))
+            && matches!(
+                execute::get_property(&guard.js, ONREAD_EOF_PROP),
+                Value::Boolean(true)
+            )
         {
             execute::set_property_in_place(&guard.js, ONREAD_EOF_PROP, Value::Boolean(false));
             events.eofs.push(sock.clone());
@@ -357,7 +376,6 @@ fn read_available(
             }
             Ok(n) => {
                 guard.bytes_read = guard.bytes_read.saturating_add(n as u64);
-                update_socket_counters(&guard);
                 datas.push((sock.clone(), buf[..n].to_vec()));
             }
             Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -475,8 +493,11 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     for sock in to_close {
         let js = sock.borrow().js.clone();
+        let bytes_read = sock.borrow().bytes_read;
         set_socket_state(&js, true, false, "closed");
         super::replace_socket_property(&js, "pending", Value::Boolean(true));
+        super::set_socket_bytes_read(&js, bytes_read);
+        super::replace_socket_property(&js, "_handle", quench_runtime::value::Value::Null);
         crate::modules::http::connection_close(state, &js)?;
         emit(state, &js, "close", Vec::new())?;
     }
