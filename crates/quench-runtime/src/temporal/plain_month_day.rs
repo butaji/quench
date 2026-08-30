@@ -298,6 +298,25 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
         let base = text.split('[').next().unwrap_or(&text);
         let has_time = base.contains(['T', 't', ' ']);
+        if calendar_id != "iso8601" && !has_time && base.len() <= 7 {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainMonthDay",
+            ));
+        }
+        if calendar_id != "iso8601"
+            && !has_time
+            && base.len() >= 10
+            && (if base.starts_with(['+', '-']) {
+                base[..7].parse::<i32>().ok()
+            } else {
+                base[..4].parse::<i32>().ok()
+            })
+            .is_some_and(|year| year.abs() > 271_821)
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainMonthDay",
+            ));
+        }
         // A UTC offset is only permitted when a time component is present.
         // Date separators alone are not offsets, so count signs beyond the
         // one or two expected date hyphens.
