@@ -895,8 +895,8 @@ pub(crate) fn array_word_is_current(array: &crate::value::ArrayData) -> bool {
 }
 
 pub(crate) fn reset_replacements() {
-    REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
-    REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());
+    REPLACEMENTS.with(|replacements| replacements.replace(ReplacementMap::default()));
+    REPLACEMENT_ROOTS.with(|roots| roots.replace(ReplacementMap::default()));
     REPLACEMENTS_ACTIVE.with(|active| active.set(false));
 }
 

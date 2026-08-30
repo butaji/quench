@@ -5,7 +5,7 @@ thread_local! {
 }
 
 pub(crate) fn reset_weak_refs() {
-    WEAK_REFS.with(|refs| refs.borrow_mut().clear());
+    WEAK_REFS.with(|refs| refs.replace(Vec::new()));
 }
 
 pub fn collect_weak_refs() {

@@ -1305,7 +1305,7 @@ thread_local! {
 }
 
 pub(crate) fn reset_object_layout_cache() {
-    OBJECT_LAYOUTS.with(|layouts| layouts.borrow_mut().clear());
+    OBJECT_LAYOUTS.with(|layouts| layouts.replace(Vec::new()));
 }
 
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
