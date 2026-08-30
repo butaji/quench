@@ -96,6 +96,26 @@ fn accept_one(
     stream: TcpStream,
     peer: SocketAddr,
 ) -> Result<(), VmError> {
+    let blocked = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .map(|server| server.borrow().js.clone())
+        .is_some_and(|server| {
+            let block_list = execute::get_property(&server, "blockList");
+            quench_runtime::is_callable(&execute::get_property(&block_list, "check"))
+                && execute::call(
+                    &execute::get_property(&block_list, "check"),
+                    &block_list,
+                    &[Value::String(peer.ip().to_string())],
+                )
+                .is_ok_and(|result| execute::is_truthy(&result))
+        });
+    if blocked {
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+        return Ok(());
+    }
     let (object, id) = new_net_object(state, socket_props())?;
     let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
