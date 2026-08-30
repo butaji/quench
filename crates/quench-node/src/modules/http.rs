@@ -1107,6 +1107,10 @@ pub fn incoming_destroy(
                 .as_ref()
                 .is_some_and(|response| execute::same_identity(response, receiver))
         });
+    let response_complete = matches!(
+        execute::get_property(receiver, "complete"),
+        Value::Boolean(true)
+    );
     if !client_response || error.is_some() {
         execute::set_property_in_place(receiver, INCOMING_CLOSE_PENDING_PROP, Value::Boolean(true));
     }
@@ -1137,8 +1141,10 @@ pub fn incoming_destroy(
             .net
             .pending_events
             .push((receiver.clone(), "close".into(), Vec::new()));
-        if let Some(socket) = socket {
-            net::socket_destroy(state, Some(&socket), &[])?;
+        if !response_complete {
+            if let Some(socket) = socket {
+                net::socket_destroy(state, Some(&socket), &[])?;
+            }
         }
     }
     if let Some(error) = error {
@@ -1171,6 +1177,10 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let agent_prototype = host_api::object(vec![
         (
             "createConnection".into(),
+            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+        ),
+        (
+            "createSocket".into(),
             crate::host::capability(crate::registry::SPEC_NET_CONNECT),
         ),
         (
