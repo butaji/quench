@@ -85,6 +85,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             refed: true,
             server_id: None,
             write_buf: Vec::new(),
+            write_offset: 0,
             read_buf: Vec::new(),
             bytes_read: 0,
             bytes_written: 0,
@@ -460,6 +461,7 @@ fn connect_with_receiver(
         refed: true,
         server_id: None,
         write_buf: Vec::new(),
+        write_offset: 0,
         read_buf: Vec::new(),
         bytes_read: 0,
         bytes_written: 0,
@@ -1026,7 +1028,7 @@ pub fn socket_write(
     execute::set_property_in_place(&receiver, "bufferSize", Value::Number(buffer_size));
     let connecting = !guard.connect_announced;
     let flushed = try_flush(&mut guard);
-    let pending = guard.write_buf.len();
+    let pending = super::pending_write_len(&guard);
     execute::set_property_in_place(
         &receiver,
         "writableLength",
@@ -1036,7 +1038,7 @@ pub fn socket_write(
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 16_384,
     };
-    let result = Value::Boolean(flushed && guard.write_buf.len() < high_water_mark);
+    let result = Value::Boolean(flushed && super::pending_write_len(&guard) < high_water_mark);
     drop(guard);
     let callback = args
         .get(1)
@@ -1080,8 +1082,15 @@ pub fn socket_end(
         .sockets
         .get(&id)
         .is_some_and(|socket| !socket.borrow().connect_announced);
-    execute::set_property_in_place(receiver, "bufferSize", Value::Number(0.0));
-    execute::set_property_in_place(receiver, "writableLength", Value::Number(0.0));
+    let pending = state
+        .borrow()
+        .net
+        .sockets
+        .get(&id)
+        .map(|socket| super::pending_write_len(&socket.borrow()))
+        .unwrap_or(0);
+    execute::set_property_in_place(receiver, "bufferSize", Value::Number(pending as f64));
+    execute::set_property_in_place(receiver, "writableLength", Value::Number(pending as f64));
     // The JavaScript half-close state is synchronous. Apply it to the
     // receiver before consulting the native registry so aliases and sockets
     // whose host entry is being retired observe the same transition.
@@ -1120,7 +1129,7 @@ pub fn socket_end(
     }
     guard.state = SocketState::Closing;
     try_flush(&mut guard);
-    if guard.write_buf.is_empty() {
+    if super::pending_write_len(&guard) == 0 {
         if let Some(stream) = guard.stream.as_mut() {
             let _ = stream.shutdown(Shutdown::Write);
         }
