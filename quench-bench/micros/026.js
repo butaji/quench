@@ -1,15 +1,12 @@
 // VM micro-case 026
-// family=primitives; level=1; depth=26
+// family=arrays; operation=prefix-sum; variant=6; work_units=44; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const n = 78; let a = Array.from({ length: n }, (_, i) => (i % 7) / 7);
-for (let pass = 0; pass < 4; pass++) for (let i = 1; i < n - 1; i++) a[i] = (a[i - 1] + a[i] + a[i + 1]) / 3;
-assert(a.every(Number.isFinite), "numeric relaxation");
-return Number(a.reduce((sum, value) => sum + value, 0).toFixed(6));
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = Array.from({ length: 44 }, (_, i) => (i + 5) & 31); for (let i = 1; i < values.length; i++) values[i] += values[i - 1]; return values.at(-1);
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

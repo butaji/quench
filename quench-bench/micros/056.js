@@ -1,15 +1,12 @@
 // VM micro-case 056
-// family=control-flow; level=2; depth=6
+// family=strings; operation=substring-scan; variant=6; work_units=48; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const n = 18; let a = Array.from({ length: n }, (_, i) => (i % 7) / 7);
-for (let pass = 0; pass < 4; pass++) for (let i = 1; i < n - 1; i++) a[i] = (a[i - 1] + a[i] + a[i + 1]) / 3;
-assert(a.every(Number.isFinite), "numeric relaxation");
-return Number(a.reduce((sum, value) => sum + value, 0).toFixed(6));
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const text = ("segment-5-").repeat(48); let total = 0; for (let i = 0; i < text.length; i += 3) if (text.slice(i, i + 4).includes("e")) total++; return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

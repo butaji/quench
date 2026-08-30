@@ -1,15 +1,13 @@
 // VM micro-case 080
-// family=control-flow; level=2; depth=30
+// family=collections; operation=multi-key-index; variant=10; work_units=60; memory=retained-ring
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const table = new Map(); let hash = 2166136261; for (let i = 0; i < 60; i++) { hash ^= (i * 2654435761) >>> 0; hash = Math.imul(hash, 16777619) >>> 0; table.set(i, hash); }
-let found = 0; for (let i = 59; i >= 0; i--) if (table.has(i)) found += table.get(i) & 1;
-assert(table.size === 60 && found >= 0, "hash lookup");
-return [table.size, found, hash];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+const index = new Map();
+function microRun() {
+  for (let i = 0; i < 60; i++) { const key = (i % 7) + ":" + (i % 11); index.set(key, i); } let total = 0; for (const key of index.keys()) total += index.get(key); return total + index.size;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

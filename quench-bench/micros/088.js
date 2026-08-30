@@ -1,15 +1,12 @@
 // VM micro-case 088
-// family=control-flow; level=2; depth=38
+// family=typed-memory; operation=float32-reduction; variant=8; work_units=74; memory=external
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const queue = Array.from({ length: 15 }, (_, id) => ({ id, budget: id % 4 + 1 })); let ticks = 0;
-while (queue.length) { const task = queue.shift(); ticks += task.budget; if (task.budget > 1) queue.push({ id: task.id, budget: task.budget - 1 }); }
-assert(ticks > 0 && queue.length === 0, "scheduler queue");
-return ticks;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = new Float32Array(74); for (let i = 0; i < values.length; i++) values[i] = Math.sin(i * 0.03 + 7); let total = 0; for (let i = 0; i < values.length; i++) total += values[i] * values[i]; return Math.round(total * 1e6);
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));
