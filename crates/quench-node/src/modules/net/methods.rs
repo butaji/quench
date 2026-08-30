@@ -883,11 +883,12 @@ pub fn server_listen(
         add_listener_cb(state, &receiver, args.first(), "listening", true)?;
         return Ok(receiver);
     }
-    if let Some(path) = args
-        .first()
-        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
-        .and_then(|value| execute::to_js_string(value).ok())
-    {
+    let path_argument = args.first().and_then(|value| match value {
+        Value::String(_) | Value::StringUnits(_) => execute::to_js_string(value).ok(),
+        Value::Object(_) | Value::ObjectAlias(_) => string_property(value, "path"),
+        _ => None,
+    });
+    if let Some(path) = path_argument {
         if path.starts_with('/') || path.parse::<u16>().is_err() {
             if path.starts_with('/')
                 && Path::new(&path)
