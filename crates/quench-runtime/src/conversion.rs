@@ -54,19 +54,6 @@ pub(crate) fn well_known_symbol(name: &str) -> Option<crate::ops::Builtin> {
     })
 }
 
-pub(crate) fn property_key_value(key: &str) -> Value {
-    well_known_symbol(key).map_or_else(
-        || Value::String(key.to_string()),
-        |_builtin| {
-            // Proxy traps observe the actual property key value. Keep the
-            // canonical symbol payload here rather than leaking the internal
-            // Builtin tag, so Symbol.prototype.description and identity work
-            // through user code as well as ordinary property lookup.
-            Value::String(format!("{key}\0"))
-        },
-    )
-}
-
 pub(crate) fn number_to_string(value: f64) -> String {
     if value == 0.0 {
         return "0".to_string();
@@ -207,13 +194,6 @@ pub(crate) fn primitive_to_boolean(value: &Value) -> bool {
 #[inline(always)]
 pub(crate) fn to_boolean(value: &Value) -> bool {
     primitive_to_boolean(value)
-}
-
-/// Nullishness is intentionally narrower than falsiness: only `null` and
-/// `undefined` satisfy the ECMAScript nullish check.
-#[inline(always)]
-pub(crate) fn is_nullish(value: &Value) -> bool {
-    matches!(value, Value::Null | Value::Undefined)
 }
 
 /// Classify the canonical symbol representation without allocating.
@@ -409,7 +389,7 @@ pub fn is_callable(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_nullish, primitive_to_boolean, primitive_to_number, to_boolean, to_number};
+    use super::{primitive_to_boolean, primitive_to_number, to_boolean, to_number};
     use crate::value::Value;
     fn generic(value: &Value) -> Result<f64, crate::execute::VmError> {
         if super::is_symbol(value) || matches!(value, Value::BigInt(_)) {
@@ -465,6 +445,7 @@ mod tests {
 
     #[test]
     fn nullish_conversion_is_not_falsiness() {
+        let is_nullish = |value: &Value| matches!(value, Value::Null | Value::Undefined);
         assert!(is_nullish(&Value::Null));
         assert!(is_nullish(&Value::Undefined));
         assert!(!is_nullish(&Value::Boolean(false)));
