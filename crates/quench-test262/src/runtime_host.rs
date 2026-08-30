@@ -412,6 +412,8 @@ impl Test262Host for RuntimeHost {
         // parse failure as an unresolved module specifier.
         let program =
             reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
+        quench_runtime::vm::reset_global_object();
+        quench_runtime::vm::reset_fixture_realms();
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
@@ -429,6 +431,7 @@ impl Test262Host for RuntimeHost {
         quench_runtime::vm::reset_host_agent_state();
         quench_runtime::reset_fixture_caches();
         quench_runtime::vm::reset_global_object();
+        quench_runtime::vm::reset_fixture_realms();
         result
     }
 }
@@ -445,6 +448,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     // thread-local root global before installing the fresh execution scope so
     // properties created by one fixture cannot leak into the next fixture.
     quench_runtime::vm::reset_global_object();
+    quench_runtime::vm::reset_fixture_realms();
     quench_runtime::reset_fixture_caches();
     quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
@@ -458,6 +462,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     // during script execution and must settle before the host reports success.
     quench_runtime::module_bindings::drain_jobs();
     quench_runtime::reset_fixture_caches();
+    quench_runtime::vm::reset_fixture_realms();
     result
 }
 
