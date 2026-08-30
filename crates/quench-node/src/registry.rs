@@ -534,6 +534,8 @@ pub const SPEC_HTTP_REQ_SIGNAL_ABORT: NodeSpec = NodeSpec::new("http:req:signalA
 pub const SPEC_HTTP_REQ_ERROR: NodeSpec = NodeSpec::new("http:req:error", 0x0F1E);
 pub const SPEC_HTTP_AGENT_GET_NAME: NodeSpec = NodeSpec::new("http:Agent:getName", 0x0F20);
 pub const SPEC_HTTP_CLIENT_REQUEST: NodeSpec = NodeSpec::new("http:ClientRequest", 0x0F21);
+pub const SPEC_HTTP_REQ_SET_TIMEOUT: NodeSpec = NodeSpec::new("http:req:setTimeout", 0x0F22);
+pub const SPEC_HTTP_REQ_TIMEOUT_FIRE: NodeSpec = NodeSpec::new("http:req:timeoutFire", 0x0F23);
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
 pub const SPEC_NET_SOCKET: NodeSpec = NodeSpec::new("net:Socket", 0x1013);
@@ -1082,6 +1084,8 @@ pub const CAP_HTTP_INCOMING: CapId = SPEC_HTTP_INCOMING.cap;
 pub const CAP_HTTP_INCOMING_DESTROY: CapId = SPEC_HTTP_INCOMING_DESTROY.cap;
 pub const CAP_HTTP_REQ_SIGNAL_ABORT: CapId = SPEC_HTTP_REQ_SIGNAL_ABORT.cap;
 pub const CAP_HTTP_REQ_SET_HEADER: CapId = SPEC_HTTP_REQ_SET_HEADER.cap;
+pub const CAP_HTTP_REQ_SET_TIMEOUT: CapId = SPEC_HTTP_REQ_SET_TIMEOUT.cap;
+pub const CAP_HTTP_REQ_TIMEOUT_FIRE: CapId = SPEC_HTTP_REQ_TIMEOUT_FIRE.cap;
 pub const CAP_HTTP_REQ_WRITE: CapId = SPEC_HTTP_REQ_WRITE.cap;
 pub const CAP_HTTP_RESDATA: CapId = SPEC_HTTP_RESDATA.cap;
 pub const CAP_HTTP_RESEND: CapId = SPEC_HTTP_RESEND.cap;
