@@ -19,6 +19,18 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+fn placeholder_constructor(parent: Option<&Value>) -> Value {
+    let prototype = host_api::object(Vec::new());
+    let constructor = host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Object,
+        Value::Undefined,
+    );
+    let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype);
+    parent
+        .and_then(|parent| quench_runtime::execute::set_prototype_of(&constructor, parent).ok())
+        .unwrap_or(constructor)
+}
+
 fn global_constructor_or_capability(
     global: &Value,
     name: &str,
@@ -579,7 +591,24 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             (!matches!(module, Value::Undefined)).then_some(module)
         }
         "net" => Some(crate::modules::net::build()),
-        "tty" => Some(crate::modules::tty::build()),
+        "tty" => {
+            let tty = quench_runtime::execute::get_property(
+                &quench_runtime::vm::current_global_object(),
+                "__nodeTtyModule",
+            );
+            if !matches!(tty, Value::Undefined | Value::Null) {
+                Some(tty)
+            } else {
+                let base = placeholder_constructor(None);
+                let write_stream = placeholder_constructor(Some(&base));
+                let read_stream = placeholder_constructor(Some(&write_stream));
+                Some(crate::host::namespace_object_from_pairs(vec![
+                    ("isatty".into(), crate::host::capability(crate::registry::SPEC_TTY_ISATTY)),
+                    ("ReadStream".into(), read_stream),
+                    ("WriteStream".into(), write_stream),
+                ]))
+            }
+        }
         "fs" => Some(crate::modules::fs::build()),
         "http" => Some(crate::modules::http::build(state)),
         "readline" => Some(crate::modules::readline::build()),
@@ -614,7 +643,22 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 Some(crate::host::namespace_object_from_pairs(vec![]))
             }
         }
-        "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "tls" => {
+            let tls = quench_runtime::execute::get_property(
+                &quench_runtime::vm::current_global_object(),
+                "__nodeTlsModule",
+            );
+            if !matches!(tls, Value::Undefined | Value::Null) {
+                Some(tls)
+            } else {
+                let base = placeholder_constructor(None);
+                Some(crate::host::namespace_object_from_pairs(vec![
+                    ("TLSSocket".into(), placeholder_constructor(Some(&base))),
+                    ("Server".into(), placeholder_constructor(Some(&base))),
+                    ("SecureContext".into(), placeholder_constructor(Some(&base))),
+                ]))
+            }
+        }
         "cluster" => {
             if let Some(module) = state.borrow().cluster.module() {
                 return Some(module);
