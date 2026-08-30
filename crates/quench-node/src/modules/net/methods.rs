@@ -20,7 +20,11 @@ const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let (object, _id) = new_net_object(state, server_props())?;
     register_server(state, &object, None)?;
-    add_listener_cb(state, &object, args.first(), "connection", false)?;
+    let connection_listener = args
+        .first()
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| args.get(1).filter(|value| quench_runtime::is_callable(value)));
+    add_listener_cb(state, &object, connection_listener, "connection", false)?;
     Ok(object)
 }
 
