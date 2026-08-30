@@ -89,11 +89,13 @@ impl NodeRunner {
         // Fresh host per fixture with `node <file>` argv semantics.
         let _cwd_guard = FixtureCwdGuard::capture();
         let script = fixture.path.to_string_lossy().into_owned();
-        let (host, context) = quench_node::host::install_script_with_args(
+        let title = cli_title(&fixture.source).unwrap_or_else(|| "quench-node".into());
+        let (host, context) = quench_node::host::install_script_with_args_and_title(
             RealmId::ROOT,
             self.sink.clone(),
             &script,
             &fixture.argv,
+            &title,
         );
         let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
@@ -361,6 +363,15 @@ fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejec
         Some("strict") => quench_node::modules::process::UnhandledRejectionMode::Strict,
         _ => quench_node::modules::process::UnhandledRejectionMode::Throw,
     }
+}
+
+fn cli_title(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("// Flags:")?
+            .split_whitespace()
+            .find_map(|flag| flag.strip_prefix("--title=").map(str::to_owned))
+    })
 }
 
 fn reduce_fixture(

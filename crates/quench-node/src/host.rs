@@ -262,6 +262,21 @@ pub fn install_script_with_args(
     install_with_argv(realm, sink, argv)
 }
 
+pub fn install_script_with_args_and_title(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    script: &str,
+    args: &[String],
+    title: &str,
+) -> (Rc<NodeHost>, VmContext) {
+    let exec_path = host_exec_path();
+    let argv = std::iter::once(exec_path)
+        .chain(std::iter::once(script.to_string()))
+        .chain(args.iter().cloned())
+        .collect();
+    install_with_argv_and_title(realm, sink, argv, title)
+}
+
 fn host_exec_path() -> String {
     std::env::current_exe()
         .ok()
@@ -284,11 +299,24 @@ pub fn install_with_argv(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
+    install_with_argv_and_title(realm, sink, argv, "quench-node")
+}
+
+/// Install the host with an explicit `process.title` fact. The title is
+/// part of the process namespace constructed at install time, so aliases
+/// obtained through `require("process")` observe the same value.
+pub fn install_with_argv_and_title(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    argv: Vec<String>,
+    title: &str,
+) -> (Rc<NodeHost>, VmContext) {
     quench_runtime::date::set_local_timezone(None);
     // Node schedules every async-function continuation as a microtask,
     // including awaits whose operand is already fulfilled.
     quench_runtime::module_bindings::defer_fulfilled_await(true);
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
+    host.state.borrow_mut().process.title = title.to_string();
     let host_state = host.state.clone();
     quench_runtime::install_host_job_pump(Rc::new(move || {
         crate::modules::pump::drain_one_tick(&host_state)
@@ -297,7 +325,7 @@ pub fn install_with_argv(
         let state = host.state.borrow();
         (state.process.argv.clone(), state.process.exec_path.clone())
     };
-    let bindings = crate::registry::namespace_bindings(&argv, &exec_path);
+    let bindings = crate::registry::namespace_bindings(&argv, &exec_path, title);
     let mut context = VmContext::default().with_host(host.clone());
     // Bootstrap globals derive the public process surface from these
     // canonical argv facts. Keep them identical to the host state so

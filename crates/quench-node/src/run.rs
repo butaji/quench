@@ -61,12 +61,21 @@ pub fn run_script_with_sink(
     let script_str = script.to_string_lossy().into_owned();
     let mut argv = vec![exec, script_str.clone()];
     argv.extend(script_args.iter().cloned());
-    let (host, context) = crate::host::install_with_argv(RealmId::ROOT, sink, argv);
+    let title = source
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("// Flags:")?
+                .split_whitespace()
+                .find_map(|flag| flag.strip_prefix("--title=").map(str::to_owned))
+        })
+        .unwrap_or_else(|| "quench-node".into());
+    let (host, context) =
+        crate::host::install_with_argv_and_title(RealmId::ROOT, sink, argv, &title);
     let context = context.with_source_text(source.to_owned());
     if let Some(dir) = script.parent() {
         host.set_main_dir(dir.to_string_lossy().into_owned());
     }
-
     let wrapped = crate::modules::require::wrap_cjs(&host.state(), &script_str, source);
     let url_pattern_surface =
         crate::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
