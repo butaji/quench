@@ -417,6 +417,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             bytes_written: 0,
             read_eof: false,
             close_emitted: false,
+            close_deferred: false,
             finish_emitted: false,
             connect_announced: false,
             peer: None,
@@ -1139,6 +1140,7 @@ fn connect_with_receiver(
         bytes_written: 0,
         read_eof: false,
         close_emitted: false,
+        close_deferred: false,
         finish_emitted: false,
         connect_announced: false,
         peer: Some(addr),
@@ -2073,6 +2075,17 @@ pub fn socket_end(
         }
     }
     if queue_finish {
+        if let Some(callback) = args
+            .iter()
+            .rev()
+            .find(|value| quench_runtime::is_callable(value))
+        {
+            crate::modules::events::method_once(
+                state,
+                Some(receiver),
+                &[Value::String("finish".into()), callback.clone()],
+            )?;
+        }
         state
             .borrow_mut()
             .net
