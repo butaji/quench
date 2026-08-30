@@ -132,6 +132,14 @@ pub fn agent_construct(
         Value::Number(value) if value.is_finite() && value >= 0.0 => Value::Number(value),
         _ => Value::Number(0.0),
     });
+    object = execute::set_property(
+        object,
+        "agentKeepAliveTimeoutBuffer",
+        match option("agentKeepAliveTimeoutBuffer") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Value::Number(value),
+            _ => Value::Number(1000.0),
+        },
+    );
     object = execute::set_property(object, "totalSocketCount", Value::Number(0.0));
     object = install_methods(
         object,

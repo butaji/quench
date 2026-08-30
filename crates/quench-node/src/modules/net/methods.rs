@@ -85,6 +85,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             refed: true,
             server_id: None,
             write_buf: Vec::new(),
+            read_buf: Vec::new(),
             bytes_read: 0,
             bytes_written: 0,
             read_eof: false,
@@ -443,6 +444,12 @@ fn connect_with_receiver(
         }
     };
     let object = execute::canonical_value(&object);
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        configure_onread(&object, options);
+    }
     let local = stream.local_addr().ok();
     set_socket_state(&object, true, true, "opening");
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
@@ -453,6 +460,7 @@ fn connect_with_receiver(
         refed: true,
         server_id: None,
         write_buf: Vec::new(),
+        read_buf: Vec::new(),
         bytes_read: 0,
         bytes_written: 0,
         read_eof: false,
@@ -466,6 +474,22 @@ fn connect_with_receiver(
     state.borrow_mut().net.sockets.insert(id, socket);
     add_listener_cb(state, &object, args.last(), "connect")?;
     Ok(object)
+}
+
+fn configure_onread(socket: &Value, options: &Value) {
+    let onread = execute::get_property(options, "onread");
+    if !matches!(onread, Value::Object(_) | Value::ObjectAlias(_)) {
+        return;
+    }
+    let buffer = execute::get_property(&onread, "buffer");
+    let callback = execute::get_property(&onread, "callback");
+    if (matches!(buffer, Value::Uint8Array(_) | Value::DataView(_))
+        || quench_runtime::is_callable(&buffer))
+        && quench_runtime::is_callable(&callback)
+    {
+        execute::set_property_in_place(socket, ONREAD_BUFFER_PROP, buffer);
+        execute::set_property_in_place(socket, ONREAD_CALLBACK_PROP, callback);
+    }
 }
 
 /// A refused/absent loopback peer surfaces as an `'error'` on a
@@ -946,6 +970,11 @@ pub fn socket_write(
         "bytesWritten",
         Value::Number(guard.bytes_written as f64),
     );
+    let buffer_size = match execute::get_property(&receiver, "bufferSize") {
+        Value::Number(value) => value + bytes.len() as f64,
+        _ => bytes.len() as f64,
+    };
+    execute::set_property_in_place(&receiver, "bufferSize", Value::Number(buffer_size));
     let connecting = !guard.connect_announced;
     let flushed = try_flush(&mut guard);
     let high_water_mark = match execute::get_property(&guard.js, "writableHighWaterMark") {
@@ -990,15 +1019,24 @@ pub fn socket_end(
     let Some(id) = net_id(receiver) else {
         return Ok(receiver.clone());
     };
+    let connecting = state
+        .borrow()
+        .net
+        .sockets
+        .get(&id)
+        .is_some_and(|socket| !socket.borrow().connect_announced);
+    execute::set_property_in_place(receiver, "bufferSize", Value::Number(0.0));
     // The JavaScript half-close state is synchronous. Apply it to the
     // receiver before consulting the native registry so aliases and sockets
     // whose host entry is being retired observe the same transition.
-    execute::set_property_in_place(receiver, "writable", Value::Boolean(false));
-    execute::set_property_in_place(
-        receiver,
-        "readyState",
-        Value::String("readOnly".into()),
-    );
+    if !connecting {
+        execute::set_property_in_place(receiver, "writable", Value::Boolean(false));
+        execute::set_property_in_place(
+            receiver,
+            "readyState",
+            Value::String("readOnly".into()),
+        );
+    }
     let mut queue_finish = false;
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
         // A socket can be observed through an event-delivery alias after its
@@ -1014,12 +1052,14 @@ pub fn socket_end(
     let mut guard = sock.borrow_mut();
     if !guard.finish_emitted {
         guard.finish_emitted = true;
-        execute::set_property_in_place(&guard.js, "writable", Value::Boolean(false));
-        execute::set_property_in_place(
-            &guard.js,
-            "readyState",
-            Value::String("readOnly".into()),
-        );
+        if guard.connect_announced {
+            execute::set_property_in_place(&guard.js, "writable", Value::Boolean(false));
+            execute::set_property_in_place(
+                &guard.js,
+                "readyState",
+                Value::String("readOnly".into()),
+            );
+        }
         queue_finish = true;
     }
     guard.state = SocketState::Closing;
@@ -1240,12 +1280,15 @@ pub fn socket_set_encoding(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
-/// `socket.pause()` / `socket.resume()` — accepted as a no-op.
+/// `socket.pause()` / `socket.resume()` suspend and resume onread delivery.
 pub fn socket_pause(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, ONREAD_PAUSED_PROP, Value::Boolean(true));
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -1254,5 +1297,8 @@ pub fn socket_resume(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, ONREAD_PAUSED_PROP, Value::Boolean(false));
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }

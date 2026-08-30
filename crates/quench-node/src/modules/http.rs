@@ -36,6 +36,7 @@ pub struct HttpState {
     pub agent_pending: Vec<u64>,
     pub global_agent: Option<Value>,
     pub agent_prototype: Option<Value>,
+    pub outgoing_prototype: Option<Value>,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -96,6 +97,7 @@ impl HttpState {
             agent_pending: Vec::new(),
             global_agent: None,
             agent_prototype: None,
+            outgoing_prototype: None,
         }
     }
 }
@@ -1143,8 +1145,33 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             "IncomingMessage",
             crate::host::capability(crate::registry::SPEC_HTTP_INCOMING),
         ),
+        (
+            "OutgoingMessage",
+            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined);
+    let outgoing_prototype = host_api::object(vec![
+        (
+            "write".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING_WRITE),
+        ),
+        (
+            "end".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING_END),
+        ),
+        (
+            "destroy".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING_DESTROY),
+        ),
+    ]);
+    state.borrow_mut().http.outgoing_prototype = Some(outgoing_prototype.clone());
+    let outgoing = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING),
+        "prototype",
+        outgoing_prototype,
+    );
+    module = quench_runtime::execute::set_property(module, "OutgoingMessage", outgoing);
     let methods = [
         "ACL",
         "BIND",
