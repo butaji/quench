@@ -87,6 +87,9 @@ pub fn parse(
         crate::modules::path::validate_string(args.first().unwrap_or(&Value::Undefined), "url")?
             .trim_matches(|character: char| character <= '\u{20}')
             .to_string();
+    if let Some(error) = invalid_legacy_authority(&raw_url) {
+        return Err(error);
+    }
     let url = if let Some((head, fragment)) = raw_url.split_once('#') {
         format!("{}#{}", normalize_legacy_input(head), fragment)
     } else {
@@ -171,7 +174,9 @@ pub fn parse(
             }
         }
         if let Some(hostname) = parsed.get_mut("hostname") {
-            *hostname = idna::domain_to_ascii(hostname).unwrap_or_else(|_| hostname.clone());
+            let ascii = idna::domain_to_ascii(hostname)
+                .map_err(|_| legacy_url_error("ERR_INVALID_URL", &raw_url))?;
+            *hostname = ascii;
         }
         let hostname_value = parsed.get("hostname").cloned();
         if let (Some(host), Some(hostname)) = (parsed.get_mut("host"), hostname_value) {
@@ -291,6 +296,105 @@ pub fn parse(
         return Ok(execute::set_property(result, "search", Value::Null));
     }
     Ok(result)
+}
+
+fn invalid_legacy_authority(input: &str) -> Option<VmError> {
+    let (_, rest) = input.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.contains('\0') {
+        return Some(legacy_url_error("ERR_INVALID_URL", input));
+    }
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if let Some((auth, _)) = authority.rsplit_once('@') {
+        if has_malformed_percent_encoding(auth) {
+            return Some(uri_malformed_error());
+        }
+    }
+    if host.starts_with('[') {
+        let Some(end) = host.find(']') else {
+            return Some(legacy_url_error("ERR_INVALID_URL", input));
+        };
+        let suffix = &host[end + 1..];
+        if suffix.is_empty() {
+            return None;
+        }
+        if let Some(port) = suffix.strip_prefix(':') {
+            if port.is_empty() || port.chars().all(|character| character.is_ascii_digit()) {
+                return None;
+            }
+            return Some(legacy_url_error("ERR_INVALID_ARG_VALUE", input));
+        }
+        return Some(legacy_url_error("ERR_INVALID_URL", input));
+    }
+    let Some((hostname, port)) = host.rsplit_once(':') else {
+        return None;
+    };
+    if hostname.is_empty() || port.is_empty() {
+        return None;
+    }
+    if !port.chars().all(|character| character.is_ascii_digit()) {
+        return Some(legacy_url_error("ERR_INVALID_ARG_VALUE", input));
+    }
+    if port.parse::<u32>().ok().is_some_and(|value| value > 65_535) {
+        return Some(legacy_url_error("ERR_INVALID_ARG_VALUE", input));
+    }
+    None
+}
+
+fn uri_malformed_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("URIError".into())),
+        ("message".into(), Value::String("URI malformed".into())),
+        (
+            "constructor".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::URIError),
+        ),
+    ]))
+}
+
+fn legacy_url_error(code: &str, input: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String("Invalid URL".into())),
+        ("code".into(), Value::String(code.into())),
+        ("input".into(), Value::String(input.into())),
+    ]))
+}
+
+fn has_malformed_percent_encoding(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return true;
+        }
+        let Some(high) = percent_hex(bytes[index + 1]) else {
+            return true;
+        };
+        let Some(low) = percent_hex(bytes[index + 2]) else {
+            return true;
+        };
+        decoded.push((high << 4) | low);
+        index += 3;
+    }
+    std::str::from_utf8(&decoded).is_err()
+}
+
+fn percent_hex(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn legacy_object(entries: Vec<(String, Value)>) -> Value {
