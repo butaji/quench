@@ -33,6 +33,8 @@ pub struct HttpState {
     /// AbortSignal target id -> ClientRequest id.
     pub client_signals: HashMap<u64, u64>,
     pub agent_connections: Vec<(Value, String)>,
+    /// Requests deferred by an Agent's maxSockets limit, in submission order.
+    pub agent_pending: Vec<u64>,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -88,6 +90,7 @@ impl HttpState {
             clients: HashMap::new(),
             client_signals: HashMap::new(),
             agent_connections: Vec::new(),
+            agent_pending: Vec::new(),
         }
     }
 }
