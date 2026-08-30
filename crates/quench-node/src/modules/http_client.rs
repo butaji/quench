@@ -807,7 +807,11 @@ pub fn req_end(
         let Some(current) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
-        match current.agent.as_ref() {
+        let current_agent = current.agent.clone();
+        let current_target = current.target.clone();
+        let current_req = current.req.clone();
+        drop(current);
+        match current_agent.as_ref() {
             None => false,
             Some(agent) => {
                 let max = match execute::get_property(agent, "maxSockets") {
@@ -828,7 +832,7 @@ pub fn req_end(
                                 && request.agent.as_ref().is_some_and(|candidate| {
                                     execute::same_identity(candidate, agent)
                                         && agent_name(&request.target, agent)
-                                            == agent_name(&current.target, agent)
+                                            == agent_name(&current_target, agent)
                                 })
                         })
                         .count();
@@ -836,6 +840,8 @@ pub fn req_end(
                         if !guard.http.agent_pending.contains(&id) {
                             guard.http.agent_pending.push(id);
                         }
+                        let name = agent_name(&current_target, agent);
+                        add_agent_request(agent, &name, &current_req);
                         true
                     } else {
                         false
@@ -1285,6 +1291,13 @@ pub fn req_close(
         let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
         crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
+    if response.as_ref().is_some_and(|value| {
+        matches!(execute::get_property(value, "complete"), Value::Boolean(true))
+    }) {
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+            req.response_closed = true;
+        }
+    }
     if let (Some(agent), Some(target)) = (agent.as_ref(), target.as_ref()) {
         let name = agent_name(target, agent);
         remove_agent_socket(agent, &name, socket);
@@ -1342,7 +1355,9 @@ pub fn req_close(
 
 fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str) {
     let pending = {
-        let mut guard = state.borrow_mut();
+        let Ok(mut guard) = state.try_borrow_mut() else {
+            return;
+        };
         let position = guard.http.agent_pending.iter().position(|id| {
             guard.http.clientreqs.get(id).is_some_and(|request| {
                 request.agent.as_ref().is_some_and(|candidate| {
@@ -1359,13 +1374,25 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
         })
     };
     let Some(id) = pending else { return; };
-    let request = state
+    let (request, agent_request) = state
         .borrow()
         .http
         .clientreqs
         .get(&id)
-        .map(|request| request.req.clone());
-    let Some(request) = request else { return; };
+        .map(|request| {
+            (
+                request.req.clone(),
+                request
+                    .agent
+                    .as_ref()
+                    .map(|agent| (agent.clone(), agent_name(&request.target, agent))),
+            )
+        })
+        .unwrap_or((Value::Undefined, None));
+    if let Some((agent, name)) = agent_request {
+        remove_agent_request(&agent, &name, &request);
+    }
+    if matches!(request, Value::Undefined) { return; }
     set_request_property(Some(&request), "finished", Value::Boolean(false));
     let _ = req_end(state, Some(&request), &[]);
 }
@@ -1386,6 +1413,24 @@ fn agent_name(target: &RequestTarget, agent: &Value) -> String {
         agent,
         &[options],
     ).unwrap_or(Value::String(String::new()))).unwrap_or_default()
+}
+
+fn emit_agent_free(
+    state: &Rc<RefCell<HostState>>,
+    agent: &Value,
+    target: &RequestTarget,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let options = match target {
+        RequestTarget::Tcp { host, port } => host_api::object(vec![
+            ("host".into(), Value::String(host.clone())),
+            ("port".into(), Value::Number(*port as f64)),
+        ]),
+        RequestTarget::Unix { path } => {
+            host_api::object(vec![("socketPath".into(), Value::String(path.clone()))])
+        }
+    };
+    net::emit(state, agent, "free", vec![socket.clone(), options])
 }
 
 fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
@@ -1411,6 +1456,42 @@ fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
     };
     execute::set_property_in_place(&list, &length.to_string(), socket.clone());
     execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
+}
+
+fn add_agent_request(agent: &Value, name: &str, request: &Value) {
+    let pools = execute::get_property(agent, "requests");
+    let list = match execute::get_property(&pools, name) {
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::get_property(&pools, name)
+        }
+        _ => {
+            let list = host_api::array(Vec::new());
+            execute::set_property_in_place(&pools, name, list.clone());
+            list
+        }
+    };
+    let push = execute::get_property(&list, "push");
+    if quench_runtime::is_callable(&push) {
+        let _ = execute::call(&push, &list, &[request.clone()]);
+    }
+}
+
+fn remove_agent_request(agent: &Value, name: &str, request: &Value) {
+    let pools = execute::get_property(agent, "requests");
+    let list = execute::get_property(&pools, name);
+    let values: Vec<Value> = execute::own_enumerable_keys(&list)
+        .into_iter()
+        .filter_map(|key| {
+            let value = execute::get_property(&list, &key);
+            (!execute::same_identity(&value, request)).then_some(value)
+        })
+        .collect();
+    if values.is_empty() {
+        let (updated, _) = execute::delete_property(pools.clone(), name);
+        execute::replace_value(&pools, &updated);
+    } else {
+        execute::set_property_in_place(&pools, name, host_api::array(values));
+    }
 }
 
 fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
@@ -1792,6 +1873,9 @@ pub fn res_end_handler(
         }
         set_response_property(&res, "complete", Value::Boolean(true));
         set_response_property(&res, "readable", Value::Boolean(false));
+        if let Some(request) = client_value(state, client_id, true) {
+            set_request_property(Some(&request), "destroyed", Value::Boolean(true));
+        }
         net::emit(state, &res, "end", Vec::new())?;
         let should_close = {
             let mut guard = state.borrow_mut();
@@ -1812,6 +1896,21 @@ pub fn res_end_handler(
             net::emit(state, &res, "close", Vec::new())?;
             let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
             crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
+        } else if let Some(request) = client_value(state, client_id, true) {
+            set_request_property(Some(&request), "destroyed", Value::Boolean(true));
+        }
+        let agent_target = {
+            let guard = state.borrow();
+            guard.http.clientreqs.get(&client_id).and_then(|request| {
+                request
+                    .agent
+                    .clone()
+                    .map(|agent| (agent, request.target.clone()))
+            })
+        };
+        if let Some((agent, target)) = agent_target {
+            net::emit(state, socket, "free", Vec::new())?;
+            emit_agent_free(state, &agent, &target, socket)?;
         }
         let pooled = state
             .borrow()
@@ -1839,7 +1938,19 @@ pub fn res_end_handler(
                     .get(&client_id)
                     .map(|request| request.target.clone()),
             ) {
-                move_agent_socket_to_free(&agent, &agent_name(&target, &agent), socket);
+                let name = agent_name(&target, &agent);
+                let alive = net::net_id(socket).is_some_and(|id| {
+                    state
+                        .borrow()
+                        .net
+                        .sockets
+                        .get(&id)
+                        .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
+                });
+                if alive {
+                    move_agent_socket_to_free(&agent, &name, socket);
+                }
+                drain_agent_pending(state, &agent, &name);
             }
             net::socket_unref(state, Some(socket), &[])?;
         } else {
