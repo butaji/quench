@@ -966,10 +966,39 @@
     return signal;
   }
 
+  function readableSource(stream) {
+    if (stream.__quenchIterator) return stream.__quenchIterator;
+    if (typeof stream.read !== "function") return stream[Symbol.asyncIterator]?.();
+    return {
+      next() {
+        const value = stream.read();
+        if (value !== null) return { value, done: false };
+        if (stream._readableState?.ended || stream.readableEnded) {
+          return { value: undefined, done: true };
+        }
+        return new Promise((resolve, reject) => {
+          const onData = (chunk) => { cleanup(); resolve({ value: chunk, done: false }); };
+          const onEnd = () => { cleanup(); resolve({ value: undefined, done: true }); };
+          const onError = (error) => { cleanup(); reject(error); };
+          const cleanup = () => {
+            stream.removeListener("data", onData);
+            stream.removeListener("end", onEnd);
+            stream.removeListener("error", onError);
+          };
+          stream.once("data", onData);
+          stream.once("end", onEnd);
+          stream.once("error", onError);
+          requestRead(stream);
+        });
+      },
+      return() { stream.destroy?.(); return { value: undefined, done: true }; },
+    };
+  }
+
   function readableOperator(stream, mapper, filtering, options) {
     const concurrency = operatorConcurrency(options);
     const signal = operatorSignal(options);
-    const source = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
+    const source = readableSource(stream);
     const output = new ReadableClass({ objectMode: true });
     const state = {
       ended: false,
@@ -1031,7 +1060,7 @@
     const next = () => {
       if (state.operatorError) throw state.operatorError;
       if (state.ended) return { value: undefined, done: true };
-      if (signal?.aborted) throw sliceAbortError();
+      if (signal?.aborted) return Promise.reject(sliceAbortError());
       const initialFill = fill();
       const ready = () => {
         if (state.head >= state.pending.length) {
@@ -1074,7 +1103,15 @@
       };
       return initialFill ? Promise.resolve(initialFill).then(ready) : ready();
     };
-    output.__quenchIterator = { next, return() { state.ended = true; return Promise.resolve({ value: undefined, done: true }); } };
+    output.__quenchIterator = {
+      next,
+      return() {
+        state.ended = true;
+        state.sourceDone = true;
+        source.return?.();
+        return Promise.resolve({ value: undefined, done: true });
+      }
+    };
     output.__quenchIterator[Symbol.asyncIterator] = function () { return this; };
     output[Symbol.asyncIterator] = function () { return output.__quenchIterator; };
     output.toArray = function () {
@@ -1189,71 +1226,46 @@
     }
     const limit = sliceCount(count);
     const signal = options?.signal;
-    const slice = {
+    const source = readableSource(stream);
+    const state = { skipped: 0, emitted: 0, done: limit === 0, destroyed: false };
+    const next = () => {
+      if (signal?.aborted) return Promise.reject(sliceAbortError());
+      if (state.done) {
+        return { value: undefined, done: true };
+      }
+      const consume = (step) => {
+        if (!step || step.done) { state.done = true; return { value: undefined, done: true }; }
+        if (state.skipped < drop) { state.skipped++; return next(); }
+        state.emitted++;
+        if (state.emitted >= limit) state.done = true;
+        return { value: step.value, done: false };
+      };
+      const step = source.next();
+      return step && typeof step.then === "function" ? step.then(consume) : consume(step);
+    };
+    const iterator = {
+      next,
+      return() { state.done = true; source.return?.(); return { value: undefined, done: true }; },
+      [Symbol.asyncIterator]() { return this; }
+    };
+    return {
       readable: true,
       destroyed: false,
-      async *[Symbol.asyncIterator]() {
-        let skipped = 0;
-        let emitted = 0;
-        if (limit === 0) return;
-        if (signal?.aborted) throw sliceAbortError();
-        for await (const value of readableValues(stream)) {
-          if (signal?.aborted) throw sliceAbortError();
-          if (skipped < drop) {
-            skipped++;
-            continue;
-          }
-          if (emitted >= limit) break;
-          emitted++;
-          yield value;
-          if (emitted >= limit) return;
-        }
-      },
-      take(nextCount, nextOptions) {
-        return sliceReadable(this, nextCount, 0, nextOptions);
-      },
-      drop(nextCount, nextOptions) {
-        return sliceReadable(this, Infinity, nextCount, nextOptions);
-      },
+      __quenchIterator: iterator,
+      [Symbol.asyncIterator]() { return iterator; },
+      take(nextCount, nextOptions) { return sliceReadable(this, nextCount, 0, nextOptions); },
+      drop(nextCount, nextOptions) { return sliceReadable(this, Infinity, nextCount, nextOptions); },
       toArray() {
-        if (limit === 0) return [];
-        if (signal) {
-          return new Promise((resolve, reject) => {
-            const values = [];
-            let settled = false;
-            const finish = (error, result) => {
-              if (settled) return;
-              settled = true;
-              signal.removeEventListener?.("abort", abort);
-              if (error) reject(error);
-              else resolve(result);
-            };
-            const abort = () => finish(sliceAbortError());
-            signal.addEventListener?.("abort", abort, { once: true });
-            if (signal.aborted) return abort();
-            (async () => {
-              try {
-                await new Promise((next) => nextTick(next));
-                if (signal.aborted) return abort();
-                for await (const value of this) values.push(value);
-                await new Promise((next) => nextTick(next));
-                if (signal.aborted) abort();
-                else finish(null, values);
-              } catch (error) {
-                finish(error);
-              }
-            })();
-          });
-        }
-        return collectValues(this);
+        const values = [];
+        const collect = () => Promise.resolve(iterator.next()).then((step) => {
+          if (step.done) return values;
+          values.push(step.value);
+          return collect();
+        });
+        return collect();
       },
-      destroy(error) {
-        this.destroyed = true;
-        if (typeof stream.destroy === "function") stream.destroy(error);
-        return this;
-      }
+      destroy(error) { state.destroyed = true; state.done = true; source.return?.(); stream.destroy?.(error); return this; }
     };
-    return slice;
   }
 
   ReadableClass.prototype.take = function (count, options) {
@@ -1283,8 +1295,25 @@
     return readableTerminal(this, "find", predicate, undefined, false, options);
   };
   ReadableClass.prototype.toArray = function () {
-    const iterator = this.__quenchIterator || this[Symbol.asyncIterator]();
     const values = [];
+    if (!this.__quenchIterator && typeof this.read === "function") {
+      const collectReadable = () => {
+        let chunk;
+        while ((chunk = this.read()) !== null) values.push(chunk);
+        if (this._readableState?.ended || this.readableEnded) return Promise.resolve(values);
+        return new Promise((resolve, reject) => {
+          const onData = (value) => { values.push(value); collectReadable().then(resolve, reject); };
+          const onEnd = () => resolve(values);
+          const onError = (error) => reject(error);
+          this.once("data", onData);
+          this.once("end", onEnd);
+          this.once("error", onError);
+          requestRead(this);
+        });
+      };
+      return collectReadable();
+    }
+    const iterator = this.__quenchIterator || this[Symbol.asyncIterator]();
     const collect = () => Promise.resolve(iterator.next()).then((step) => {
       if (step.done) return values;
       values.push(step.value);
@@ -1316,7 +1345,10 @@
         next() {
           if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
           if (ended) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolve) => waiters.push(resolve));
+          return new Promise((resolve) => {
+            waiters.push(resolve);
+            requestRead(stream);
+          });
         },
         return() {
           finish();
