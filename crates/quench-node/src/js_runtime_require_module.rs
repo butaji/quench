@@ -8,6 +8,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = require_common_module(name) {
         return Ok(value);
     }
+    if name == "console" || name == "node:console" {
+        let global = quench_runtime::vm::current_global_object();
+        return Ok(quench_runtime::execute::get_property(&global, "console"));
+    }
     if name == "readline" || name == "node:readline" {
         return Ok(crate::modules::readline::build());
     }
