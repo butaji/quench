@@ -94,6 +94,17 @@ pub fn agent_call(
     Ok(agent.clone())
 }
 
+/// `agent.addRequest(request, options)` is an observable extension point.
+/// Transport dispatch is owned by ClientRequest itself; an uninitialized
+/// manually-seeded free socket must not be invoked by the host.
+pub fn agent_add_request(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(args.first().cloned().unwrap_or(Value::Undefined))
+}
+
 pub fn agent_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
@@ -103,6 +114,19 @@ pub fn agent_construct(
     let max_total_sockets = validate_agent_limit("maxTotalSockets", option("maxTotalSockets"))?;
     let mut object = crate::modules::events::new_emitter_object(state)?;
     if let Some(prototype) = state.borrow().http.agent_prototype.clone() {
+        // The bootstrap Agent class is installed after the initial module
+        // table is built. Copy its closure-backed mechanical methods lazily
+        // when the first user Agent is constructed.
+        let global = quench_runtime::vm::current_global_object();
+        let node_http = execute::get_property(&global, "__nodeHttp");
+        let node_agent = execute::get_property(&node_http, "Agent");
+        let node_agent_prototype = execute::get_property(&node_agent, "prototype");
+        for name in ["addRequest", "keepSocketAlive", "reuseSocket", "removeSocket"] {
+            let method = execute::get_property(&node_agent_prototype, name);
+            if quench_runtime::is_callable(&method) {
+                execute::set_property_in_place(&prototype, name, method);
+            }
+        }
         object = execute::set_prototype_of(&object, &prototype)?;
     }
     object = execute::set_property(object, "sockets", host_api::object(Vec::new()));
