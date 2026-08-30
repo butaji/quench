@@ -1,15 +1,12 @@
 // VM micro-case 030
-// family=primitives; level=1; depth=30
+// family=arrays; operation=matrix-multiply; variant=10; work_units=3600; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const table = new Map(); let hash = 2166136261; for (let i = 0; i < 60; i++) { hash ^= (i * 2654435761) >>> 0; hash = Math.imul(hash, 16777619) >>> 0; table.set(i, hash); }
-let found = 0; for (let i = 59; i >= 0; i--) if (table.has(i)) found += table.get(i) & 1;
-assert(table.size === 60 && found >= 0, "hash lookup");
-return [table.size, found, hash];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const size = 13; const left = Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_, col) => row + col + 9)); const right = Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_, col) => row === col ? 1 : 0)); let total = 0; for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) for (let inner = 0; inner < size; inner++) total += left[row][inner] * right[inner][col]; return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

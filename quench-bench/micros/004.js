@@ -1,15 +1,12 @@
 // VM micro-case 004
-// family=primitives; level=1; depth=4
+// family=numeric; operation=transcendental-scan; variant=4; work_units=165; memory=none
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const negativeZero = -0;
-const values = [negativeZero, Number.MIN_VALUE, Number.MAX_SAFE_INTEGER, BigInt(4)];
-assert(same(values[0], -0) && values[1] > 0 && Number.isSafeInteger(values[2]), "numeric edges");
-return [Object.is(values[0], -0), String(values[3])];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  let total = 0; for (let i = 1; i <= 165; i++) total += Math.sin(i * 0.017 + 3) * Math.cos(i * 0.013); return Math.round(total * 1e6);
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

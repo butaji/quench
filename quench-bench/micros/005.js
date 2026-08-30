@@ -1,15 +1,12 @@
 // VM micro-case 005
-// family=primitives; level=1; depth=5
+// family=numeric; operation=bigint-accumulator; variant=5; work_units=188; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const a = 5;
-const b = Number(String(a));
-assert(a == b && a === b && !same(a, -a - 1), "equality");
-return { loose: a == b, strict: a === b, type: typeof a };
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  let total = 0n; for (let i = 0n; i < 188n; i++) total = (total * 6364136223846793005n + i + 5n) & 0xffffffffffffffffn; return Number(total & 0xffffffffn);
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

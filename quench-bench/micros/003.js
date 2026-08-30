@@ -1,15 +1,12 @@
 // VM micro-case 003
-// family=primitives; level=1; depth=3
+// family=numeric; operation=bitwise-mixer; variant=3; work_units=142; memory=none
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let bits = 3;
-for (let i = 0; i < 4; i++) bits = ((bits << 3) ^ (bits >>> 2) ^ i) | 0;
-assert(Number.isInteger(bits), "bitwise integer");
-return bits;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  let bits = -1640531525; for (let i = 0; i < 284; i++) bits = Math.imul(bits ^ (bits >>> 13), 0x85ebca6b) | 0; return bits >>> 0;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

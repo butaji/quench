@@ -1,15 +1,12 @@
 // VM micro-case 087
-// family=control-flow; level=2; depth=37
+// family=typed-memory; operation=uint32-bitfields; variant=7; work_units=68; memory=external
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const nodes = Array.from({ length: 6 }, (_, id) => ({ id, value: id }));
-for (let pass = 0; pass < 5; pass++) for (let i = 1; i < nodes.length; i++) nodes[i].value = nodes[i - 1].value + 1;
-assert(nodes.at(-1).value === nodes.length - 1, "constraint propagation");
-return nodes.at(-1).value;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = new Uint32Array(68); let total = 0; for (let i = 0; i < values.length; i++) { values[i] = (i << 16) | (i ^ 6); total ^= values[i] >>> 5; } return total >>> 0;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

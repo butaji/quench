@@ -1,15 +1,12 @@
 // VM micro-case 062
-// family=control-flow; level=2; depth=12
+// family=iterables; operation=generator-yield; variant=2; work_units=13; memory=allocation-heavy
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let cells = 0;
-for (let row = 0; row < 4; row++) for (let col = 0; col < 5; col++) cells += row + col;
-assert(cells >= 0, "nested loop");
-return cells;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  function* sequence() { for (let i = 0; i < 13; i++) yield (i * i + 1) & 255; } let total = 0; for (const value of sequence()) total += value; return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

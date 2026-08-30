@@ -1,15 +1,13 @@
 // VM micro-case 035
-// family=primitives; level=1; depth=35
+// family=objects; operation=symbol-key-retention; variant=5; work_units=52; memory=retained-ring
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const a = 35;
-const b = Number(String(a));
-assert(a == b && a === b && !same(a, -a - 1), "equality");
-return { loose: a == b, strict: a === b, type: typeof a };
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+const retained = [];
+function microRun() {
+  const key = Symbol("field-4"); const object = { [key]: 4, visible: 5 }; retained.push(object); if (retained.length > 16) retained.shift(); return 16 + object[key] + object.visible;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

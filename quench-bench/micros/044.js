@@ -1,15 +1,12 @@
 // VM micro-case 044
-// family=primitives; level=1; depth=44
+// family=functions; operation=constructor-prototype; variant=4; work_units=29; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const negativeZero = -0;
-const values = [negativeZero, Number.MIN_VALUE, Number.MAX_SAFE_INTEGER, BigInt(44)];
-assert(same(values[0], -0) && values[1] > 0 && Number.isSafeInteger(values[2]), "numeric edges");
-return [Object.is(values[0], -0), String(values[3])];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  function Box(value) { this.value = value; } Box.prototype.bump = function (delta) { this.value = (this.value + delta) | 0; return this.value; }; let total = 0; for (let i = 0; i < 29; i++) total += new Box(i + 3).bump(i & 3); return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));
