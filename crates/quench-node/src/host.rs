@@ -76,6 +76,8 @@ pub struct HostState {
     pub stream_consumers_module: Option<Value>,
     /// Canonical `require("util")` module for this realm.
     pub util_module: Option<Value>,
+    /// Canonical `require("console")` module and global console identity.
+    pub console_module: Option<Value>,
     pub string_decoder_aliases: std::collections::HashMap<u64, u64>,
     pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
     pub string_decoder_encoding: std::collections::HashMap<u64, String>,
@@ -127,6 +129,7 @@ impl NodeHost {
             stream_module: None,
             stream_consumers_module: None,
             util_module: None,
+            console_module: None,
             string_decoder_aliases: std::collections::HashMap::new(),
             string_decoder_pending: std::collections::HashMap::new(),
             string_decoder_encoding: std::collections::HashMap::new(),
@@ -381,6 +384,7 @@ pub fn install_with_argv_and_title(
         crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
     );
     let console = crate::modules::console::build_value();
+    host.state.borrow_mut().console_module = Some(console.clone());
     context = context.with_host_value("console".to_string(), console);
     (host, context)
 }
