@@ -23,9 +23,6 @@ pub(crate) fn get_named_property_result(
 ) -> Result<Value, VmError> {
     let retry_resolved = !matches!(value, Value::Object(object) if !object.has_replacement());
     if let Value::Object(object) = value {
-        if let Some(value) = stable_length_slot(object, key) {
-            return Ok(value);
-        }
         if let Some(value) = get_named_cached_object(object, cache) {
             return Ok(value);
         }
@@ -33,9 +30,6 @@ pub(crate) fn get_named_property_result(
     let resolved = crate::locals::resolved_replacement(value.clone());
     if retry_resolved {
         if let Value::Object(object) = &resolved {
-            if let Some(value) = stable_length_slot(object, key) {
-                return Ok(value);
-            }
             if let Some(value) = get_named_cached_object(object, cache) {
                 crate::execution_trace::named_get_miss_reason("unknown");
                 return Ok(value);
@@ -58,18 +52,6 @@ pub(crate) fn get_named_property_result(
         }
     }
     Ok(result)
-}
-
-#[inline]
-fn stable_length_slot(
-    object: &crate::value::ObjectData,
-    key: &str,
-) -> Option<Value> {
-    (key == "length"
-        && object.plain_index_cached() == Some(true)
-        && object.names().next().is_some_and(|name| name == key))
-        .then(|| object.slot_value(0))
-        .flatten()
 }
 
 /// Resolve an already-proven object word without constructing an owning
