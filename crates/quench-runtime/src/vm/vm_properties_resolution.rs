@@ -599,6 +599,12 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     if crate::vm::is_global_object(value) {
         return None;
     }
+    if key == "length"
+        && properties.plain_index_cached() == Some(true)
+        && properties.names().next().is_some_and(|name| name == key)
+    {
+        return properties.slot_value(0);
+    }
     let mut own = None;
     let mut metadata = None;
     for (slot, name) in properties.names().enumerate().rev() {
