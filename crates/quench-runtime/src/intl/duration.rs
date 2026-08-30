@@ -7,9 +7,6 @@ use super::{
     supported_numbering_systems, SLOT,
 };
 
-#[path = "duration_parts.rs"]
-mod duration_parts;
-
 pub(crate) fn dispatch(
     builtin: Builtin,
     arguments: &[Value],

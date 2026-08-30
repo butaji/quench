@@ -356,14 +356,6 @@ fn finish_async_yield(
     }
 }
 
-fn propagate_default(result: &Rc<PromiseData>, state: &PromiseState, value: Value) {
-    match state {
-        PromiseState::Fulfilled(_) => resolve_promise(result, value),
-        PromiseState::Rejected(_) => reject_promise(result, value),
-        PromiseState::Pending => {}
-    }
-}
-
 fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
     if Rc::ptr_eq(result, next) {
         reject_promise(
