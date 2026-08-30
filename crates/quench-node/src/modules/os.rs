@@ -378,8 +378,8 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
 fn frozen_object(properties: Vec<(String, Value)>) -> Value {
     let value = host_api::object(properties);
     let global = quench_runtime::vm::current_global_object();
-    let freeze = quench_runtime::execute::get_property(
-        &&quench_runtime::execute::get_property(&global, "Object"),
+    let freeze = quench_runtime::execute::get_property(&
+        &quench_runtime::execute::get_property(&global, "Object"),
         "freeze",
     );
     quench_runtime::execute::call(&freeze, &Value::Undefined, &[value.clone()]).unwrap_or(value)

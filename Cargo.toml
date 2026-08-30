@@ -7,15 +7,13 @@ members = [
     "crates/quench-node-test",
     "crates/quench-runtime",
     "crates/quench-test262",
-    "crates/quench-wasm",
-    "crates/quench-wasm-test",
 ]
 
 [profile.dev]
 opt-level = 3
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
@@ -27,8 +25,11 @@ lto = "thin"
 
 [profile.production]
 inherits = "release"
-# Alias the release contract for explicit score invocations. The optimizer
-# policy itself lives only in `profile.release`.
+# Production artifacts use whole-program optimization and one codegen unit.
+# Keep this profile explicit so release policy cannot drift by accident.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
 
 [profile.bench-throughput]
 inherits = "production"

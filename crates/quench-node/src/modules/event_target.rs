@@ -109,20 +109,6 @@ pub fn new_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Val
     allocate_target(state, false)
 }
 
-/// Keep the constructor and allocated targets on one prototype fact. Bootstrap
-/// modules can expose the constructor before its host prototype is installed;
-/// repair that derived view once, at the boundary, instead of teaching every
-/// consumer a separate fallback.
-pub(crate) fn ensure_constructor_prototype(constructor: &Value) -> Value {
-    let current = execute::get_property(constructor, "prototype");
-    if quench_runtime::is_callable(&execute::get_property(&current, "addEventListener")) {
-        return current;
-    }
-    let replacement = prototype();
-    let _ = execute::set_callable_property(constructor, "prototype", replacement.clone());
-    replacement
-}
-
 /// Construct the internal NodeEventTarget using the same target registry and
 /// listener records as EventTarget. Only the method surface differs.
 pub fn new_node_target(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -146,8 +132,7 @@ fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, 
             .unwrap_or_else(prototype)
     } else {
         let global = quench_runtime::vm::current_global_object();
-        let constructor = execute::get_property(&global, "EventTarget");
-        ensure_constructor_prototype(&constructor)
+        execute::get_property(&execute::get_property(&global, "EventTarget"), "prototype")
     };
     let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&object, &prototype)?
@@ -311,22 +296,13 @@ fn warn_max_listeners(
     count: usize,
     limit: usize,
 ) {
-    let target_kind = target_id(target).and_then(|id| {
-        state
-            .borrow()
-            .targets
-            .get(id)
-            .map(|target| {
-                let target = target.borrow();
-                (target.node, target.message_port)
-            })
-    });
     let label = if is_abort_signal(target) {
         "[AbortSignal]"
-    } else if target_kind.is_some_and(|(_, message_port)| message_port) {
+    } else if target_id(target)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| target.borrow().message_port)
+    {
         "[MessagePort [EventTarget]]"
-    } else if target_kind.is_some_and(|(node, _)| node) {
-        "NodeEventTarget"
     } else {
         "EventTarget"
     };
@@ -1110,7 +1086,10 @@ pub fn dispatch_event(
             break;
         }
     }
-    let prevented = execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
+    let prevented = event
+        .object_identity()
+        .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
+        || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
     execute::set_property_in_place(event, "eventPhase", Value::Number(0.0));
     execute::set_property_in_place(event, "currentTarget", Value::Null);
     execute::set_property_in_place(event, "srcElement", Value::Null);

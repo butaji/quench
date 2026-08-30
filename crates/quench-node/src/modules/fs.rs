@@ -3,25 +3,15 @@
 //! callbacks run on the host event loop.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
-use quench_runtime::execute::{self, VmError};
+use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-pub struct FsState {
-    next_fd: i32,
-    pub(crate) descriptors: HashMap<i32, FileDescriptor>,
-}
-
-pub(crate) struct FileDescriptor {
-    pub(crate) file: std::fs::File,
-    pub(crate) path: String,
-}
+pub struct FsState;
 
 impl Default for FsState {
     fn default() -> Self {
@@ -31,10 +21,7 @@ impl Default for FsState {
 
 impl FsState {
     pub fn new() -> Self {
-        Self {
-            next_fd: 3,
-            descriptors: HashMap::new(),
-        }
+        Self
     }
 }
 
@@ -42,7 +29,6 @@ impl FsState {
 #[derive(Default)]
 pub(crate) struct FsOptions {
     pub encoding: Option<String>,
-    pub buffer: Option<Value>,
     pub flag: Option<String>,
     pub mode: Option<u32>,
     pub recursive: bool,
@@ -76,509 +62,9 @@ pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
         }
         return decode_percent_path(&parsed.get("pathname"));
     }
-    Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-        "The \"path\" argument must be of type string or an instance of Buffer or URL.{}",
-        crate::modules::util::invalid_arg_received(value)
-    )))
-}
-
-pub(crate) fn descriptor_arg(value: Option<&Value>) -> Result<i32, VmError> {
-    match value {
-        Some(Value::Number(fd)) if fd.is_finite() && *fd >= 0.0 && fd.fract() == 0.0 => {
-            Ok(*fd as i32)
-        }
-        Some(value) => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-            "The \"fd\" argument must be of type number.{}",
-            crate::modules::util::invalid_arg_received(value)
-        ))),
-        None => Err(crate::modules::buffer_enc::invalid_arg_type(
-            "The \"fd\" argument must be of type number. Received undefined".into(),
-        )),
-    }
-}
-
-fn view_parts(value: &Value) -> Option<(Rc<quench_runtime::value::ArrayBufferData>, usize, usize)> {
-    macro_rules! view {
-        ($view:expr, $size:expr) => {
-            Some((
-                $view.buffer.clone(),
-                $view.byte_offset,
-                $view.length * $size,
-            ))
-        };
-    }
-    match value {
-        Value::Float64Array(view) => view!(view, 8),
-        Value::Float32Array(view) => view!(view, 4),
-        Value::Int8Array(view) => view!(view, 1),
-        Value::Int16Array(view) => view!(view, 2),
-        Value::Int32Array(view) => view!(view, 4),
-        Value::BigInt64Array(view) => view!(view, 8),
-        Value::BigUint64Array(view) => view!(view, 8),
-        Value::Uint32Array(view) => view!(view, 4),
-        Value::Uint8Array(view) => view!(view, 1),
-        Value::Uint8ClampedArray(view) => view!(view, 1),
-        Value::Uint16Array(view) => view!(view, 2),
-        Value::DataView(view) => Some((view.buffer.clone(), view.byte_offset, view.byte_length)),
-        _ => None,
-    }
-}
-
-fn io_view(
-    value: Option<&Value>,
-) -> Result<
-    (
-        Value,
-        Rc<quench_runtime::value::ArrayBufferData>,
-        usize,
-        usize,
-    ),
-    VmError,
-> {
-    let value = value.cloned().unwrap_or(Value::Undefined);
-    let Some((buffer, offset, length)) = view_parts(&value) else {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-            "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView.{}",
-            crate::modules::util::invalid_arg_received(&value)
-        )));
-    };
-    Ok((value, buffer, offset, length))
-}
-
-fn io_range(
-    value: Option<&Value>,
-    offset: usize,
-    length: usize,
-) -> Result<(Value, Rc<quench_runtime::value::ArrayBufferData>, usize), VmError> {
-    let (value, buffer, base, view_length) = io_view(value)?;
-    if view_length == 0 {
-        return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
-            "The argument 'buffer' is empty and cannot be written.{}",
-            crate::modules::util::invalid_arg_received(&value)
-        )));
-    }
-    let end = offset.checked_add(length).ok_or_else(|| {
-        crate::modules::buffer_enc::out_of_range("buffer", "within the buffer", "out of range")
-    })?;
-    if end > view_length {
-        return Err(crate::modules::buffer_enc::out_of_range(
-            "offset + length",
-            "within the buffer",
-            &end.to_string(),
-        ));
-    }
-    Ok((value, buffer, base + offset))
-}
-
-fn index_arg(value: Option<&Value>, name: &str, default: usize) -> Result<usize, VmError> {
-    match value {
-        None | Some(Value::Undefined) => Ok(default),
-        Some(Value::Number(number))
-            if number.is_finite() && *number >= 0.0 && number.fract() == 0.0 =>
-        {
-            Ok(*number as usize)
-        }
-        Some(value) => Err(crate::modules::buffer_enc::out_of_range(
-            name,
-            "an integer",
-            &crate::modules::util::inspect(value),
-        )),
-    }
-}
-
-pub(crate) fn open_options(flags: &str) -> Result<std::fs::OpenOptions, VmError> {
-    let mut options = std::fs::OpenOptions::new();
-    match flags {
-        "r" => {
-            options.read(true);
-        }
-        "r+" => {
-            options.read(true).write(true);
-        }
-        "w" => {
-            options.write(true).create(true).truncate(true);
-        }
-        "w+" => {
-            options.read(true).write(true).create(true).truncate(true);
-        }
-        "wx+" => {
-            options
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .truncate(true);
-        }
-        "a" => {
-            options.write(true).create(true).append(true);
-        }
-        "a+" => {
-            options.read(true).write(true).create(true).append(true);
-        }
-        "wx" => {
-            options.write(true).create_new(true);
-        }
-        "ax" => {
-            options.write(true).create_new(true).append(true);
-        }
-        "ax+" => {
-            options.read(true).write(true).create_new(true).append(true);
-        }
-        _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
-                "The argument 'flags' is invalid. Received {flags:?}"
-            )))
-        }
-    }
-    Ok(options)
-}
-
-pub fn open_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let path = path_arg(args.first())?;
-    let flags = match args.get(1) {
-        None | Some(Value::Undefined) => "r",
-        Some(Value::String(flags)) => flags.as_str(),
-        Some(value) => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-                "The \"flags\" argument must be of type string.{}",
-                crate::modules::util::invalid_arg_received(value)
-            )))
-        }
-    };
-    let file = open_options(flags)?
-        .open(&path)
-        .map_err(|error| crate::modules::fs_error::fs_error("open", Some(&path), &error))?;
-    let mut fs = state.borrow_mut();
-    let fd = fs.fs.next_fd;
-    fs.fs.next_fd += 1;
-    fs.fs.descriptors.insert(fd, FileDescriptor { file, path });
-    Ok(Value::Number(fd as f64))
-}
-
-pub fn close_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = descriptor_arg(args.first())?;
-    if state.borrow_mut().fs.descriptors.remove(&fd).is_none() {
-        return Err(crate::modules::buffer_enc::invalid_arg_value(
-            "file descriptor is not valid".into(),
-        ));
-    }
-    Ok(Value::Undefined)
-}
-
-pub fn close(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let (callback, leading) = args
-        .split_last()
-        .ok_or_else(|| callback_type_error(&Value::Undefined))?;
-    let fd = descriptor_arg(leading.first())?;
-    let callback = require_callback(Some(callback))?;
-    let result = close_sync(state, None, &[Value::Number(fd as f64)]);
-    match result {
-        Ok(_) => defer(state, &callback, vec![Value::Null]),
-        Err(error) => defer(state, &callback, vec![err_value(&Err(error))]),
-    }
-    Ok(Value::Undefined)
-}
-
-pub fn read_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = descriptor_arg(args.first())?;
-    let offset = index_arg(args.get(2), "offset", 0)?;
-    let length = index_arg(
-        args.get(3),
-        "length",
-        io_view(args.get(1))?.3.saturating_sub(offset),
-    )?;
-    let (value, buffer, target) = io_range(args.get(1), offset, length)?;
-    let position = match args.get(4) {
-        None | Some(Value::Null) | Some(Value::Undefined) => None,
-        Some(value) => Some(index_arg(Some(value), "position", 0)? as u64),
-    };
-    let mut bytes = vec![0; length];
-    let count = {
-        let mut fs = state.borrow_mut();
-        let descriptor = fs.fs.descriptors.get_mut(&fd).ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
-        })?;
-        if let Some(position) = position {
-            descriptor
-                .file
-                .seek(SeekFrom::Start(position))
-                .map_err(|error| {
-                    crate::modules::fs_error::fs_error("read", Some(&descriptor.path), &error)
-                })?;
-        }
-        descriptor.file.read(&mut bytes).map_err(|error| {
-            crate::modules::fs_error::fs_error("read", Some(&descriptor.path), &error)
-        })?
-    };
-    buffer.bytes.borrow_mut()[target..target + count].copy_from_slice(&bytes[..count]);
-    let _ = value;
-    Ok(Value::Number(count as f64))
-}
-
-pub fn write_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = descriptor_arg(args.first())?;
-    let offset = index_arg(args.get(2), "offset", 0)?;
-    let length = index_arg(
-        args.get(3),
-        "length",
-        io_view(args.get(1))?.3.saturating_sub(offset),
-    )?;
-    let (_, buffer, target) = io_range(args.get(1), offset, length)?;
-    let bytes = buffer.bytes.borrow()[target..target + length].to_vec();
-    let position = match args.get(4) {
-        None | Some(Value::Null) | Some(Value::Undefined) => None,
-        Some(value) => Some(index_arg(Some(value), "position", 0)? as u64),
-    };
-    let count = {
-        let mut fs = state.borrow_mut();
-        let descriptor = fs.fs.descriptors.get_mut(&fd).ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
-        })?;
-        if let Some(position) = position {
-            descriptor
-                .file
-                .seek(SeekFrom::Start(position))
-                .map_err(|error| {
-                    crate::modules::fs_error::fs_error("write", Some(&descriptor.path), &error)
-                })?;
-        }
-        descriptor.file.write(&bytes).map_err(|error| {
-            crate::modules::fs_error::fs_error("write", Some(&descriptor.path), &error)
-        })?
-    };
-    Ok(Value::Number(count as f64))
-}
-
-pub fn read(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let (callback, leading) = args
-        .split_last()
-        .ok_or_else(|| callback_type_error(&Value::Undefined))?;
-    descriptor_arg(leading.first())?;
-    let callback = require_callback(Some(callback))?;
-    let count = read_sync(state, None, leading)?;
-    defer(
-        state,
-        &callback,
-        vec![
-            Value::Null,
-            count,
-            leading.get(1).cloned().unwrap_or(Value::Undefined),
-        ],
-    );
-    Ok(Value::Undefined)
-}
-
-pub fn write(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let (callback, leading) = args
-        .split_last()
-        .ok_or_else(|| callback_type_error(&Value::Undefined))?;
-    descriptor_arg(leading.first())?;
-    let callback = require_callback(Some(callback))?;
-    let count = write_sync(state, None, leading)?;
-    defer(
-        state,
-        &callback,
-        vec![
-            Value::Null,
-            count,
-            leading.get(1).cloned().unwrap_or(Value::Undefined),
-        ],
-    );
-    Ok(Value::Undefined)
-}
-
-pub fn fstat_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = descriptor_arg(args.first())?;
-    let path = state
-        .borrow()
-        .fs
-        .descriptors
-        .get(&fd)
-        .map(|descriptor| descriptor.path.clone())
-        .ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
-        })?;
-    crate::modules::fs_sync::stat_sync(state, None, &[Value::String(path)])
-}
-
-pub fn ftruncate_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = descriptor_arg(args.first())?;
-    let length = args
-        .get(1)
-        .and_then(|value| match value {
-            Value::Number(value) if *value >= 0.0 => Some(*value as u64),
-            _ => None,
-        })
-        .unwrap_or(0);
-    let mut fs = state.borrow_mut();
-    let descriptor = fs.fs.descriptors.get_mut(&fd).ok_or_else(|| {
-        crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
-    })?;
-    descriptor.file.set_len(length).map_err(|error| {
-        crate::modules::fs_error::fs_error("ftruncate", Some(&descriptor.path), &error)
-    })?;
-    Ok(Value::Undefined)
-}
-
-pub fn fsync_sync(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = descriptor_arg(args.first())?;
-    let mut fs = state.borrow_mut();
-    let descriptor = fs.fs.descriptors.get_mut(&fd).ok_or_else(|| {
-        crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
-    })?;
-    descriptor.file.sync_all().map_err(|error| {
-        crate::modules::fs_error::fs_error("fsync", Some(&descriptor.path), &error)
-    })?;
-    Ok(Value::Undefined)
-}
-
-pub fn dir_construct(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    if args.is_empty() {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            (
-                "message".into(),
-                Value::String("The \"path\" argument must be specified".into()),
-            ),
-            ("code".into(), Value::String("ERR_MISSING_ARGS".into())),
-        ])));
-    }
-    let path = path_arg(args.first())?;
-    Ok(host_api::object(vec![("path".into(), Value::String(path))]))
-}
-
-fn settle(result: Result<Value, VmError>) -> Value {
-    let state = match result {
-        Ok(value) => quench_runtime::value::PromiseState::Fulfilled(value),
-        Err(VmError::Thrown(error)) => quench_runtime::value::PromiseState::Rejected(error),
-        Err(_) => quench_runtime::value::PromiseState::Rejected(Value::String("I/O error".into())),
-    };
-    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(state)))
-}
-
-pub fn promises_open(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let fd = open_sync(state, None, args)?;
-    let handle = host_api::object(vec![
-        ("fd".into(), fd),
-        (
-            "read".into(),
-            crate::host::capability(crate::registry::SPEC_FS_HANDLE_READ),
-        ),
-        (
-            "readFile".into(),
-            crate::host::capability(crate::registry::SPEC_FS_HANDLE_READFILE),
-        ),
-        (
-            "close".into(),
-            crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
-        ),
-        (
-            "Symbol.asyncDispose".into(),
-            crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
-        ),
-    ]);
-    Ok(settle(Ok(handle)))
-}
-
-pub fn file_handle_read(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let receiver = receiver.ok_or(VmError::NotCallable)?;
-    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
-    let mut read_args = vec![Value::Number(fd as f64)];
-    read_args.extend_from_slice(args);
-    let result = read_sync(state, None, &read_args).map(|bytes_read| {
-        host_api::object(vec![
-            ("bytesRead".into(), bytes_read),
-            (
-                "buffer".into(),
-                args.first().cloned().unwrap_or(Value::Undefined),
-            ),
-        ])
-    });
-    Ok(settle(result))
-}
-
-pub fn file_handle_close(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
-    let receiver = receiver.ok_or(VmError::NotCallable)?;
-    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
-    Ok(settle(close_sync(state, None, &[Value::Number(fd as f64)])))
-}
-
-pub fn file_handle_read_file(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let receiver = receiver.ok_or(VmError::NotCallable)?;
-    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
-    let path = state
-        .borrow()
-        .fs
-        .descriptors
-        .get(&fd)
-        .map(|descriptor| descriptor.path.clone())
-        .ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_value("file descriptor is not valid".into())
-        })?;
-    let result = crate::modules::fs_sync::read_file_sync(
-        state,
-        None,
-        &[
-            Value::String(path),
-            args.first().cloned().unwrap_or(Value::Undefined),
-        ],
-    );
-    Ok(settle(result))
+    Err(crate::modules::buffer_enc::invalid_arg_type(
+        "The \"path\" argument must be a string, Buffer, or URL".into(),
+    ))
 }
 
 fn decode_percent_path(path: &str) -> Result<String, VmError> {
@@ -653,10 +139,6 @@ pub(crate) fn parse_mkdir_options(value: Option<&Value>) -> Result<FsOptions, Vm
 }
 
 fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> {
-    if encoding.eq_ignore_ascii_case("buffer") {
-        options.encoding = Some("buffer".into());
-        return Ok(());
-    }
     match crate::modules::buffer_enc::canonical_encoding(encoding) {
         Some(canonical) => {
             options.encoding = Some(canonical.to_string());
@@ -670,21 +152,13 @@ fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> 
 
 fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), VmError> {
     let get = |key: &str| quench_runtime::vm::get_property(object, key);
-    let buffer = get("buffer");
-    if !matches!(buffer, Value::Undefined) {
-        options.buffer = Some(buffer);
-    }
     if let Value::String(encoding) = get("encoding") {
-        if encoding.eq_ignore_ascii_case("buffer") {
-            options.encoding = Some("buffer".into());
-        } else {
-            match crate::modules::buffer_enc::canonical_encoding(&encoding) {
-                Some(canonical) => options.encoding = Some(canonical.to_string()),
-                None => {
-                    return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
-                        "The argument 'encoding' is invalid encoding. Received '{encoding}'"
-                    )))
-                }
+        match crate::modules::buffer_enc::canonical_encoding(&encoding) {
+            Some(canonical) => options.encoding = Some(canonical.to_string()),
+            None => {
+                return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                    "The argument 'encoding' is invalid encoding. Received '{encoding}'"
+                )))
             }
         }
     }
@@ -696,10 +170,9 @@ fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), Vm
     }
     let recursive = get("recursive");
     if !matches!(recursive, Value::Undefined | Value::Boolean(_)) {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-            "The \"options.recursive\" property must be of type boolean.{}",
-            crate::modules::util::invalid_arg_received(&recursive)
-        )));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!("The \"options.recursive\" property must be of type boolean.{}", crate::modules::util::invalid_arg_received(&recursive)),
+        ));
     }
     options.recursive = truthy(&recursive);
     options.force = truthy(&get("force"));
@@ -736,10 +209,7 @@ fn callback_type_error(value: &Value) -> VmError {
 
 /// Queue an async fs callback on the event loop's immediate queue.
 pub(crate) fn defer(state: &Rc<RefCell<HostState>>, cb: &Value, args: Vec<Value>) {
-    let callback = crate::modules::domain::current(state)
-        .and_then(|domain| crate::modules::domain::bind(state, Some(&domain), &[cb.clone()]).ok())
-        .unwrap_or_else(|| cb.clone());
-    state.borrow().event_loop.queue_immediate(callback, args);
+    state.borrow().event_loop.queue_immediate(cb.clone(), args);
 }
 
 /// Split `args` into `(leading, callback)` for the async family: the
@@ -784,45 +254,14 @@ pub fn build() -> Value {
         ("mkdtemp", crate::host::capability(SPEC_FS_MKDTEMP)),
         ("realpath", crate::host::capability(SPEC_FS_REALPATH)),
         ("watch", crate::host::capability(SPEC_FS_WATCH)),
+        ("ReadStream", crate::host::capability(SPEC_FS_READSTREAM)),
+        ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
         ("opendir", crate::host::capability(SPEC_FS_OPENDIR)),
         ("readlink", crate::host::capability(SPEC_FS_READLINK)),
         ("chmod", crate::host::capability(SPEC_FS_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
-        ("open", crate::host::capability(SPEC_FS_OPEN)),
     ];
-    props.extend([
-        (
-            "createReadStream",
-            crate::host::capability(SPEC_FS_CREATE_READSTREAM),
-        ),
-        (
-            "createWriteStream",
-            crate::host::capability(SPEC_FS_WRITESTREAM),
-        ),
-        ("ReadStream", crate::host::capability(SPEC_FS_READSTREAM)),
-        ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
-    ]);
     props.extend(sync_props());
-    props.extend([
-        ("openSync", crate::host::capability(SPEC_FS_OPENSYNC)),
-        ("closeSync", crate::host::capability(SPEC_FS_CLOSESYNC)),
-        ("readSync", crate::host::capability(SPEC_FS_READSYNC)),
-        ("writeSync", crate::host::capability(SPEC_FS_WRITESYNC)),
-        ("read", crate::host::capability(SPEC_FS_READ)),
-        ("write", crate::host::capability(SPEC_FS_WRITE)),
-        ("fstatSync", crate::host::capability(SPEC_FS_FSTAT_SYNC)),
-        (
-            "ftruncateSync",
-            crate::host::capability(SPEC_FS_FTRUNCATE_SYNC),
-        ),
-        ("fsyncSync", crate::host::capability(SPEC_FS_FSYNC_SYNC)),
-        (
-            "fdatasyncSync",
-            crate::host::capability(SPEC_FS_FDATASYNC_SYNC),
-        ),
-        ("Dir", crate::host::capability(SPEC_FS_DIR)),
-        ("close", crate::host::capability(SPEC_FS_CLOSE)),
-    ]);
     if let Ok(factory) = eval_function(
         "(mkdtempSync, rmdirSync, resolve) => (prefix, options) => {\
           const path = mkdtempSync(prefix, options);\
@@ -842,71 +281,14 @@ pub fn build() -> Value {
             crate::host::capability(SPEC_FS_RMDIRSYNC),
             crate::host::capability(SPEC_PATH_RESOLVE),
         ];
-        if let Ok(disposable) = quench_runtime::execute::call(&factory, &Value::Undefined, &args) {
+        if let Ok(disposable) = quench_runtime::execute::call(&factory, &Value::Undefined, &args)
+        {
             props.push(("mkdtempDisposableSync", disposable));
         }
     }
     props.push(("constants", constants()));
     props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
-}
-
-pub fn open(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let (leading, callback) = async_args(args)?;
-    match open_sync(state, None, leading) {
-        Ok(fd) => defer(state, &callback, vec![Value::Null, fd]),
-        Err(error) => {
-            let error = err_value(&Err(error));
-            defer(state, &callback, vec![error, Value::Undefined]);
-        }
-    }
-    Ok(Value::Undefined)
-}
-
-pub fn create_read_stream(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let path = path_arg(args.first())?;
-    let stream = crate::modules::events::new_emitter_object(state)?;
-    let stream = execute::set_property(stream, "path", Value::String(path.clone()));
-    let open = host_api::bound_capability_with_arguments(
-        crate::host::capability_ref(crate::registry::SPEC_FS_READSTREAM_OPEN),
-        vec![stream.clone(), Value::String(path)],
-    );
-    defer(state, &open, Vec::new());
-    Ok(stream)
-}
-
-pub fn read_stream_open(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let stream = args.first().ok_or_else(|| execute::type_error("stream"))?;
-    let path = match args.get(1) {
-        Some(Value::String(path)) => path,
-        _ => return Err(execute::type_error("path")),
-    };
-    match std::fs::File::open(path) {
-        Ok(_) => Ok(Value::Undefined),
-        Err(error) => {
-            let error = match crate::modules::fs_error::fs_error("open", Some(path), &error) {
-                VmError::Thrown(value) => value,
-                other => return Err(other),
-            };
-            crate::modules::events::method_emit(
-                state,
-                Some(stream),
-                &[Value::String("error".into()), error],
-            )
-        }
-    }
 }
 
 fn eval_function(source: &str) -> Result<Value, VmError> {
@@ -1035,7 +417,6 @@ fn promises() -> Value {
         ("chmod", crate::host::capability(SPEC_FSP_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FSP_TRUNCATE)),
         ("realpath", crate::host::capability(SPEC_FSP_REALPATH)),
-        ("open", crate::host::capability(SPEC_FSP_OPEN)),
     ];
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
 }

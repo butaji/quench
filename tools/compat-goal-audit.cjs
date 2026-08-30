@@ -33,6 +33,19 @@ const findings = [];
 const add = (rank, area, finding, action, evidence) =>
   findings.push({ rank, area, finding, action, evidence });
 
+const tasks = readJson(path.join(root, "tasks/index.json"));
+const taskRows = tasks?.tasks || tasks?.items || [];
+const unfinished = taskRows.filter((task) => task.status !== "complete");
+if (unfinished.length) {
+  add(
+    1,
+    "scope",
+    `${unfinished.length}/${taskRows.length} task records are unfinished`,
+    "Use the task index as the completion checklist; do not close the goal from focused-stage green alone.",
+    unfinished.map((task) => `${task.id}:${task.status}`).join(", "),
+  );
+}
+
 const metrics = path.join(root, "target/compat/focused-stage-metrics.jsonl");
 if (!exists(metrics)) {
   add(
@@ -157,6 +170,11 @@ const result = {
   schema: 1,
   generated_at: new Date().toISOString(),
   root,
+  task_counts: {
+    total: taskRows.length,
+    complete: taskRows.filter((task) => task.status === "complete").length,
+    unfinished: unfinished.length,
+  },
   findings,
   next_action: findings[0]?.action ||
     "Run the complete local verification gates.",

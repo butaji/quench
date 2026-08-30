@@ -90,12 +90,6 @@ pub fn get_property(value: &Value, key: &str) -> Value {
 }
 
 fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
-    // An own typed-array property containing `undefined` still shadows its
-    // prototype. Keep presence separate from the value so the ordinary
-    // prototype fallback cannot resurrect an inherited member.
-    if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
-        return found;
-    }
     let direct = get_property_value(value, key);
     if !matches!(direct, Value::Undefined) {
         return direct;
@@ -126,6 +120,9 @@ fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
     use Value::*;
+    if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
+        return found;
+    }
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
             bind_callable_property(value, crate::ops::Builtin::SymbolPrototype, key)

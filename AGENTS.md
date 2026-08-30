@@ -1,43 +1,64 @@
-# Repository rules
+# AGENTS.md
 
-Quench implements Node-compatible APIs on a JavaScript engine. Treat API
-shape, validation, errors, calling conventions, exports, and evidence as data.
-Generate repetitive registration and wrappers from those facts; handwrite only
-irreducible observable behavior. Keep the Rust host minimal and do not add a
-separate runtime crate.
+This repository implements Node-compatible APIs on JavaScript engine. Treat API shape,
+validation, errors, calling conventions, exports, and evidence as data. Generate
+repetitive Rust registration and JavaScript wrappers from that data; keep only
+irreducible behavior handwritten. Optimize for the minimum maintainable LOC.
+Keep the Rust host minimal and do not add or restore a separate runtime crate.
+The architecture is defined in `docs/data-first-minimal-runtime.md`.
 
-## Architecture principles
+## Frozen doctrine
 
-1. Represent each semantic fact once.
-2. OXC owns syntax; Quench does not create another syntax tree.
-3. Keep static structure as data or eliminate it before runtime.
-4. Let VM code represent only dynamic uncertainty.
+1. Never represent the same semantic fact twice.
+2. OXC owns syntax; Quench does not invent another syntax tree.
+3. Static structure remains data or disappears.
+4. VM code represents only dynamic uncertainty.
 5. Semantic abstractions do not imply runtime allocations.
-6. Share semantic mechanisms while specializing physical execution.
-7. Generate mechanical consequences from one declaration.
-8. Give no subsystem its own universe unless its semantics require one.
-9. Treat types and profiles as facts, not as another runtime or optimizer.
-10. Treat facts as `Proven`, `Guarded`, or `Unknown`.
-11. Complete slow semantics and cheap `Unknown` behavior precede guarded fast paths.
-12. Never optimize through observable JavaScript behavior.
-13. Keep heap references compact and account for generated code, static data,
-    caches, and native code in the complexity budget.
-14. Optional native execution consumes the same residual operations, remains
-    bounded and disposable, and owns no alternative semantics.
-15. If something can disappear before runtime, justify why it exists.
+6. Share semantic mechanisms; specialize physical execution.
+7. One declaration generates every mechanical consequence.
+8. Generate mechanics, handwrite observable algorithms, and budget generated
+   binary size as well as handwritten source.
+9. Facts have three states: `Proven`, `Guarded`, and `Unknown`.
+10. Never optimize through observable JavaScript behavior.
+11. Keep heap references compact.
+12. No subsystem gets its own universe unless semantics truly require it.
+13. Types are facts, not another runtime.
+14. Profiles are facts, not another optimizer.
+15. Optional native execution consumes the same residual Ops, remains bounded
+    and disposable, and owns no alternative semantics.
+16. If something can disappear before runtime, it must justify why it exists.
+17. Complete slow semantics and cheap `Unknown` behavior precede guarded fast
+    paths.
+18. Generated LOC, binary text, static data, caches, and native code all count
+    toward the memory and complexity budget.
 
-## Compatibility and benchmark rules
+1. Select the next upstream Node fixture or API cluster.
+2. Model the reusable API facts in the shared declaration/IR layer first.
+3. Generate registration, wrappers, and ordinary tests; hand-write only
+   irreducible compatibility behavior.
+4. Add a focused stage under `tests/node-compat/stage-N/`, run it, format with
+   Prettier, and run `git diff --check`.
+5. Commit and push each verified stage before starting the next one.
 
-- `quench-node` owns only the Node host/API boundary; `quench-runtime` owns
-  JavaScript semantics.
-- Verify Node behavior against the local Node oracle and upstream source.
-- Compare observable values, descriptors, identity, ordering, errors, exit
-  status, and host effects.
-- Benchmark code is measurement only. Production code must not detect fixture
-  names or source, scores, checksums, suite markers, or another engine.
-- Every optimization must be reusable outside its originating workload,
-  guarded by facts, and fall back to complete ordinary semantics.
-- Do not add benchmark dispatch, benchmark build hooks, CI configuration, or
-  unrelated external-project changes.
-- Keep declarations explicit; generated wrappers may replace duplicated
-  mechanics but may not obscure exceptional behavior.
+```bash
+cargo build -p quench-runtime
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Run an upstream fixture with:
+
+```sh
+tools/run-node-tests.sh tests/node/test/parallel/test-name.js
+```
+
+Do not minify or obscure declarations or exceptional polyfills. Generated
+mechanical wrappers may replace duplicated source. Leave `tests/node` as the
+Node.js submodule and do not modify unrelated external projects.
+
+Do not add or restore GitHub Actions or other GitHub CI configuration. Keep
+verification local through the repository tooling.
+
+When behavior is uncertain, first check the actual local Node.js CLI behavior;
+then consult the corresponding Node.js source code on GitHub before choosing an
+implementation or documenting a compatibility difference.

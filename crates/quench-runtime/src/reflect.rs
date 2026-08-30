@@ -369,7 +369,7 @@ pub(crate) fn execute_eval(
             return Ok(Some(crate::completion::TailCallRequest {
                 callee,
                 receiver: this_value,
-                arguments: vec![source].into(),
+                arguments: vec![source],
             }));
         }
         let value = crate::functions::execute_target(&callee, &this_value, &[source])?;

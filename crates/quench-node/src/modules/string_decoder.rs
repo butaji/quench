@@ -42,28 +42,40 @@ pub fn new_decoder(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Va
     ));
     props.push((
         "write".to_string(),
-        crate::host::capability(crate::registry::SPEC_STRING_DECODER_WRITE),
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "string_decoder:write",
+            0x0D01,
+        )),
     ));
     props.push((
         "end".to_string(),
-        crate::host::capability(crate::registry::SPEC_STRING_DECODER_END),
+        crate::host::capability(crate::registry::NodeSpec::new("string_decoder:end", 0x0D02)),
     ));
     props.push((
         "text".to_string(),
-        crate::host::capability(crate::registry::SPEC_STRING_DECODER_TEXT),
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "string_decoder:text",
+            0x0D04,
+        )),
     ));
     let prototype = host_api::object(vec![
         (
             "write".to_string(),
-            crate::host::capability(crate::registry::SPEC_STRING_DECODER_WRITE),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "string_decoder:write",
+                0x0D01,
+            )),
         ),
         (
             "end".to_string(),
-            crate::host::capability(crate::registry::SPEC_STRING_DECODER_END),
+            crate::host::capability(crate::registry::NodeSpec::new("string_decoder:end", 0x0D02)),
         ),
         (
             "text".to_string(),
-            crate::host::capability(crate::registry::SPEC_STRING_DECODER_TEXT),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "string_decoder:text",
+                0x0D04,
+            )),
         ),
     ]);
     props.push(("\0prototype".to_string(), prototype.clone()));
@@ -456,7 +468,10 @@ impl StringDecoder {
 
 pub fn build() -> Vec<(String, Value)> {
     let constructor = crate::host::capability(crate::registry::SPEC_STRING_DECODER);
-    let call = crate::host::capability(crate::registry::SPEC_STRING_DECODER_CALL);
+    let call = crate::host::capability(crate::registry::NodeSpec::new(
+        "string_decoder:call",
+        0x0D03,
+    ));
     let _ = quench_runtime::execute::set_host_capability_property(&constructor, "call", call);
     vec![("StringDecoder".to_string(), constructor)]
 }

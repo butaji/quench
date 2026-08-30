@@ -34,39 +34,9 @@ class NodeTimerPromiseScheduler {
     return globalThis.__nodeTimersPromises.setImmediate(undefined, options);
   }
 }
-const __nodeTimerPromiseValidateOptions = (options) => {
-  if (options === null || typeof options !== "object") {
-    throw __nodeTimerPromiseSchedulerError(
-      "ERR_INVALID_ARG_TYPE",
-      'The "options" argument must be an object'
-    );
-  }
-  if (options.ref !== undefined && typeof options.ref !== "boolean") {
-    throw __nodeTimerPromiseSchedulerError(
-      "ERR_INVALID_ARG_TYPE",
-      'The "options.ref" property must be of type boolean'
-    );
-  }
-  if (
-    options.signal !== undefined &&
-    (options.signal === null ||
-      typeof options.signal.addEventListener !== "function")
-  ) {
-    throw __nodeTimerPromiseSchedulerError(
-      "ERR_INVALID_ARG_TYPE",
-      'The "options.signal" property must be an AbortSignal'
-    );
-  }
-};
 globalThis.__nodeTimersPromises = {
   setTimeout: (_delay = 0, value, options = {}) =>
     new Promise((resolve, reject) => {
-      try {
-        __nodeTimerPromiseValidateOptions(options);
-      } catch (error) {
-        reject(error);
-        return;
-      }
       const signal = options?.signal;
       if (Number.isNaN(Number(_delay))) {
         process.emitWarning("NaN is an invalid delay value", {
@@ -101,13 +71,7 @@ globalThis.__nodeTimersPromises = {
       );
     }),
   setImmediate: (value, options = {}) =>
-    new Promise((resolve, reject) => {
-      try {
-        __nodeTimerPromiseValidateOptions(options);
-      } catch (error) {
-        reject(error);
-        return;
-      }
+    new Promise((resolve, reject) =>
       queueMicrotask(() => {
         if (options && options.signal && options.signal.aborted) {
           const error = new Error("The operation was aborted");
@@ -118,8 +82,8 @@ globalThis.__nodeTimersPromises = {
           return;
         }
         resolve(value);
-      });
-    }),
+      })
+    ),
   setInterval: async function* (_delay = 0, value, options = {}) {
     if (options === null || typeof options !== "object") {
       throw __nodeTimerPromiseSchedulerError(

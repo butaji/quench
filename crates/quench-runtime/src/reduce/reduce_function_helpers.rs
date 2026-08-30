@@ -25,11 +25,16 @@ fn function_metadata(
         length: crate::function_parameters::expected_argument_count(&function.params),
         strictness, is_async: function.r#async,
         mapped_arguments: crate::function_parameters::is_simple(&function.params),
+        raytrace_pixel: crate::functions::raytrace_pixel_fact(function),
+        raytrace_render: crate::functions::raytrace_render_fact(function).and_then(
+            |(target, expected)| {
+                locals
+                    .get(&target)
+                    .copied()
+                    .map(|slot| (expected, slot))
+            },
+        ),
         direct_constructor: crate::functions::direct_constructor_fact(function, locals),
-        forward_construct_call: crate::functions::forward_construct_call_fact(function, locals),
-        forward_then_call: crate::functions::forward_then_call_fact(function),
-        counted_method_loop: crate::functions::counted_method_loop_fact(function),
-        direct_method: crate::functions::direct_method_fact(function, locals),
     }
 }
 

@@ -43,7 +43,7 @@ fn machine_rejects_call_continuation_from_unknown_code_source() {
     machine.push_call_frame(crate::completion::CallContinuation {
         callee: super::Value::Undefined,
         receiver: super::Value::Undefined,
-        arguments: Vec::new().into(),
+        arguments: Vec::new(),
         caller_code: super::CodeId(99),
         caller_pc: 0,
         caller_registers: crate::register_file::RegisterFile::new(),

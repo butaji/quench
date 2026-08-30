@@ -1321,14 +1321,12 @@ fn string_property_matches_units(name: &str, units: &[Unit]) -> bool {
         "RGI_Emoji_Modifier_Sequence" => is_modifier_units(units),
         "RGI_Emoji_Tag_Sequence" => is_tag_units(units),
         "RGI_Emoji_ZWJ_Sequence" => is_zwj_units(units),
-        "RGI_Emoji" => {
-            is_basic_emoji_units(units)
-                || is_keycap_units(units)
-                || is_flag_units(units)
-                || is_modifier_units(units)
-                || is_tag_units(units)
-                || is_zwj_units(units)
-        }
+        "RGI_Emoji" => is_basic_emoji_units(units)
+            || is_keycap_units(units)
+            || is_flag_units(units)
+            || is_modifier_units(units)
+            || is_tag_units(units)
+            || is_zwj_units(units),
         _ => false,
     }
 }
@@ -1373,14 +1371,16 @@ fn is_tag_units(units: &[Unit]) -> bool {
 
 fn is_zwj_units(units: &[Unit]) -> bool {
     units.iter().any(|unit| unit.value == 0x200D)
-        && units.split(|unit| unit.value == 0x200D).all(|part| {
-            !part.is_empty()
-                && part.iter().all(|unit| {
-                    unit.value == 0xFE0F
-                        || (0x1F3FB..=0x1F3FF).contains(&unit.value)
-                        || is_basic_emoji_code_point(unit.value)
-                })
-        })
+        && units
+            .split(|unit| unit.value == 0x200D)
+            .all(|part| {
+                !part.is_empty()
+                    && part.iter().all(|unit| {
+                        unit.value == 0xFE0F
+                            || (0x1F3FB..=0x1F3FF).contains(&unit.value)
+                            || is_basic_emoji_code_point(unit.value)
+                    })
+            })
 }
 
 fn is_basic_emoji_units(units: &[Unit]) -> bool {
@@ -1573,7 +1573,10 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
     icu_properties::CodePointSetData::new::<P>().contains(character)
 }
 
-pub(crate) fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
+pub(crate) fn compile_property_matcher(
+    name: &str,
+    value: Option<&str>,
+) -> Option<PropertyMatcher> {
     use icu_properties::{props, PropertyParser};
     let kind = if name == "Any" {
         PropertyMatcherKind::Any
@@ -1710,6 +1713,7 @@ mod tests {
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
     }
+
 
     #[test]
     fn unicode_string_class_matches() {

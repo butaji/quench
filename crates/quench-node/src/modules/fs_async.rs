@@ -16,11 +16,7 @@ use super::fs::{async_args, defer, err_value, parse_mkdir_options, parse_options
 /// like Node), execute eagerly, then defer `cb(err, result)`.
 fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Value, VmError> {
     let (leading, callback) = async_args(args)?;
-    if name == "readFile" && matches!(leading.first(), Some(Value::Number(_))) {
-        super::fs::descriptor_arg(leading.first())?;
-    } else {
-        path_arg(leading.first())?;
-    }
+    path_arg(leading.first())?;
     if matches!(name, "rename" | "copyFile") {
         path_arg(leading.get(1))?;
     }

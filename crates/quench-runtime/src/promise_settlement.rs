@@ -32,12 +32,6 @@ fn settle_rejected(promise: &Rc<PromiseData>, reason: Value) {
             crate::promise::aggregate_settle(&aggregate, index, &state);
         }
         queue_promise(promise);
-        if !promise.rejection_handled.get() && !promise.unhandled_queued.replace(true) {
-            crate::promise::queue_unhandled_rejection(
-                Rc::clone(promise),
-                promise.result.borrow().clone().unwrap_or(Value::Undefined),
-            );
-        }
     }
 }
 

@@ -2,7 +2,6 @@
 //! Node errors. Async variants wrap these and defer the callback.
 
 use std::cell::RefCell;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -100,133 +99,25 @@ fn apply_mode(path: &str, mode: Option<u32>) {
 }
 
 fn read_bytes(path: &str, options: &FsOptions) -> Result<Value, VmError> {
-    let bytes = if let Some(flags) = options.flag.as_deref() {
-        let mut file = super::fs::open_options(flags)?
-            .open(path)
-            .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|e| super::fs_error::fs_error("read", Some(path), &e))?;
-        bytes
-    } else {
-        let meta = std::fs::metadata(Path::new(path))
-            .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
-        if meta.is_dir() {
-            let err = std::io::Error::from_raw_os_error(21);
-            return Err(super::fs_error::fs_error("read", Some(path), &err));
-        }
-        std::fs::read(Path::new(path))
-            .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?
-    };
-    decode_bytes(bytes, options)
-}
-
-fn decode_bytes(bytes: Vec<u8>, options: &FsOptions) -> Result<Value, VmError> {
-    let target = if let Some(buffer) = options.buffer.clone() {
-        if quench_runtime::is_callable(&buffer) {
-            quench_runtime::execute::call(
-                &buffer,
-                &Value::Undefined,
-                &[Value::Number(bytes.len() as f64)],
-            )?
-        } else {
-            buffer
-        }
-    } else {
-        Value::Undefined
-    };
-    if !matches!(target, Value::Undefined) {
-        let Some((buffer, offset, length)) = view_parts(&target) else {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"options.buffer\" property must be an instance of Buffer, TypedArray, or DataView".into(),
-            ));
-        };
-        if length < bytes.len() {
-            return Err(crate::modules::buffer_enc::invalid_arg_value(
-                "The \"buffer\" argument must be at least as large as the file".into(),
-            ));
-        }
-        buffer.bytes.borrow_mut()[offset..offset + bytes.len()].copy_from_slice(&bytes);
-        if let Some(encoding) = &options.encoding {
-            return Ok(crate::modules::buffer_enc::decode_str(&bytes, encoding));
-        }
-        let start = Value::Number(0.0);
-        let end = Value::Number(bytes.len() as f64);
-        let subarray = quench_runtime::execute::get_property(&target, "subarray");
-        if quench_runtime::is_callable(&subarray) {
-            return Ok(quench_runtime::execute::call(
-                &subarray,
-                &target,
-                &[start, end],
-            )?);
-        }
-        return Ok(super::buffer_proto::make_view(buffer, offset, bytes.len()));
+    let meta = std::fs::metadata(Path::new(path))
+        .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
+    if meta.is_dir() {
+        let err = std::io::Error::from_raw_os_error(21);
+        return Err(super::fs_error::fs_error("read", Some(path), &err));
     }
+    let bytes = std::fs::read(Path::new(path))
+        .map_err(|e| super::fs_error::fs_error("open", Some(path), &e))?;
     Ok(match &options.encoding {
         Some(encoding) => crate::modules::buffer_enc::decode_str(&bytes, encoding),
         None => crate::modules::buffer_proto::make_buffer(&bytes),
     })
 }
 
-fn view_parts(
-    value: &Value,
-) -> Option<(
-    std::rc::Rc<quench_runtime::value::ArrayBufferData>,
-    usize,
-    usize,
-)> {
-    macro_rules! view {
-        ($view:expr, $size:expr) => {
-            Some((
-                $view.buffer.clone(),
-                $view.byte_offset,
-                $view.length * $size,
-            ))
-        };
-    }
-    match value {
-        Value::Float64Array(view) => view!(view, 8),
-        Value::Float32Array(view) => view!(view, 4),
-        Value::Int8Array(view) => view!(view, 1),
-        Value::Int16Array(view) => view!(view, 2),
-        Value::Int32Array(view) => view!(view, 4),
-        Value::BigInt64Array(view) => view!(view, 8),
-        Value::BigUint64Array(view) => view!(view, 8),
-        Value::Uint32Array(view) => view!(view, 4),
-        Value::Uint8Array(view) => view!(view, 1),
-        Value::Uint8ClampedArray(view) => view!(view, 1),
-        Value::Uint16Array(view) => view!(view, 2),
-        Value::DataView(view) => Some((view.buffer.clone(), view.byte_offset, view.byte_length)),
-        _ => None,
-    }
-}
-
 pub fn read_file_sync(
-    state: &Rc<RefCell<HostState>>,
+    _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if matches!(args.first(), Some(Value::Number(_))) {
-        let fd = super::fs::descriptor_arg(args.first())?;
-        let options = parse_options(args.get(1))?;
-        let bytes = {
-            let mut host = state.borrow_mut();
-            let descriptor = host.fs.descriptors.get_mut(&fd).ok_or_else(|| {
-                crate::modules::fs_error::fs_error(
-                    "read",
-                    None,
-                    &std::io::Error::from_raw_os_error(9),
-                )
-            })?;
-            let mut bytes = Vec::new();
-            descriptor
-                .file
-                .read_to_end(&mut bytes)
-                .map_err(|e| super::fs_error::fs_error("read", Some(&descriptor.path), &e))?;
-            bytes
-        };
-        return decode_bytes(bytes, &options);
-    }
     let (path, options) = split(args)?;
     read_bytes(&path, &options)
 }
@@ -318,10 +209,6 @@ pub fn readdir_sync(
         .map(|(name, mode)| {
             if options.with_file_types {
                 super::fs_stats::dirent(name, *mode)
-            } else if options.encoding.as_deref() == Some("hex") {
-                crate::modules::buffer_enc::decode_str(name.as_bytes(), "hex")
-            } else if options.encoding.as_deref() == Some("buffer") {
-                super::buffer_proto::make_buffer(name.as_bytes())
             } else {
                 Value::String(name.clone())
             }
@@ -395,15 +282,10 @@ pub fn realpath_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    let options = super::fs::parse_options(args.get(1))?;
+    super::fs::parse_options(args.get(1))?;
     let canon = std::fs::canonicalize(Path::new(&path))
         .map_err(|e| super::fs_error::fs_error("realpath", Some(&path), &e))?;
-    let canon = canon.to_string_lossy().into_owned();
-    Ok(match options.encoding.as_deref() {
-        Some("buffer") => super::buffer_proto::make_buffer(canon.as_bytes()),
-        Some(encoding) => crate::modules::buffer_enc::decode_str(canon.as_bytes(), encoding),
-        None => Value::String(canon),
-    })
+    Ok(Value::String(canon.to_string_lossy().into_owned()))
 }
 
 pub fn mkdir_sync(

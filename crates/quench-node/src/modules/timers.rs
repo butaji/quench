@@ -165,6 +165,18 @@ fn async_resource(state: &Rc<RefCell<HostState>>, kind: &TimerKind) -> Result<Va
     )
 }
 
+pub(crate) fn async_destroy(resource: &Value) {
+    let global = quench_runtime::vm::current_global_object();
+    let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncDestroy");
+    if quench_runtime::is_callable(&helper) {
+        let _ = quench_runtime::execute::call(
+            &helper,
+            &Value::Undefined,
+            std::slice::from_ref(resource),
+        );
+    }
+}
+
 /// Build the JS Timeout/Immediate object: hidden id plus the
 /// `unref`/`ref`/`hasRef`/`refresh` capability methods.
 fn timer_object(

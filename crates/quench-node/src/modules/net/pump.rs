@@ -106,30 +106,7 @@ fn accept_one(
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
     if let Some(js) = server_js {
-        let owner = state
-            .borrow()
-            .net
-            .servers
-            .get(&server_id)
-            .and_then(|server| server.borrow().owner_worker)
-            .and_then(|worker_id| {
-                state
-                    .borrow()
-                    .cluster
-                    .worker_object(worker_id)
-                    .map(|worker| (worker_id, worker))
-            });
-        if let Some((worker_id, worker)) = owner {
-            let previous = state.borrow().cluster.worker_context;
-            crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
-            state.borrow_mut().cluster.worker_context = Some(worker_id);
-            let result = emit(state, &js, "connection", vec![object]);
-            state.borrow_mut().cluster.worker_context = previous;
-            crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
-            result?;
-        } else {
-            emit(state, &js, "connection", vec![object])?;
-        }
+        emit(state, &js, "connection", vec![object])?;
     }
     Ok(())
 }
@@ -220,12 +197,6 @@ fn read_available(
             Ok(0) => {
                 guard.read_eof = true;
                 had_eof = true;
-                guard.state = SocketState::Closing;
-                if guard.write_buf.is_empty() {
-                    if let Some(stream) = guard.stream.as_mut() {
-                        let _ = stream.shutdown(std::net::Shutdown::Write);
-                    }
-                }
                 break;
             }
             Ok(n) => {
@@ -237,7 +208,6 @@ fn read_available(
             Err(_) => {
                 guard.read_eof = true;
                 had_eof = true;
-                guard.state = SocketState::Closing;
                 break;
             }
         }
