@@ -201,10 +201,9 @@ fn connect_with_receiver(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let mut lookup_address = None;
-    if let Some(path) = args
-        .first()
-        .filter(|value| matches!(value, Value::String(_)))
-    {
+    if let Some(path) = args.first().filter(|value| {
+        matches!(value, Value::String(_) | Value::StringUnits(_))
+    }) {
         let path = execute::to_js_string(path)?;
         if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
             return connect_path(state, &path);
@@ -214,9 +213,21 @@ fn connect_with_receiver(
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
-        if let Value::String(path) = execute::get_property(options, "port") {
+        if let Some(path) = string_property(options, "socketPath") {
             if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
                 return connect_path(state, &path);
+            }
+        }
+        if let Some(path) = string_property(options, "port") {
+            if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
+                return connect_path(state, &path);
+            }
+        }
+        if matches!(execute::get_property(options, "port"), Value::Undefined) {
+            if let Some(path) = string_property(options, "path") {
+                if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
+                    return connect_path(state, &path);
+                }
             }
         }
         let auto_select_family = execute::get_property(options, "autoSelectFamily");
@@ -700,6 +711,15 @@ fn parse_port(value: &Value) -> Result<u16, VmError> {
     Ok(port as u16)
 }
 
+fn string_property(object: &Value, key: &str) -> Option<String> {
+    match execute::get_property(object, key) {
+        Value::String(_) | Value::StringUnits(_) => {
+            execute::to_js_string(&execute::get_property(object, key)).ok()
+        }
+        _ => None,
+    }
+}
+
 fn bad_port(value: &Value, text: &str) -> VmError {
     let kind = match value {
         Value::Number(_) => "number",
@@ -745,7 +765,9 @@ pub fn server_listen(
         add_listener_cb(state, &receiver, args.first(), "listening")?;
         return Ok(receiver);
     }
-    if let Some(Value::String(path)) = args.first() {
+    if let Some(path) = args.first().filter(|value| {
+        matches!(value, Value::String(_) | Value::StringUnits(_))
+    }).and_then(|value| execute::to_js_string(value).ok()) {
         if path.starts_with('/') || path.parse::<u16>().is_err() {
             let listener = match bind_listener(0, None) {
                 Ok(listener) => listener,
