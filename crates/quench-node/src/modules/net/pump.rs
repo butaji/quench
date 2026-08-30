@@ -102,6 +102,7 @@ fn accept_one(
         bytes_written: 0,
         read_eof: false,
         close_emitted: false,
+        finish_emitted: false,
         connect_announced: true,
         peer: Some(peer),
         local,
@@ -230,11 +231,10 @@ fn read_available(
                 guard.read_eof = true;
                 had_eof = true;
                 guard.state = SocketState::Closing;
-                if guard.write_buf.is_empty() {
-                    if let Some(stream) = guard.stream.as_mut() {
-                        let _ = stream.shutdown(std::net::Shutdown::Write);
-                    }
-                }
+                // Keep the write side open until the queued `data`/`end`
+                // callbacks have run.  A single read turn can contain both
+                // the final bytes and the peer FIN; shutting down here would
+                // discard writes produced by those callbacks.
                 break;
             }
             Ok(n) => {
@@ -303,9 +303,10 @@ fn poll_server_close(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     Ok(())
 }
 
-/// `'close'` for sockets that read EOF and drained their writes (or
-/// were asked to close); the socket leaves the live set.
+/// `'close'` for sockets that read EOF and drained their writes; the socket
+/// leaves the live set only after both sides of the stream are complete.
 pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let mut to_finish: Vec<Value> = Vec::new();
     let mut to_close: Vec<Rc<RefCell<NetSocket>>> = Vec::new();
     {
         let host = state.borrow();
@@ -315,8 +316,22 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 continue;
             }
             let done = guard.read_eof && guard.write_buf.is_empty();
-            let asked_close = guard.state == SocketState::Closing && guard.write_buf.is_empty();
-            if done || asked_close {
+            if done {
+                if !guard.finish_emitted
+                    && !matches!(
+                        execute::get_property(&guard.js, "allowHalfOpen"),
+                        quench_runtime::value::Value::Boolean(true)
+                    )
+                {
+                    guard.finish_emitted = true;
+                    execute::set_property_in_place(&guard.js, "writable", Value::Boolean(false));
+                    execute::set_property_in_place(
+                        &guard.js,
+                        "readyState",
+                        Value::String("readOnly".into()),
+                    );
+                    to_finish.push(guard.js.clone());
+                }
                 if let Some(stream) = guard.stream.take() {
                     let _ = stream.shutdown(Shutdown::Both);
                 }
@@ -331,6 +346,9 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         host.net.sockets.remove(&sock.borrow().id);
     }
     drop(host);
+    for js in to_finish {
+        emit(state, &js, "finish", Vec::new())?;
+    }
     for sock in to_close {
         let js = sock.borrow().js.clone();
         set_socket_state(&js, true, false, "closed");
