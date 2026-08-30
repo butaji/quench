@@ -131,14 +131,23 @@ pub fn res_write(
             .ok_or_else(|| execute::type_error("chunk required"))?;
         chunk_bytes(Some(value))
     };
-    let (status, text, mut headers, socket, keep_alive, first_write, chunked) = {
+    let (status, text, mut headers, socket, keep_alive, http10, send_date, first_write, chunked) = {
         let mut guard = state.borrow_mut();
         let Some(res) = guard.http.res.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
         res.body.extend_from_slice(&bytes);
         let first_write = !res.headers_sent;
+        let http10 = res.http10
+            || guard.http.conns.values().any(|conn| {
+                execute::same_identity(&conn.socket, &res.socket)
+                    && matches!(
+                        conn.req.as_ref().map(|req| execute::get_property(req, "httpVersion")),
+                        Some(Value::String(version)) if version == "1.0"
+                    )
+            });
         if first_write
+            && !http10
             && !res.headers.iter().any(|(key, _)| {
                 key.eq_ignore_ascii_case("content-length")
                     || key.eq_ignore_ascii_case("transfer-encoding")
@@ -159,12 +168,14 @@ pub fn res_write(
             res.headers.clone(),
             res.socket.clone(),
             res.keep_alive,
+            res.http10,
+            !matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"), Value::Boolean(false)),
             first_write,
             chunked,
         )
     };
     let payload = if first_write {
-        compose(status, &text, &headers, &bytes, keep_alive)
+        compose(status, &text, &headers, &bytes, keep_alive, http10, send_date)
     } else {
         if chunked {
             chunk_frame(&bytes)
@@ -240,7 +251,7 @@ pub fn res_end(
             }
         }
     }
-    let (status, text, headers, body, socket, keep_alive, headers_sent, chunked) = {
+    let (status, text, headers, body, socket, keep_alive, http10, send_date, headers_sent, chunked) = {
         let guard = state.borrow();
         let Some(res) = guard.http.res.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -252,13 +263,15 @@ pub fn res_end(
             res.body.clone(),
             res.socket.clone(),
             res.keep_alive,
+            res.http10,
+            !matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"), Value::Boolean(false)),
             res.headers_sent,
             res.chunked,
         )
     };
     let status = status_code(receiver, status);
     if !headers_sent {
-        let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
+        let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive, http10, send_date));
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     } else if chunked {
         let terminator = host_api::bytes(b"0\r\n\r\n");
@@ -315,7 +328,7 @@ pub fn res_flush_headers(
     let Some(id) = res_state(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let (status, text, headers, socket, keep_alive) = {
+    let (status, text, headers, socket, keep_alive, http10) = {
         let guard = state.borrow();
         let Some(res) = guard.http.res.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -326,9 +339,18 @@ pub fn res_flush_headers(
             res.headers.clone(),
             res.socket.clone(),
             res.keep_alive,
+            res.http10,
         )
     };
-    let payload = host_api::bytes(&compose(status, &text, &headers, &[], keep_alive));
+    let payload = host_api::bytes(&compose(
+        status,
+        &text,
+        &headers,
+        &[],
+        keep_alive,
+        http10,
+        !matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"), Value::Boolean(false)),
+    ));
     net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -351,20 +373,22 @@ fn compose(
     headers: &[(String, String)],
     body: &[u8],
     keep_alive: bool,
+    http10: bool,
+    send_date: bool,
 ) -> Vec<u8> {
     let text = if text.is_empty() { "OK" } else { text };
     let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
     let chunked = headers.iter().any(|(key, value)| {
         key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     });
-    if !chunked
+    if !http10 && !chunked
         && !headers
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
     {
         out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     }
-    if !headers
+    if send_date && !headers
         .iter()
         .any(|(key, _)| key.eq_ignore_ascii_case("date"))
     {
