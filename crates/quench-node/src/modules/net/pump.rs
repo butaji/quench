@@ -175,6 +175,9 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             install_methods(js.clone(), net_info_props(peer, Some(local)))?;
         }
         set_socket_state(&js, false, false, "open");
+        if matches!(execute::get_property(&js, super::NO_DELAY_PROP), Value::Boolean(true)) {
+            super::socket_set_no_delay(state, Some(&js), &[Value::Boolean(true)])?;
+        }
         crate::modules::http_client::apply_deferred_request_timeout(state, &js)?;
         emit(state, &js, "connect", Vec::new())?;
     }

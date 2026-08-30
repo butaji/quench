@@ -519,7 +519,20 @@ fn connect_with_receiver(
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         configure_onread(&object, options);
+        let no_delay = execute::get_property(options, "noDelay");
+        if execute::is_truthy(&no_delay) {
+            execute::set_property_in_place(
+                &object,
+                super::NO_DELAY_PROP,
+                Value::Boolean(true),
+            );
+        }
     }
+    let handle = host_api::object(vec![
+        ("setNoDelay".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("setKeepAlive".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+    ]);
+    execute::set_property_in_place(&object, "_handle", handle);
     let local = stream.local_addr().ok();
     set_socket_state(&object, true, true, "opening");
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
@@ -1367,8 +1380,16 @@ pub fn socket_address(
 pub fn socket_set_no_delay(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let handle = execute::get_property(receiver, "_handle");
+        let set_no_delay = execute::get_property(&handle, "setNoDelay");
+        if quench_runtime::is_callable(&set_no_delay) {
+            let enabled = args.first().map(execute::is_truthy).unwrap_or(true);
+            execute::call(&set_no_delay, &handle, &[Value::Boolean(enabled)])?;
+        }
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
