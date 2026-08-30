@@ -1160,7 +1160,8 @@ pub fn socket_destroy(
         execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, Value::Undefined);
     }
     let mut emit_close = false;
-    if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
+    let socket_entry = state.borrow().net.sockets.get(&id).cloned();
+    if let Some(sock) = socket_entry {
         let mut guard = sock.borrow_mut();
         let error = args.first().cloned();
         let was_closed = guard.state == SocketState::Closed;
