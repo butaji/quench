@@ -1,21 +1,27 @@
 fn object_array_like(
     properties: &crate::value::ObjectData,
 ) -> Result<Option<Vec<Value>>, crate::execute::VmError> {
-    let object = Value::Object(Rc::new(properties.clone()));
-    if let Ok(values) = crate::collections::iterator::collect_iterable(object.clone()) {
-        return Ok(Some(values));
+    let plain_hint = properties.plain_index_cached() == Some(true);
+    if !plain_hint {
+        let object = Value::Object(Rc::new(properties.clone()));
+        if let Ok(values) = crate::collections::iterator::collect_iterable(object) {
+            return Ok(Some(values));
+        }
     }
     // A plain object with only data properties can be projected in one pass.
     // This keeps large array-like constructor inputs linear while leaving
     // accessors, prototypes, and iterators on the observable property path.
-    let plain = properties.original_prototype().is_none_or(|prototype| {
+    let plain = plain_hint
+        || properties.original_prototype().is_none_or(|prototype| {
         matches!(
             prototype,
             crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
         )
-    }) && !properties
-        .iter()
-        .any(|(name, _)| name.starts_with('\0') || name == "Symbol.iterator");
+    }) && !properties.iter().any(|(name, value)| {
+        (name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator"))
+            || (name == "\0prototype"
+                && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype)))
+    });
     if plain {
         let length = properties.value_for_key("length");
         let Some(length) = length else {
@@ -48,6 +54,7 @@ fn object_array_like(
         }
         return Ok(Some(values));
     }
+    let object = Value::Object(Rc::new(properties.clone()));
     let length = crate::execute::get_property_result(&object, "length")?;
     if matches!(length, Value::Undefined) {
         return Ok(Some(Vec::new()));
