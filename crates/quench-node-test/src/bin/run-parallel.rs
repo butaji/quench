@@ -13,6 +13,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 const RESULT_MARKER: &str = "__QUENCH_RESULT__";
 
@@ -44,8 +45,15 @@ fn main() -> ExitCode {
         .and_then(|i| args.get(i + 1))
     {
         // Child mode: run one fixture so a fatal abort (e.g. stack
-        // overflow) cannot take down the parent triage sweep.
-        let outcome = quench_node_test::NodeTestRunner::new().run_file(&PathBuf::from(path));
+        // overflow) cannot take down the parent triage sweep.  The parent
+        // consumes only the result marker, so keep fixture output out of the
+        // child's pipe.  A printing sink can fill that pipe before the
+        // fixture reaches its terminal state and make a healthy run look
+        // hung.
+        let sink: quench_runtime::vm::OutputSink = Arc::new(|_| {});
+        let outcome = quench_node_test::NodeTestRunner::new()
+            .with_output_sink(sink)
+            .run_file(&PathBuf::from(path));
         let (status, code) = match outcome {
             quench_node_test::NodeOutcome::Pass => ("pass", ExitCode::SUCCESS),
             quench_node_test::NodeOutcome::Skip { .. } => ("skip", ExitCode::SUCCESS),
