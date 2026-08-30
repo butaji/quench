@@ -37,71 +37,6 @@ const DEFAULT_STACK_SIZE: usize = 256 * 1024 * 1024;
 const STACK_SIZE_ENV: &str = "TRIAGE_WORKER_STACK_SIZE_BYTES";
 const WORK_BATCH: usize = 32;
 
-/// Tests that crash the runtime regardless of runner state (stack
-/// overflow, panic, infinite loop, etc.). These are runtime bugs, not
-/// runner determinism issues, and the comparison skips them so the diff
-/// focuses on order/thread-induced divergence.
-const CRASHED_AT_RUNTIME: &[&str] = &[
-    "built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js",
-    "built-ins/Array/from/iter-set-elem-prop-non-writable.js",
-    "built-ins/Array/prototype/concat/Array.prototype.concat_large-typed-array.js",
-    "built-ins/Array/prototype/reduceRight/length-near-integer-limit.js",
-    "built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js",
-    "built-ins/Iterator/from/iterable-primitives.js",
-    "built-ins/Iterator/prototype/map/returned-iterator-yields-mapper-return-values.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-iterator.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-only-depth-1.js",
-    "built-ins/Iterator/prototype/flatMap/iterable-to-iterator-fallback.js",
-    "built-ins/Iterator/prototype/flatMap/iterable-primitives-are-not-flattened.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-iterable.js",
-    "built-ins/Iterator/prototype/take/limit-tonumber.js",
-    "built-ins/Iterator/prototype/take/limit-greater-than-or-equal-to-total.js",
-    "built-ins/Iterator/prototype/take/limit-less-than-total.js",
-    "built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js",
-    "built-ins/Proxy/deleteProperty/call-parameters.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js",
-    "built-ins/Proxy/construct/trap-is-null.js",
-    "built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
-    "built-ins/Proxy/construct/trap-is-undefined-no-property.js",
-    "built-ins/Proxy/construct/trap-is-undefined.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js",
-    "built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js",
-    "built-ins/RegExp/property-escapes/",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js",
-    "built-ins/RegExp/character-class-escape-non-whitespace.js",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-17.0.js",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-13.1.js",
-    "built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js",
-    "built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js",
-    "built-ins/RegExp/prototype/hasIndices/this-val-regexp.js",
-    "language/statements/with/set-mutable-binding-idref-with-proxy-env.js",
-    "language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js",
-    "built-ins/Object/prototype/setPrototypeOf-with-different-values.js",
-    "built-ins/Object/setPrototypeOf/set-failure-cycle.js",
-    "built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js",
-    "built-ins/String/prototype/matchAll/regexp-prototype-matchAll-v-u-flag.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-resizable-buffer.js",
-    "built-ins/TypedArray/prototype/fill/",
-    "built-ins/TypedArray/prototype/slice/resize-count-bytes-to-zero.js",
-    "built-ins/TypedArray/prototype/byteOffset/return-byteoffset.js",
-    "built-ins/TypedArray/prototype/lastIndexOf/negative-index-and-resize-to-smaller.js",
-    "built-ins/Array/prototype/every/15.4.4.16-3-29.js",
-    "built-ins/Array/prototype/some/15.4.4.17-3-29.js",
-    "built-ins/Promise/all/",
-    "built-ins/Promise/any/",
-    "built-ins/Promise/allSettled/",
-    "built-ins/Promise/race/",
-];
-
 struct TestSource {
     path: PathBuf,
     source: String,
@@ -129,15 +64,6 @@ fn main() -> ExitCode {
     };
     let discovered_count = discovered.len();
     let files = select_files(discovered, &base, &args.filters);
-    let files: Vec<PathBuf> = files
-        .into_iter()
-        .filter(|path| {
-            let path_str = path.to_string_lossy();
-            !CRASHED_AT_RUNTIME
-                .iter()
-                .any(|needle| path_str.contains(needle))
-        })
-        .collect();
     if files.is_empty() {
         return fail("no tests matched the requested filters");
     }
