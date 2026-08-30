@@ -426,6 +426,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             read_eof: false,
             close_emitted: false,
             close_deferred: false,
+            write_shutdown_pending: false,
             finish_emitted: false,
             connect_announced: false,
             peer: None,
@@ -1149,6 +1150,7 @@ fn connect_with_receiver(
         read_eof: false,
         close_emitted: false,
         close_deferred: false,
+        write_shutdown_pending: false,
         finish_emitted: false,
         connect_announced: false,
         peer: Some(addr),
@@ -2071,15 +2073,11 @@ pub fn socket_end(
         queue_finish = true;
     }
     guard.state = SocketState::Closing;
+    guard.write_shutdown_pending = true;
     try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
     super::set_socket_property(receiver, "bufferSize", Value::Number(pending as f64));
     super::set_socket_property(receiver, "writableLength", Value::Number(pending as f64));
-    if pending == 0 {
-        if let Some(stream) = guard.stream.as_mut() {
-            let _ = stream.shutdown(Shutdown::Write);
-        }
-    }
     if queue_finish {
         if let Some(callback) = args
             .iter()

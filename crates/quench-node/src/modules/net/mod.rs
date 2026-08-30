@@ -90,6 +90,9 @@ pub struct NetSocket {
     pub close_emitted: bool,
     /// Keep EOF/finish observable for one turn before close finalization.
     pub close_deferred: bool,
+    /// Delay the local FIN until the next pump turn after `end()` so queued
+    /// bytes are observable by the peer before shutdown is observed.
+    pub write_shutdown_pending: bool,
     pub finish_emitted: bool,
     pub connect_announced: bool,
     pub peer: Option<SocketAddr>,
