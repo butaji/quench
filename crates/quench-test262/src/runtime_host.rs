@@ -417,6 +417,7 @@ impl Test262Host for RuntimeHost {
             .entry()
             .ok_or_else(|| "module graph missing entry".to_string())?;
         let linked = LinkedModuleGraph::compile_with_entry_program(&mut graph, entry, program)?;
+        graph.release_payloads();
         quench_runtime::vm::reset_global_object();
         quench_runtime::reset_fixture_caches();
         quench_runtime::vm::reset_host_agent_state();

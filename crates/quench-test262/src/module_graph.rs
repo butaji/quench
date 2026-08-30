@@ -124,6 +124,15 @@ impl ModuleGraph {
         &self.units
     }
 
+    /// Drop source payloads after linking; execution uses only ids, paths, and
+    /// edge metadata, while compiled module units retain their residual code.
+    pub(crate) fn release_payloads(&mut self) {
+        for unit in &mut self.units {
+            unit.source.clear();
+            unit.bytes.clear();
+        }
+    }
+
     pub fn dependencies(&self, from: ModuleId) -> &[ModuleId] {
         self.edges.get(&from).map_or(&[], Vec::as_slice)
     }
