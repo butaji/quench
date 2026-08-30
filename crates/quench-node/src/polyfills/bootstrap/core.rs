@@ -2740,6 +2740,9 @@ let __quenchHttpModule;
         error.code = "ENOTSUP";
         throw error;
       }
+      createSocket(...args) {
+        return this.createConnection(...args);
+      }
       keepSocketAlive(socket) {
         socket?.setKeepAlive?.(true, this.keepAliveMsecs);
         socket?.unref?.();
