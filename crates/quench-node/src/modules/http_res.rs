@@ -133,19 +133,25 @@ pub fn res_write(
     };
     let (status, text, mut headers, socket, keep_alive, http10, send_date, first_write, chunked) = {
         let mut guard = state.borrow_mut();
+        let response_socket = guard
+            .http
+            .res
+            .get(&id)
+            .map(|res| res.socket.clone())
+            .unwrap_or(Value::Undefined);
+        let connection_http10 = guard.http.conns.values().any(|conn| {
+            execute::same_identity(&conn.socket, &response_socket)
+                && matches!(
+                    conn.req.as_ref().map(|req| execute::get_property(req, "httpVersion")),
+                    Some(Value::String(version)) if version == "1.0"
+                )
+        });
         let Some(res) = guard.http.res.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
         res.body.extend_from_slice(&bytes);
         let first_write = !res.headers_sent;
-        let http10 = res.http10
-            || guard.http.conns.values().any(|conn| {
-                execute::same_identity(&conn.socket, &res.socket)
-                    && matches!(
-                        conn.req.as_ref().map(|req| execute::get_property(req, "httpVersion")),
-                        Some(Value::String(version)) if version == "1.0"
-                    )
-            });
+        let http10 = res.http10 || connection_http10;
         if first_write
             && !http10
             && !res.headers.iter().any(|(key, _)| {
@@ -394,11 +400,21 @@ fn compose(
     {
         out.extend_from_slice(b"Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n");
     }
+    let connection = if keep_alive { "keep-alive" } else { "close" };
+    let transfer_encoding = headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
+        .collect::<Vec<_>>();
     for (key, value) in headers {
+        if key.eq_ignore_ascii_case("transfer-encoding") {
+            continue;
+        }
         out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
-    let connection = if keep_alive { "keep-alive" } else { "close" };
     out.extend_from_slice(format!("Connection: {connection}\r\n").as_bytes());
+    for (key, value) in transfer_encoding {
+        out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
+    }
     out.extend_from_slice(b"\r\n");
     if chunked {
         out.extend_from_slice(&chunk_frame(body));
