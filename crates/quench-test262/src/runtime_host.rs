@@ -414,6 +414,7 @@ impl Test262Host for RuntimeHost {
             reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         quench_runtime::vm::reset_global_object();
         quench_runtime::vm::reset_fixture_realms();
+        quench_runtime::module_bindings::reset_evaluators();
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
@@ -432,6 +433,7 @@ impl Test262Host for RuntimeHost {
         quench_runtime::reset_fixture_caches();
         quench_runtime::vm::reset_global_object();
         quench_runtime::vm::reset_fixture_realms();
+        quench_runtime::module_bindings::reset_evaluators();
         result
     }
 }
@@ -449,6 +451,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     // properties created by one fixture cannot leak into the next fixture.
     quench_runtime::vm::reset_global_object();
     quench_runtime::vm::reset_fixture_realms();
+    quench_runtime::module_bindings::reset_evaluators();
     quench_runtime::reset_fixture_caches();
     quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
@@ -463,6 +466,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     quench_runtime::module_bindings::drain_jobs();
     quench_runtime::reset_fixture_caches();
     quench_runtime::vm::reset_fixture_realms();
+    quench_runtime::module_bindings::reset_evaluators();
     result
 }
 
