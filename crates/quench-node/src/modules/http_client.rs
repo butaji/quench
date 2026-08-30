@@ -708,8 +708,18 @@ pub fn req_timeout_fire(
     if !active {
         return Ok(Value::Undefined);
     }
+    let has_socket = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .and_then(|req| req.socket.as_ref())
+        .is_some();
     if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
         req.timeout = None;
+        if !has_socket {
+            req.timeout_set = false;
+        }
     }
     let socket = {
         state
@@ -928,20 +938,18 @@ pub fn req_end(
             req.agent.as_ref().map(|agent| execute::get_property(agent, "timeout")),
         )
     };
-    if lookup.is_some() {
-        let pending_timer = {
-            state
-                .borrow()
-                .http
-                .clientreqs
-                .get(&id)
-                .and_then(|req| req.timeout.clone())
-        };
-        if let Some(timer) = pending_timer {
-            crate::modules::timers::clear_timeout(state, &[timer])?;
-            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
-                req.timeout = None;
-            }
+    let pending_timer = {
+        state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&id)
+            .and_then(|req| req.timeout.clone())
+    };
+    if let Some(timer) = pending_timer {
+        crate::modules::timers::clear_timeout(state, &[timer])?;
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.timeout = None;
         }
     }
     let request_timeout_set = state
@@ -964,10 +972,30 @@ pub fn req_end(
         )
     };
     set_request_property(Some(&request), "timeoutCb", request_timeout_cb.clone());
-    if lookup.is_some() && agent_timeout.is_some() {
-        if let Value::Number(value) = agent_timeout.clone().unwrap_or(Value::Number(0.0)) {
-            if value.is_finite() && value > 0.0 {
-                let agent_cb = quench_runtime::host_api::bound_capability_with_arguments(
+    let effective_timeout = if request_timeout_set {
+        request_timeout
+    } else {
+        agent_timeout.unwrap_or(Value::Number(0.0))
+    };
+    if let Value::Number(value) = effective_timeout {
+        if value.is_finite() && value > 0.0 {
+            let internal_cb = quench_runtime::host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_HTTP_REQ_TIMEOUT_FIRE.cap,
+                    ),
+                },
+                vec![request.clone(), Value::Boolean(false)],
+            );
+            subscribe_event(state, &socket, "timeout", internal_cb)?;
+            net::socket_set_timeout(
+                state,
+                Some(&socket),
+                &[Value::Number(value), request_timeout_cb.clone()],
+            )?;
+            if request_timeout_set && lookup.is_none() {
+                let response_cb = quench_runtime::host_api::bound_capability_with_arguments(
                     quench_runtime::ops::HostCapabilityRef {
                         realm: quench_runtime::ops::RealmId::ROOT,
                         kind: quench_runtime::ops::HostCapabilityKind::Custom(
@@ -976,31 +1004,11 @@ pub fn req_end(
                     },
                     vec![request.clone(), Value::Boolean(false)],
                 );
-                net::socket_set_timeout(
-                    state,
-                    Some(&socket),
-                    &[Value::Number(value), agent_cb],
-                )?;
+                subscribe_event(state, &socket, "timeout", response_cb)?;
             }
+        } else if request_timeout_set {
+            subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
         }
-    }
-    let effective_timeout = if request_timeout_set {
-        request_timeout
-    } else {
-        agent_timeout.unwrap_or(Value::Number(0.0))
-    };
-    if lookup.is_some() {
-        if let Value::Number(value) = effective_timeout {
-            if value.is_finite() && value > 0.0 {
-                net::socket_set_timeout(
-                    state,
-                    Some(&socket),
-                    &[Value::Number(value), request_timeout_cb],
-                )?;
-            }
-        }
-    } else if request_timeout_set {
-        subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
     }
     state
         .borrow_mut()
@@ -1346,12 +1354,47 @@ fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
             list
         }
     };
+    let push = execute::get_property(&list, "push");
+    if quench_runtime::is_callable(&push) {
+        let _ = execute::call(&push, &list, &[socket.clone()]);
+        return;
+    }
     let length = match execute::get_property(&list, "length") {
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 0,
     };
     execute::set_property_in_place(&list, &length.to_string(), socket.clone());
     execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
+}
+
+fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
+    let sockets_pools = execute::get_property(agent, "sockets");
+    let sockets = execute::get_property(&sockets_pools, name);
+    let found = execute::own_enumerable_keys(&sockets)
+        .into_iter()
+        .any(|key| execute::same_identity(&execute::get_property(&sockets, &key), socket));
+    if !found {
+        return;
+    }
+    execute::set_property_in_place(&sockets_pools, name, host_api::array(Vec::new()));
+    let free_pools = execute::get_property(agent, "freeSockets");
+    let free = match execute::get_property(&free_pools, name) {
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::get_property(&free_pools, name)
+        }
+        _ => {
+            let list = host_api::array(Vec::new());
+            execute::set_property_in_place(&free_pools, name, list.clone());
+            list
+        }
+    };
+    let push = execute::get_property(&free, "push");
+    if quench_runtime::is_callable(&push) {
+        let _ = execute::call(&push, &free, &[socket.clone()]);
+    } else {
+        execute::set_property_in_place(&free, "0", socket.clone());
+        execute::set_property_in_place(&free, "length", Value::Number(1.0));
+    }
 }
 
 fn remove_agent_socket(agent: &Value, name: &str, socket: &Value) {
@@ -1702,6 +1745,22 @@ pub fn res_end_handler(
         if pooled {
             // Idle HTTP agent sockets are retained for reuse but do not keep
             // the process alive. A later request refs the socket when reused.
+            if let (Some(agent), Some(target)) = (
+                state
+                    .borrow()
+                    .http
+                    .clientreqs
+                    .get(&client_id)
+                    .and_then(|request| request.agent.clone()),
+                state
+                    .borrow()
+                    .http
+                    .clientreqs
+                    .get(&client_id)
+                    .map(|request| request.target.clone()),
+            ) {
+                move_agent_socket_to_free(&agent, &agent_name(&target, &agent), socket);
+            }
             net::socket_unref(state, Some(socket), &[])?;
         } else {
             net::socket_destroy(state, Some(socket), &[])?;
@@ -1880,8 +1939,6 @@ fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Optio
 fn set_request_property(receiver: Option<&Value>, key: &str, value: Value) {
     if let Some(receiver) = receiver {
         execute::set_property_in_place(receiver, key, value.clone());
-        let updated = execute::set_property(receiver.clone(), key, value);
-        execute::replace_value(receiver, &updated);
     }
 }
 
