@@ -118,7 +118,7 @@ fn push_nested_try_after_yield(
         end: outer_resume.end,
     };
     {
-        let mut machine = generator.machine.borrow_mut();
+        let machine = generator.machine.borrow_mut();
         let Some(crate::machine::Frame::Try { body_resume, .. }) = machine.frames.frames.last_mut()
         else {
             return Ok(false);
@@ -186,7 +186,7 @@ fn complete_try_frame(
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
     let completion = if matches!(frame.phase, crate::machine::TryPhase::Body) {
-        run_try_handler(generator, state, frame, completion)?
+        run_try_handler(generator, frame, completion)?
     } else {
         completion
     };
@@ -195,7 +195,6 @@ fn complete_try_frame(
 
 fn run_try_handler(
     generator: &GeneratorData,
-    state: &mut GeneratorState,
     frame: &TryFrameResume,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {

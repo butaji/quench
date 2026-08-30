@@ -47,7 +47,7 @@ fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> 
         .raw
         .as_ref()
         .map_or(value.as_str(), |raw| raw.as_str());
-    let op = decode_unicode_escapes(&value, raw)
+    let op = decode_unicode_escapes(raw)
         .map_or_else(|| Constant::String(value.clone()), Constant::StringUnits);
     Some(Literal {
         span: string.span,
@@ -56,7 +56,7 @@ fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> 
     })
 }
 
-fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
+fn decode_unicode_escapes(raw: &str) -> Option<Vec<u16>> {
     if !has_unicode_escape(raw) {
         return None;
     }
