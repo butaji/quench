@@ -554,6 +554,7 @@ pub(crate) struct AsyncForOfState {
 /// property semantics. Accessor properties are represented by `get`/`set`
 /// values in the descriptor object and therefore cannot also carry a data
 /// value.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PropertyDescriptor {
     pub writable: Option<bool>,
@@ -561,6 +562,7 @@ pub(crate) struct PropertyDescriptor {
     pub configurable: Option<bool>,
 }
 
+#[cfg(test)]
 impl PropertyDescriptor {
     #[inline]
     pub(crate) const fn empty() -> Self {
@@ -711,15 +713,6 @@ impl ObjectProperties {
         }
     }
 
-    #[cold]
-    pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
-        self.names
-            .iter()
-            .cloned()
-            .zip(self.values.iter().map(crate::register_file::SlotWord::load))
-            .collect()
-    }
-
     #[inline]
     pub(crate) fn slot_value(&self, slot: usize) -> Option<Value> {
         self.values
@@ -727,6 +720,7 @@ impl ObjectProperties {
             .map(crate::register_file::SlotWord::load)
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn slot_value_mut(&mut self, slot: usize) -> Option<PropertyValueMut<'_>> {
         self.values.get(slot).map(|word| PropertyValueMut {
@@ -735,6 +729,7 @@ impl ObjectProperties {
         })
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn name_at(&self, slot: usize) -> Option<&PropertyName> {
         self.names.get(slot)
@@ -1106,6 +1101,7 @@ impl ObjectData {
     /// that retain a reference-derived cache must prove it points at this
     /// allocation and invalidate it when the owning `ObjectData` is replaced.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn properties_source(&self) -> *const ObjectProperties {
         &self.properties as *const ObjectProperties
     }
@@ -1404,6 +1400,7 @@ mod object_identity_tests {
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
 /// `ObjectData.properties` remains the semantic storage.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectShape {
     pub(crate) id: crate::identity::ShapeId,
@@ -1414,6 +1411,7 @@ pub(crate) struct ObjectShape {
 ///
 /// The source object remains authoritative; this record only describes the
 /// derived `(shape_id, property_id)` cache key and its resulting layout.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectTransition {
     pub(crate) from: crate::identity::ShapeId,
@@ -1425,9 +1423,11 @@ pub(crate) struct ObjectTransition {
 pub(crate) const DICTIONARY_SLOT_THRESHOLD: u32 = 32;
 /// Tiny objects stay on the ordinary property vector; this limit is deliberately
 /// derived from the measured fast path rather than introducing a second store.
+#[cfg(test)]
 pub(crate) const TINY_SLOT_LIMIT: u32 = 2;
 
 impl ObjectData {
+    #[cfg(test)]
     pub(crate) fn shape(&self) -> ObjectShape {
         // Hash the visible layout with a fixed algorithm.  Shape ids are used
         // as transition-cache keys and must be reproducible across processes.
@@ -1452,11 +1452,13 @@ impl ObjectData {
             dictionary: slots > DICTIONARY_SLOT_THRESHOLD,
         }
     }
+    #[cfg(test)]
     #[inline]
     pub(crate) fn shape_id(&self) -> crate::identity::ShapeId {
         self.shape().id
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn is_tiny(&self) -> bool {
         let shape = self.shape();
@@ -1465,15 +1467,18 @@ impl ObjectData {
 }
 
 impl ObjectData {
+    #[cfg(test)]
     #[inline]
     pub(crate) fn is_dictionary(&self) -> bool {
         self.shape().dictionary
     }
+    #[cfg(test)]
     #[inline]
     pub(crate) fn has_shape(&self, shape: crate::identity::ShapeId) -> bool {
         self.shape_id() == shape
     }
 
+    #[cfg(test)]
     pub(crate) fn slot_for(&self, key: &str) -> Option<usize> {
         if self.shape().dictionary || key.starts_with('\0') {
             return None;
@@ -1490,9 +1495,18 @@ impl ObjectData {
     /// execution caches retain pointers into the canonical vector.  Keeping
     /// this projection here prevents fast paths from reconstructing a second
     /// property layout.
+    #[inline(always)]
+    fn is_dictionary_layout(&self) -> bool {
+        self.properties
+            .names()
+            .filter(|name| !name.starts_with('\0'))
+            .nth(DICTIONARY_SLOT_THRESHOLD as usize)
+            .is_some()
+    }
+
     #[inline]
     pub(crate) fn physical_slot_for_name(&self, key: &str) -> Option<usize> {
-        if self.shape().dictionary || key.starts_with('\0') {
+        if self.is_dictionary_layout() || key.starts_with('\0') {
             return None;
         }
         self.properties
@@ -1503,7 +1517,7 @@ impl ObjectData {
     ///
     /// Kept as a cheap debug-only assertion at call sites so optimized code
     /// cannot accidentally grow a second semantic representation.
-    #[cfg(debug_assertions)]
+    #[cfg(all(test, debug_assertions))]
     pub(crate) fn assert_canonical_slots(&self) {
         // Dictionary layouts intentionally do not expose positional slots.
         if self.shape().dictionary {
@@ -1521,6 +1535,7 @@ impl ObjectData {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn value_at_slot(&self, slot: usize) -> Option<Value> {
         let physical_slot = self
             .properties
@@ -1537,6 +1552,7 @@ impl ObjectData {
     /// This accessor is the dictionary representation contract: lookups use
     /// reverse encounter order (including duplicate writes), while metadata
     /// remains visible only to the slow-path caller that interprets it.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn dictionary_value(&self, key: &str) -> Option<Value> {
         if !self.is_dictionary() || key.starts_with('\0') {
@@ -1549,6 +1565,7 @@ impl ObjectData {
 }
 
 impl ObjectData {
+    #[cfg(test)]
     #[inline]
     pub(crate) fn value_for_shape_slot(
         &self,
@@ -1566,6 +1583,7 @@ impl ObjectData {
 }
 
 impl ObjectData {
+    #[cfg(test)]
     #[inline]
     pub(crate) fn transition_key(
         &self,
@@ -1577,6 +1595,7 @@ impl ObjectData {
     /// Derive the canonical transition for `property`, without mutating the
     /// object. Existing properties retain their slot; a new property appends
     /// one slot. Dictionary layouts intentionally have no positional contract.
+    #[cfg(test)]
     pub(crate) fn transition_for(&self, property: &str) -> Option<ObjectTransition> {
         if property.starts_with('\0') || self.is_dictionary() {
             return None;
@@ -1841,10 +1860,6 @@ impl BindingCell {
         use_word(&self.0.borrow())
     }
 
-    #[inline(always)]
-    pub(crate) fn load_number(&self) -> Option<f64> {
-        self.0.borrow().number()
-    }
 }
 
 /// Canonical JavaScript value representation.

@@ -236,7 +236,7 @@ fn boxed_primitive_instance(value: &Value, constructor: &Value) -> Option<bool> 
         }
         _ => return None,
     };
-    let actual = properties
+    let _actual = properties
         .iter()
         .rev()
         .find_map(|(key, value)| (key == "\0prototype").then_some(value))?;

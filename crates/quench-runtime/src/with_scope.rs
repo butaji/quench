@@ -474,28 +474,6 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
     crate::execute::get_property_result(&target, key).map(Some)
 }
 
-/// Resolve only objects introduced by a `with` in the current activation.
-/// Captured `with` objects remain an outer environment and therefore do not
-/// shadow the function's own var bindings.
-pub(crate) fn resolve_active_binding(key: &str) -> Result<Option<Value>, VmError> {
-    let (objects, base) = OBJECTS.with(|objects| {
-        (
-            objects.borrow().clone(),
-            CAPTURED_BASE.with(|base| base.get()),
-        )
-    });
-    for object in objects.iter().skip(base).rev() {
-        let object = live_object(object);
-        if has_property(&object, key)? && !is_unscopable(&object, key)? {
-            if matches!(object, Value::Proxy(_)) && !has_property(&object, key)? {
-                return Ok(None);
-            }
-            return crate::execute::get_property_result(&object, key).map(Some);
-        }
-    }
-    Ok(None)
-}
-
 pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {

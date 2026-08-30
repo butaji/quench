@@ -38,14 +38,6 @@ pub(crate) fn current_context_or_default() -> Rc<VmContext> {
         .unwrap_or_else(|| Rc::new(VmContext::default()))
 }
 
-pub(crate) fn execute_completion_in_place(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<crate::completion::Completion, VmError> {
-    let context = current_context_or_default();
-    execute_completion_in_place_context(ops, registers, &context)
-}
-
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
     // Intrinsic overrides are scoped to one top-level evaluation; do not
     // carry mutations such as Math.random assignments into the next one.
@@ -158,33 +150,6 @@ pub fn execute_code_in_place_context(
     execute_code_in_environment(code, registers, context, environment)
 }
 
-pub(crate) fn execute_code_in_place(
-    code: crate::machine::CodeView<'_>,
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<Value, VmError> {
-    let context = current_context_or_default();
-    execute_code_in_place_context(code, registers, &context)
-}
-
-fn execute_completion_in_place_context(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-) -> Result<crate::completion::Completion, VmError> {
-    prepare_register_stack(registers);
-    let _context_guard = ContextGuard::install(context);
-    let _global_guard = GlobalObjectGuard::install();
-    drive_completion(ops, registers, context)
-}
-
-pub(crate) fn execute_completion_in_current_frame(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<crate::completion::Completion, VmError> {
-    let context = current_context_or_default();
-    drive_completion(ops, registers, &context)
-}
-
 pub(crate) fn execute_code_completion_in_current_frame(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -202,28 +167,6 @@ pub(crate) fn execute_code_completion_with_context(
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     drive_code_completion(code, registers, context)
-}
-
-fn drive_completion(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-) -> Result<crate::completion::Completion, VmError> {
-    let mut pc = 0;
-    loop {
-        let step = run_ops_completion_step_from(ops, pc, registers, context)?;
-        pc = step.next;
-        match step.completion {
-            crate::completion::Completion::Call(continuation) => {
-                if let Err(VmError::Thrown(value)) =
-                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
-                {
-                    return Ok(crate::completion::Completion::Throw(value));
-                }
-            }
-            completion => return preserve_frame_completion(completion),
-        }
-    }
 }
 
 fn drive_code_completion(
@@ -372,32 +315,6 @@ pub(crate) fn execute_code_in_environment(
         }
     }
 }
-pub(crate) fn execute_frame_completion(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-    environment: Rc<crate::environment::Environment>,
-) -> Result<crate::completion::Completion, VmError> {
-    let _context_guard = ContextGuard::install(context);
-    let _global_guard = GlobalObjectGuard::install();
-    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    let mut pc = 0;
-    loop {
-        let step = run_ops_completion_step_from(ops, pc, registers, context)?;
-        pc = step.next;
-        match step.completion {
-            crate::completion::Completion::Call(continuation) => {
-                if let Err(VmError::Thrown(value)) =
-                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
-                {
-                    return Ok(crate::completion::Completion::Throw(value));
-                }
-            }
-            completion => return Ok(completion),
-        }
-    }
-}
-
 pub(crate) fn execute_code_frame_completion(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,

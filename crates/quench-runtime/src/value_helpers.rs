@@ -149,6 +149,7 @@ impl Value {
 
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_number(&self) -> bool {
         matches!(self, Self::Number(_))
     }
@@ -164,12 +165,14 @@ impl Value {
     /// Fast IEEE-754 classification; NaN remains a Number, never a tag.
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_nan(&self) -> bool {
         matches!(self, Self::Number(number) if number.is_nan())
     }
 
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_finite_number(&self) -> bool {
         matches!(self, Self::Number(number) if number.is_finite())
     }
@@ -177,6 +180,7 @@ impl Value {
     /// Preserve the distinct JavaScript `-0` number payload.
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_negative_zero(&self) -> bool {
         matches!(self, Self::Number(number) if *number == 0.0 && number.is_sign_negative())
     }
@@ -184,24 +188,23 @@ impl Value {
 
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_boolean(&self) -> bool {
         matches!(self, Self::Boolean(_))
     }
 
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_null(&self) -> bool {
         matches!(self, Self::Null)
     }
 
     #[inline(always)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn is_undefined(&self) -> bool {
         matches!(self, Self::Undefined)
     }
 
-    #[inline(always)]
-    pub(crate) fn from_integer(value: i64) -> Self {
-        Self::Number(value as f64)
-    }
 }
