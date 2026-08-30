@@ -1300,6 +1300,17 @@ pub fn req_close(
     }
     if let (Some(agent), Some(target)) = (agent.as_ref(), target.as_ref()) {
         let name = agent_name(target, agent);
+        let has_pending = state.borrow().http.agent_pending.iter().any(|id| {
+            state.borrow().http.clientreqs.get(id).is_some_and(|request| {
+                request.agent.as_ref().is_some_and(|candidate| {
+                    execute::same_identity(candidate, agent)
+                        && agent_name(&request.target, agent) == name
+                })
+            })
+        });
+        if has_pending {
+            emit_agent_free(state, agent, target, socket)?;
+        }
         remove_agent_socket(agent, &name, socket);
         let has_active = state.borrow().http.clientreqs.values().any(|req| {
             req.agent
