@@ -410,8 +410,8 @@ impl Test262Host for RuntimeHost {
         // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
         // Validate source-level early errors before graph resolution can mask a
         // parse failure as an unresolved module specifier.
-        let program = reduce_module_sequence(harness, source)
-            .map_err(|errors| errors.join("; "))?;
+        let program =
+            reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
@@ -423,9 +423,8 @@ impl Test262Host for RuntimeHost {
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         quench_runtime::execute::reset_replacements();
         let context = fresh_context();
-        let result = quench_runtime::vm::with_current_context(&context, || {
-            linked.execute(&graph, entry)
-        });
+        let result =
+            quench_runtime::vm::with_current_context(&context, || linked.execute(&graph, entry));
         quench_runtime::vm::reset_host_agent_state();
         quench_runtime::reset_fixture_caches();
         quench_runtime::vm::reset_global_object();
