@@ -135,7 +135,10 @@ fn typed_array_length(value: &Value) -> Option<usize> {
 
 fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
     if let Some(keys) = script_global_view_keys(target) {
-        return keys;
+        return keys
+            .into_iter()
+            .filter(|key| !crate::vm::current_context_or_default().host_value_is_persistent(key))
+            .collect();
     }
     if matches!(target, Value::Proxy(_)) {
         let Ok(Value::Array(keys)) = crate::proxy::proxy_own_keys(target) else {
@@ -221,6 +224,9 @@ fn script_global_view_keys(target: &Value) -> Option<Vec<String>> {
         return Some(keys);
     };
     for key in object_enumerable_keys(&live) {
+        if crate::vm::current_context_or_default().host_value_is_persistent(&key) {
+            continue;
+        }
         if !keys.iter().any(|current| current == &key) {
             keys.push(key);
         }
