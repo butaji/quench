@@ -425,6 +425,27 @@ fn sequential_harnessed_scripts_do_not_share_bindings() {
 }
 
 #[test]
+fn sequential_scripts_do_not_share_intrinsic_prototype_mutations() {
+    let mut runner = crate::Test262Runner::new(super::RuntimeHost);
+    let mut cache = crate::HarnessCache::new(PathBuf::from("tests/test262/harness"));
+    let mutate = "/*---\nflags: [raw]\n---*/\nObject.prototype.__quench_batch_leak = 1;\n";
+    let probe = concat!(
+        "/*---\nflags: [raw]\n---*/\n",
+        "if (Object.prototype.hasOwnProperty('__quench_batch_leak')) {\n",
+        "  throw new Error('intrinsic prototype leaked');\n",
+        "}\n",
+    );
+    assert!(matches!(
+        runner.run_test_with_cache(mutate, &mut cache),
+        Ok(crate::TestOutcome::Pass)
+    ));
+    assert!(matches!(
+        runner.run_test_with_cache(probe, &mut cache),
+        Ok(crate::TestOutcome::Pass)
+    ));
+}
+
+#[test]
 fn deferred_module_throw_is_replayed_on_get() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(

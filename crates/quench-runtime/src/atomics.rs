@@ -28,7 +28,7 @@ pub(crate) fn reset_agent_state() {
     AGENT_TIME_BIAS.with(|bias| bias.set(0.0));
     AGENT_CURRENT_WAITER.with(|waiter| waiter.set(None));
     AGENT_NEXT_WAITER.with(|next| next.set(0));
-    AGENT_WAITERS.with(|waiters| waiters.borrow_mut().clear());
+    AGENT_WAITERS.with(|waiters| waiters.replace(Vec::new()));
 }
 
 pub(crate) fn begin_agent_callback() {

@@ -27,7 +27,15 @@ pub fn has_pending_unhandled_rejections() -> bool {
 }
 
 pub fn clear_jobs() {
-    JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
+    JOB_QUEUE.with(|queue| queue.replace(VecDeque::new()));
+}
+
+pub(crate) fn reset_fixture_state() {
+    MICROTASK_QUEUE.with(|queue| queue.replace(VecDeque::new()));
+    PROMISE_TRIGGER.with(|trigger| trigger.replace(None));
+    THEN_RESULTS.with(|results| results.replace(HashMap::new()));
+    JOB_QUEUE.with(|queue| queue.replace(VecDeque::new()));
+    UNHANDLED_REJECTIONS.with(|queue| queue.replace(VecDeque::new()));
 }
 
 /// Whether a promise reaction or host job is waiting to run.

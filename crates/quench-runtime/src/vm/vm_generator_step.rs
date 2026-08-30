@@ -4,20 +4,6 @@ pub(crate) struct GeneratorStep {
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
 }
 
-pub(crate) fn execute_generator_step(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    environment: Rc<crate::environment::Environment>,
-    pc: usize,
-    resume: crate::completion::Completion,
-) -> Result<GeneratorStep, VmError> {
-    let context = crate::vm::current_context_or_default();
-    let _context_guard = ContextGuard::install(&context);
-    let _global_guard = GlobalObjectGuard::install();
-    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    run_generator_steps(ops, registers, pc, resume, &context)
-}
-
 pub(crate) fn execute_generator_code_step(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -77,51 +63,6 @@ fn run_generator_code_steps(
     Ok(GeneratorStep { completion: crate::completion::Completion::Normal, pc: code.len(), suspension: None })
 }
 
-fn run_generator_steps(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    pc: usize,
-    resume: crate::completion::Completion,
-    context: &VmContext,
-) -> Result<GeneratorStep, VmError> {
-    if !matches!(resume, crate::completion::Completion::Normal)
-        && !matches!(ops.get(pc), Some(Op::YieldStar { .. }))
-    {
-        crate::vm::flush_global_declaration_batch(registers);
-        return Ok(GeneratorStep {
-            completion: resume,
-            pc,
-            suspension: None,
-        });
-    }
-    for (offset, op) in ops[pc..].iter().enumerate() {
-        if matches!(op, Op::YieldStar { .. }) {
-            let maybe = run_yield_star_step(registers, op, &resume, pc + offset)?;
-            if let Some(result) = maybe {
-                return Ok(result);
-            }
-            continue;
-        }
-        let result = run_generator_op(registers, op, context, pc + offset)?;
-        if let Some(step) = result {
-            // Ordinary calls are nested VM transitions, not suspensions of
-            // the generator itself. Consume their continuation here so the
-            // body continues until an explicit yield/await boundary.
-            if let crate::completion::Completion::Call(continuation) = step.completion {
-                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
-                continue;
-            }
-            return Ok(step);
-        }
-    }
-    crate::vm::flush_global_declaration_batch(registers);
-    Ok(GeneratorStep {
-        completion: crate::completion::Completion::Normal,
-        pc: ops.len(),
-        suspension: None,
-    })
-}
-
 fn run_yield_star_step(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
@@ -155,39 +96,6 @@ fn run_yield_star_step(
         pc: next + offset,
         suspension,
     }))
-}
-
-fn run_generator_op(
-    registers: &mut crate::register_file::RegisterFile,
-    op: &Op,
-    context: &VmContext,
-    next: usize,
-) -> Result<Option<GeneratorStep>, VmError> {
-    let result = match run_op(registers, op, context) {
-        Err(error) => match crate::completion::Completion::from_vm_error(error) {
-            Ok(completion) => Some(completion),
-            Err(error) => {
-                crate::vm::flush_global_declaration_batch(registers);
-                return Err(error);
-            }
-        },
-        Ok(result) => result,
-    };
-    if matches!(result, Some(crate::completion::Completion::Normal) | None) {
-        return Ok(None);
-    }
-    if let Some(completion) = result {
-        crate::vm::flush_global_declaration_batch(registers);
-        let suspension = matches!(completion, crate::completion::Completion::Yield(_))
-            .then(|| direct_suspension(op, next))
-            .flatten();
-        return Ok(Some(GeneratorStep {
-            completion,
-            pc: next + 1,
-            suspension,
-        }));
-    }
-    Ok(None)
 }
 
 fn direct_suspension(op: &Op, pc: usize) -> Option<crate::continuation::SuspensionPoint> {

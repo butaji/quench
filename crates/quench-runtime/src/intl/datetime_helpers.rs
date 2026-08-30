@@ -1,10 +1,3 @@
-fn range_parts(start: &str, end: &str) -> Vec<Value> {
-    if start == end {
-        return vec![literal_part(start)];
-    }
-    vec![literal_part(start), literal_part(" – "), literal_part(end)]
-}
-
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     let style = slot_string(slots, "dayPeriod")?;
     let hour = DateTime::<Utc>::from_timestamp((number / 1_000.0).trunc() as i64, 0)?.hour();

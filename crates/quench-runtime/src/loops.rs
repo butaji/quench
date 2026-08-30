@@ -434,6 +434,11 @@ pub(crate) fn take_pending_async_for_of() -> Option<crate::value::AsyncForOfStat
     PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).pop() })
 }
 
+pub(crate) fn reset_fixture_state() {
+    LIVE_FOR_OF.with(|live| unsafe { drop(std::mem::take(&mut *live.0.get())) });
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { drop(std::mem::take(&mut *pending.get())) });
+}
+
 type ForInLoopData<'a> = (
     &'a Option<String>,
     u16,
@@ -854,7 +859,7 @@ include!("loops_while.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{live_for_of, take_live_for_of, LIVE_FOR_OF};
+    use super::{live_for_of, reset_fixture_state, take_live_for_of, LIVE_FOR_OF};
     use crate::value::Value;
 
     #[test]
@@ -867,5 +872,12 @@ mod tests {
         assert_eq!(take_live_for_of(), Some(Value::Number(2.0)));
         assert_eq!(take_live_for_of(), Some(Value::Number(1.0)));
         assert_eq!(take_live_for_of(), None);
+    }
+
+    #[test]
+    fn fixture_reset_clears_live_for_of_stack() {
+        LIVE_FOR_OF.with(|live| live.push(Value::Number(1.0)));
+        reset_fixture_state();
+        assert_eq!(live_for_of(), None);
     }
 }
