@@ -866,11 +866,26 @@
   }
   ReadableClass.from = function (source, options) {
     options = options || {};
-    if (source == null) throw new TypeError("Readable.from requires a source");
-    const asyncIterator = source[Symbol.asyncIterator];
+    if (source == null) {
+      const error = new TypeError("The \"iterable\" argument must be an Iterable");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    // A string is one logical readable chunk in Node, rather than an
+    // iteration over its UTF-16 code units. Preserve that source fact before
+    // adapting generic synchronous/asynchronous iterables.
+    let stringPending = typeof source === "string";
+    const asyncIterator = stringPending ? null : source[Symbol.asyncIterator];
     const iterator = asyncIterator ? asyncIterator.call(source) :
-      (source[Symbol.iterator] ? source[Symbol.iterator].call(source) : null);
-    const pull = iterator ? () => iterator.next() :
+      (stringPending ? null :
+        (source[Symbol.iterator] ? source[Symbol.iterator].call(source) : null));
+    const pull = stringPending
+      ? () => {
+          if (!stringPending) return { done: true };
+          stringPending = false;
+          return { value: source, done: false };
+        }
+      : iterator ? () => iterator.next() :
       (typeof source.read === "function" ? () => source.read() : null);
     if (!pull) throw new TypeError("source is not iterable or readable");
 
