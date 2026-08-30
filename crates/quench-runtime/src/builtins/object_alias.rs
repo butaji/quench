@@ -69,7 +69,7 @@ pub(crate) fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool 
             properties.set_plain_index_cached(plain);
             plain
         })
-        && properties.original_prototype().is_none_or(|prototype| {
+        && properties.original_prototype().map_or(true, |prototype| {
             matches!(
                 prototype,
                 Value::Builtin(crate::ops::Builtin::ObjectPrototype)

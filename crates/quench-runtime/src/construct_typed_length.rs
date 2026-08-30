@@ -1,14 +1,17 @@
-fn object_array_like(
-    properties: &crate::value::ObjectData,
-) -> Result<Option<Vec<Value>>, crate::execute::VmError> {
-    let object = Value::Object(Rc::new(properties.clone()));
-    if let Ok(values) = crate::collections::iterator::collect_iterable(object.clone()) {
-        return Ok(Some(values));
+fn object_values(
+    properties: &Rc<crate::value::ObjectData>,
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    let object = Value::Object(Rc::clone(properties));
+    let iterator = crate::execute::get_property_result(&object, "Symbol.iterator")?;
+    if !matches!(iterator, Value::Undefined | Value::Null) {
+        return crate::collections::iterator::collect_with_method(&object, iterator);
     }
     // A plain object with only data properties can be projected in one pass.
     // This keeps large array-like constructor inputs linear while leaving
     // accessors, prototypes, and iterators on the observable property path.
-    let plain = properties.original_prototype().is_none_or(|prototype| {
+    let plain = !crate::builtins::intrinsic_prototype_state_changed(
+        crate::ops::Builtin::ObjectPrototype,
+    ) && properties.original_prototype().map_or(true, |prototype| {
         matches!(
             prototype,
             crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
@@ -19,10 +22,10 @@ fn object_array_like(
     if plain {
         let length = properties.value_for_key("length");
         let Some(length) = length else {
-            return Ok(Some(Vec::new()));
+            return Ok(Vec::new());
         };
         if matches!(length, Value::Undefined) {
-            return Ok(Some(Vec::new()));
+            return Ok(Vec::new());
         }
         let length = crate::conversion::to_number(&length)?;
         let length = if !length.is_finite() || length <= 0.0 {
@@ -46,11 +49,11 @@ fn object_array_like(
                 }
             }
         }
-        return Ok(Some(values));
+        return Ok(values);
     }
     let length = crate::execute::get_property_result(&object, "length")?;
     if matches!(length, Value::Undefined) {
-        return Ok(Some(Vec::new()));
+        return Ok(Vec::new());
     }
     let length = crate::conversion::to_number(&length)?;
     let length = if !length.is_finite() || length <= 0.0 {
@@ -72,7 +75,7 @@ fn object_array_like(
             &index.to_string(),
         )?);
     }
-    Ok(Some(values))
+    Ok(values)
 }
 fn alloc_buffer(
     length: usize,
@@ -83,6 +86,14 @@ fn alloc_buffer(
         .and_then(crate::value::ArrayBufferData::try_new)
         .map(Rc::new)
         .ok_or_else(|| range_error(&format!("Invalid typed array length: {length}")))
+}
+
+fn new_buffer(
+    byte_length: usize,
+) -> Result<Rc<crate::value::ArrayBufferData>, crate::execute::VmError> {
+    crate::value::ArrayBufferData::try_new(byte_length)
+        .map(Rc::new)
+        .ok_or_else(|| range_error("ArrayBuffer allocation failed"))
 }
 
 #[inline]
@@ -100,9 +111,12 @@ fn identity_number(number: f64) -> f64 {
 macro_rules! dense_numeric_constructor {
     ($name:ident, $variant:ident, $view:ident, $convert:expr) => {
         fn $name(numbers: &[f64]) -> Result<crate::value::Value, crate::execute::VmError> {
-            let buffer = std::rc::Rc::new(crate::value::ArrayBufferData::new(
-                numbers.len() * crate::value::$view::BYTES_PER_ELEMENT,
-            ));
+            let buffer = new_buffer(
+                numbers
+                    .len()
+                    .checked_mul(crate::value::$view::BYTES_PER_ELEMENT)
+                    .ok_or_else(|| range_error("Invalid typed array length"))?,
+            )?;
             let view = crate::value::$view::new(buffer, 0, numbers.len());
             for (index, number) in numbers.iter().copied().enumerate() {
                 view.set(index, ($convert)(number));

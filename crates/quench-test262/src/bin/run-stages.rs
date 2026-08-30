@@ -24,20 +24,10 @@ struct Args {
     root: PathBuf,
 }
 
+type StageFileResult = (usize, PathBuf, Result<TestOutcome, String>);
+
 fn main() -> ExitCode {
-    const STACK_SIZE: usize = 256 * 1024 * 1024;
-    let handle = match std::thread::Builder::new()
-        .name("run-stages-main".to_string())
-        .stack_size(STACK_SIZE)
-        .spawn(run_stages_entry)
-    {
-        Ok(handle) => handle,
-        Err(error) => return fail(error.to_string()),
-    };
-    match handle.join() {
-        Ok(code) => code,
-        Err(_) => ExitCode::from(1),
-    }
+    run_stages_entry()
 }
 
 fn run_stages_entry() -> ExitCode {
@@ -303,7 +293,8 @@ fn run_single_stage(
         );
         return Ok(StageReport::default());
     }
-    let results = run_stage_files(root, files)?;
+    let isolated = stage_process_isolation(files.len());
+    let results = run_stage_files(root, files, isolated)?;
     let mut report = StageReport::default();
     for (_, path, outcome) in results {
         report.total += 1;
@@ -327,7 +318,8 @@ fn run_single_stage(
 fn run_stage_files(
     root: &Path,
     files: Vec<PathBuf>,
-) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
+    isolated: bool,
+) -> Result<Vec<StageFileResult>, String> {
     const WORK_BATCH: usize = 32;
     // OXC and the reducer need more than the platform default for deeply
     // nested fixtures, but 256 MiB per worker makes a four-worker RegExp
@@ -353,7 +345,6 @@ fn run_stage_files(
                 .name(format!("stage-files-{worker}"))
                 .stack_size(WORKER_STACK_SIZE)
                 .spawn(move || {
-                    let isolated = env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some();
                     let mut runner = Test262Runner::new(RuntimeHost);
                     let mut harness = HarnessCache::new(root.join("harness"));
                     loop {
@@ -394,10 +385,25 @@ fn run_stage_files(
         .collect())
 }
 
+/// Long in-process sweeps retain unreachable `Rc` cycles until the worker
+/// exits. Recycle each fixture in a child process for large stages so the
+/// runner's memory bound is independent of fixture graph shape.
+fn stage_process_isolation(file_count: usize) -> bool {
+    const MAX_IN_PROCESS_FILES: usize = 64;
+    env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some()
+        || (file_count > MAX_IN_PROCESS_FILES && run_test_executable().is_some())
+}
+
+fn run_test_executable() -> Option<std::path::PathBuf> {
+    env::current_exe()
+        .ok()
+        .map(|executable| executable.with_file_name("run-test"))
+        .filter(|executable| executable.is_file())
+}
+
 fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
-    let executable = env::current_exe()
-        .map_err(|error| format!("stage executable lookup failed: {error}"))?
-        .with_file_name("run-test");
+    let executable = run_test_executable()
+        .ok_or_else(|| "stage run-test executable is unavailable".to_string())?;
     let output = Command::new(executable)
         .env("TEST262_DIR", root)
         .arg(path)
@@ -416,6 +422,7 @@ fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> 
         },
     })
 }
+
 fn parse_stage_index(value: &str) -> Result<u32, String> {
     value
         .parse::<u32>()

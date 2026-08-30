@@ -43,7 +43,7 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             .import_types
             .iter()
             .any(|(source, attribute)| source == specifier && attribute == "type=bytes");
-        if graph.resolve(from, &specifier).is_some() && !text_import && !bytes_import {
+        if graph.resolve(from, specifier).is_some() && !text_import && !bytes_import {
             continue;
         }
         if specifier == "<module source>" {
@@ -52,11 +52,11 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             graph.link(from, dependency)?;
             continue;
         }
-        let path = base.join(&specifier);
+        let path = base.join(specifier);
         if !path.exists() {
             continue;
         }
-        let dependency = add_module_source(graph, path, &metadata.import_types, &specifier)?;
+        let dependency = add_module_source(graph, path, &metadata.import_types, specifier)?;
         if dynamic {
             graph.mark_dynamic_target(dependency);
         }

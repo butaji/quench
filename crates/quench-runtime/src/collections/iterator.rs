@@ -525,6 +525,14 @@ pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execut
     collect(&iterator)
 }
 
+pub(crate) fn collect_with_method(
+    value: &Value,
+    method: Value,
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    let iterator = open_with_method(value, method)?;
+    collect(&iterator)
+}
+
 pub(crate) fn for_each_iterable<F>(value: Value, callback: F) -> Result<(), crate::execute::VmError>
 where
     F: FnMut(Value) -> Result<(), crate::execute::VmError>,

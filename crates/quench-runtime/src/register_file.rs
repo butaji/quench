@@ -868,7 +868,7 @@ impl RegisterFile {
     pub(crate) fn read_array_index(&self, index: usize) -> Option<usize> {
         let number = self.read_number(index)?;
         (number >= 0.0 && number <= u32::MAX as f64 && number.fract() == 0.0)
-            .then(|| number as usize)
+            .then_some(number as usize)
     }
 
     /// Return the complete nullish fact without decoding a heap-backed value.
@@ -1038,7 +1038,7 @@ impl RegisterFile {
     pub(crate) fn immediate_word_ptr(&mut self, index: usize) -> Option<*mut TaggedValue> {
         self.resize_undefined(index + 1);
         let word = self.words.get_mut(index)?;
-        (!word.owns_rc()).then(|| word as *mut TaggedValue)
+        (!word.owns_rc()).then_some(word as *mut TaggedValue)
     }
 
     /// Copy one canonical execute word between storage owners. This is the

@@ -343,6 +343,22 @@ fn cached_harness_preserves_declared_composition_order() {
 }
 
 #[test]
+fn cached_harness_rejects_paths_outside_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = dir.path().join("harness");
+    std::fs::create_dir(&harness).unwrap();
+    std::fs::write(harness.join("assert.js"), "assert").unwrap();
+    std::fs::write(harness.join("sta.js"), "sta").unwrap();
+    let source = "/*---\nincludes: [../secret.js]\n---*/\npass";
+    let mut runner = Test262Runner::new(CaptureHost {
+        seen: Arc::new(Mutex::new(Vec::new())),
+    });
+    let mut cache = HarnessCache::new(harness);
+    let error = runner.run_test_with_cache(source, &mut cache).unwrap_err();
+    assert!(error.contains("harness path escapes root"));
+}
+
+#[test]
 fn runner_reports_batch_file_outcomes() {
     let dir = tempfile::tempdir().unwrap();
     let passing = dir.path().join("pass.js");

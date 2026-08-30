@@ -41,6 +41,7 @@ struct Outcomes {
 #[derive(Debug)]
 struct Args {
     target: PathBuf,
+    limit: Option<usize>,
     threads: usize,
     out_dir: PathBuf,
 }
@@ -52,10 +53,13 @@ fn main() -> ExitCode {
     };
     let root = test262_root();
     let target_dir = root.join(&args.target);
-    let files = match discover_js_files(&target_dir) {
+    let mut files = match discover_js_files(&target_dir) {
         Ok(files) => files,
         Err(error) => return fail(format!("discover: {error}")),
     };
+    if let Some(limit) = args.limit {
+        files.truncate(limit);
+    }
     if files.is_empty() {
         return fail(format!("no tests found under {}", target_dir.display()));
     }
@@ -97,6 +101,7 @@ fn main() -> ExitCode {
 
 fn parse_args() -> Result<Args, String> {
     let mut target = PathBuf::from("test");
+    let mut limit = None;
     let mut threads = thread::available_parallelism().map_or(1, |n| n.get());
     let mut out_dir = PathBuf::from("/tmp/quench-compare");
     let mut values = env::args().skip(1);
@@ -116,6 +121,15 @@ fn parse_args() -> Result<Args, String> {
                     .parse::<usize>()
                     .map_err(|_| "invalid --threads value".to_string())?;
             }
+            "--limit" => {
+                limit = Some(
+                    values
+                        .next()
+                        .ok_or_else(|| "--limit requires a value".to_string())?
+                        .parse::<usize>()
+                        .map_err(|_| "invalid --limit value".to_string())?,
+                );
+            }
             "--out" => {
                 out_dir = PathBuf::from(
                     values
@@ -128,6 +142,7 @@ fn parse_args() -> Result<Args, String> {
     }
     Ok(Args {
         target,
+        limit,
         threads: threads.max(1),
         out_dir,
     })

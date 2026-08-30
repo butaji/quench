@@ -323,7 +323,7 @@ impl FrameStack {
         self.frames.len() <= usize::from(self.limit)
             && self
                 .top_offset()
-                .is_none_or(|offset| usize::from(offset) + 1 == self.frames.len())
+                .map_or(true, |offset| usize::from(offset) + 1 == self.frames.len())
     }
     /// Return the offset of the top frame in the contiguous frame storage.
     #[inline]
@@ -1155,10 +1155,6 @@ pub struct CodeStore {
 }
 
 impl CodeStore {
-    pub(crate) fn instruction_count(&self) -> usize {
-        self.instructions.len()
-    }
-
     pub fn code(&self, range: CodeRange) -> Option<CodeView<'_>> {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
         (range.start >= start && range.end <= end).then_some(CodeView { store: self, range })
@@ -1439,14 +1435,8 @@ impl FunctionCode {
         self.range.end.saturating_sub(self.range.start) as usize
     }
 
-    /// Register ids are allocated while lowering the containing program, so
-    /// a nested body can start above its own instruction count. The immutable
-    /// code arena is the canonical static bound for that allocation; keeping
-    /// it on the code fact avoids a second runtime register allocator.
-    pub(crate) fn register_capacity(&self) -> usize {
-        self.store()
-            .map_or_else(|| self.len(), |store| store.instruction_count())
-            .max(32)
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub(crate) fn code(&self) -> Option<CodeView<'_>> {

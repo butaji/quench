@@ -30,7 +30,7 @@ pub(crate) fn hash_str(value: &str) -> u64 {
 pub(crate) fn hash_value(value: &Value) -> Option<u64> {
     match value {
         Value::String(value) => Some(hash_str(value)),
-        Value::StringUnits(value) => Some(hash_units(value)),
+        Value::StringUnits(value) => Some(value.cached_hash(hash_units)),
         _ => None,
     }
 }
@@ -98,8 +98,29 @@ mod hash_tests {
         units_add_fits_limit, units_fit_limit, ShortStringLayout, StringEncoding,
         StringSourceEncoding, Value, MAX_STRING_BYTES, SHORT_STRING_MAX_UNITS,
     };
+    use crate::value::StringUnitsData;
+
+    // The immutable UTF-16 owner lazily computes its hash once and shares the
+    // cached result across clones without changing semantic string contents.
     #[test]
-    fn canonical_hash_uses_owned_value() {
+    fn utf16_hash_cache_is_lazy_and_shared() {
+        let data = StringUnitsData::new(vec![0xD800, 0x0061]);
+        let calls = std::cell::Cell::new(0);
+        let first = data.cached_hash(|units| {
+            calls.set(calls.get() + 1);
+            hash_units(units)
+        });
+        let second = data.cached_hash(|_| {
+            calls.set(calls.get() + 1);
+            0
+        });
+        assert_eq!(first, hash_units(&[0xD800, 0x0061]));
+        assert_eq!(second, first);
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn canonical_hash_uses_owned_value_and_shared_cache_lifecycle() {
         let value = super::from_units(vec![0xD800, 0x0061]);
         let expected = hash_units(&[0xD800, 0x0061]);
         assert_eq!(super::hash_value(&value), Some(expected));
@@ -119,7 +140,7 @@ mod hash_tests {
         assert_eq!(hash_units(&units), hash_units(&units));
     }
     // Well-formed UTF-8 strings derive directly from their canonical buffer;
-    // lone-surrogate strings retain their exact UTF-16 units.
+    // lone-surrogate strings use the owner-local cache above.
     #[test]
     fn utf8_hash_matches_utf16_hash_without_buffer() {
         let value = "héllo";
@@ -321,17 +342,6 @@ pub(crate) fn is_short_units(units: &[u16]) -> bool {
 /// compact layouts must be derived from these values, never stored as a
 /// competing semantic buffer.
 pub(crate) fn from_units(units: Vec<u16>) -> Value {
-    // Keep large UTF-16 results in their native immutable owner.  Re-encoding
-    // them as UTF-8 would make every indexed operation (charCodeAt, charAt,
-    // codePointAt) rescan the complete string to recover code units.  The
-    // representation is not observable; both variants expose the same
-    // ECMAScript string, while the canonical owner lets read-only algorithms
-    // borrow O(1)-indexed units.
-    if units.len() > 4096 {
-        return Value::StringUnits(std::rc::Rc::new(
-            crate::value::StringUnitsData::new(units),
-        ));
-    }
     match String::from_utf16(&units) {
         Ok(value) => Value::String(value),
         Err(_) => Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units))),
@@ -570,7 +580,7 @@ pub(crate) fn repeat(
     // Keep ordinary one-unit strings in their compact UTF-8 representation;
     // this avoids a transient UTF-16 allocation for Node's documented maximum
     // string-length boundary while preserving the same observable value.
-    if value.len() == source.len() {
+    if source.len() == value.encode_utf16().count() {
         return Ok(Value::String(value.repeat(count)));
     }
     let mut result = Vec::with_capacity(total_units);
