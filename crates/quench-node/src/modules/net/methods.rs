@@ -89,6 +89,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             bytes_written: 0,
             read_eof: false,
             close_emitted: false,
+            finish_emitted: false,
             connect_announced: false,
             peer: None,
             local: None,
@@ -456,6 +457,7 @@ fn connect_with_receiver(
         bytes_written: 0,
         read_eof: false,
         close_emitted: false,
+        finish_emitted: false,
         connect_announced: false,
         peer: Some(addr),
         local,
@@ -983,9 +985,19 @@ pub fn socket_end(
     let Some(id) = receiver.and_then(net_id) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let mut queue_end = false;
+    let mut queue_finish = false;
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
+        if !guard.finish_emitted {
+            guard.finish_emitted = true;
+            execute::set_property_in_place(&guard.js, "writable", Value::Boolean(false));
+            execute::set_property_in_place(
+                &guard.js,
+                "readyState",
+                Value::String("readOnly".into()),
+            );
+            queue_finish = true;
+        }
         guard.state = SocketState::Closing;
         try_flush(&mut guard);
         if guard.write_buf.is_empty() {
@@ -993,16 +1005,11 @@ pub fn socket_end(
                 let _ = stream.shutdown(Shutdown::Write);
             }
         }
-        // Outbound sockets with the default half-open policy report their
-        // readable side ending once the local write side is closed. Keep the
-        // notification on the normal net event queue so callbacks run on the
-        // next pump turn.
-        queue_end = guard.server_id.is_none();
     }
-    if queue_end {
+    if queue_finish {
         state.borrow_mut().net.pending_events.push((
             receiver.cloned().unwrap_or(Value::Undefined),
-            "end".into(),
+            "finish".into(),
             Vec::new(),
         ));
     }
