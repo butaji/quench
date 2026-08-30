@@ -1125,6 +1125,26 @@ impl ObjectData {
         self.deleted_marker_state.set(0);
     }
 
+    /// Publish a host-owned value without making the virtual binding visible
+    /// to ordinary `for...in` enumeration. Persistent host bindings are
+    /// observable properties, but their publication policy is non-enumerable.
+    pub(crate) fn set_non_enumerable_property_in_place(&mut self, key: &str, value: Value) {
+        self.set_property_in_place(key, value);
+        let descriptor = crate::builtins::descriptor_key(key);
+        if !self.properties.iter().any(|(name, _)| name == &descriptor) {
+            self.properties.push((
+                descriptor.into(),
+                Value::Object(Rc::new(ObjectData::new(vec![
+                    ("writable".into(), Value::Boolean(true)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]))),
+            ));
+        }
+        self.layout_id.set(0);
+        self.descriptor_metadata_state.set(0);
+    }
+
     /// Borrow the canonical hot property storage once for dependent-load-heavy
     /// readers. Metadata remains owned by this object and is not mirrored here.
     #[inline]
