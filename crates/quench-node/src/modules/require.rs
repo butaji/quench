@@ -32,6 +32,22 @@ fn global_constructor_or_capability(
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    let parent = state
+        .borrow()
+        .module_stack
+        .last()
+        .cloned()
+        .unwrap_or_default();
+    let event = crate::modules::diagnostics_channel::module_require_start(state, parent, spec.clone())?;
+    let result = require_impl(state, args);
+    if let Some(event) = event {
+        crate::modules::diagnostics_channel::module_require_end(state, event, &result)?;
+    }
+    result
+}
+
+fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let spec = args.first().map(value_to_string).unwrap_or_default();
     // The Node test helpers are one host-owned resource.  Resolve every
     // spelling of the common entry point and tmpdir helper before filesystem
     // resolution; otherwise `common/index.js` loads a second JS copy whose
@@ -292,7 +308,10 @@ fn execute_module(
 /// frame for the main script (see `quench-node-test`'s runner).
 pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) -> String {
     let exports = host_api::object(vec![]);
-    let module = host_api::object(vec![("exports".to_string(), exports)]);
+    let module = host_api::object(vec![
+        ("exports".to_string(), exports),
+        ("filename".to_string(), Value::String(filename.to_string())),
+    ]);
     let dirname = std::path::Path::new(filename)
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
@@ -314,7 +333,9 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         return Err(VmError::EvalError("cjs wrap without pending module".into()));
     };
     let exports = quench_runtime::execute::get_property_result(&pending.module, "exports")?;
+    let filename = pending.filename.clone();
     state.borrow_mut().dir_stack.push(pending.dirname.clone());
+    state.borrow_mut().module_stack.push(filename);
     let result = quench_runtime::vm::call_value(
         function,
         &Value::Undefined,
@@ -326,6 +347,7 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             Value::String(pending.dirname),
         ],
     );
+    state.borrow_mut().module_stack.pop();
     state.borrow_mut().dir_stack.pop();
     result
 }
