@@ -108,6 +108,15 @@ fn accept_one(
         .servers
         .get(&server_id)
         .is_some_and(|server| server.borrow().path.is_some());
+    let allow_half_open = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .is_some_and(|server| server.borrow().allow_half_open);
+    if allow_half_open {
+        execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(true));
+    }
     let object = if is_pipe {
         object
     } else {

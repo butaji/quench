@@ -71,6 +71,7 @@ pub struct NetServer {
     pub announced: bool,
     pub closed: bool,
     pub close_emitted: bool,
+    pub allow_half_open: bool,
 }
 
 pub struct NetSocket {
@@ -440,6 +441,10 @@ fn register_server_path(
             announced: false,
             closed: false,
             close_emitted: false,
+            allow_half_open: matches!(
+                execute::get_property(js, "allowHalfOpen"),
+                Value::Boolean(true)
+            ),
         })),
     );
     set_server_listening(js, is_listening)?;
