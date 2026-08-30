@@ -83,6 +83,11 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
   printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
   skipIfInspectorDisabled: () =>
     globalThis.__nodeCommon.skip("inspector disabled"),
+  skipIf32Bits: () => {
+    if (process.arch === "ia32" || process.arch === "arm") {
+      globalThis.__nodeCommon.skip("32-bit platform");
+    }
+  },
   skip: (message = "") => {
     console.log(`1..0 # Skipped: ${message}`);
     process.exit(0);
