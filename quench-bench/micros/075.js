@@ -1,15 +1,13 @@
 // VM micro-case 075
-// family=control-flow; level=2; depth=25
+// family=collections; operation=bounded-map-cache; variant=5; work_units=40; memory=retained-ring
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let kept = [];
-outer: for (let i = 0; i < 25; i++) { for (let j = 0; j < 4; j++) { if ((i + j) % 3 === 0) continue outer; } kept.push(i); }
-assert(kept.every((x) => x % 3 !== 0), "labeled continue");
-return kept.length;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+const cache = new Map();
+function microRun() {
+  for (let i = 0; i < 40; i++) { cache.set((i + 4) % 17, i * i); if (cache.size > 12) cache.delete(cache.keys().next().value); } let total = 0; for (const value of cache.values()) total += value; return total + 12000;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

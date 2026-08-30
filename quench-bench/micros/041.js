@@ -1,15 +1,12 @@
 // VM micro-case 041
-// family=primitives; level=1; depth=41
+// family=functions; operation=closure-capture; variant=1; work_units=20; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let total = 0;
-for (let i = 0; i < 41; i++) total = (total + i * 3 + 1) % 997;
-assert(total === (41 * (41 - 1) * 3 / 2 + 41) % 997, "arithmetic");
-return { total, inf: 1 / 0, nan: Number.isNaN(0 / 0) };
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  function make(seed) { let value = seed; return () => value = (value * 31 + 7) | 0; } const next = make(1); let total = 0; for (let i = 0; i < 80; i++) total ^= next(); return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

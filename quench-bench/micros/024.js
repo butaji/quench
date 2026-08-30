@@ -1,15 +1,12 @@
 // VM micro-case 024
-// family=primitives; level=1; depth=24
+// family=arrays; operation=splice-rotate; variant=4; work_units=36; memory=allocation-heavy
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const negativeZero = -0;
-const values = [negativeZero, Number.MIN_VALUE, Number.MAX_SAFE_INTEGER, BigInt(24)];
-assert(same(values[0], -0) && values[1] > 0 && Number.isSafeInteger(values[2]), "numeric edges");
-return [Object.is(values[0], -0), String(values[3])];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = Array.from({ length: 36 }, (_, i) => i); for (let i = 0; i < 11; i++) { const moved = values.splice((i * 3) % values.length, 1)[0]; values.splice((i * 5) % (values.length + 1), 0, moved); } return values[(3 * 7) % values.length];
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

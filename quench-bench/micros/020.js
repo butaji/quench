@@ -1,15 +1,12 @@
 // VM micro-case 020
-// family=primitives; level=1; depth=20
+// family=control; operation=recurrence-branch; variant=10; work_units=233; memory=none
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const table = new Map(); let hash = 2166136261; for (let i = 0; i < 40; i++) { hash ^= (i * 2654435761) >>> 0; hash = Math.imul(hash, 16777619) >>> 0; table.set(i, hash); }
-let found = 0; for (let i = 39; i >= 0; i--) if (table.has(i)) found += table.get(i) & 1;
-assert(table.size === 40 && found >= 0, "hash lookup");
-return [table.size, found, hash];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  let a = 10; let b = 11; for (let i = 0; i < 233; i++) { const next = (a + b) & 0xffff; a = b; b = next ^ (i & 31); } return b;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

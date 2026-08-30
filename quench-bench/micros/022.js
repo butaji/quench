@@ -1,15 +1,12 @@
 // VM micro-case 022
-// family=primitives; level=1; depth=22
+// family=arrays; operation=sparse-probe; variant=2; work_units=28; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const values = ["22", 22, true, null];
-const coerced = values.map(Number);
-assert(coerced[0] === 22 && coerced[1] === 22 && coerced[2] === 1 && coerced[3] === 0, "coercion");
-return coerced;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const sparse = []; for (let i = 0; i < 28; i += 3) sparse[i * 2] = i + 1; let total = 0; for (let i = 0; i < sparse.length; i++) if (i in sparse) total += sparse[i]; return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

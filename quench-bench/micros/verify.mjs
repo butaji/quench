@@ -1,8 +1,29 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { CASES_PER_FAMILY, CASE_COUNT, families, ROOT, checkCorpus } from "./generate.mjs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = dirname(fileURLToPath(import.meta.url));
+const manifest = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
+const CASE_COUNT = manifest.count;
+const families = manifest.families;
+const metadataById = new Map(manifest.cases.map((item) => [item.id, item]));
+
+function checkCorpus() {
+  const expected = Array.from({ length: CASE_COUNT }, (_, index) => `${String(index + 1).padStart(3, "0")}.js`);
+  const actual = readdirSync(ROOT).filter((name) => /^\d{3}\.js$/.test(name)).sort();
+  const errors = [];
+  if (actual.length !== expected.length) errors.push(`expected ${expected.length} numbered scripts, found ${actual.length}`);
+  for (let index = 0; index < expected.length; index++) {
+    if (actual[index] !== expected[index]) errors.push(`missing or unexpected script: ${expected[index]}`);
+  }
+  const manifestFiles = manifest.cases.map(({ file }) => file).sort();
+  if (manifestFiles.length !== expected.length || manifestFiles.some((name, index) => name !== expected[index])) {
+    errors.push("manifest case files do not match the numbered corpus");
+  }
+  return errors;
+}
 
 const arg = (name, fallback) => {
   const index = process.argv.indexOf(name);
@@ -92,6 +113,9 @@ for (let id = first; id <= last; id++) {
   cases.push({
     id,
     file: name,
+    operation: metadataById.get(id)?.operation ?? null,
+    memory_profile: metadataById.get(id)?.memory_profile ?? null,
+    work_units: metadataById.get(id)?.work_units ?? null,
     ok,
     oracle: { wall_ns: oracleWall, peak_rss_bytes: oracleRss, instructions: median(oracleRuns.map((sample) => sample.instructions)), cycles: median(oracleRuns.map((sample) => sample.cycles)), page_faults: median(oracleRuns.map((sample) => sample.pageFaults)), page_reclaims: median(oracleRuns.map((sample) => sample.pageReclaims)) },
     engine: { wall_ns: engineWall, peak_rss_bytes: engineRss, instructions: median(engineRuns.map((sample) => sample.instructions)), cycles: median(engineRuns.map((sample) => sample.cycles)), page_faults: median(engineRuns.map((sample) => sample.pageFaults)), page_reclaims: median(engineRuns.map((sample) => sample.pageReclaims)) },
@@ -129,8 +153,8 @@ const scoreMetric = (field) => {
 const speedScore = scoreMetric("wall_ns");
 const memoryScore = scoreMetric("peak_rss_bytes");
 const overallScore = geometricMean([speedScore, memoryScore]);
-const familyScores = families.map(([name], familyIndex) => {
-  const members = validCases.filter((item) => Math.floor((item.id - 1) / CASES_PER_FAMILY) === familyIndex);
+const familyScores = families.map(({ name, first, last }) => {
+  const members = validCases.filter((item) => item.id >= first && item.id <= last);
   const metricScore = (field) => {
     if (failures || !members.length) return null;
     const ratios = members.map((item) => item.oracle[field] / item.engine[field]);
@@ -140,6 +164,19 @@ const familyScores = families.map(([name], familyIndex) => {
   const speed = metricScore("wall_ns");
   const memory = metricScore("peak_rss_bytes");
   return { name, count: members.length, speed_score: speed, memory_score: memory, overall_score: geometricMean([speed, memory]) };
+});
+const profileNames = [...new Set(manifest.cases.map(({ memory_profile }) => memory_profile))].sort();
+const profileScores = profileNames.map((memory_profile) => {
+  const members = validCases.filter((item) => item.memory_profile === memory_profile);
+  const metricScore = (field) => {
+    if (failures || !members.length) return null;
+    const ratios = members.map((item) => item.oracle[field] / item.engine[field]);
+    const mean = geometricMean(ratios);
+    return mean === null ? null : 100 * mean;
+  };
+  const speed = metricScore("wall_ns");
+  const memory = metricScore("peak_rss_bytes");
+  return { memory_profile, count: members.length, speed_score: speed, memory_score: memory, overall_score: geometricMean([speed, memory]) };
 });
 const report = {
   schema: 1,
@@ -159,6 +196,7 @@ const report = {
     memory_score: memoryScore,
     overall_score: overallScore,
     family_scores: familyScores,
+    memory_profile_scores: profileScores,
   },
   cases,
 };

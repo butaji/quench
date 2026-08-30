@@ -1,15 +1,12 @@
 // VM micro-case 033
-// family=primitives; level=1; depth=33
+// family=objects; operation=descriptor-churn; variant=3; work_units=42; memory=allocation-heavy
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let bits = 33;
-for (let i = 0; i < 7; i++) bits = ((bits << 3) ^ (bits >>> 2) ^ i) | 0;
-assert(Number.isInteger(bits), "bitwise integer");
-return bits;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const object = {}; let total = 0; for (let i = 0; i < 42; i++) { Object.defineProperty(object, "p" + (i % 5), { value: i + 2, writable: true, configurable: true, enumerable: (i & 1) === 0 }); total += Object.getOwnPropertyDescriptor(object, "p" + (i % 5)).value; } return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

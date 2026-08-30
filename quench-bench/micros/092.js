@@ -1,15 +1,12 @@
 // VM micro-case 092
-// family=control-flow; level=2; depth=42
+// family=meta; operation=reflect-property; variant=2; work_units=21; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let cells = 0;
-for (let row = 0; row < 2; row++) for (let col = 0; col < 1; col++) cells += row + col;
-assert(cells >= 0, "nested loop");
-return cells;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const object = {}; let total = 0; for (let i = 0; i < 21; i++) { Reflect.defineProperty(object, "p" + (i % 4), { value: i + 1, writable: true, configurable: true }); total += Reflect.get(object, "p" + (i % 4)); } return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

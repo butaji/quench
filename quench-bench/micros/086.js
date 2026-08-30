@@ -1,15 +1,12 @@
 // VM micro-case 086
-// family=control-flow; level=2; depth=36
+// family=typed-memory; operation=int16-saturation; variant=6; work_units=62; memory=external
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const n = 108; let a = Array.from({ length: n }, (_, i) => (i % 7) / 7);
-for (let pass = 0; pass < 4; pass++) for (let i = 1; i < n - 1; i++) a[i] = (a[i - 1] + a[i] + a[i + 1]) / 3;
-assert(a.every(Number.isFinite), "numeric relaxation");
-return Number(a.reduce((sum, value) => sum + value, 0).toFixed(6));
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = new Int16Array(62); for (let i = 0; i < values.length; i++) values[i] = (i * 22) - 20000; let total = 0; for (const value of values) total += Math.max(-1000, Math.min(1000, value)); return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

@@ -1,15 +1,12 @@
 // VM micro-case 096
-// family=control-flow; level=2; depth=46
+// family=meta; operation=proxy-ownkeys; variant=6; work_units=33; memory=allocation-heavy
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const n = 138; let a = Array.from({ length: n }, (_, i) => (i % 7) / 7);
-for (let pass = 0; pass < 4; pass++) for (let i = 1; i < n - 1; i++) a[i] = (a[i - 1] + a[i] + a[i + 1]) / 3;
-assert(a.every(Number.isFinite), "numeric relaxation");
-return Number(a.reduce((sum, value) => sum + value, 0).toFixed(6));
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const target = {}; for (let i = 0; i < 33; i++) target["p" + i] = i; const proxy = new Proxy(target, { ownKeys(object) { return Reflect.ownKeys(object).reverse(); } }); let total = 0; for (let i = 0; i < 5; i++) total += Reflect.ownKeys(proxy).length; return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

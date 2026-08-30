@@ -1,14 +1,12 @@
 // VM micro-case 049
-// family=primitives; level=1; depth=49
+// family=functions; operation=function-property-shapes; variant=9; work_units=44; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const source = Array.from({ length: 98 }, (_, i) => (i % 2 ? "word" : "number") + i).join(" "); const tokens = source.match(/[a-z]+|\d+/gi) || [];
-assert(tokens.length === 196, "lexer tokens");
-return tokens.slice(0, 6);
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const functions = Array.from({ length: 44 }, (_, i) => { const fn = (x) => x + i; fn.tag = i & 3; return fn; }); let total = 0; for (const fn of functions) total += fn(fn.tag); return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

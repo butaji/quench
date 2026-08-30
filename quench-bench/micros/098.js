@@ -1,15 +1,12 @@
 // VM micro-case 098
-// family=control-flow; level=2; depth=48
+// family=meta; operation=date-format-fields; variant=8; work_units=39; memory=allocation-heavy
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const queue = Array.from({ length: 12 }, (_, id) => ({ id, budget: id % 4 + 1 })); let ticks = 0;
-while (queue.length) { const task = queue.shift(); ticks += task.budget; if (task.budget > 1) queue.push({ id: task.id, budget: task.budget - 1 }); }
-assert(ticks > 0 && queue.length === 0, "scheduler queue");
-return ticks;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  let total = 0; for (let i = 0; i < 39; i++) { const date = new Date(Date.UTC(2020 + (i % 4), i % 12, (i % 27) + 1)); total += date.toISOString().slice(0, 10).length + date.getTime() % 97; } return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

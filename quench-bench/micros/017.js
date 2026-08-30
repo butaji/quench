@@ -1,15 +1,12 @@
 // VM micro-case 017
-// family=primitives; level=1; depth=17
+// family=control; operation=labeled-nesting; variant=7; work_units=182; memory=none
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const nodes = Array.from({ length: 3 }, (_, id) => ({ id, value: id }));
-for (let pass = 0; pass < 2; pass++) for (let i = 1; i < nodes.length; i++) nodes[i].value = nodes[i - 1].value + 1;
-assert(nodes.at(-1).value === nodes.length - 1, "constraint propagation");
-return nodes.at(-1).value;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  let total = 0; outer: for (let row = 0; row < 182; row++) for (let col = 0; col < 13; col++) { if ((row + col + 6) % 11 === 0) continue outer; total += row ^ col; } return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

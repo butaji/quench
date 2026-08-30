@@ -1,15 +1,12 @@
 // VM micro-case 083
-// family=control-flow; level=2; depth=33
+// family=typed-memory; operation=float64-transform; variant=3; work_units=44; memory=external
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let label = "";
-for (let i = 0; i < 33; i++) { switch (i % 3) { case 0: label += "a"; break; case 1: label += "b"; break; default: label += "c"; } }
-assert(label.length === 33, "switch");
-return label;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = new Float64Array(44); let total = 0; for (let i = 0; i < values.length; i++) { values[i] = Math.sin(i + 2) * 0.5; total += values[i]; } return Math.round(total * 1e6);
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));
