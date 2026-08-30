@@ -323,7 +323,7 @@ impl FrameStack {
         self.frames.len() <= usize::from(self.limit)
             && self
                 .top_offset()
-                .is_none_or(|offset| usize::from(offset) + 1 == self.frames.len())
+                .map_or(true, |offset| usize::from(offset) + 1 == self.frames.len())
     }
     /// Return the offset of the top frame in the contiguous frame storage.
     #[inline]
@@ -1433,6 +1433,10 @@ impl FunctionCode {
 
     pub fn len(&self) -> usize {
         self.range.end.saturating_sub(self.range.start) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub(crate) fn code(&self) -> Option<CodeView<'_>> {

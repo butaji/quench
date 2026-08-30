@@ -521,14 +521,6 @@ fn run_instruction(
                         unsafe { &*word }
                             .copy_to_register(registers, usize::from(instruction.a));
                     }
-                    NamedCachedPayload::Cell(cell) => {
-                        // SAFETY: the source register keeps the containing
-                        // object alive until the word copy completes. The
-                        // destination may be the source register itself.
-                        unsafe { &*cell }.with_word(|word| {
-                            registers.write_owned(usize::from(instruction.a), word)
-                        });
-                    }
                     NamedCachedPayload::Value(value) => {
                         write_value(registers, instruction.a, value)
                     }

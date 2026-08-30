@@ -3,7 +3,7 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         && crate::typed_array_ops::canonical_numeric_index(key)
     {
         let deleted = crate::typed_array_ops::typed_array_index(key)
-            .is_none_or(|index| !crate::typed_array_prototype::index_exists(&target, index));
+            .map_or(true, |index| !crate::typed_array_prototype::index_exists(&target, index));
         return (target, deleted);
     }
     if crate::typed_array_ops::is_view(&target)
