@@ -989,18 +989,6 @@ fn is_plain_year_month(value: &Value) -> bool {
     }))
 }
 
-fn ensure_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
-    let receiver = receiver
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth receiver"))?;
-    if is_plain_year_month(receiver) {
-        Ok(())
-    } else {
-        Err(crate::value::error::throw_type_error(
-            "Invalid PlainYearMonth receiver",
-        ))
-    }
-}
-
 fn values(value: &Value) -> Result<(f64, f64), VmError> {
     Ok((
         crate::conversion::to_number(&field(Some(value), "year")?)?,

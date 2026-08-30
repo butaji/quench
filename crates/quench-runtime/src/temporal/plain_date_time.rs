@@ -2695,12 +2695,6 @@ fn from_overflow_option(options: Option<&Value>) -> Result<String, VmError> {
     crate::temporal::options::overflow(options)
 }
 
-fn month_code_number(value: &Value) -> Result<Value, VmError> {
-    let code = month_code_text(value)?;
-    let core = code.strip_suffix('L').unwrap_or(&code);
-    Ok(Value::Number(core[1..].parse::<f64>().unwrap_or(f64::NAN)))
-}
-
 fn month_code_text(value: &Value) -> Result<String, VmError> {
     if crate::conversion::is_symbol(value) {
         return Err(crate::value::error::throw_type_error("Invalid monthCode"));
