@@ -2190,7 +2190,23 @@ mod stubs {
                 "Invalid ZonedDateTime receiver",
             ));
         }
-        let property = |name: &str| crate::execute::get_property_result(receiver, name);
+        let property = |name: &str| {
+            if let Value::Object(object) = receiver {
+                let direct = object.iter().any(|(key, value)| {
+                    key == "\0prototype"
+                        && matches!(
+                            value,
+                            Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+                        )
+                });
+                if direct {
+                    if let Some((_, value)) = object.iter().find(|(key, _)| key == name) {
+                        return Ok(value.clone());
+                    }
+                }
+            }
+            crate::execute::get_property_result(receiver, name)
+        };
         match builtin {
             crate::ops::Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => {
                 let epoch = property("epochNanoseconds")?;
@@ -4030,6 +4046,27 @@ mod stubs {
                     std::slice::from_ref(&month_duration),
                 )
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))??;
+                let eom_correction = if end_day < start_day
+                    && start_day
+                        == super::plain_date::days_in_month_for_record(
+                            start_year,
+                            start_month as u32,
+                        ) as i32
+                {
+                    let month = crate::conversion::to_number(
+                        &crate::execute::get_property_result(&anchor, "month")?,
+                    )? as u32;
+                    let year = crate::conversion::to_number(
+                        &crate::execute::get_property_result(&anchor, "year")?,
+                    )? as i32;
+                    let anchor_day = number(&anchor, "day")?;
+                    i128::from(
+                        super::plain_date::days_in_month_for_record(year, month) as i32
+                            - anchor_day,
+                    ) * 86_400_000_000_000
+                } else {
+                    0
+                };
                 let epoch = |value: &Value| -> Result<i128, VmError> {
                     match crate::execute::get_property_result(value, "epochNanoseconds")? {
                         Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
@@ -4072,6 +4109,7 @@ mod stubs {
                 if number(&anchor, "hour")? != number(start, "hour")? {
                     residual += 3_600_000_000_000;
                 }
+                residual -= eom_correction;
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[1] = Value::Number(months as f64 * result_sign);
                 let sign = result_sign as i128;
