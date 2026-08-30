@@ -427,6 +427,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     // thread-local root global before installing the fresh execution scope so
     // properties created by one fixture cannot leak into the next fixture.
     quench_runtime::vm::reset_global_object();
+    quench_runtime::reset_fixture_caches();
     quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
@@ -438,6 +439,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     // Promise reactions (including asyncHelpers' $DONE handler) are queued
     // during script execution and must settle before the host reports success.
     quench_runtime::module_bindings::drain_jobs();
+    quench_runtime::reset_fixture_caches();
     result
 }
 

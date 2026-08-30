@@ -329,6 +329,7 @@ fn run_stage_files(
     files: Vec<PathBuf>,
 ) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
     const WORK_BATCH: usize = 32;
+    const WORKER_STACK_SIZE: usize = 256 * 1024 * 1024;
     let worker_count = env::var("QUENCH_STAGE_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -347,8 +348,12 @@ fn run_stage_files(
         workers.push(
             std::thread::Builder::new()
                 .name(format!("stage-files-{worker}"))
+                .stack_size(WORKER_STACK_SIZE)
                 .spawn(move || {
                     let _ = worker;
+                    let isolated = env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some();
+                    let mut runner = Test262Runner::new(RuntimeHost);
+                    let mut harness = HarnessCache::new(root.join("harness"));
                     loop {
                         let start = next.fetch_add(WORK_BATCH, Ordering::Relaxed);
                         if start >= files.len() {
@@ -357,7 +362,11 @@ fn run_stage_files(
                         let stop = (start + WORK_BATCH).min(files.len());
                         for index in start..stop {
                             let path = files[index].clone();
-                            let outcome = run_isolated_file(&root, &path);
+                            let outcome = if isolated {
+                                run_file_in_process(&root, &path)
+                            } else {
+                                runner.run_file_with_cache(&path, &mut harness)
+                            };
                             if sender.send((index, path, outcome)).is_err() {
                                 return;
                             }
@@ -376,24 +385,6 @@ fn run_stage_files(
     }
     results.sort_by_key(|(index, _, _)| *index);
     Ok(results)
-}
-
-fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
-    if env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some() {
-        return run_file_in_process(root, path);
-    }
-    let root = root.to_path_buf();
-    let path = path.to_path_buf();
-    std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
-        .spawn(move || {
-            let mut runner = Test262Runner::new(RuntimeHost);
-            let mut harness = HarnessCache::new(root.join("harness"));
-            runner.run_file_with_cache(path, &mut harness)
-        })
-        .map_err(|error| format!("stage worker spawn failed: {error}"))?
-        .join()
-        .map_err(|_| "stage worker panicked".to_string())?
 }
 
 fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {

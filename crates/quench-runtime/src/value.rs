@@ -1315,11 +1315,16 @@ impl PropertyEntries for ObjectData {
     }
 }
 
+thread_local! {
+    static OBJECT_LAYOUTS: RefCell<Vec<Vec<PropertyName>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn reset_object_layout_cache() {
+    OBJECT_LAYOUTS.with(|layouts| layouts.borrow_mut().clear());
+}
+
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
-    thread_local! {
-        static LAYOUTS: RefCell<Vec<Vec<PropertyName>>> = const { RefCell::new(Vec::new()) };
-    }
-    LAYOUTS.with(|layouts| {
+    OBJECT_LAYOUTS.with(|layouts| {
         let mut layouts = layouts.borrow_mut();
         if let Some(index) = layouts.iter().position(|layout| {
             layout.len() == properties.len()
