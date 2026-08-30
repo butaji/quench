@@ -2181,6 +2181,9 @@ fn abort_incomplete_response(
 
 fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
     let mut object = crate::modules::events::new_emitter_object(state)?;
+    if let Some(prototype) = state.borrow().http.client_request_prototype.clone() {
+        object = execute::set_prototype_of(&object, &prototype)?;
+    }
     let async_resource = crate::modules::async_hooks::new_resource(
         state,
         &[Value::String("HTTPCLIENTREQUEST".into())],

@@ -36,6 +36,7 @@ pub struct HttpState {
     pub agent_pending: Vec<u64>,
     pub global_agent: Option<Value>,
     pub agent_prototype: Option<Value>,
+    pub client_request_prototype: Option<Value>,
     pub outgoing_prototype: Option<Value>,
 }
 
@@ -97,6 +98,7 @@ impl HttpState {
             agent_pending: Vec::new(),
             global_agent: None,
             agent_prototype: None,
+            client_request_prototype: None,
             outgoing_prototype: None,
         }
     }
@@ -1118,6 +1120,43 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let global_agent = crate::modules::http_client::agent_construct(state, &[])
         .unwrap_or(Value::Undefined);
     state.borrow_mut().http.global_agent = Some(global_agent.clone());
+    let client_request_prototype = host_api::object(vec![
+        (
+            "write".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE),
+        ),
+        (
+            "end".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
+        ),
+        (
+            "setHeader".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_HEADER),
+        ),
+        (
+            "setTimeout".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_TIMEOUT),
+        ),
+        (
+            "abort".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_ABORT),
+        ),
+        (
+            "destroy".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_CLIENT_DESTROY),
+        ),
+    ]);
+    state.borrow_mut().http.client_request_prototype = Some(client_request_prototype);
+    let client_request = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_HTTP_CLIENT_REQUEST),
+        "prototype",
+        state
+            .borrow()
+            .http
+            .client_request_prototype
+            .clone()
+            .unwrap_or_else(|| host_api::object(Vec::new())),
+    );
     let mut module = crate::host::namespace_object(vec![
         (
             "createServer",
@@ -1133,7 +1172,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ),
         (
             "ClientRequest",
-            crate::host::capability(crate::registry::SPEC_HTTP_CLIENT_REQUEST),
+            client_request,
         ),
         (
             "get",
