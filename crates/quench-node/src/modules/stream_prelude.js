@@ -998,18 +998,23 @@
         try { result = mapper(step.value, { signal }); }
         catch (error) { result = Promise.reject(error); }
         const task = { done: false, value: undefined };
-        task.promise = Promise.resolve(result).then((value) => {
+        const complete = (value) => {
           task.done = true;
           task.value = value;
           return value;
-        });
+        };
+        if (result && typeof result.then === "function") {
+          task.promise = Promise.resolve(result).then(complete);
+        } else {
+          task.promise = Promise.resolve(complete(result));
+        }
         state.pending.push(task);
         return true;
       };
       const step = pull();
       return step && typeof step.then === "function" ? step.then(process) : process(step);
     };
-    const fill = async () => {
+    const fill = () => {
       const waiters = [];
       let reserved = 0;
       while (state.pending.slice(state.head).length + reserved < concurrency && !state.sourceDone) {
@@ -1019,42 +1024,61 @@
           waiters.push(result);
         }
       }
-      if (state.pending.length === state.head && waiters.length) await Promise.race(waiters);
+      return state.pending.length === state.head && waiters.length
+        ? Promise.race(waiters)
+        : undefined;
     };
-    const next = async () => {
+    const next = () => {
       if (state.operatorError) throw state.operatorError;
       if (state.ended) return { value: undefined, done: true };
       if (signal?.aborted) throw sliceAbortError();
-      await fill();
-      if (state.head >= state.pending.length) {
-        state.ended = true;
-        return { value: undefined, done: true };
-      }
-      while (state.pending[state.head] && !state.pending[state.head].done) {
-        await Promise.race(state.pending.slice(state.head).filter((task) => !task.done).map((task) => task.promise));
-        await fill();
-      }
-      const task = state.pending[state.head++];
-      if (!task) {
-        state.ended = true;
-        return { value: undefined, done: true };
-      }
-      if (state.head >= state.pending.length && !state.sourceDone) await enqueue();
-      const value = task.value;
-      if (filtering && !value.keep) return next();
-      return { value: filtering ? value.value : value, done: false };
+      const initialFill = fill();
+      const ready = () => {
+        if (state.head >= state.pending.length) {
+          state.ended = true;
+          return { value: undefined, done: true };
+        }
+        const task = state.pending[state.head];
+        if (task && !task.done) {
+          const wait = new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (error) => {
+              if (settled) return;
+              settled = true;
+              signal?.removeEventListener("abort", onAbort);
+              error ? reject(error) : resolve();
+            };
+            const onAbort = () => finish(sliceAbortError());
+            if (signal?.aborted) return onAbort();
+            signal?.addEventListener("abort", onAbort, { once: true });
+            state.pending.slice(state.head).filter((entry) => !entry.done)
+              .forEach((entry) => entry.promise.then(() => finish(), finish));
+          });
+          return wait.then(() => {
+            if (signal?.aborted) throw sliceAbortError();
+            const refill = fill();
+            return refill ? Promise.resolve(refill).then(ready) : ready();
+          });
+        }
+        state.head++;
+        const emit = () => {
+          const value = task.value;
+          if (filtering && !value.keep) return ready();
+          return { value: filtering ? value.value : value, done: false };
+        };
+        if (state.head >= state.pending.length && !state.sourceDone) {
+          const refill = fill();
+          return refill ? Promise.resolve(refill).then(emit) : emit();
+        }
+        return emit();
+      };
+      return initialFill ? Promise.resolve(initialFill).then(ready) : ready();
     };
     output.__quenchIterator = { next, return() { state.ended = true; return Promise.resolve({ value: undefined, done: true }); } };
     output.__quenchIterator[Symbol.asyncIterator] = function () { return this; };
-    output[Symbol.asyncIterator] = async function* () {
-      while (true) {
-        const step = await output.__quenchIterator.next();
-        if (step.done) return;
-        yield step.value;
-      }
-    };
+    output[Symbol.asyncIterator] = function () { return output.__quenchIterator; };
     output.toArray = function () {
-      const collect = (values) => output.__quenchIterator.next().then((step) => {
+      const collect = (values) => Promise.resolve(output.__quenchIterator.next()).then((step) => {
         if (step.done) return values;
         return collect(values.concat([step.value]));
       });
@@ -1069,9 +1093,13 @@
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const callback = filtering
-      ? async (value, context) => ({ value, keep: await mapper(value, context) })
-      : mapper;
+    const callback = filtering ? (value, context) => {
+      const decision = mapper(value, context);
+      if (decision && typeof decision.then === "function") {
+        return decision.then((keep) => ({ value, keep }));
+      }
+      return { value, keep: decision };
+    } : mapper;
     return readableOperator(stream, callback, filtering, options);
   }
 
@@ -1254,10 +1282,15 @@
   ReadableClass.prototype.find = function (predicate, options) {
     return readableTerminal(this, "find", predicate, undefined, false, options);
   };
-  ReadableClass.prototype.toArray = async function () {
+  ReadableClass.prototype.toArray = function () {
+    const iterator = this.__quenchIterator || this[Symbol.asyncIterator]();
     const values = [];
-    for await (const value of readableValues(this)) values.push(value);
-    return values;
+    const collect = () => Promise.resolve(iterator.next()).then((step) => {
+      if (step.done) return values;
+      values.push(step.value);
+      return collect();
+    });
+    return collect();
   };
 
   if (typeof Symbol === "function" && Symbol.asyncIterator) {
