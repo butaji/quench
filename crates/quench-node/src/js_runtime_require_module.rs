@@ -185,6 +185,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "internal/util" || name == "node:internal/util" {
             return Ok(Value::object(vec![
                 (
+                    "customInspectSymbol".into(),
+                    Value::String("Symbol.for.nodejs.util.inspect.custom\0".into()),
+                ),
+                (
                     "sleep".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::InternalUtilSleep,
