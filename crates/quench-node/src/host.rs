@@ -284,6 +284,7 @@ pub fn install_with_argv(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
+    quench_runtime::date::set_local_timezone(None);
     // Node schedules every async-function continuation as a microtask,
     // including awaits whose operand is already fulfilled.
     quench_runtime::module_bindings::defer_fulfilled_await(true);
