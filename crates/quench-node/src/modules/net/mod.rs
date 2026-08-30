@@ -341,6 +341,10 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ),
         ("pause", cap(crate::registry::SPEC_NET_SOCKET_PAUSE)),
         ("resume", cap(crate::registry::SPEC_NET_SOCKET_RESUME)),
+        // The host write queue already provides cork semantics; expose the
+        // pair as stable no-op calls so callers can bracket vectorized writes.
+        ("cork", Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("uncork", Value::Builtin(quench_runtime::ops::Builtin::Object)),
     ]
 }
 
