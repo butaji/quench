@@ -535,6 +535,30 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
 }
 
 fn validate_connect_options(options: &Value) -> Result<(), VmError> {
+    let local_address = execute::get_property(options, "localAddress");
+    if !matches!(local_address, Value::Undefined | Value::Null) {
+        let valid = match &local_address {
+            Value::String(_) | Value::StringUnits(_) => {
+                execute::to_js_string(&local_address)
+                    .ok()
+                    .is_some_and(|value| value.parse::<std::net::IpAddr>().is_ok())
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_IP_ADDRESS".into())),
+            ])));
+        }
+    }
+    let local_port = execute::get_property(options, "localPort");
+    if !matches!(local_port, Value::Undefined | Value::Null | Value::Number(_)) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ])));
+    }
     for key in ["objectMode", "readableObjectMode", "writableObjectMode"] {
         let value = execute::get_property(options, key);
         if execute::is_truthy(&value) {
