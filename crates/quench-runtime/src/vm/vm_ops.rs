@@ -429,18 +429,7 @@ pub fn execute_await(
                         crate::module_bindings::mark_await_advanced(false);
                         return Err(VmError::Suspended(promise));
                     }
-                    crate::promise::drain_microtasks_all();
-                    let state = promise.state.borrow().clone();
-                    match state {
-                        crate::value::PromiseState::Fulfilled(value) => {
-                            super::write_value(registers, dst, value);
-                            Ok(())
-                        }
-                        crate::value::PromiseState::Rejected(reason) => {
-                            Err(VmError::Thrown(reason))
-                        }
-                        crate::value::PromiseState::Pending => Err(VmError::Suspended(promise)),
-                    }
+                    Err(VmError::Suspended(promise))
                 }
             }
         }

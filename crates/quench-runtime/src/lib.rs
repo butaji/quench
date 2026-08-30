@@ -21,6 +21,7 @@ pub use host_jobs::install_host_job_pump;
 
 mod arrays;
 mod atomics;
+pub use atomics::expire_async_waiters;
 pub mod benchmark;
 mod bigint;
 mod binding_patterns;
