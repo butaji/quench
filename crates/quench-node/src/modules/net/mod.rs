@@ -95,6 +95,7 @@ pub struct NetState {
     pub pending_events: Vec<(Value, String, Vec<Value>)>,
     pub paths: HashMap<String, u16>,
     pub pending_writes: Vec<(Value, Vec<u8>)>,
+    pub pending_request_writes: Vec<(Value, Vec<u8>, Value)>,
 }
 
 pub struct PendingLookup {
@@ -122,6 +123,7 @@ impl NetState {
             pending_events: Vec::new(),
             paths: HashMap::new(),
             pending_writes: Vec::new(),
+            pending_request_writes: Vec::new(),
         }
     }
 }
