@@ -37,6 +37,7 @@ pub struct ProcessState {
     pub exit_code: Option<i32>,
     pub cwd: std::path::PathBuf,
     pub umask: u32,
+    pub title: String,
 }
 
 impl Default for ProcessState {
@@ -74,6 +75,7 @@ impl ProcessState {
             exit_code: None,
             cwd,
             umask: 0o022,
+            title: "quench-node".into(),
         }
     }
 }
@@ -105,7 +107,11 @@ pub(crate) fn mark_deprecation(
 }
 
 pub fn build(argv: &[String], exec_path: &str) -> Value {
-    let mut props = info_props(argv, exec_path);
+    build_with_title(argv, exec_path, "quench-node")
+}
+
+pub fn build_with_title(argv: &[String], exec_path: &str, title: &str) -> Value {
+    let mut props = info_props(argv, exec_path, title);
     props.extend(method_props());
     let process =
         crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
@@ -125,7 +131,7 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
     process
 }
 
-fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
+fn info_props(argv: &[String], exec_path: &str, title: &str) -> Vec<(&'static str, Value)> {
     vec![
         ("Symbol.toStringTag", Value::String("process".into())),
         (
@@ -174,6 +180,7 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
             ),
         ),
         ("execArgv", host_api::array(vec![])),
+        ("title", Value::String(title.to_string())),
         ("features", features()),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),

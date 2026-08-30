@@ -1329,9 +1329,10 @@ node_api! {
 pub fn namespace_bindings(
     argv: &[String],
     exec_path: &str,
+    title: &str,
 ) -> Vec<(String, quench_runtime::value::Value)> {
     let mut out = Vec::new();
-    push_bindings(&mut out, argv, exec_path);
+    push_bindings(&mut out, argv, exec_path, title);
     out.push(timers_binding(
         "setTimeout",
         crate::registry::SPEC_TIMERS_SETTIMEOUT,
@@ -1630,6 +1631,7 @@ fn push_bindings(
     out: &mut Vec<(String, quench_runtime::value::Value)>,
     argv: &[String],
     exec_path: &str,
+    title: &str,
 ) {
     out.push((
         "console".to_string(),
@@ -1637,7 +1639,7 @@ fn push_bindings(
     ));
     out.push((
         "process".to_string(),
-        crate::modules::process::build(argv, exec_path),
+        crate::modules::process::build_with_title(argv, exec_path, title),
     ));
     out.push(("Buffer".to_string(), crate::modules::buffer::build_object()));
 }
