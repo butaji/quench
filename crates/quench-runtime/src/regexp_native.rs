@@ -317,12 +317,15 @@ fn find_repeat(
     max: Option<usize>,
     sticky: bool,
 ) -> Option<std::ops::Range<usize>> {
-    let starts = if sticky {
-        0..input.len().min(1)
-    } else {
-        0..input.len()
-    };
-    for start in starts {
+    let mut start = 0;
+    while start < input.len() {
+        if input[start] != unit {
+            if sticky {
+                break;
+            }
+            start += 1;
+            continue;
+        }
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == unit)
@@ -331,6 +334,10 @@ fn find_repeat(
             let end = start + max.map_or(available, |upper| available.min(upper));
             return Some(start..end);
         }
+        if sticky {
+            break;
+        }
+        start += available;
     }
     (min == 0).then_some(0..0)
 }
@@ -342,12 +349,15 @@ fn find_repeat_units(
     max: Option<usize>,
     sticky: bool,
 ) -> Option<std::ops::Range<usize>> {
-    let starts = if sticky {
-        0..input.len().min(1)
-    } else {
-        0..input.len()
-    };
-    for start in starts {
+    let mut start = 0;
+    while start < input.len() {
+        if input[start] != u16::from(unit) {
+            if sticky {
+                break;
+            }
+            start += 1;
+            continue;
+        }
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == u16::from(unit))
@@ -356,6 +366,10 @@ fn find_repeat_units(
             let end = start + max.map_or(available, |upper| available.min(upper));
             return Some(start..end);
         }
+        if sticky {
+            break;
+        }
+        start += available;
     }
     (min == 0).then_some(0..0)
 }

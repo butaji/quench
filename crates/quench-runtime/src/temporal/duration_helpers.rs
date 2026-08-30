@@ -697,6 +697,12 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
 }
 
 fn proxy_relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
+    proxy_relative_date_record(value).map(|(date, _)| date)
+}
+
+fn proxy_relative_date_record(
+    value: &Value,
+) -> Result<((i32, u32, u32), Option<String>), VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     let day = integer_property(value, "day")?;
     let _ = integer_property(value, "hour")?;
@@ -721,7 +727,7 @@ fn proxy_relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
         crate::conversion::to_string(&offset)?;
     }
     let _ = integer_property(value, "second")?;
-    let _ = crate::execute::get_property_result(value, "timeZone")?;
+    let timezone = crate::execute::get_property_result(value, "timeZone")?;
     let year = integer_property(value, "year")?;
     let calendar = match calendar {
         Value::Undefined => Value::Undefined,
@@ -736,7 +742,12 @@ fn proxy_relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
         Value::Number(day),
         calendar,
     ])?;
-    Ok((year as i32, month as u32, day as u32))
+    let timezone = match timezone {
+        Value::Undefined => None,
+        Value::String(value) => Some(value),
+        _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
+    };
+    Ok(((year as i32, month as u32, day as u32), timezone))
 }
 
 fn integer_property(value: &Value, name: &str) -> Result<f64, VmError> {
