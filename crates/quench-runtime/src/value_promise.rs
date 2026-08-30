@@ -18,7 +18,7 @@ pub(crate) enum PromiseContinuation {
         values: Vec<Value>,
         index: usize,
         array_like: Option<(Value, usize)>,
-        pending_mapper: bool,
+        pending: ArrayFromAsyncPending,
         target: Option<Value>,
     },
     Aggregate {
@@ -30,6 +30,13 @@ pub(crate) enum PromiseContinuation {
         thenable: Value,
         then: Value,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArrayFromAsyncPending {
+    None,
+    Input,
+    Mapper,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
