@@ -315,7 +315,13 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             if guard.close_emitted || guard.state == SocketState::Closed {
                 continue;
             }
-            let done = guard.read_eof && guard.write_buf.is_empty();
+            let allow_half_open = matches!(
+                execute::get_property(&guard.js, "allowHalfOpen"),
+                quench_runtime::value::Value::Boolean(true)
+            );
+            let done = guard.read_eof
+                && guard.write_buf.is_empty()
+                && (!allow_half_open || guard.finish_emitted);
             if done {
                 if !guard.finish_emitted
                     && !matches!(

@@ -168,6 +168,13 @@ pub fn connection_handler(
             )
         })
         .unwrap_or(true);
+    let allow_half_open = receiver.is_some_and(|server| {
+        matches!(
+            execute::get_property(server, "httpAllowHalfOpen"),
+            Value::Boolean(true)
+        )
+    });
+    execute::set_property_in_place(&socket, "allowHalfOpen", Value::Boolean(allow_half_open));
     state.borrow_mut().http.conns.insert(
         socket_id,
         Conn {
@@ -199,6 +206,33 @@ pub fn connection_handler(
         &[Value::String("close".to_string()), close_cap],
     )?;
     Ok(Value::Undefined)
+}
+
+/// Stop keep-alive reuse for established HTTP connections when the server is
+/// closing. Existing responses still drain, then `res.end` closes the socket.
+pub(crate) fn server_close(state: &Rc<RefCell<HostState>>, server: &Value) {
+    let mut guard = state.borrow_mut();
+    let server_id = net::net_id(server);
+    let socket_ids: std::collections::HashSet<u64> = guard
+        .http
+        .conns
+        .iter_mut()
+        .filter_map(|(id, conn)| {
+            if execute::same_identity(&conn.server, server)
+                || server_id.is_some_and(|value| net::net_id(&conn.server) == Some(value))
+            {
+                conn.keep_alive = false;
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    for response in guard.http.res.values_mut() {
+        if net::net_id(&response.socket).is_some_and(|id| socket_ids.contains(&id)) {
+            response.keep_alive = false;
+        }
+    }
 }
 
 /// Complete every server-side IncomingMessage when its transport closes.
@@ -377,6 +411,27 @@ fn reset_keep_alive_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) {
         conn.head_parsed = false;
         conn.response_done = false;
     }
+}
+
+/// Resume parsing after a delayed response completes. Pipelined bytes may
+/// already be buffered while the request listener waits on a timer; the
+/// normal socket `'data'` edge has then already fired, so feed that buffer
+/// through the same state machine explicitly.
+pub(crate) fn resume_connection(
+    state: &Rc<RefCell<HostState>>,
+    socket_id: u64,
+) -> Result<(), VmError> {
+    reset_keep_alive_conn(state, socket_id);
+    let buffered = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .is_some_and(|conn| !conn.buffer.is_empty() && !conn.head_parsed);
+    if buffered {
+        feed_conn(state, socket_id)?;
+    }
+    Ok(())
 }
 
 fn conn_has_head(state: &Rc<RefCell<HostState>>, socket_id: u64) -> bool {
