@@ -625,6 +625,9 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
         CAP_HTTP_CLIENT_REQUEST => crate::modules::http_client::request,
         CAP_HTTP_INCOMING => crate::modules::http::incoming_construct,
+        CAP_FS_CREATE_READSTREAM | CAP_FS_READSTREAM => {
+            crate::modules::fs::construct_read_stream
+        }
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_READLINE => readline_create_interface,
         CAP_ASYNC_RESOURCE => crate::modules::async_hooks::new_resource,

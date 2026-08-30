@@ -43,6 +43,8 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_HANDLE_CLOSE => crate::modules::fs::file_handle_close,
         CAP_FS_CLOSE => crate::modules::fs::close,
         CAP_FS_HANDLE_READFILE => crate::modules::fs::file_handle_read_file,
+        CAP_FS_READSTREAM_CLOSE => crate::modules::fs::read_stream_close,
+        CAP_FS_READSTREAM_DESTROY => crate::modules::fs::read_stream_destroy,
         _ => return fs_dispatch_more(cap),
     })
 }
