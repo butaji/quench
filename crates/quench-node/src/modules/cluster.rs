@@ -82,8 +82,17 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             "disconnect",
             crate::host::capability(SPEC_CLUSTER_DISCONNECT),
         ),
-        ("setupPrimary", Value::Undefined),
-        ("setupMaster", Value::Undefined),
+        // The single-process host has no child-process launch settings, but
+        // both setup entry points remain callable so API consumers can use
+        // the same lifecycle before `fork()`.
+        (
+            "setupPrimary",
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "setupMaster",
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
         ("Worker", worker_constructor),
     ] {
         let _ = execute::set_property_in_place(&module, key, value);
@@ -221,6 +230,12 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let global = quench_runtime::vm::current_global_object();
     if let Ok(process) = execute::get_property_result(&global, "process") {
         let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
+        let disconnect = quench_runtime::host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_CLUSTER_WORKER_DISCONNECT),
+            vec![worker.clone()],
+        );
+        let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(true));
+        let _ = execute::set_property_in_place(&process, "disconnect", disconnect);
         let _ = execute::set_property_in_place(
             &process,
             "send",
@@ -285,7 +300,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let global = quench_runtime::vm::current_global_object();
     if let Ok(process) = execute::get_property_result(&global, "process") {
         let _ = execute::delete_property(process.clone(), ID);
-        let _ = execute::delete_property(process, "send");
+        let _ = execute::delete_property(process.clone(), "send");
+        let _ = execute::delete_property(process.clone(), "disconnect");
+        let _ = execute::delete_property(process, "connected");
     }
     if result.is_err() {
         state.borrow_mut().cluster.worker_context = None;

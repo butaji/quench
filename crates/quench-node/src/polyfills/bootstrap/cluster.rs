@@ -1161,6 +1161,9 @@ const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
   const previousAsyncResource = globalThis.__nodeCurrentAsyncResource;
   const previousIsWorker = cluster.isWorker;
   const previousArgv = process.argv;
+  const previousConnected = process.connected;
+  const previousDisconnect = process.disconnect;
+  const previousSend = process.send;
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined) process.env[key] = value;
   }
@@ -1168,16 +1171,35 @@ const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
   if (setupArgs.length) process.argv = [...process.argv, ...setupArgs];
   cluster.isWorker = true;
   cluster.worker = worker;
+  // A cluster worker observes its IPC methods on the global process object,
+  // not only on `worker.process`. Keep this scoped to the worker re-entry so
+  // the primary process retains its ordinary surface afterward.
+  process.connected = true;
+  process.disconnect = () => worker.disconnect();
+  process.send = (...values) => worker.send(...values);
   globalThis.__quench_in_cluster_worker = true;
   globalThis.__nodeCurrentAsyncResource = { id: worker.id };
   let workerError = null;
   try {
-    (0, globalThis.eval)(globalThis.__quench_script_source);
+    // Install the worker IPC surface in the same global evaluation that runs
+    // the fixture. The runtime may retain a lexical `process` value across
+    // re-entry, so mutating it only in this outer frame would leave the child
+    // observing a stale object.
+    globalThis.__quench_cluster_worker = worker;
+    const workerSource = `globalThis.process.connected = true;
+globalThis.process.disconnect = () => globalThis.__quench_cluster_worker.disconnect();
+globalThis.process.send = (...values) => globalThis.__quench_cluster_worker.send(...values);
+${globalThis.__quench_script_source}`;
+    (0, globalThis.eval)(workerSource);
   } catch (error) {
     workerError = error;
   }
+  delete globalThis.__quench_cluster_worker;
   cluster.isWorker = previousIsWorker;
   process.argv = previousArgv;
+  process.connected = previousConnected;
+  process.disconnect = previousDisconnect;
+  process.send = previousSend;
   globalThis.__nodeCurrentAsyncResource = previousAsyncResource;
   if (worker.state !== "dead") {
     __quenchFinishClusterWorker(cluster, worker, workerError);
