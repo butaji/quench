@@ -60,6 +60,10 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         if let Value::Boolean(value) = execute::get_property(options, "pauseOnConnect") {
             execute::set_property_in_place(&object, "pauseOnConnect", Value::Boolean(value));
         }
+        let block_list = execute::get_property(options, "blockList");
+        if matches!(block_list, Value::Object(_) | Value::ObjectAlias(_)) {
+            execute::set_property_in_place(&object, "blockList", block_list);
+        }
     }
     register_server(state, &object, None)?;
     let connection_listener = args
