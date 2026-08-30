@@ -50,6 +50,9 @@ pub struct Conn {
     pub requests: Vec<Value>,
     /// Bytes of the request body still expected (from Content-Length).
     pub body_remaining: usize,
+    /// Whether the request body uses HTTP chunked framing.
+    pub body_chunked: bool,
+    pub body_chunked_done: bool,
     /// Whether the request body fully arrived (`'end'` was emitted).
     pub body_done: bool,
     /// Whether the request head has been consumed.
@@ -168,6 +171,8 @@ pub fn connection_handler(
             req: None,
             requests: Vec::new(),
             body_remaining: 0,
+            body_chunked: false,
+            body_chunked_done: false,
             body_done: true,
             head_parsed: false,
             response_done: false,
@@ -392,6 +397,15 @@ fn take_head(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Option<Vec<u8>> 
 /// Emit buffered request-body bytes as `'data'`, then `'end'` once the
 /// declared Content-Length arrives.
 fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmError> {
+    if state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .is_some_and(|conn| conn.body_chunked)
+    {
+        return drain_chunked_body(state, socket_id);
+    }
     let (req, data, done) = {
         let mut guard = state.borrow_mut();
         let Some(conn) = guard.http.conns.get_mut(&socket_id) else {
@@ -426,6 +440,60 @@ fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmEr
                     execute::set_property_in_place(req, "complete", Value::Boolean(true));
                 }
             }
+            net::emit(state, &req, "end", Vec::new())?;
+        }
+    }
+    Ok(())
+}
+
+fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmError> {
+    let (req, data, done) = {
+        let mut guard = state.borrow_mut();
+        let Some(conn) = guard.http.conns.get_mut(&socket_id) else {
+            return Ok(());
+        };
+        if conn.req.is_none() || conn.body_done {
+            return Ok(());
+        }
+        let mut data = Vec::new();
+        let mut done = false;
+        loop {
+            let Some(line_end) = conn.buffer.windows(2).position(|pair| pair == b"\r\n")
+            else {
+                break;
+            };
+            let Ok(size) = usize::from_str_radix(
+                String::from_utf8_lossy(&conn.buffer[..line_end])
+                    .split(';')
+                    .next()
+                    .unwrap_or_default(),
+                16,
+            ) else {
+                break;
+            };
+            let frame_end = line_end + 2 + size + 2;
+            if conn.buffer.len() < frame_end {
+                break;
+            }
+            conn.buffer.drain(..line_end + 2);
+            if size == 0 {
+                conn.buffer.drain(..2);
+                done = true;
+                break;
+            }
+            data.extend_from_slice(&conn.buffer[..size]);
+            conn.buffer.drain(..size + 2);
+        }
+        conn.body_chunked_done |= done;
+        conn.body_done = conn.body_chunked_done;
+        (conn.req.clone(), data, conn.body_done)
+    };
+    if let Some(req) = req {
+        if !data.is_empty() {
+            net::emit(state, &req, "data", vec![make_buffer(&data)])?;
+        }
+        if done {
+            execute::set_property_in_place(&req, "complete", Value::Boolean(true));
             net::emit(state, &req, "end", Vec::new())?;
         }
     }
@@ -496,7 +564,18 @@ fn emit_request(
         res_end(state, Some(&res), &[])?;
         return Ok(Value::Undefined);
     }
-    net::emit(state, &server, "request", vec![req.clone(), res])?;
+    let expect_continue = String::from_utf8_lossy(head).lines().skip(1).any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("expect")
+                && value.trim().eq_ignore_ascii_case("100-continue")
+        })
+    });
+    let event = if expect_continue {
+        "checkContinue"
+    } else {
+        "request"
+    };
+    net::emit(state, &server, event, vec![req.clone(), res])?;
     let body_done = state
         .borrow()
         .http
@@ -537,7 +616,7 @@ fn build_req_res(
     socket_id: u64,
     head: &[u8],
 ) -> Result<(Value, Value), VmError> {
-    let (req, content_length, keep_alive) = build_req(state, head)?;
+    let (req, content_length, keep_alive, body_chunked) = build_req(state, head)?;
     // IncomingMessage.socket/connection are aliases of the accepted net
     // socket. Stamp both on the request before exposing it to user code.
     if let Some(socket) = state
@@ -558,7 +637,9 @@ fn build_req_res(
             conn.req = Some(req.clone());
             conn.requests.push(req.clone());
             conn.body_remaining = content_length;
-            conn.body_done = content_length == 0;
+            conn.body_chunked = body_chunked;
+            conn.body_chunked_done = false;
+            conn.body_done = !body_chunked && content_length == 0;
             conn.response_done = false;
             conn.keep_alive = keep_alive;
         }
@@ -567,7 +648,10 @@ fn build_req_res(
 }
 
 /// Build the `req` emitter from the parsed head.
-fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usize, bool), VmError> {
+fn build_req(
+    state: &Rc<RefCell<HostState>>,
+    head: &[u8],
+) -> Result<(Value, usize, bool, bool), VmError> {
     let (method, url, version, headers, content_length, keep_alive) = parse_request_head(head);
     let async_resource = crate::modules::async_hooks::new_resource(
         state,
@@ -603,7 +687,14 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
             (REQ_ASYNC_RESOURCE_PROP.to_string(), async_resource),
         ],
     )?;
-    Ok((req, content_length, keep_alive))
+    let chunked = headers_value(&req, "transfer-encoding")
+        .is_some_and(|value| value.eq_ignore_ascii_case("chunked"));
+    Ok((req, content_length, keep_alive, chunked))
+}
+
+fn headers_value(request: &Value, key: &str) -> Option<String> {
+    execute::to_js_string(&execute::get_property(&execute::get_property(request, "headers"), key))
+        .ok()
 }
 
 /// `req.destroy([error])` — abort the server-side request without tearing
@@ -798,6 +889,10 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             res_cap(crate::registry::SPEC_HTTP_RES_WRITE),
         ),
         (
+            "writeContinue".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE_CONTINUE),
+        ),
+        (
             "end".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_END),
         ),
@@ -821,7 +916,9 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 
 // Response methods live in `http_res`; re-exported here for dispatch.
 pub use crate::modules::http_res::{res_destroy, res_flush_headers};
-pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
+pub use crate::modules::http_res::{
+    res_end, res_set_header, res_write, res_write_continue, res_write_head,
+};
 
 /// Construct an IncomingMessage with the same signal/destroy state used by
 /// network-created messages. This keeps the public constructor useful for

@@ -380,6 +380,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_RES_WRITE_HEAD => crate::modules::http::res_write_head,
         CAP_HTTP_RES_WRITE => crate::modules::http::res_write,
         CAP_HTTP_RES_END => crate::modules::http::res_end,
+        CAP_HTTP_RES_WRITE_CONTINUE => crate::modules::http::res_write_continue,
         CAP_HTTP_RES_DESTROY => crate::modules::http::res_destroy,
         CAP_HTTP_RES_FLUSH_HEADERS => crate::modules::http::res_flush_headers,
         CAP_HTTP_CONN => crate::modules::http::connection_handler,

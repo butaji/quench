@@ -175,6 +175,41 @@ pub fn res_write(
     if !payload.is_empty() {
         net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
     }
+    if let Some(callback) = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)))
+    {
+        execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `res.writeContinue([callback])` — send the interim 100 response.
+pub fn res_write_continue(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let socket = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .map(|res| res.socket.clone());
+    if let Some(socket) = socket {
+        net::socket_write(
+            state,
+            Some(&socket),
+            &[Value::String("HTTP/1.1 100 Continue\r\n\r\n".into())],
+        )?;
+    }
+    if let Some(callback) = args.iter().find(|value| quench_runtime::is_callable(value)) {
+        execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -236,6 +271,13 @@ pub fn res_end(
     }
     if !keep_alive {
         crate::modules::net::socket_end(state, Some(&socket), &[])?;
+    }
+    if let Some(callback) = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)))
+    {
+        execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }

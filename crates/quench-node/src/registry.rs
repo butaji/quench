@@ -515,6 +515,8 @@ pub const SPEC_HTTP_RES_SET_HEADER: NodeSpec = NodeSpec::new("http:res:setHeader
 pub const SPEC_HTTP_RES_WRITE_HEAD: NodeSpec = NodeSpec::new("http:res:writeHead", 0x0F04);
 pub const SPEC_HTTP_RES_WRITE: NodeSpec = NodeSpec::new("http:res:write", 0x0F05);
 pub const SPEC_HTTP_RES_END: NodeSpec = NodeSpec::new("http:res:end", 0x0F06);
+pub const SPEC_HTTP_RES_WRITE_CONTINUE: NodeSpec =
+    NodeSpec::new("http:res:writeContinue", 0x0F25);
 // http ClientRequest methods (dispatched with the req receiver).
 pub const SPEC_HTTP_REQ_WRITE: NodeSpec = NodeSpec::new("http:req:write", 0x0F09);
 pub const SPEC_HTTP_REQ_END: NodeSpec = NodeSpec::new("http:req:end", 0x0F0A);
@@ -1096,6 +1098,7 @@ pub const CAP_HTTP_RES_SET_ENCODING: CapId = SPEC_HTTP_RES_SET_ENCODING.cap;
 pub const CAP_HTTP_RES_SET_HEADER: CapId = SPEC_HTTP_RES_SET_HEADER.cap;
 pub const CAP_HTTP_RES_WRITE: CapId = SPEC_HTTP_RES_WRITE.cap;
 pub const CAP_HTTP_RES_WRITE_HEAD: CapId = SPEC_HTTP_RES_WRITE_HEAD.cap;
+pub const CAP_HTTP_RES_WRITE_CONTINUE: CapId = SPEC_HTTP_RES_WRITE_CONTINUE.cap;
 pub const CAP_HTTP_SERVER: CapId = SPEC_HTTP_SERVER.cap;
 pub const CAP_INSPECTOR_CLOSE: CapId = SPEC_INSPECTOR_CLOSE.cap;
 pub const CAP_INSPECTOR_CONNECT: CapId = SPEC_INSPECTOR_CONNECT.cap;
