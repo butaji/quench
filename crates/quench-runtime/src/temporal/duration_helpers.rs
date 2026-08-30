@@ -824,13 +824,18 @@ fn validate_relative_string(text: &str) -> Result<(), VmError> {
         }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
             let offset = &base[sign..];
-            if !valid_string_offset(offset) {
+            let valid = if time.contains('[') {
+                valid_string_offset(offset)
+            } else {
+                valid_timezone_offset(offset)
+            };
+            if !valid {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
         if let Some((_, annotation)) = time.split_once('[') {
             let annotation = annotation.strip_suffix(']').unwrap_or(annotation);
-            if annotation.starts_with(['+', '-']) && !valid_string_offset(annotation) {
+            if annotation.starts_with(['+', '-']) && !valid_timezone_offset(annotation) {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
@@ -957,7 +962,12 @@ fn validate_timezone_string(text: &str) -> Result<(), VmError> {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
-            if !valid_string_offset(&base[sign..]) {
+            let valid = if text.contains('[') {
+                valid_string_offset(&base[sign..])
+            } else {
+                valid_timezone_offset(&base[sign..])
+            };
+            if !valid {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
@@ -992,6 +1002,10 @@ fn valid_offset(value: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn valid_timezone_offset(value: &str) -> bool {
+    valid_offset(value) && value.matches(':').count() <= 1
 }
 
 fn valid_string_offset(value: &str) -> bool {

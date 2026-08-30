@@ -12,6 +12,29 @@ pub(crate) mod plain_year_month;
 
 const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 
+fn round_quotient(delta: i128, quantum: i128, mode: &str) -> i128 {
+    let quotient = delta / quantum;
+    let remainder = delta % quantum;
+    if remainder == 0 {
+        return quotient;
+    }
+    let sign = delta.signum();
+    let distance = remainder.abs();
+    let adjust = match mode {
+        "trunc" => false,
+        "floor" => sign < 0,
+        "ceil" => sign > 0,
+        "expand" => true,
+        "halfTrunc" => distance * 2 > quantum,
+        "halfExpand" => distance * 2 >= quantum,
+        "halfFloor" => distance * 2 > quantum || sign < 0 && distance * 2 == quantum,
+        "halfCeil" => distance * 2 > quantum || sign > 0 && distance * 2 == quantum,
+        "halfEven" => distance * 2 > quantum || distance * 2 == quantum && quotient % 2 != 0,
+        _ => false,
+    };
+    quotient + if adjust { sign } else { 0 }
+}
+
 pub(crate) fn zoned_construct(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
@@ -1451,7 +1474,12 @@ mod stubs {
             if offset_start.is_some() && offset_mode == "reject" {
                 let supplied_offset = super::iso_offset_nanos(offset_text);
                 let actual_offset = super::timezone_offset_nanos(&timezone, epoch);
-                if supplied_offset != actual_offset && super::iso_offset_has_seconds(offset_text) {
+                let fixed_timezone = timezone_annotation
+                    .as_deref()
+                    .is_some_and(|value| !value.contains('/'));
+                if supplied_offset != actual_offset
+                    && (super::iso_offset_has_seconds(offset_text) || fixed_timezone)
+                {
                     return Err(crate::value::error::throw_range_error(
                         "Offset does not match time zone",
                     ));
@@ -3661,18 +3689,20 @@ mod stubs {
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
                 .unwrap_or_else(|| "trunc".into());
-            let smallest = options
+            let smallest_value = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "smallestUnit"))
                 .transpose()?
-                .filter(|value| !matches!(value, Value::Undefined))
+                .filter(|value| !matches!(value, Value::Undefined));
+            let smallest_was_default = smallest_value.is_none();
+            let smallest = smallest_value
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
                 .unwrap_or_else(|| "nanosecond".into());
             let smallest = smallest
                 .strip_suffix('s')
                 .map_or(smallest.clone(), str::to_string);
-            if largest_was_default && matches!(smallest.as_str(), "day" | "nanosecond") {
+            if largest_was_default && !smallest_was_default && smallest == "day" {
                 largest = "day".into();
             }
             if !matches!(
@@ -3718,17 +3748,6 @@ mod stubs {
             let other_calendar = crate::conversion::to_string(
                 &crate::execute::get_property_result(&other, "calendarId")?,
             )?;
-            // Calendar-aware defaults balance by calendar days.  Keeping the
-            // default as hours for non-ISO calendars makes an otherwise
-            // date-only difference observe the epoch length instead of the
-            // calendar date fields.
-            if largest_was_default
-                && largest == "hour"
-                && receiver_calendar != "iso8601"
-                && receiver_calendar != "gregory"
-            {
-                largest = "day".into();
-            }
             if super::plain_date::canonical_calendar_id(&receiver_calendar)
                 != super::plain_date::canonical_calendar_id(&other_calendar)
             {
@@ -3753,7 +3772,8 @@ mod stubs {
                 let dst_shift = super::timezone_offset_nanos(&receiver_timezone, left_epoch)
                     != super::timezone_offset_nanos(&receiver_timezone, right_epoch);
                 if delta < 0
-                    && (rounding_mode == "floor" || rounding_mode == "halfExpand" && dst_shift)
+                    && dst_shift
+                    && (rounding_mode == "floor" || rounding_mode == "halfExpand")
                 {
                     let field = |value: &Value, name: &str| -> Result<f64, VmError> {
                         crate::conversion::to_number(&crate::execute::get_property_result(
@@ -3774,35 +3794,7 @@ mod stubs {
                     return crate::temporal::duration::construct(&fields);
                 }
                 let quantum = 86_400_000_000_000_i128 * increment_number.unwrap_or(1.0) as i128;
-                let quotient = delta.div_euclid(quantum);
-                let remainder = delta.rem_euclid(quantum);
-                let distance = if delta < 0 && remainder != 0 {
-                    quantum - remainder
-                } else {
-                    remainder
-                };
-                let round_up = if remainder == 0 {
-                    false
-                } else {
-                    match rounding_mode.as_str() {
-                        "ceil" => true,
-                        "floor" => false,
-                        "trunc" => delta < 0,
-                        "expand" => delta > 0,
-                        "halfTrunc" => distance * 2 > quantum,
-                        "halfFloor" => distance * 2 < quantum,
-                        "halfCeil" => distance * 2 <= quantum,
-                        "halfExpand" => {
-                            if delta < 0 {
-                                distance * 2 < quantum
-                            } else {
-                                distance * 2 >= quantum
-                            }
-                        }
-                        _ => distance * 2 >= quantum,
-                    }
-                };
-                let rounded = (quotient + i128::from(round_up)) * quantum;
+                let rounded = super::round_quotient(delta, quantum, &rounding_mode) * quantum;
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[3] = Value::Number((rounded / 86_400_000_000_000) as f64);
                 return crate::temporal::duration::construct(&fields);
