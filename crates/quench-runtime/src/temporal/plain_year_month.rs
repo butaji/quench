@@ -84,14 +84,14 @@ pub(crate) fn calendar_edge_month_fields(
     month: u32,
     month_code: &str,
 ) -> bool {
-    CALENDAR_EDGE_MONTH_FIELDS.iter().any(
-        |(name, edge_year, edge_month, edge_code)| {
+    CALENDAR_EDGE_MONTH_FIELDS
+        .iter()
+        .any(|(name, edge_year, edge_month, edge_code)| {
             calendar == *name
                 && year == *edge_year
                 && month == *edge_month
                 && month_code == *edge_code
-        },
-    )
+        })
 }
 
 const CALENDAR_EDGE_DAYS: &[(&str, i32, u32, &str, u32)] = &[
@@ -127,26 +127,22 @@ pub(crate) fn calendar_edge_day(
     month: u32,
     month_code: &str,
 ) -> Option<u32> {
-    CALENDAR_EDGE_DAYS.iter().find_map(
-        |(name, edge_year, edge_month, edge_code, day)| {
+    CALENDAR_EDGE_DAYS
+        .iter()
+        .find_map(|(name, edge_year, edge_month, edge_code, day)| {
             (calendar == *name
                 && year == *edge_year
                 && month == *edge_month
                 && month_code == *edge_code)
                 .then_some(*day)
-        },
-    )
+        })
 }
 
 pub(crate) fn calendar_edge_month_number(calendar: &str, year: i32, month: u32) -> bool {
     matches!((calendar, year, month), ("dangi", 2050, 13))
 }
 
-pub(crate) fn calendar_edge_day_for_month(
-    calendar: &str,
-    year: i32,
-    month: u32,
-) -> Option<u32> {
+pub(crate) fn calendar_edge_day_for_month(calendar: &str, year: i32, month: u32) -> Option<u32> {
     calendar_edge_month_number(calendar, year, month).then_some(29)
 }
 
@@ -251,9 +247,7 @@ fn construct_inner(
             "Invalid PlainYearMonth",
         ));
     }
-    if iso_calendar
-        && ((year == -271_821.0 && month < 4.0) || (year == 275_760.0 && month > 9.0))
-    {
+    if iso_calendar && ((year == -271_821.0 && month < 4.0) || (year == 275_760.0 && month > 9.0)) {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
         ));
@@ -270,16 +264,22 @@ fn construct_inner(
                 ));
             }
         }
-        if CALENDAR_MIN_MONTHS.iter().any(|(name, min_year, min_month)| {
-            calendar == *name && year == f64::from(*min_year) && month <= f64::from(*min_month)
-        }) {
+        if CALENDAR_MIN_MONTHS
+            .iter()
+            .any(|(name, min_year, min_month)| {
+                calendar == *name && year == f64::from(*min_year) && month <= f64::from(*min_month)
+            })
+        {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
         }
-        if CALENDAR_MAX_MONTHS.iter().any(|(name, max_year, max_month)| {
-            calendar == *name && year == f64::from(*max_year) && month >= f64::from(*max_month)
-        }) {
+        if CALENDAR_MAX_MONTHS
+            .iter()
+            .any(|(name, max_year, max_month)| {
+                calendar == *name && year == f64::from(*max_year) && month >= f64::from(*max_month)
+            })
+        {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
@@ -306,9 +306,7 @@ fn construct_inner(
             CALENDAR_EDGE_REFERENCE_DAYS
                 .iter()
                 .find(|(name, edge_year, edge_month, _)| {
-                    *name == calendar
-                        && *edge_year == year as i32
-                        && *edge_month == month as u32
+                    *name == calendar && *edge_year == year as i32 && *edge_month == month as u32
                 })
                 .map(|(_, _, _, day)| f64::from(*day))
         })
@@ -442,7 +440,10 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         })
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?
         .clone();
-    if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
+    if let Some(options) = arguments
+        .get(1)
+        .filter(|value| crate::value::is_object(value))
+    {
         let time_style = crate::execute::get_property_result(options, "timeStyle")?;
         if !matches!(time_style, Value::Undefined) {
             return Err(crate::value::error::throw_type_error(
@@ -496,7 +497,8 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     if !crate::temporal::plain_date::is_supported_calendar_name(&annotation[5..]) {
                         return Err(crate::value::error::throw_range_error("Invalid calendar"));
                     }
-                    calendar_id = crate::temporal::plain_date::canonical_calendar_id(&annotation[5..]);
+                    calendar_id =
+                        crate::temporal::plain_date::canonical_calendar_id(&annotation[5..]);
                 }
             }
             if critical && annotation.contains('=') && !annotation.starts_with("u-ca=") {
@@ -508,9 +510,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
         if (calendars > 1 && text.contains("[!u-ca=")) || time_zones > 1 {
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
-        }
-        if calendars > 0 && calendar_id.as_deref() != Some("iso8601") {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
         let base = text.split('[').next().unwrap_or(&text);
         if base.len() == 9 && base.starts_with('+') {
@@ -583,7 +582,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
         if let Some(day_text) = day_text {
             let day = day_text.parse::<f64>().unwrap_or(0.0);
-            if !matches!(calendar_id.as_deref(), None | Some("iso8601") | Some("gregory")) {
+            if !matches!(
+                calendar_id.as_deref(),
+                None | Some("iso8601") | Some("gregory")
+            ) {
                 return construct_from_constructor(
                     year,
                     month,
@@ -727,7 +729,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if matches!(month_value, Value::Undefined) && matches!(month_code_value, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing month"));
     }
-    if let Some(code) = month_code_text.as_deref().filter(|code| code.ends_with('L')) {
+    if let Some(code) = month_code_text
+        .as_deref()
+        .filter(|code| code.ends_with('L'))
+    {
         let exists = crate::temporal::plain_date::calendar_date_from_code(
             year as i32,
             code,
@@ -776,14 +781,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if let (Some(month), Some(code)) = (month_number, month_code) {
         let expected = code_ordinal.or(month_code_number).unwrap_or(code);
         let edge_fields = month_code_text.as_deref().is_some_and(|text| {
-            CALENDAR_EDGE_MONTH_FIELDS.iter().any(
-                |(name, edge_year, edge_month, edge_code)| {
+            CALENDAR_EDGE_MONTH_FIELDS
+                .iter()
+                .any(|(name, edge_year, edge_month, edge_code)| {
                     calendar_name == *name
                         && year == f64::from(*edge_year)
                         && month == f64::from(*edge_month)
                         && text == *edge_code
-                },
-            )
+                })
         });
         if month.trunc() != expected && !edge_fields {
             return Err(crate::value::error::throw_range_error(
@@ -792,14 +797,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
     }
     let edge_fields = month_code_text.as_deref().is_some_and(|text| {
-        CALENDAR_EDGE_MONTH_FIELDS.iter().any(
-            |(name, edge_year, edge_month, edge_code)| {
+        CALENDAR_EDGE_MONTH_FIELDS
+            .iter()
+            .any(|(name, edge_year, edge_month, edge_code)| {
                 calendar_name == *name
                     && year == f64::from(*edge_year)
                     && month_number == Some(f64::from(*edge_month))
                     && text == *edge_code
-            },
-        )
+            })
     });
     let month = if edge_fields {
         month_number.or(month_code_number).unwrap_or(0.0)
@@ -817,24 +822,30 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         month
     };
     let month = if matches!(calendar_name.as_str(), "iso8601" | "gregory") {
-        if constrain { month.min(12.0) } else { month }
-    } else {
-        let max_month = crate::temporal::plain_date::calendar_months_in_year(
-            year as i32,
-            1,
-            &calendar_name,
-        )
-        .unwrap_or(12) as f64;
-        if month > max_month && !constrain {
-            return Err(crate::value::error::throw_range_error("Invalid PlainYearMonth"));
+        if constrain {
+            month.min(12.0)
+        } else {
+            month
         }
-        if constrain { month.min(max_month) } else { month }
+    } else {
+        let max_month =
+            crate::temporal::plain_date::calendar_months_in_year(year as i32, 1, &calendar_name)
+                .unwrap_or(12) as f64;
+        if month > max_month && !constrain {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
+        if constrain {
+            month.min(max_month)
+        } else {
+            month
+        }
     };
     let mut result = construct_with_calendar(year, month, &calendar_name)?;
     if edge_fields {
         if let (Some(code), Value::Object(object)) = (month_code_text, &mut result) {
-            std::rc::Rc::make_mut(object)
-                .set_property_in_place("monthCode", Value::String(code));
+            std::rc::Rc::make_mut(object).set_property_in_place("monthCode", Value::String(code));
         }
     }
     Ok(result)
@@ -1032,22 +1043,15 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     } else {
         let calendar_year = year as i32;
         let calendar_month = month as u32;
-        let serial = crate::temporal::plain_date::calendar_date_serial(
-            year,
-            month,
-            1.0,
-            &calendar,
-        )
-        .unwrap_or_else(|| {
-            crate::temporal::plain_date::date_serial(year, month, reference_day(receiver))
-        });
+        let serial = crate::temporal::plain_date::calendar_date_serial(year, month, 1.0, &calendar)
+            .unwrap_or_else(|| {
+                crate::temporal::plain_date::date_serial(year, month, reference_day(receiver))
+            });
         let (year, month, day) = crate::temporal::plain_date::civil_from_serial(serial);
         let day = CALENDAR_EDGE_REFERENCE_DAYS
             .iter()
             .find(|(name, edge_year, edge_month, _)| {
-                *name == calendar
-                    && *edge_year == calendar_year
-                    && *edge_month == calendar_month
+                *name == calendar && *edge_year == calendar_year && *edge_month == calendar_month
             })
             .map_or(day, |(_, _, _, day)| *day);
         (year, month, day)
@@ -1196,12 +1200,8 @@ fn with(
         if !era_year.is_finite() {
             return Err(crate::value::error::throw_range_error("Invalid eraYear"));
         }
-        year = crate::temporal::plain_date::derive_year_from_era(
-            &receiver_calendar,
-            era,
-            era_year,
-        )
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
+        year = crate::temporal::plain_date::derive_year_from_era(&receiver_calendar, era, era_year)
+            .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
     }
     let constrain = overflow_option(options)?;
     // A leap-month PlainYearMonth retains its month code when only the year
@@ -1225,23 +1225,19 @@ fn with(
                     month_code_text = Some(receiver_code.clone());
                     month_code = Some(parse_month_code(&receiver_code)?);
                 } else if !constrain {
-                    return Err(crate::value::error::throw_range_error(
-                        "Invalid monthCode",
-                    ));
+                    return Err(crate::value::error::throw_range_error("Invalid monthCode"));
                 } else {
                     let ordinary = if receiver_calendar == "hebrew" && receiver_code == "M05L" {
                         "M06"
                     } else {
                         receiver_code.trim_end_matches('L')
                     };
-                    if let Some((ordinal, _)) =
-                        crate::temporal::plain_date::calendar_date_from_code(
-                            year as i32,
-                            ordinary,
-                            1,
-                            &receiver_calendar,
-                        )
-                    {
+                    if let Some((ordinal, _)) = crate::temporal::plain_date::calendar_date_from_code(
+                        year as i32,
+                        ordinary,
+                        1,
+                        &receiver_calendar,
+                    ) {
                         month = ordinal as f64;
                         month_code_text = Some(ordinary.to_string());
                         month_code = Some(parse_month_code(ordinary)?);
@@ -1306,23 +1302,30 @@ fn with(
             None => result,
         });
     }
-    let max_month = crate::temporal::plain_date::calendar_months_in_year(
-        year as i32,
-        1,
+    let max_month =
+        crate::temporal::plain_date::calendar_months_in_year(year as i32, 1, &receiver_calendar)
+            .map(f64::from)
+            .unwrap_or_else(|| {
+                if crate::temporal::plain_date::calendar_supports_month13(&receiver_calendar) {
+                    13.0
+                } else {
+                    12.0
+                }
+            });
+    if !constrain && month > max_month {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainYearMonth",
+        ));
+    }
+    construct_with_calendar(
+        year,
+        if constrain {
+            month.min(max_month)
+        } else {
+            month
+        },
         &receiver_calendar,
     )
-    .map(f64::from)
-    .unwrap_or_else(|| {
-        if crate::temporal::plain_date::calendar_supports_month13(&receiver_calendar) {
-            13.0
-        } else {
-            12.0
-        }
-    });
-    if !constrain && month > max_month {
-        return Err(crate::value::error::throw_range_error("Invalid PlainYearMonth"));
-    }
-    construct_with_calendar(year, if constrain { month.min(max_month) } else { month }, &receiver_calendar)
 }
 
 fn preserve_month_code(mut result: Value, year: f64, code: &str, calendar: &str) -> Value {
@@ -1434,8 +1437,8 @@ fn difference(
     options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
-    let receiver = receiver
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let left = values(receiver)?;
     let right_value = from(other, None)?;
     let left_calendar = crate::conversion::to_string(&field(Some(receiver), "calendarId")?)?;
@@ -1464,17 +1467,15 @@ fn difference(
         let right_code = crate::execute::get_property_result(&right_value, "monthCode")
             .ok()
             .and_then(|value| crate::conversion::to_string(&value).ok());
-        if let Some((years, months, _, _)) =
-            crate::temporal::plain_date::calendar_difference_fields(
-                (left.0, left.1, 1.0),
-                (right.0, right.1, 1.0),
-                direction,
-                &left_calendar,
-                largest,
-                left_code,
-                right_code,
-            )
-        {
+        if let Some((years, months, _, _)) = crate::temporal::plain_date::calendar_difference_fields(
+            (left.0, left.1, 1.0),
+            (right.0, right.1, 1.0),
+            direction,
+            &left_calendar,
+            largest,
+            left_code,
+            right_code,
+        ) {
             return crate::temporal::duration::construct(&[
                 Value::Number(years as f64),
                 Value::Number(months as f64),
