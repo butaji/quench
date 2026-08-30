@@ -610,6 +610,7 @@ pub fn request_destroy(
     }) {
         conn.body_done = true;
     }
+    execute::set_property_in_place(&req, REQ_CLOSE_PROP, Value::Boolean(true));
     let error = if body_complete {
         None
     } else {
@@ -830,6 +831,7 @@ pub fn incoming_destroy(
         execute::set_property_in_place(receiver, INCOMING_CLOSE_PENDING_PROP, Value::Boolean(true));
     }
     if !client_response {
+        execute::set_property_in_place(receiver, REQ_CLOSE_PROP, Value::Boolean(true));
         state
             .borrow_mut()
             .net
