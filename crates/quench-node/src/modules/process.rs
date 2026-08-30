@@ -284,6 +284,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "initgroups",
             crate::host::capability(crate::registry::SPEC_PROCESS_INITGROUPS),
         ),
+        (
+            "setgroups",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SETGROUPS),
+        ),
         ("uptime", crate::host::process_uptime_capability()),
         (
             "availableMemory",
