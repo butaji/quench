@@ -150,7 +150,13 @@ pub fn agent_construct(
         let node_http = execute::get_property(&global, "__nodeHttp");
         let node_agent = execute::get_property(&node_http, "Agent");
         let node_agent_prototype = execute::get_property(&node_agent, "prototype");
-        for name in ["addRequest", "keepSocketAlive", "reuseSocket", "removeSocket"] {
+        for name in [
+            "addRequest",
+            "keepSocketAlive",
+            "reuseSocket",
+            "removeSocket",
+            "createSocket",
+        ] {
             let method = execute::get_property(&node_agent_prototype, name);
             if quench_runtime::is_callable(&method) {
                 execute::set_property_in_place(&prototype, name, method);
@@ -474,7 +480,8 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         .filter(|value| !matches!(value, Value::Undefined | Value::Null));
     let agent = agent
         .or(default_agent)
-        .or_else(|| state.borrow().http.global_agent.clone());
+        .or_else(|| state.borrow().http.global_agent.clone())
+        .map(|value| execute::canonical_value(&value));
     let lookup = option_source.and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
@@ -649,6 +656,11 @@ pub fn req_abort(
         )
     };
     clear_request_timeout(state, id)?;
+    state
+        .borrow_mut()
+        .net
+        .pending_request_writes
+        .retain(|(_, _, pending)| !execute::same_identity(pending, &request));
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
@@ -1114,6 +1126,15 @@ pub fn req_end(
         matches!(execute::get_property(&req.req, CLIENT_EXPECT_CONTINUE_PROP), Value::Boolean(true))
             && req.socket.is_some()
     });
+    let already_dispatched = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .is_some_and(|req| req.dispatched);
+    if already_dispatched && !expect_started {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     if expect_started {
         if args.first().is_some_and(|data| !matches!(data, Value::Undefined)) {
             req_write(state, receiver, end_chunk_args(args))?;
@@ -1261,6 +1282,9 @@ pub fn req_end(
     let custom = agent
         .as_ref()
         .and_then(|agent| custom_connection(state, agent));
+    let custom_socket = agent.as_ref().and_then(|agent| {
+        custom.is_none().then(|| custom_socket(state, agent)).flatten()
+    });
     let existing = state
         .borrow()
         .http
@@ -1282,7 +1306,7 @@ pub fn req_end(
         net::socket_set_timeout(state, Some(socket), &[Value::Number(0.0)])?;
     }
     let reused = pooled.is_some();
-    let socket = match (existing.or(pooled), custom) {
+    let socket = match (existing.or(pooled), custom.or(custom_socket.clone())) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
             let mut bytes = head.into_bytes();
@@ -1308,7 +1332,12 @@ pub fn req_end(
                 crate::host::capability_ref(crate::registry::SPEC_HTTP_AGENT_CONNECT),
                 vec![receiver.cloned().unwrap_or(Value::Undefined)],
             );
-            let socket = execute::call(&connection, agent.as_ref().unwrap(), &[options, callback])?;
+            let call_args = if custom_socket.is_some() {
+                vec![receiver.cloned().unwrap_or(Value::Undefined), options, callback]
+            } else {
+                vec![options, callback]
+            };
+            let socket = execute::call(&connection, agent.as_ref().unwrap(), &call_args)?;
             if matches!(socket, Value::Undefined | Value::Null) {
                 return Ok(receiver.cloned().unwrap_or(Value::Undefined));
             }
@@ -1337,7 +1366,16 @@ pub fn req_end(
             }
             net::connect(state, &[host_api::object(options)])?
         }
-        (None, None) => send_request(state, &target, &method, &path, &headers, &body, omit_host)?,
+        (None, None) => send_request(
+            state,
+            &target,
+            &method,
+            &path,
+            &headers,
+            &body,
+            omit_host,
+            receiver.cloned().unwrap_or(Value::Undefined),
+        )?,
     };
     let high_water_mark = state
         .borrow()
@@ -1514,16 +1552,17 @@ fn send_request(
     headers: &[(String, String)],
     body: &[u8],
     omit_host: bool,
+    request: Value,
 ) -> Result<Value, VmError> {
     let socket = open_socket(state, target)?;
     let head = request_head(&request_host(target), method, path, headers, body.len(), omit_host);
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
-    if matches!(target, RequestTarget::Unix { .. }) {
-        state.borrow_mut().net.pending_writes.push((socket.clone(), payload));
-    } else {
-        net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
-    }
+    state
+        .borrow_mut()
+        .net
+        .pending_request_writes
+        .push((socket.clone(), payload, request));
     Ok(socket)
 }
 
@@ -1707,6 +1746,20 @@ pub(crate) fn apply_deferred_request_timeout(
         net::socket_set_timeout(state, Some(socket), &[Value::Number(timeout)])?;
     }
     Ok(())
+}
+
+pub(crate) fn request_write_allowed(
+    state: &Rc<RefCell<HostState>>,
+    request: &Value,
+) -> bool {
+    let Some(id) = client_id(Some(request)) else {
+        return false;
+    };
+    let allowed = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
+        !req.aborted
+            && !matches!(execute::get_property(&req.req, "destroyed"), Value::Boolean(true))
+    });
+    allowed
 }
 
 /// Socket close completes the corresponding ClientRequest lifecycle.
@@ -2837,8 +2890,31 @@ fn custom_connection(state: &Rc<RefCell<HostState>>, agent: &Value) -> Option<Va
     let default_method = default_prototype
         .as_ref()
         .map(|prototype| execute::get_property(prototype, "createConnection"));
-    (!default_method.is_some_and(|value| execute::same_identity(&value, &visible)))
-        .then_some(visible)
+    let custom = !default_method
+        .as_ref()
+        .is_some_and(|value| execute::same_identity(value, &visible));
+    custom.then_some(visible)
+}
+
+fn custom_socket(state: &Rc<RefCell<HostState>>, agent: &Value) -> Option<Value> {
+    let default_prototype = state.borrow().http.agent_prototype.clone();
+    let visible = execute::get_property(agent, "createSocket");
+    if !quench_runtime::is_callable(&visible) {
+        return None;
+    }
+    if execute::own_enumerable_keys(agent)
+        .iter()
+        .any(|key| key == "createSocket")
+    {
+        return Some(visible);
+    }
+    let default_method = default_prototype
+        .as_ref()
+        .map(|prototype| execute::get_property(prototype, "createSocket"));
+    let custom = !default_method
+        .as_ref()
+        .is_some_and(|value| execute::same_identity(value, &visible));
+    custom.then_some(visible)
 }
 
 fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Option<u64> {
