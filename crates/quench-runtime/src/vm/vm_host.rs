@@ -400,9 +400,9 @@ struct AgentTimer {
 }
 
 pub(crate) fn reset_agent_state() {
-    AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().clear());
-    AGENT_REPORTS.with(|reports| reports.borrow_mut().clear());
-    AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow_mut().clear());
-    AGENT_TIMERS.with(|timers| timers.borrow_mut().clear());
+    AGENT_CALLBACKS.with(|callbacks| callbacks.replace(Vec::new()));
+    AGENT_REPORTS.with(|reports| reports.replace(Vec::new()));
+    AGENT_REPORT_CONSUMED.with(|consumed| consumed.replace(Vec::new()));
+    AGENT_TIMERS.with(|timers| timers.replace(Vec::new()));
     crate::atomics::reset_agent_state();
 }

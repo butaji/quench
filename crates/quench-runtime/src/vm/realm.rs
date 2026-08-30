@@ -33,7 +33,7 @@ thread_local! {
 
 /// Drop child realms after an independent fixture has finished.
 pub(super) fn reset_fixture_state() {
-    REALMS.with(|realms| realms.borrow_mut().clear());
+    REALMS.with(|realms| realms.replace(Vec::new()));
     NEXT_REALM.with(|next| next.set(1));
 }
 

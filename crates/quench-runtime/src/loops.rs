@@ -416,8 +416,8 @@ pub(crate) fn take_pending_async_for_of() -> Option<crate::value::AsyncForOfStat
 }
 
 pub(crate) fn reset_fixture_state() {
-    LIVE_FOR_OF.with(|live| unsafe { (&mut *live.0.get()).clear() });
-    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).clear() });
+    LIVE_FOR_OF.with(|live| unsafe { drop(std::mem::take(&mut *live.0.get())) });
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { drop(std::mem::take(&mut *pending.get())) });
 }
 
 type ForInLoopData<'a> = (

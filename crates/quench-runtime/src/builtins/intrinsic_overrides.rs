@@ -117,8 +117,8 @@ pub(crate) fn is_non_extensible(builtin: Builtin) -> bool {
 /// start with a clean prototype view.
 pub(crate) fn reset() {
     changed();
-    INTRINSIC_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
-    INTRINSIC_REMOVED.with(|removed| removed.borrow_mut().clear());
-    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
-    INTRINSIC_NON_EXTENSIBLE.with(|values| values.borrow_mut().clear());
+    INTRINSIC_OVERRIDES.with(|overrides| overrides.replace(HashMap::new()));
+    INTRINSIC_REMOVED.with(|removed| removed.replace(HashSet::new()));
+    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.replace(HashMap::new()));
+    INTRINSIC_NON_EXTENSIBLE.with(|values| values.replace(HashSet::new()));
 }

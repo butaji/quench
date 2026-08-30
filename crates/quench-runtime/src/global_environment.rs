@@ -16,7 +16,7 @@ thread_local! {
 }
 
 pub(crate) fn reset_global_bindings() {
-    GLOBAL_BINDINGS.with(|bindings| bindings.borrow_mut().clear());
+    GLOBAL_BINDINGS.with(|bindings| bindings.replace(HashMap::new()));
 }
 
 pub(crate) fn store_global_binding(name: &str, value: Value) -> bool {

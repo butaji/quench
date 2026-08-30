@@ -23,15 +23,15 @@ pub fn take_unhandled_rejections() -> Vec<(Rc<PromiseData>, Value)> {
 }
 
 pub fn clear_jobs() {
-    JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
+    JOB_QUEUE.with(|queue| queue.replace(VecDeque::new()));
 }
 
 pub(crate) fn reset_fixture_state() {
-    MICROTASK_QUEUE.with(|queue| queue.borrow_mut().clear());
+    MICROTASK_QUEUE.with(|queue| queue.replace(VecDeque::new()));
     PROMISE_TRIGGER.with(|trigger| trigger.replace(None));
-    THEN_RESULTS.with(|results| results.borrow_mut().clear());
-    JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
-    UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().clear());
+    THEN_RESULTS.with(|results| results.replace(HashMap::new()));
+    JOB_QUEUE.with(|queue| queue.replace(VecDeque::new()));
+    UNHANDLED_REJECTIONS.with(|queue| queue.replace(VecDeque::new()));
 }
 
 /// Whether a promise reaction or host job is waiting to run.
