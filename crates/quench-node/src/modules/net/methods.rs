@@ -102,6 +102,52 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
     Ok(object)
 }
 
+fn validate_connect_options(options: &Value) -> Result<(), VmError> {
+    for key in ["objectMode", "readableObjectMode", "writableObjectMode"] {
+        let value = execute::get_property(options, key);
+        if execute::is_truthy(&value) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                (
+                    "message".into(),
+                    Value::String(format!(
+                        "The property 'options.{key}' is not supported. Received {}",
+                        match value {
+                            Value::Boolean(value) => value.to_string(),
+                            Value::Number(value) => value.to_string(),
+                            _ => format!("{value:?}"),
+                        }
+                    )),
+                ),
+            ])));
+        }
+    }
+    let host = execute::get_property(options, "host");
+    if !matches!(host, Value::Undefined | Value::Null | Value::String(_) | Value::StringUnits(_)) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ])));
+    }
+    let host_text = match &host {
+        Value::String(host) => Some(host.clone()),
+        Value::StringUnits(units) => Some(String::from_utf16_lossy(units)),
+        _ => None,
+    };
+    if host_text.is_some_and(|host| host.contains('\0')) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                (
+                    "message".into(),
+                    Value::String("The property 'options.host' must be a string without null bytes.".into()),
+                ),
+            ])));
+    }
+    Ok(())
+}
+
 /// `net.connect(port[, host][, cb])` / `net.connect(options, cb)`.
 /// Connects (bounded) on loopback and returns a socket object;
 /// `'connect'` fires on the next pump tick.
@@ -215,6 +261,7 @@ fn connect_with_receiver(
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
+        validate_connect_options(options)?;
         if let Some(path) = string_property(options, "socketPath") {
             if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
                 return connect_path(state, &path);
