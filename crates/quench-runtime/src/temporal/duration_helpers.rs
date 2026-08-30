@@ -957,7 +957,7 @@ fn validate_timezone_string(text: &str) -> Result<(), VmError> {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
-            if base[sign..].matches(':').count() > 1 {
+            if !valid_string_offset(&base[sign..]) {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
@@ -1002,13 +1002,24 @@ fn valid_string_offset(value: &str) -> bool {
         return false;
     };
     let parts = value.split(':').collect::<Vec<_>>();
-    matches!(parts.as_slice(), [hour, minute, second]
-        if hour.len() == 2
-            && minute.len() == 2
-            && second.len() == 2
-            && hour.bytes().all(|byte| byte.is_ascii_digit())
-            && minute.bytes().all(|byte| byte.is_ascii_digit())
-            && *second == "00")
+    let [hour, minute, second] = parts.as_slice() else {
+        return false;
+    };
+    let (second, fraction) = second
+        .split_once(['.', ','])
+        .map_or((*second, None), |(s, f)| (s, Some(f)));
+    hour.len() == 2
+        && minute.len() == 2
+        && second.len() == 2
+        && hour.bytes().all(|byte| byte.is_ascii_digit())
+        && minute.bytes().all(|byte| byte.is_ascii_digit())
+        && second.bytes().all(|byte| byte.is_ascii_digit())
+        && hour.parse::<u8>().is_ok_and(|value| value <= 23)
+        && minute.parse::<u8>().is_ok_and(|value| value <= 59)
+        && second.parse::<u8>().is_ok_and(|value| value <= 59)
+        && fraction.is_none_or(|value| {
+            !value.is_empty() && value.len() <= 9 && value.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 fn offset_minutes(value: &str) -> Option<i32> {
@@ -1025,7 +1036,9 @@ fn offset_minutes(value: &str) -> Option<i32> {
     let value = &value[1..];
     let (hour, minute) = value
         .split_once(':')
-        .map_or((value.get(..2)?, value.get(2..4)?), |(h, m)| (h, m));
+        .map_or((value.get(..2)?, value.get(2..4)?), |(h, rest)| {
+            (h, rest.get(..2).unwrap_or(rest))
+        });
     Some(sign * (hour.parse::<i32>().ok()? * 60 + minute.parse::<i32>().ok()?))
 }
 
