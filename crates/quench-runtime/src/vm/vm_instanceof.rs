@@ -181,7 +181,43 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype) || is_error_subclass(value, constructor))
+    Ok(prototype_chain_contains(value, &prototype)
+        || own_constructor(value)
+            .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
+        || boxed_primitive_instance(value, constructor).unwrap_or(false)
+        || is_error_subclass(value, constructor))
+}
+
+fn boxed_primitive_instance(value: &Value, constructor: &Value) -> Option<bool> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    let builtin = intrinsic_builtin(constructor)?;
+    let expected = match builtin {
+        Builtin::Boolean if properties.iter().any(|(key, _)| key == "_value") => {
+            Builtin::BooleanPrototype
+        }
+        Builtin::Number if properties.iter().any(|(key, _)| key == "_value") => {
+            Builtin::NumberPrototype
+        }
+        Builtin::String if properties.iter().any(|(key, _)| key == "_value") => {
+            Builtin::StringPrototype
+        }
+        _ => return None,
+    };
+    let _actual = properties
+        .iter()
+        .rev()
+        .find_map(|(key, value)| (key == "\0prototype").then_some(value))?;
+    // Boxed primitive subclasses inherit the intrinsic prototype through the
+    // subclass prototype object. Check the complete chain rather than only
+    // comparing the immediate prototype's realm.
+    let expected_realm = crate::vm::intrinsic_realm(constructor, builtin);
+    let expected = crate::vm::realm_intrinsic_for(
+        expected_realm.unwrap_or(crate::ops::RealmId::ROOT),
+        expected,
+    );
+    Some(prototype_chain_contains(value, &expected))
 }
 
 fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {

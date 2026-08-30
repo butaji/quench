@@ -1750,6 +1750,7 @@ mod tests {
         // Returned snapshots are detached from both arena owners.
         let mut detached = left_snapshot;
         detached.live_bytes = 0;
+        assert_eq!(detached.live_bytes, 0);
         assert_eq!(left.stats().live_bytes, 8);
         assert_eq!(right.stats().live_bytes, 32);
     }

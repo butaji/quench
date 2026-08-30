@@ -43,6 +43,18 @@ mod tests {
             PromiseState::Fulfilled(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn fixture_reset_releases_pending_reaction_state() {
+        let promise = new_promise();
+        promise_then(Some(&promise), &[Value::Undefined]).unwrap();
+        assert!(!super::THEN_RESULTS.with(|results| results.borrow().is_empty()));
+
+        super::reset_fixture_state();
+
+        assert!(super::THEN_RESULTS.with(|results| results.borrow().is_empty()));
+    }
+
     #[test]
     fn promise_prototype_is_cached_per_realm() {
         let first = crate::vm::VmContext::isolated();

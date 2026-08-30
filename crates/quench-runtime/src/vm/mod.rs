@@ -18,6 +18,11 @@ pub fn reset_host_agent_state() {
     reset_agent_object();
 }
 
+/// Release realms created by the current fixture and reuse compact ids.
+pub fn reset_fixture_realms() {
+    realm::reset_fixture_state();
+}
+
 include!("vm_context.rs");
 include!("vm_execution.rs");
 include!("vm_runtime.rs");
