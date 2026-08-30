@@ -2349,6 +2349,47 @@ pub fn socket_set_no_delay(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+pub fn socket_set_type_of_service(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => *value,
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"tos\" argument must be a number".into(),
+            ))
+        }
+    };
+    if !(0.0..=255.0).contains(&value) {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "tos",
+            ">= 0 && <= 255",
+            &value.to_string(),
+        ));
+    }
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(
+            receiver,
+            super::TOS_PROP,
+            Value::Number(value),
+        );
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn socket_get_type_of_service(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver
+        .map(|socket| execute::get_property(socket, super::TOS_PROP))
+        .filter(|value| matches!(value, Value::Number(_)))
+        .unwrap_or(Value::Number(0.0)))
+}
+
 /// `socket.setKeepAlive([enable][, initialDelay])` — no-op.
 pub fn socket_set_keep_alive(
     _state: &Rc<RefCell<HostState>>,
