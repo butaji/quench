@@ -352,6 +352,7 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     for sock in to_close {
         let js = sock.borrow().js.clone();
         set_socket_state(&js, true, false, "closed");
+        crate::modules::http::connection_close(state, &js)?;
         emit(state, &js, "close", Vec::new())?;
     }
     Ok(())
