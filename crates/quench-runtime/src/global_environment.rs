@@ -15,6 +15,10 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+pub(crate) fn reset_global_bindings() {
+    GLOBAL_BINDINGS.with(|bindings| bindings.borrow_mut().clear());
+}
+
 pub(crate) fn store_global_binding(name: &str, value: Value) -> bool {
     let realm = crate::vm::current_context_or_default().realm();
     GLOBAL_BINDINGS.with(|bindings| {
