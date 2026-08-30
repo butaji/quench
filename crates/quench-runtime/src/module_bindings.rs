@@ -167,9 +167,15 @@ pub fn drain_jobs() {
 
 pub fn reset_module_jobs() {
     crate::promise::clear_jobs();
+    AWAIT_ADVANCED.with(|flag| flag.set(false));
     defer_fulfilled_await(false);
     PENDING_TYPE_ERROR.with(|flag| flag.set(false));
     PENDING_THROW.with(|slot| slot.replace(None));
+}
+
+/// Release deferred namespace callbacks owned by the completed fixture.
+pub fn reset_evaluators() {
+    EVALUATORS.with(|map| *map.borrow_mut() = HashMap::new());
 }
 
 /// A live binding shared by module environments.
@@ -282,5 +288,26 @@ mod tests {
         super::exports(&object, "foo").expect("exports");
         super::exports(&object, "then").expect("then is symbol-like");
         assert_eq!(hits.get(), 1);
+    }
+
+    #[test]
+    fn module_reset_releases_deferred_evaluator() {
+        use std::{cell::Cell, rc::Rc};
+        let object = Value::object(Vec::new());
+        let hits = Rc::new(Cell::new(0));
+        let count = hits.clone();
+        super::attach_evaluator(&object, Rc::new(move || count.set(count.get() + 1)));
+
+        super::reset_evaluators();
+        super::exports(&object, "foo").expect("exports");
+
+        assert_eq!(hits.get(), 0);
+    }
+
+    #[test]
+    fn module_reset_clears_await_resume_state() {
+        super::mark_await_advanced(true);
+        super::reset_module_jobs();
+        assert!(!super::await_advanced());
     }
 }

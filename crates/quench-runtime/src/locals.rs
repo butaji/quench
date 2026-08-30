@@ -124,16 +124,6 @@ pub(crate) struct IterationBinding {
 }
 
 impl IterationBinding {
-    pub(crate) fn install(slot: u16, value: Value) -> Self {
-        let environment = current();
-        environment.clear_immutable_slot(slot);
-        let previous = vec![(slot, environment.replace_slot(slot, value))];
-        Self {
-            environment,
-            previous,
-        }
-    }
-
     pub(crate) fn install_many<I>(bindings: I) -> Self
     where
         I: IntoIterator<Item = (u16, Value)>,
@@ -905,8 +895,8 @@ pub(crate) fn array_word_is_current(array: &crate::value::ArrayData) -> bool {
 }
 
 pub(crate) fn reset_replacements() {
-    REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
-    REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());
+    REPLACEMENTS.with(|replacements| replacements.replace(ReplacementMap::default()));
+    REPLACEMENT_ROOTS.with(|roots| roots.replace(ReplacementMap::default()));
     REPLACEMENTS_ACTIVE.with(|active| active.set(false));
 }
 

@@ -31,6 +31,12 @@ thread_local! {
     static NEXT_REALM: Cell<u64> = const { Cell::new(1) };
 }
 
+/// Drop child realms after an independent fixture has finished.
+pub(super) fn reset_fixture_state() {
+    REALMS.with(|realms| realms.replace(Vec::new()));
+    NEXT_REALM.with(|next| next.set(1));
+}
+
 pub(super) fn create(parent: &VmContext) -> RealmId {
     let id = NEXT_REALM.with(|next| {
         let id = next.get();
@@ -330,4 +336,23 @@ fn register(state: Rc<RealmState>) {
 fn state(id: RealmId) -> Option<Rc<RealmState>> {
     let index = usize::try_from(id.get()).ok()?;
     REALMS.with(|realms| realms.borrow().get(index).and_then(Clone::clone))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_reset_drops_child_realms_and_rewinds_ids() {
+        let parent = VmContext::default();
+        let first = create(&parent);
+        assert_eq!(first.get(), 1);
+        assert!(state(first).is_some());
+
+        reset_fixture_state();
+
+        assert!(state(first).is_none());
+        assert_eq!(create(&parent).get(), 1);
+        reset_fixture_state();
+    }
 }

@@ -143,10 +143,12 @@ pub(crate) fn find_units(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn test_str(source: &str, flags: &str, input: &str, start: usize) -> Option<bool> {
     Some(find_str(source, flags, input, start).is_some())
 }
 
+#[cfg(test)]
 pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize) -> Option<bool> {
     Some(find_units(source, flags, input, start).is_some())
 }

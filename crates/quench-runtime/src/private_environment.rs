@@ -60,6 +60,11 @@ pub(crate) fn take_suspended() -> Option<PrivateEnvironment> {
     SUSPENDED.with(|slot| slot.take())
 }
 
+pub(crate) fn reset_fixture_state() {
+    CURRENT.with(|slot| slot.replace(None));
+    SUSPENDED.with(|slot| slot.replace(None));
+}
+
 /// Restores the private environment even when class evaluation completes abruptly.
 pub(crate) struct Guard {
     previous: Option<PrivateEnvironment>,

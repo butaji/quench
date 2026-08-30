@@ -5,7 +5,6 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 mod date_kind;
 pub(crate) mod parse_num;
 pub(crate) use date_kind::DateLocaleKind;
-mod array_values;
 mod date;
 mod locale_number;
 
@@ -327,6 +326,11 @@ pub(crate) mod symbol {
     thread_local! {
         static GLOBAL_SYMBOLS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     }
+
+    pub(crate) fn reset_fixture_state() {
+        GLOBAL_SYMBOLS.with(|symbols| *symbols.borrow_mut() = HashMap::new());
+    }
+
     pub(crate) fn dispatch(
         builtin: Builtin,
         arguments: &[Value],

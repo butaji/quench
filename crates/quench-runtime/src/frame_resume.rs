@@ -111,6 +111,7 @@ impl Frame {
     ///
     /// Frames store only fixed-width integer IDs; values and code ranges are
     /// resolved by the machine at the suspension boundary.
+    #[cfg(test)]
     pub(crate) fn register_ids(&self) -> Vec<u16> {
         match self {
             Self::Try { yield_dst, catch_slot, .. } => {
@@ -130,6 +131,7 @@ impl Frame {
     }
 
     /// Check that every register ID addresses the machine's register window.
+    #[cfg(test)]
     pub(crate) fn has_valid_register_ids(&self, register_count: u16) -> bool {
         self.register_ids().into_iter().all(|id| id < register_count)
     }

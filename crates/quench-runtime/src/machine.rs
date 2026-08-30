@@ -1875,6 +1875,7 @@ impl Machine {
     /// The register window is moved (rather than cloned) so a callee can use
     /// the machine's storage directly.  The immutable caller code is retained
     /// by the continuation for the dispatch loop to resume.
+    #[cfg(test)]
     pub(crate) fn suspend_call(
         &mut self,
         callee: Value,
@@ -1904,6 +1905,7 @@ impl Machine {
     /// this machine's immutable code store. Keep that check at the resume
     /// boundary so stale continuations cannot turn an integer into an
     /// instruction pointer.
+    #[cfg(test)]
     pub(crate) fn resume_call(
         &mut self,
         value: Value,

@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, LocalResult, NaiveDateTime, Offset, TimeZone};
+use chrono::{Datelike, Duration, LocalResult, Offset, TimeZone};
 
 pub(crate) mod duration;
 pub(crate) mod instant;
@@ -288,7 +288,8 @@ pub(crate) fn timezone_local_epoch(
         return local_epoch;
     };
     let nanos = local_epoch.rem_euclid(1_000_000_000) as u32;
-    let Some(local) = NaiveDateTime::from_timestamp_opt(seconds, nanos) else {
+    let Some(local) = chrono::DateTime::from_timestamp(seconds, nanos).map(|date| date.naive_utc())
+    else {
         return local_epoch;
     };
     let Some(zone) = timezone.parse::<chrono_tz::Tz>().ok() else {
@@ -3394,14 +3395,14 @@ mod stubs {
                     sign,
                     &overflow,
                 )?;
-                let mut target = ["year", "month", "day"]
+                let target = ["year", "month", "day"]
                     .iter()
                     .map(|name| crate::execute::get_property_result(&added, name))
                     .collect::<Result<Vec<_>, _>>()?;
                 let target_code = crate::execute::get_property_result(&added, "monthCode")?;
                 let target_year = crate::conversion::to_number(&target[0])?;
                 let target_month = crate::conversion::to_number(&target[1])?;
-                let mut target_day = crate::conversion::to_number(&target[2])?;
+                let target_day = crate::conversion::to_number(&target[2])?;
                 let local_epoch = super::plain_date::calendar_date_serial(
                     target_year,
                     target_month,
@@ -3497,7 +3498,6 @@ mod stubs {
                     let final_serial = target_serial
                         .checked_add(day_count)
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    let (year, month, day) = super::plain_date::civil_from_serial(final_serial);
                     let old_serial = super::plain_date::date_serial(
                         base_year as f64,
                         base_month as f64,
@@ -3566,7 +3566,6 @@ mod stubs {
                     let final_serial = target_serial
                         .checked_add(day_count as i64)
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    let (year, month, day) = super::plain_date::civil_from_serial(final_serial);
                     let old_serial = super::plain_date::date_serial(
                         base_year as f64,
                         base_month as f64,
@@ -4620,27 +4619,27 @@ mod stubs {
                 }
                 let years = month_delta / 12;
                 let months = month_delta % 12;
-                let (anchor, days) = if month_delta >= 0 {
+                let days = if month_delta >= 0 {
                     if direction > 0 {
                         let anchor = start_date
                             .checked_add_months(chrono::Months::new(month_delta as u32))
                             .ok_or_else(|| {
                                 crate::value::error::throw_range_error("Invalid date")
                             })?;
-                        (anchor, (end_date - anchor).num_days())
+                        (end_date - anchor).num_days()
                     } else {
                         let anchor = end_date
                             .checked_sub_months(chrono::Months::new(month_delta as u32))
                             .ok_or_else(|| {
                                 crate::value::error::throw_range_error("Invalid date")
                             })?;
-                        (anchor, (anchor - start_date).num_days())
+                        (anchor - start_date).num_days()
                     }
                 } else {
                     let anchor = start_date
                         .checked_sub_months(chrono::Months::new(month_delta.unsigned_abs() as u32))
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    (anchor, (end_date - anchor).num_days())
+                    (end_date - anchor).num_days()
                 };
                 let date_days = (end_date - start_date).num_days() as i128;
                 let mut time_remainder = delta - date_days * 86_400_000_000_000;
@@ -4696,63 +4695,6 @@ mod stubs {
                     fields[1] = Value::Number((years * 12 + months) as f64);
                 }
                 fields[3] = Value::Number(days as f64);
-                let residual = if smallest == "month" {
-                    (days as i128) * 86_400_000_000_000_i128 + time_remainder
-                } else {
-                    (months as i128) * 30 * 86_400_000_000_000_i128
-                        + (days as i128) * 86_400_000_000_000_i128
-                        + time_remainder
-                };
-                let round_adjust = |whole: i32, unit_days: i128| -> i32 {
-                    let sign = residual.signum();
-                    if sign == 0 {
-                        return 0;
-                    }
-                    let magnitude = residual.unsigned_abs();
-                    let unit = (unit_days * 86_400_000_000_000_i128).unsigned_abs();
-                    let twice = magnitude.saturating_mul(2);
-                    match rounding_mode.as_str() {
-                        "ceil" => i32::from(sign > 0),
-                        "floor" => -i32::from(sign < 0),
-                        "expand" => sign as i32,
-                        "halfCeil" => {
-                            if twice > unit || (twice == unit && sign > 0) {
-                                sign as i32
-                            } else {
-                                0
-                            }
-                        }
-                        "halfFloor" => {
-                            if twice > unit || (twice == unit && sign < 0) {
-                                sign as i32
-                            } else {
-                                0
-                            }
-                        }
-                        "halfTrunc" => {
-                            if twice > unit {
-                                sign as i32
-                            } else {
-                                0
-                            }
-                        }
-                        "halfExpand" => {
-                            if twice >= unit {
-                                sign as i32
-                            } else {
-                                0
-                            }
-                        }
-                        "halfEven" => {
-                            if twice > unit || (twice == unit && whole % 2 != 0) {
-                                sign as i32
-                            } else {
-                                0
-                            }
-                        }
-                        _ => 0,
-                    }
-                };
                 if smallest == "year" {
                     let (year_start, year_end) = if direction > 0 {
                         (start_date, end_date)
@@ -5346,9 +5288,9 @@ mod stubs {
         let mut hour = crate::conversion::to_number(&property("hour")?)? as u32;
         let mut minute = crate::conversion::to_number(&property("minute")?)? as u32;
         let mut second = crate::conversion::to_number(&property("second")?)? as u32;
-        let mut millisecond = crate::conversion::to_number(&property("millisecond")?)? as u32;
-        let mut microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
-        let mut nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
+        let millisecond = crate::conversion::to_number(&property("millisecond")?)? as u32;
+        let microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
+        let nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
         let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
         let offset_nanos = crate::conversion::to_number(&property("offsetNanoseconds")?)? as i128;
         let offset_nanos = offset_nanos / 60_000_000_000 * 60_000_000_000;
@@ -5483,9 +5425,6 @@ mod stubs {
                     precision = 0;
                 }
                 "second" => {
-                    millisecond = 0;
-                    microsecond = 0;
-                    nanosecond = 0;
                     precision = 0;
                 }
                 "millisecond" => precision = 3,
@@ -5596,9 +5535,6 @@ mod stubs {
                     }
                 }
             }
-            millisecond = (fraction / 1_000_000) as u32;
-            microsecond = (fraction / 1_000 % 1_000) as u32;
-            nanosecond = (fraction % 1_000) as u32;
         }
         if (smallest.is_some() || precision != usize::MAX)
             && !timezone.starts_with(['+', '-'])
@@ -5615,10 +5551,11 @@ mod stubs {
             if corrected != i128::MIN {
                 let corrected_offset = super::timezone_offset_nanos(&timezone, corrected);
                 let local = corrected + corrected_offset;
-                if let Some(date) = chrono::NaiveDateTime::from_timestamp_opt(
+                if let Some(date) = chrono::DateTime::from_timestamp(
                     local.div_euclid(1_000_000_000) as i64,
                     local.rem_euclid(1_000_000_000) as u32,
-                ) {
+                )
+                .map(|date| date.naive_utc()) {
                     year = date.year();
                     month = date.month();
                     day = date.day();

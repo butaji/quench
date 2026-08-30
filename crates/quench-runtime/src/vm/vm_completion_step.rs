@@ -3,14 +3,6 @@ pub(crate) struct CompletionStep {
     pub(crate) next: usize,
 }
 
-pub(crate) fn execute_completion_step_in_place(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<CompletionStep, VmError> {
-    let context = current_context_or_default();
-    execute_completion_step_context(ops, registers, &context)
-}
-
 pub(crate) fn execute_code_completion_step_in_place(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -41,7 +33,6 @@ pub(crate) fn execute_code_completion_step_from_in_place(
         next: step.next,
     })
 }
-
 fn execute_completion_step_context(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,

@@ -310,8 +310,7 @@ fn effective_format_slots(slots: &[(String, Value)]) -> Vec<(String, Value)> {
             "weekday" | "year" | "month" | "day" | "hour" | "minute" | "second"
         )
     }) {
-        let mut result = slots.to_vec();
-        return result;
+        return slots.to_vec();
     }
     let mut result = slots.to_vec();
     if slots.iter().any(|(name, _)| name == "era") {
@@ -1098,21 +1097,6 @@ fn typed_part(kind: &str, value: String) -> Value {
         ("type".to_string(), Value::String(kind.to_string())),
         ("value".to_string(), Value::String(value)),
     ])
-}
-
-fn range_parts(start: &str, end: &str) -> Vec<Value> {
-    if start == end {
-        return vec![literal_part(start)];
-    }
-    vec![
-        literal_part(start),
-        make_object(vec![
-            ("type".to_string(), Value::String("literal".to_string())),
-            ("value".to_string(), Value::String(" – ".to_string())),
-            ("source".to_string(), Value::String("shared".to_string())),
-        ]),
-        literal_part(end),
-    ]
 }
 
 fn range_parts_result(

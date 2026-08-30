@@ -1589,7 +1589,7 @@ fn shift_date(
 }
 
 pub(crate) fn civil_from_serial(serial: i64) -> (i32, u32, u32) {
-    let mut z = serial;
+    let z = serial;
     let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
     let doe = z - era * 146_097;
     let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096).div_euclid(365);
@@ -2573,7 +2573,7 @@ fn with(
     }
     let primitive_options = options
         .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value));
-    let overflow = if let Some(value) = options.filter(|value| !primitive_options) {
+    let overflow = if let Some(value) = options.filter(|_| !primitive_options) {
         value
     } else {
         &Value::Undefined
@@ -2695,7 +2695,7 @@ fn with(
         Value::String(receiver_calendar.clone()),
     ])?;
     Ok(match month_code_text {
-        Some(code) => preserve_month_code(result, year, month, day, &receiver_calendar, &code),
+        Some(code) => preserve_month_code(result, year, day, &receiver_calendar, &code),
         None => result,
     })
 }
@@ -2703,7 +2703,6 @@ fn with(
 fn preserve_month_code(
     mut result: Value,
     year: f64,
-    month: f64,
     day: f64,
     calendar: &str,
     code: &str,

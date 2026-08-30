@@ -329,7 +329,10 @@ fn run_stage_files(
     files: Vec<PathBuf>,
 ) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
     const WORK_BATCH: usize = 32;
-    const WORKER_STACK_SIZE: usize = 256 * 1024 * 1024;
+    // OXC and the reducer need more than the platform default for deeply
+    // nested fixtures, but 256 MiB per worker makes a four-worker RegExp
+    // stage reserve a gigabyte before the engine heap is counted.
+    const WORKER_STACK_SIZE: usize = 64 * 1024 * 1024;
     let worker_count = env::var("QUENCH_STAGE_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -338,7 +341,7 @@ fn run_stage_files(
         .min(files.len());
     let files = Arc::new(files);
     let next = Arc::new(AtomicUsize::new(0));
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(worker_count * WORK_BATCH);
     let mut workers = Vec::with_capacity(worker_count);
     for worker in 0..worker_count {
         let files = Arc::clone(&files);
@@ -350,7 +353,6 @@ fn run_stage_files(
                 .name(format!("stage-files-{worker}"))
                 .stack_size(WORKER_STACK_SIZE)
                 .spawn(move || {
-                    let _ = worker;
                     let isolated = env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some();
                     let mut runner = Test262Runner::new(RuntimeHost);
                     let mut harness = HarnessCache::new(root.join("harness"));
@@ -361,13 +363,13 @@ fn run_stage_files(
                         }
                         let stop = (start + WORK_BATCH).min(files.len());
                         for index in start..stop {
-                            let path = files[index].clone();
+                            let path = &files[index];
                             let outcome = if isolated {
-                                run_file_in_process(&root, &path)
+                                run_file_in_process(&root, path)
                             } else {
-                                runner.run_file_with_cache(&path, &mut harness)
+                                runner.run_file_with_cache(path, &mut harness)
                             };
-                            if sender.send((index, path, outcome)).is_err() {
+                            if sender.send((index, outcome)).is_err() {
                                 return;
                             }
                         }
@@ -383,8 +385,13 @@ fn run_stage_files(
             .join()
             .map_err(|_| "stage worker panicked".to_string())?;
     }
-    results.sort_by_key(|(index, _, _)| *index);
-    Ok(results)
+    results.sort_by_key(|(index, _)| *index);
+    let mut files = Arc::try_unwrap(files)
+        .map_err(|_| "stage files still referenced after workers joined".to_string())?;
+    Ok(results
+        .into_iter()
+        .map(|(index, outcome)| (index, std::mem::take(&mut files[index]), outcome))
+        .collect())
 }
 
 fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
@@ -394,6 +401,7 @@ fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> 
     let output = Command::new(executable)
         .env("TEST262_DIR", root)
         .arg(path)
+        .stdout(std::process::Stdio::null())
         .output()
         .map_err(|error| format!("stage test process failed: {error}"))?;
     if output.status.success() {

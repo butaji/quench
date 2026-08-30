@@ -246,7 +246,6 @@ struct InitialTryFrame {
     handler: Option<crate::machine::CodeRange>,
     finalizer: Option<crate::machine::CodeRange>,
     body_resume: crate::machine::CodeRange,
-    yield_dst: u16,
     catch_slot: Option<u16>,
 }
 
@@ -346,7 +345,6 @@ fn initial_try_path(
                     handler: handler.as_ref().map(|body| body.range),
                     finalizer: finalizer.as_ref().map(|body| body.range),
                     body_resume: path.continuation,
-                    yield_dst: path.yield_dst,
                     catch_slot: *catch_slot,
                 },
             );
