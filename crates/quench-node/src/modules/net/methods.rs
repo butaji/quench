@@ -1073,7 +1073,7 @@ pub fn socket_write(
     guard.bytes_written = guard.bytes_written.saturating_add(bytes.len() as u64);
     guard.write_buf.extend_from_slice(&bytes);
     update_socket_counters(&guard);
-    execute::set_property_in_place(
+    super::set_socket_property(
         &receiver,
         "bytesWritten",
         Value::Number(guard.bytes_written as f64),
@@ -1084,12 +1084,12 @@ pub fn socket_write(
     // until the pump's connect transition flushes the queue.
     let flushed = !connecting && try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
-    execute::set_property_in_place(
+    super::set_socket_property(
         &receiver,
         "bufferSize",
         Value::Number(pending as f64),
     );
-    execute::set_property_in_place(
+    super::set_socket_property(
         &receiver,
         "writableLength",
         Value::Number(pending as f64),
@@ -1192,12 +1192,12 @@ pub fn socket_end(
     guard.state = SocketState::Closing;
     try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
-    execute::set_property_in_place(
+    super::set_socket_property(
         receiver,
         "bufferSize",
         Value::Number(pending as f64),
     );
-    execute::set_property_in_place(
+    super::set_socket_property(
         receiver,
         "writableLength",
         Value::Number(pending as f64),
@@ -1259,6 +1259,7 @@ pub fn socket_destroy(
     }
     if emit_close {
         set_socket_state(&receiver, true, false, "closed");
+        super::replace_socket_property(&receiver, "pending", Value::Boolean(true));
         crate::modules::http_client::mark_socket_destroyed_in_agents(state, &receiver);
         // Node delivers socket close on the next loop turn, allowing a
         // listener attached immediately after `destroy()` to observe it.
