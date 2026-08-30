@@ -580,6 +580,12 @@ pub const SPEC_NET_SET_ASF_TIMEOUT: NodeSpec =
     NodeSpec::new("net:setDefaultAutoSelectFamilyAttemptTimeout", 0x1006);
 pub const SPEC_NET_PIPE: NodeSpec = NodeSpec::new("net:Pipe", 0x1020);
 pub const SPEC_NET_PIPE_BIND: NodeSpec = NodeSpec::new("net:Pipe.bind", 0x1021);
+pub const SPEC_NET_BOUND_SOCKET: NodeSpec = NodeSpec::new("net:BoundSocket", 0x1022);
+pub const SPEC_NET_BOUND_SOCKET_ADDRESS: NodeSpec =
+    NodeSpec::new("net:BoundSocket.address", 0x1023);
+pub const SPEC_NET_BOUND_SOCKET_FD: NodeSpec = NodeSpec::new("net:BoundSocket.fd", 0x1024);
+pub const SPEC_NET_BOUND_SOCKET_CLOSE: NodeSpec =
+    NodeSpec::new("net:BoundSocket.close", 0x1025);
 
 // net socket / server methods (dispatched with the JS receiver).
 pub const SPEC_NET_SERVER_LISTEN: NodeSpec = NodeSpec::new("net:server:listen", 0x1007);
@@ -1174,6 +1180,10 @@ pub const CAP_NET_SERVER_UNREF: CapId = SPEC_NET_SERVER_UNREF.cap;
 pub const CAP_NET_SET_ASF_TIMEOUT: CapId = SPEC_NET_SET_ASF_TIMEOUT.cap;
 pub const CAP_NET_PIPE: CapId = SPEC_NET_PIPE.cap;
 pub const CAP_NET_PIPE_BIND: CapId = SPEC_NET_PIPE_BIND.cap;
+pub const CAP_NET_BOUND_SOCKET: CapId = SPEC_NET_BOUND_SOCKET.cap;
+pub const CAP_NET_BOUND_SOCKET_ADDRESS: CapId = SPEC_NET_BOUND_SOCKET_ADDRESS.cap;
+pub const CAP_NET_BOUND_SOCKET_FD: CapId = SPEC_NET_BOUND_SOCKET_FD.cap;
+pub const CAP_NET_BOUND_SOCKET_CLOSE: CapId = SPEC_NET_BOUND_SOCKET_CLOSE.cap;
 pub const CAP_NET_SOCKET: CapId = SPEC_NET_SOCKET.cap;
 pub const CAP_NET_SOCKET_ADDRESS: CapId = SPEC_NET_SOCKET_ADDRESS.cap;
 pub const CAP_NET_SOCKET_DESTROY: CapId = SPEC_NET_SOCKET_DESTROY.cap;

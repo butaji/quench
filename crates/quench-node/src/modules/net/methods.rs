@@ -61,6 +61,251 @@ pub fn pipe_bind(
     Ok(Value::Number(0.0))
 }
 
+pub fn bound_socket_construct(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let options = match args.first() {
+        None | Some(Value::Undefined) => host_api::object(Vec::new()),
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => args[0].clone(),
+        _ => return Err(bound_arg_error("options must be an object", "ERR_INVALID_ARG_TYPE")),
+    };
+    let path = execute::get_property(&options, "path");
+    if !matches!(path, Value::Undefined) {
+        let path = if matches!(path, Value::String(_) | Value::StringUnits(_)) {
+            execute::to_js_string(&path)?
+        } else {
+            return Err(bound_arg_error("path must be a string", "ERR_INVALID_ARG_TYPE"));
+        };
+        for key in ["host", "port", "ipv6Only", "reusePort"] {
+            if !matches!(execute::get_property(&options, key), Value::Undefined) {
+                return Err(bound_arg_error(
+                    "path cannot be combined with TCP options",
+                    "ERR_INVALID_ARG_VALUE",
+                ));
+            }
+        }
+        if path.starts_with('\0') && !cfg!(target_os = "linux") {
+            return Err(bound_arg_error(
+                "abstract socket paths are Linux-only",
+                "ERR_INVALID_ARG_VALUE",
+            ));
+        }
+        if path.len() > 1023 {
+            return Err(bound_bind_error("EINVAL"));
+        }
+        if Path::new(&path)
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty() && !parent.exists())
+        {
+            return Err(bound_bind_error("EACCES"));
+        }
+        if state.borrow().net.paths.contains_key(&path)
+            || state.borrow().net.bound_sockets.values().any(|bound| {
+                bound.borrow().path.as_deref() == Some(path.as_str())
+            })
+        {
+            return Err(bound_bind_error("EADDRINUSE"));
+        }
+        let listener = bind_listener(0, None).map_err(|error| bound_bind_error(bind_code(&error)))?;
+        if !path.starts_with('\0') {
+            create_pipe_placeholder(&path, Some(&options))
+                .map_err(|error| bound_bind_error(bind_code(&error)))?;
+        }
+        let fd = next_bound_fd(state);
+        let id = allocate_id(state);
+        let object = bound_object(state, id, fd, Some(path.clone()), None)?;
+        state.borrow_mut().net.bound_sockets.insert(
+            id,
+            Rc::new(RefCell::new(NetBoundSocket {
+                listener: Some(listener),
+                path: Some(path),
+                address: None,
+                fd,
+                adopted: false,
+            })),
+        );
+        return Ok(object);
+    }
+    let host = match execute::get_property(&options, "host") {
+        Value::Undefined => {
+            if matches!(execute::get_property(&options, "ipv6Only"), Value::Boolean(true)) {
+                "::".to_string()
+            } else {
+                "0.0.0.0".to_string()
+            }
+        }
+        Value::String(host) => host,
+        _ => return Err(bound_arg_error("host must be a string", "ERR_INVALID_ARG_TYPE")),
+    };
+    if host.parse::<std::net::IpAddr>().is_err() {
+        return Err(bound_arg_error("host must be an IP address", "ERR_INVALID_ARG_VALUE"));
+    }
+    let port_value = execute::get_property(&options, "port");
+    let port = if matches!(port_value, Value::Undefined) {
+        0
+    } else {
+        parse_port(&port_value)?
+    };
+    if matches!(execute::get_property(&options, "reusePort"), Value::Boolean(true)) {
+        return Err(bound_bind_error("EADDRINUSE"));
+    }
+    if !cfg!(windows) && (1..1024).contains(&port) {
+        return Err(bound_bind_error("EACCES"));
+    }
+    let listener = bind_listener(port, Some(&host))
+        .map_err(|error| bound_bind_error(bind_code(&error)))?;
+    let address = listener.local_addr().ok();
+    let fd = address.map(|addr| i64::from(addr.port())).unwrap_or(0);
+    let id = allocate_id(state);
+    let object = bound_object(state, id, fd, None, address)?;
+    state.borrow_mut().net.bound_sockets.insert(
+        id,
+        Rc::new(RefCell::new(NetBoundSocket {
+            listener: Some(listener),
+            path: None,
+            address,
+            fd,
+            adopted: false,
+        })),
+    );
+    Ok(object)
+}
+
+fn bound_object(
+    state: &Rc<RefCell<HostState>>,
+    id: u64,
+    fd: i64,
+    path: Option<String>,
+    address: Option<SocketAddr>,
+) -> Result<Value, VmError> {
+    let object = host_api::object(vec![
+        (BOUND_ID_PROP.into(), Value::Number(id as f64)),
+        ("isPipe".into(), Value::Boolean(path.is_some())),
+        ("address".into(), crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_ADDRESS)),
+        ("fd".into(), crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_FD)),
+        ("close".into(), crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_CLOSE)),
+    ]);
+    if let Some(path) = path {
+        execute::set_property_in_place(&object, "_path", Value::String(path));
+    }
+    if let Some(address) = address {
+        execute::set_property_in_place(&object, "_address", address_value(address));
+    }
+    let _ = state;
+    Ok(object)
+}
+
+fn bound_arg_error(message: &str, code: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String(message.into())),
+        ("code".into(), Value::String(code.into())),
+    ]))
+}
+
+fn bound_bind_error(code: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String(format!("{code}: bind"))),
+        ("code".into(), Value::String(code.into())),
+        ("syscall".into(), Value::String("bind".into())),
+    ]))
+}
+
+fn next_bound_fd(state: &Rc<RefCell<HostState>>) -> i64 {
+    let mut net = state.borrow_mut();
+    let fd = net.net.next_pipe_fd;
+    net.net.next_pipe_fd += 1;
+    fd
+}
+
+fn bound_id(receiver: &Value) -> Option<u64> {
+    match execute::get_property(receiver, BOUND_ID_PROP) {
+        Value::Number(id) if id.is_finite() && id >= 0.0 => Some(id as u64),
+        _ => None,
+    }
+}
+
+fn bound_state(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+) -> Result<Rc<RefCell<NetBoundSocket>>, VmError> {
+    let id = receiver.and_then(bound_id).ok_or_else(|| execute::type_error("BoundSocket"))?;
+    state
+        .borrow()
+        .net
+        .bound_sockets
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| execute::type_error("BoundSocket"))
+}
+
+pub fn bound_socket_address(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let bound = bound_state(state, receiver)?;
+    let bound = bound.borrow();
+    if bound.adopted {
+        return Err(bound_arg_error("BoundSocket handle was adopted", "ERR_SOCKET_HANDLE_ADOPTED"));
+    }
+    if bound.listener.is_none() {
+        return Err(bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"));
+    }
+    Ok(bound
+        .path
+        .clone()
+        .map(Value::String)
+        .or_else(|| bound.address.map(address_value))
+        .unwrap_or(Value::Undefined))
+}
+
+pub fn bound_socket_fd(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let bound = bound_state(state, receiver)?;
+    let bound = bound.borrow();
+    if bound.adopted {
+        return Err(bound_arg_error("BoundSocket handle was adopted", "ERR_SOCKET_HANDLE_ADOPTED"));
+    }
+    if bound.listener.is_none() {
+        return Err(bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"));
+    }
+    Ok(Value::Number(bound.fd as f64))
+}
+
+pub fn bound_socket_close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| execute::type_error("BoundSocket"))?;
+    let id = bound_id(receiver).ok_or_else(|| execute::type_error("BoundSocket"))?;
+    let bound = state
+        .borrow()
+        .net
+        .bound_sockets
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| execute::type_error("BoundSocket"))?;
+    let mut bound = bound.borrow_mut();
+    if bound.adopted {
+        return Err(bound_arg_error("BoundSocket handle was adopted", "ERR_SOCKET_HANDLE_ADOPTED"));
+    }
+    if bound.listener.take().is_none() {
+        return Err(bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"));
+    }
+    if let Some(path) = bound.path.take() {
+        state.borrow_mut().net.paths.remove(&path);
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(receiver.clone())
+}
+
 /// `new net.Socket()` creates an unconnected socket whose `connect` method
 /// shares the public connection capability and validation path.
 pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -119,6 +364,34 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
+        if let Value::Object(_) | Value::ObjectAlias(_) = execute::get_property(options, "handle") {
+            if let Some(bound_id) = bound_id(&execute::get_property(options, "handle")) {
+                execute::set_property_in_place(&object, BOUND_HANDLE_PROP, Value::Boolean(true));
+                if let Some(bound) = state.borrow().net.bound_sockets.get(&bound_id).cloned() {
+                    let mut bound = bound.borrow_mut();
+                    let _ = bound.listener.take();
+                    bound.adopted = true;
+                    if let Some(path) = bound.path.clone() {
+                        execute::set_property_in_place(
+                            &object,
+                            BOUND_LOCAL_ADDRESS_PROP,
+                            Value::String(path),
+                        );
+                    } else if let Some(address) = bound.address {
+                        execute::set_property_in_place(
+                            &object,
+                            BOUND_LOCAL_ADDRESS_PROP,
+                            Value::String(address.ip().to_string()),
+                        );
+                        execute::set_property_in_place(
+                            &object,
+                            BOUND_LOCAL_PORT_PROP,
+                            Value::Number(address.port() as f64),
+                        );
+                    }
+                }
+            }
+        }
         if let Value::Number(fd) = execute::get_property(options, "fd") {
             execute::set_property_in_place(&object, PIPE_FD_PROP, Value::Number(fd));
         }
@@ -394,6 +667,16 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let local_address = execute::get_property(receiver, BOUND_LOCAL_ADDRESS_PROP);
+        if !matches!(local_address, Value::Undefined) {
+            execute::set_property_in_place(receiver, "localAddress", local_address);
+        }
+        let local_port = execute::get_property(receiver, BOUND_LOCAL_PORT_PROP);
+        if !matches!(local_port, Value::Undefined) {
+            execute::set_property_in_place(receiver, "localPort", local_port);
+        }
+    }
     let mut lookup_address = None;
     if let Some(path) = args
         .first()
@@ -409,6 +692,16 @@ fn connect_with_receiver(
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         validate_connect_options(options)?;
+        if receiver.is_some()
+            && matches!(execute::get_property(receiver.unwrap(), BOUND_HANDLE_PROP), Value::Boolean(true))
+            && (!matches!(execute::get_property(options, "localPort"), Value::Undefined)
+                || !matches!(execute::get_property(options, "localAddress"), Value::Undefined))
+        {
+            return Err(bound_arg_error(
+                "localAddress/localPort cannot be used with an adopted handle",
+                "ERR_INVALID_ARG_VALUE",
+            ));
+        }
         if let Some(path) = string_property(options, "socketPath") {
             return connect_path_for_receiver(state, receiver, &path, args);
         }
@@ -633,7 +926,7 @@ fn connect_with_receiver(
         .unwrap_or(LOCAL_HOST);
     if port == 0 {
         let loopback = SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), 0);
-        return connect_refused(state, &loopback);
+        return connect_refused(state, receiver, &loopback);
     }
     let Some(addr) = super::resolve_connect(target_host, port) else {
         let (object, _) = new_net_object(state, socket_props())?;
@@ -658,7 +951,7 @@ fn connect_with_receiver(
     };
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
         Ok(stream) => stream,
-        Err(_) => return connect_refused(state, &addr),
+        Err(_) => return connect_refused(state, receiver, &addr),
     };
     let _ = stream.set_nonblocking(true);
     let (object, id) = match receiver {
@@ -807,8 +1100,17 @@ fn configure_onread(socket: &Value, options: &Value) {
 
 /// A refused/absent loopback peer surfaces as an `'error'` on a
 /// destroyed socket (never a synchronous throw).
-fn connect_refused(state: &Rc<RefCell<HostState>>, addr: &SocketAddr) -> Result<Value, VmError> {
-    let (object, _id) = new_net_object(state, socket_props())?;
+fn connect_refused(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    addr: &SocketAddr,
+) -> Result<Value, VmError> {
+    let object = if let Some(receiver) = receiver {
+        receiver.clone()
+    } else {
+        let (object, _) = new_net_object(state, socket_props())?;
+        object
+    };
     let message = format!("connect ECONNREFUSED {addr}");
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
@@ -1000,6 +1302,41 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    if let Some(bound_id) = args.first().and_then(bound_id) {
+        let bound = state
+            .borrow()
+            .net
+            .bound_sockets
+            .get(&bound_id)
+            .cloned()
+            .ok_or_else(|| execute::type_error("BoundSocket"))?;
+        let (listener, path, port) = {
+            let mut bound = bound.borrow_mut();
+            if bound.adopted {
+                return Err(bound_arg_error(
+                    "BoundSocket handle was adopted",
+                    "ERR_SOCKET_HANDLE_ADOPTED",
+                ));
+            }
+            let listener = bound
+                .listener
+                .take()
+                .ok_or_else(|| bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"))?;
+            let path = bound.path.clone();
+            let port = bound.address.or_else(|| listener.local_addr().ok()).map(|a| a.port()).unwrap_or(0);
+            bound.adopted = true;
+            (listener, path, port)
+        };
+        if let Some(path) = path.clone() {
+            state.borrow_mut().net.paths.insert(path.clone(), port);
+            register_server_path(state, &receiver, Some(listener), Some(path))?;
+        } else {
+            register_server(state, &receiver, Some(listener))?;
+            super::set_server_connection_key(&receiver, port, None)?;
+        }
+        add_listener_cb(state, &receiver, args.get(1), "listening", true)?;
+        return Ok(receiver);
+    }
     if args.len() == 1 && args.first().is_some_and(quench_runtime::is_callable) {
         let listener = match bind_listener(0, None) {
             Ok(listener) => listener,
@@ -1199,7 +1536,7 @@ fn bind_code(error: &std::io::Error) -> &'static str {
     if let Some(raw) = error.raw_os_error() {
         match raw {
             48 => "EADDRINUSE",
-            49 => "EADDRNOTAVAIL",
+            49 | 99 => "EADDRNOTAVAIL",
             22 | 36 | 63 => "EINVAL",
             _ => "EADDRINUSE",
         }

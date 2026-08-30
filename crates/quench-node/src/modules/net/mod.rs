@@ -27,7 +27,8 @@ mod pump;
 pub use methods::{
     complete_lookup, connect, connect_existing, connect_path, create_server, server_address,
     server_close, server_close_idle, server_listen, server_ref, server_unref, socket_abort,
-    pipe_bind, pipe_construct, socket_address, socket_construct, socket_destroy, socket_end,
+    bound_socket_address, bound_socket_close, bound_socket_construct, bound_socket_fd, pipe_bind,
+    pipe_construct, socket_address, socket_construct, socket_destroy, socket_end,
     socket_pause, socket_ref,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
@@ -39,6 +40,10 @@ const LOCAL_HOST: &str = "127.0.0.1";
 const NET_ID_PROP: &str = "\0quench:net:id";
 pub(crate) const PIPE_FD_PROP: &str = "\0quench:net:pipe-fd";
 pub(crate) const PIPE_MARKER_PROP: &str = "\0quench:net:pipe";
+pub(crate) const BOUND_ID_PROP: &str = "\0quench:net:bound-id";
+pub(crate) const BOUND_HANDLE_PROP: &str = "\0quench:net:bound-handle";
+pub(crate) const BOUND_LOCAL_ADDRESS_PROP: &str = "\0quench:net:bound-local-address";
+pub(crate) const BOUND_LOCAL_PORT_PROP: &str = "\0quench:net:bound-local-port";
 pub(crate) const ONREAD_BUFFER_PROP: &str = "\0quench:net:onread:buffer";
 pub(crate) const ONREAD_CALLBACK_PROP: &str = "\0quench:net:onread:callback";
 pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
@@ -88,10 +93,19 @@ pub struct NetSocket {
     pub encoding: Option<String>,
 }
 
+pub struct NetBoundSocket {
+    pub listener: Option<TcpListener>,
+    pub path: Option<String>,
+    pub address: Option<SocketAddr>,
+    pub fd: i64,
+    pub adopted: bool,
+}
+
 pub struct NetState {
     next: u64,
     pub servers: HashMap<u64, Rc<RefCell<NetServer>>>,
     pub sockets: HashMap<u64, Rc<RefCell<NetSocket>>>,
+    pub bound_sockets: HashMap<u64, Rc<RefCell<NetBoundSocket>>>,
     pub pending_errors: Vec<(Value, Value)>,
     pub lookup_result: Option<Value>,
     pub lookup_in_call: bool,
@@ -124,6 +138,7 @@ impl NetState {
             next: 1,
             servers: HashMap::new(),
             sockets: HashMap::new(),
+            bound_sockets: HashMap::new(),
             pending_errors: Vec::new(),
             lookup_result: None,
             lookup_in_call: false,
@@ -685,6 +700,11 @@ pub fn build() -> Value {
         "prototype",
         host_api::object(Vec::new()),
     );
+    let bound_socket_ctor = execute::set_property(
+        crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET),
+        "prototype",
+        host_api::object(vec![("isPipe".into(), Value::Boolean(false))]),
+    );
     crate::host::namespace_object(vec![
         (
             "connect",
@@ -701,6 +721,7 @@ pub fn build() -> Value {
         ("Socket", socket_ctor.clone()),
         ("Stream", socket_ctor),
         ("Server", server_ctor),
+        ("BoundSocket", bound_socket_ctor),
         (
             "BlockList",
             crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST),
