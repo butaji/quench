@@ -301,6 +301,7 @@ fn push_non_extensible(properties: &mut crate::value::ObjectData) {
     if !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
         properties.push((NON_EXTENSIBLE.into(), crate::value::Value::Boolean(true)));
     }
+    properties.set_extensibility_cached(false);
 }
 
 fn replace_object(
