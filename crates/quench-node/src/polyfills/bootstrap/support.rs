@@ -149,11 +149,22 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
   isFreeBSD: false,
   enoughTestMem: true,
   canCreateSymLink: () => process.platform !== "win32",
-  getArrayBufferViews: (buffer) => [
-    buffer,
-    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-  ],
+  // Keep the view order shared with getBufferSources.  The test helper uses
+  // the same index to verify every binary view handed to a stream callback.
+  getArrayBufferViews: (buffer) => {
+    const bytes = buffer instanceof ArrayBuffer
+      ? new Uint8Array(buffer)
+      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const start = bytes.byteOffset;
+    const length = bytes.byteLength;
+    const source = bytes.buffer;
+    return [
+      new Int8Array(source, start, length),
+      new Uint8Array(source, start, length),
+      new Uint8ClampedArray(source, start, length),
+      new DataView(source, start, length),
+    ];
+  },
   getBufferSources: (buffer) => {
     const bytes = buffer instanceof ArrayBuffer
       ? new Uint8Array(buffer)
