@@ -101,7 +101,6 @@ fn cached_shape_number(
 ) -> Option<f64> {
     match crate::vm::get_named_cached_payload(object, cache)? {
         crate::vm::NamedCachedPayload::Word(word) => unsafe { &*word }.number(),
-        crate::vm::NamedCachedPayload::Cell(cell) => unsafe { &*cell }.load_number(),
         crate::vm::NamedCachedPayload::Value(value) => value.as_number(),
     }
 }

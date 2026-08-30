@@ -18,7 +18,6 @@ pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) 
     let has_second = lookup_slot_string(slots, "second").is_some();
     let has_time = has_hour || has_minute || has_second;
     let time_zone = lookup_slot_string(slots, "timeZone");
-    let is_utc = time_zone.as_deref() == Some("UTC") || time_zone.is_none();
     let comps = zone_components(time_zone.as_deref(), number);
     let (year, month, day, hour, minute, second, ms) = comps?;
     if !has_year && !has_month && !has_day && !has_weekday {
@@ -28,7 +27,7 @@ pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) 
             text
         });
     }
-    let date_str = compose_date_string(slots, year, month, day, number, is_utc);
+    let date_str = compose_date_string(slots, year, month, day, number);
     if !has_time {
         return Some(date_str);
     }
@@ -176,7 +175,6 @@ fn compose_date_string(
     month: u32,
     day: u32,
     ms: f64,
-    is_utc: bool,
 ) -> String {
     let weekday = crate::date::chrono_utils::weekday(ms).unwrap_or(0);
     compose_date_string_with_weekday(slots, year, month, day, weekday)

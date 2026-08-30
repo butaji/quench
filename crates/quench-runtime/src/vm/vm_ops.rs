@@ -386,23 +386,6 @@ pub fn prepare_tail_call(
     })
 }
 
-fn propagate_object_mutation(
-    registers: &mut crate::register_file::RegisterFile,
-    callee: &Value,
-    args: &[u16],
-    arguments: &[Value],
-    result: &Value,
-) {
-    if !matches!(
-        callee,
-        Value::Builtin(crate::ops::Builtin::ObjectDefineProperty)
-    ) {
-        return;
-    }
-    let target = arguments.first().unwrap_or(&Value::Undefined);
-    crate::properties::propagate_updated_object(registers, args.first().copied(), target, result);
-}
-
 /// Resolve an await operand, suspending only for a pending Promise.
 pub fn execute_await(
     registers: &mut crate::register_file::RegisterFile,
@@ -477,10 +460,6 @@ fn map_not_callable(error: crate::execute::VmError) -> crate::execute::VmError {
         return crate::vm::not_callable();
     }
     error
-}
-
-fn invoke_callee(callee_value: &Value, arguments: &[Value]) -> Result<Value, VmError> {
-    invoke_with_receiver(callee_value, &Value::Undefined, arguments)
 }
 
 fn invoke_with_receiver(

@@ -15,7 +15,7 @@ thread_local! {
 }
 
 pub(crate) fn reset_tagged_template_cache() {
-    TAGGED_TEMPLATE_CACHE.with(|cache| cache.borrow_mut().clear());
+    TAGGED_TEMPLATE_CACHE.with(|cache| cache.replace(HashMap::new()));
 }
 
 pub(crate) fn execute_tagged_template(

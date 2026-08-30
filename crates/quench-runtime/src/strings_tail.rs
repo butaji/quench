@@ -132,14 +132,6 @@ fn string_match_all(
         .map(|(result, _)| result)
 }
 
-fn number(value: &Value) -> Option<f64> {
-    match value {
-        Value::Number(value) => Some(*value),
-        Value::String(value) => value.parse().ok(),
-        _ => None,
-    }
-}
-
 pub(crate) fn replace(
     receiver: Option<&Value>,
     arguments: &[Value],

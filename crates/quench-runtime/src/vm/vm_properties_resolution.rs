@@ -118,14 +118,12 @@ pub(crate) fn get_named_cached_object(
 ) -> Option<Value> {
     match get_named_cached_payload(object, cache)? {
         NamedCachedPayload::Word(word) => Some(unsafe { &*word }.load().strong_function()),
-        NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load().strong_function()),
         NamedCachedPayload::Value(value) => Some(value.strong_function()),
     }
 }
 
 pub(crate) enum NamedCachedPayload {
     Word(*const crate::register_file::SlotWord),
-    Cell(*const crate::value::BindingCell),
     Value(Value),
 }
 
@@ -177,14 +175,6 @@ pub(crate) fn get_named_cached_payload(
     Some(NamedCachedPayload::Word(word))
 }
 
-#[inline(always)]
-fn named_cached_payload(value: &Value) -> NamedCachedPayload {
-    match value {
-        Value::BindingCell(cell) => NamedCachedPayload::Cell(std::rc::Rc::as_ptr(cell)),
-        value => NamedCachedPayload::Value(property_value(value)),
-    }
-}
-
 /// Return a raw pointer to the canonical word cell on a guarded named hit.
 /// The pointer remains owned by `object`; callers must keep that object alive
 /// until the word has been copied.
@@ -195,7 +185,6 @@ pub(crate) fn get_named_cached_cell(
 ) -> Option<*const crate::value::BindingCell> {
     match get_named_cached_payload(object, cache)? {
         NamedCachedPayload::Word(_) => None,
-        NamedCachedPayload::Cell(cell) => Some(cell),
         NamedCachedPayload::Value(_) => None,
     }
 }
