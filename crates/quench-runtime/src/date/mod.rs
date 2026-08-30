@@ -22,6 +22,9 @@ pub fn current_time_ms() -> f64 {
 pub fn mock_enabled() -> bool {
     chrono_utils::mock_enabled()
 }
+pub fn set_local_timezone(name: Option<&str>) {
+    chrono_utils::set_local_timezone(name);
+}
 
 /// Internal Date representation: milliseconds since Unix epoch.
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +92,10 @@ pub fn instance(ms: f64) -> Value {
 
 pub fn local_tz_offset_minutes() -> i32 {
     chrono_utils::local_tz_offset_minutes()
+}
+
+pub fn local_tz_name() -> Option<String> {
+    chrono_utils::local_tz_name()
 }
 
 pub fn local_components(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
