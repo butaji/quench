@@ -50,6 +50,7 @@ pub struct HostState {
     pub diagnostics: crate::modules::diagnostics_channel::DiagnosticsState,
     pub domain: crate::modules::domain::DomainState,
     pub cluster: crate::modules::cluster::ClusterState,
+    pub prevented_events: HashSet<u64>,
     pub stopped_events: HashSet<u64>,
     pub dispatching_events: HashSet<u64>,
     pub output: Option<OutputSink>,
@@ -82,8 +83,6 @@ pub struct HostState {
     pub abort_composites: std::collections::HashMap<u64, Vec<Value>>,
     /// Strong roots for host-created identity-bearing objects exposed as aliases.
     pub identity_roots: Vec<Value>,
-    /// Canonical child-process prototype kept out of the JavaScript global.
-    pub child_process_prototype: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -108,6 +107,7 @@ impl NodeHost {
             diagnostics: crate::modules::diagnostics_channel::DiagnosticsState::new(),
             domain: crate::modules::domain::DomainState::new(),
             cluster: crate::modules::cluster::ClusterState::new(),
+            prevented_events: HashSet::new(),
             stopped_events: HashSet::new(),
             dispatching_events: HashSet::new(),
             output: None,
@@ -126,7 +126,6 @@ impl NodeHost {
             cares_binding: None,
             abort_composites: std::collections::HashMap::new(),
             identity_roots: Vec::new(),
-            child_process_prototype: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -281,9 +280,6 @@ pub fn install_with_argv(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
-    // Node schedules every async-function continuation as a microtask,
-    // including awaits whose operand is already fulfilled.
-    quench_runtime::module_bindings::defer_fulfilled_await(true);
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
     let host_state = host.state.clone();
     quench_runtime::install_host_job_pump(Rc::new(move || {
@@ -309,10 +305,6 @@ pub fn install_with_argv(
         );
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
-    }
-    for spec in crate::registry::PERSISTENT_GLOBALS {
-        let name = spec.name.rsplit([':', '.']).next().unwrap_or(spec.name);
-        context = context.with_persistent_host_value(name, crate::host::capability(*spec));
     }
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
@@ -348,14 +340,6 @@ pub fn capability(spec: NodeSpec) -> Value {
     let function = host_api::custom_function(RealmId::ROOT, spec.cap);
     let name = spec.name.rsplit([':', '.']).next().unwrap_or(spec.name);
     quench_runtime::execute::set_property(function, "name", Value::String(name.to_string()))
-}
-
-/// Build the stable capability descriptor used by bound host callbacks.
-pub fn capability_ref(spec: NodeSpec) -> HostCapabilityRef {
-    HostCapabilityRef {
-        realm: RealmId::ROOT,
-        kind: HostCapabilityKind::Custom(spec.cap),
-    }
 }
 
 /// Build a properly-described namespace object. Each named

@@ -29,19 +29,13 @@ mod tests {
         let mut data = ArrayData::new(vec![Value::Number(7.0)]);
         data.set_property("label", Value::String("generic".into()));
         assert_eq!(super::property(&data, "0"), Value::Number(7.0));
-        assert_eq!(
-            super::property(&data, "label"),
-            Value::String("generic".into())
-        );
+        assert_eq!(super::property(&data, "label"), Value::String("generic".into()));
     }
     #[test]
     fn indexed_generic_property_is_not_treated_as_dense_storage() {
         let mut data = ArrayData::new(Vec::new());
         data.set_property("3", Value::String("fallback".into()));
-        assert_eq!(
-            super::property(&data, "3"),
-            Value::String("fallback".into())
-        );
+        assert_eq!(super::property(&data, "3"), Value::String("fallback".into()));
         assert_eq!(data.dense_value_at(3), None);
     }
 
@@ -74,52 +68,19 @@ mod tests {
         assert_eq!(values.len(), 2);
         assert_eq!(length, 2);
         assert!(kind.is_packed());
-        assert_eq!(
-            values.as_ptr(),
-            data.dense_value_at(0).map(|_| values.as_ptr()).unwrap()
-        );
+        assert_eq!(values.as_ptr(), data.dense_value_at(0).map(|_| values.as_ptr()).unwrap());
     }
 
     #[test]
     fn packed_push_preserves_values_and_updates_length() {
         let array = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0)])));
-        let result =
-            crate::builtins::array_push(Some(&array), &[Value::Number(2.0), Value::Number(3.0)]);
+        let result = crate::builtins::array_push(
+            Some(&array),
+            &[Value::Number(2.0), Value::Number(3.0)],
+        );
         assert_eq!(result.unwrap(), Value::Number(3.0));
         // Builtin calls replace the receiver binding through the locals
         // replacement channel; a direct Rc handle is intentionally unchanged.
-    }
-
-    #[test]
-    fn shared_dense_appends_advance_the_canonical_length_header() {
-        let numbers = ArrayData::new(vec![Value::Number(1.0)]);
-        assert!(numbers.append_shared_numbers(&[
-            Value::Number(2.0),
-            Value::Number(3.0),
-        ]));
-        assert_eq!(numbers.logical_len(), 3);
-        assert_eq!(numbers.dense_number_at(2), Some(3.0));
-
-        let values = ArrayData::new(vec![Value::String("a".into())]);
-        assert!(values.append_shared_values(&[Value::String("b".into())]));
-        assert_eq!(values.logical_len(), 2);
-        assert_eq!(values.dense_value_at(1), Some(Value::String("b".into())));
-    }
-
-    #[test]
-    fn existing_object_index_write_preserves_dense_tail() {
-        let first = Value::Object(Rc::new(ObjectData::new(Vec::new())));
-        let second = Value::Object(Rc::new(ObjectData::new(Vec::new())));
-        let third = Value::Object(Rc::new(ObjectData::new(Vec::new())));
-        let array = Value::Array(Rc::new(ArrayData::new(vec![
-            first.clone(),
-            second.clone(),
-            third.clone(),
-        ])));
-        let updated = crate::builtins::set_property(array, "0", first);
-        assert_eq!(crate::builtins::map_length(&updated).unwrap(), 3);
-        assert_eq!(crate::execute::get_property(&updated, "1"), second);
-        assert_eq!(crate::execute::get_property(&updated, "2"), third);
     }
     #[test]
     fn array_length_header_is_authoritative_when_capacity_exceeds_storage() {
@@ -164,6 +125,7 @@ mod tests {
         assert_eq!(data.dense_value_at(1), None);
         assert_eq!(data.get_index(0), Some(Value::Number(1.0)));
     }
+
 
     #[test]
     fn indexed_growth_reserves_capacity_before_materializing_holes() {
@@ -213,16 +175,14 @@ mod tests {
         assert_eq!(hot.slot_value(0), Some(&Value::Number(42.0)).cloned());
     }
 
+
     #[test]
     fn indexed_and_length_reads_fall_back_after_sparse_transition() {
         let mut data = ArrayData::new(vec![Value::Number(11.0)]);
         data.set_index(10_000, Value::String("tail".into()));
         assert!(!data.is_packed_ordinary());
         assert_eq!(super::property(&data, "0"), Value::Number(11.0));
-        assert_eq!(
-            super::property(&data, "10000"),
-            Value::String("tail".into())
-        );
+        assert_eq!(super::property(&data, "10000"), Value::String("tail".into()));
         assert_eq!(super::property(&data, "length"), Value::Number(10_001.0));
     }
 
@@ -252,15 +212,18 @@ mod tests {
             Value::Array(Rc::new(ArrayData::new(vec![Value::Number(3.0)]))),
         ])));
         let values = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0), nested])));
-        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]).unwrap()
-        else {
+        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]).unwrap() else {
             panic!("flat must return an array");
         };
         assert_eq!(
             (0..flattened.logical_len())
                 .map(|index| flattened.get_index(index).unwrap())
                 .collect::<Vec<_>>(),
-            vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]
+            vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ]
         );
     }
 }

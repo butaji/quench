@@ -3,7 +3,7 @@ use std::{env, fs, path::PathBuf, process::Command, time::Instant};
 const RUNNER: &str = r#"
 let __quenchBenchSucceeded = true;
 const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
-  ? console.log.bind(console)
+  ? console.log
   : print;
 BenchmarkSuite.RunSuites({
   NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },

@@ -187,7 +187,7 @@ pub enum Op {
     },
     MakeObject {
         dst: u16,
-        properties: Vec<(crate::value::PropertyName, u16)>,
+        properties: Vec<(String, u16)>,
     },
     /// Per-script global view: an isolated property vector retaining the
     /// realm-global semantic owner for copy-on-write writes.

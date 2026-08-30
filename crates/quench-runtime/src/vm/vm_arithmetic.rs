@@ -81,8 +81,9 @@ pub(crate) fn execute_binary(
         }
         crate::execution_trace::event(crate::execution_trace::Event::EqualityWordMiss);
     }
-    if let Some((left, right)) =
-        registers.read_number_pair(usize::from(lhs), usize::from(rhs))
+    if let Some((left, right)) = registers
+        .read_number(usize::from(lhs))
+        .zip(registers.read_number(usize::from(rhs)))
     {
         use crate::ops::BinaryOp;
         let result = match operator {

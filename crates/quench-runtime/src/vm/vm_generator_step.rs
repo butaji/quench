@@ -38,13 +38,7 @@ fn run_generator_code_steps(
             }
             continue;
         }
-        let result = match run_instruction(code, next, instruction, registers, context) {
-            Ok(result) => result,
-            Err(error) => match crate::completion::Completion::from_vm_error(error) {
-                Ok(completion) => Some(completion),
-                Err(error) => return Err(error),
-            },
-        };
+        let result = run_instruction(code, next, instruction, registers, context)?;
         if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
             if let crate::completion::Completion::Call(continuation) = completion {
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;

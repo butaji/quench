@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use quench_node::NodeHost;
 use quench_runtime::ops::RealmId;
-use quench_runtime::value::Value;
 use quench_runtime::vm::VmContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,16 +96,7 @@ impl NodeRunner {
         );
         let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
-        self.context = context
-            .with_source_text(fixture_source.clone())
-            .with_host_value(
-                "__quench_script_source".to_string(),
-                Value::String(fixture_source.clone()),
-            )
-            .with_host_value(
-                "__quench_script_filename".to_string(),
-                Value::String(script.clone()),
-            );
+        self.context = context.with_source_text(fixture_source.clone());
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
@@ -162,11 +152,6 @@ impl NodeRunner {
             "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
         );
         let source = format!("{web_streams_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
-        self.host
-            .state()
-            .borrow_mut()
-            .cluster
-            .set_script(script.clone(), fixture_source.clone());
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) if is_module && source.contains("await ") => {
@@ -186,21 +171,16 @@ impl NodeRunner {
                 };
             }
         };
-        let result = normalize_script_completion(quench_runtime::vm::execute_code_with_context(
-            program.code(),
-            &self.context,
-        ))
-        .and_then(|_| self.drive("__quench_run_loop__();"));
-        // Promise jobs may surface an uncaught rejection while the loop is
-        // draining. Route that lifecycle event before checking harness call
-        // counts; otherwise the verifier observes its own pending handler as
-        // missing and reports a false failure.
+        let result = normalize_script_completion(
+            quench_runtime::vm::execute_code_with_context(program.code(), &self.context),
+        )
+            .and_then(|_| self.drive("__quench_run_loop__();"))
+            .and_then(|_| {
+                self.drive(
+                    "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
+                )
+            });
         let result = self.route_uncaught(result);
-        let result = result.and_then(|_| {
-            self.drive(
-                "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
-            )
-        });
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
             Err(error) => {

@@ -125,10 +125,7 @@ fn spread_concat_element(
         return Ok(());
     }
     let length = concat_array_like_length(&item)?;
-    let total = elements.len().checked_add(length).ok_or_else(|| {
-        crate::value::error::throw_type_error("Maximum array size exceeded")
-    })?;
-    if (total as u64) > 9_007_199_254_740_991u64 {
+    if elements.len() + length > 9_007_199_254_740_991 {
         return Err(crate::value::error::throw_type_error(
             "Maximum array size exceeded",
         ));

@@ -13,7 +13,7 @@ pub(crate) fn array_unshift(
     let new_length = length.checked_add(argument_count).ok_or_else(|| {
         crate::value::error::throw_range_error("Invalid array length")
     })?;
-    if (new_length as u64) > 9_007_199_254_740_991u64 {
+    if new_length > 9_007_199_254_740_991usize {
         return Err(crate::value::error::throw_type_error("Invalid array length"));
     }
     let mut target = crate::locals::resolved_replacement(receiver.clone());

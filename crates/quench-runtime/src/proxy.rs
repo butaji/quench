@@ -59,9 +59,7 @@ fn create_revoke_function(proxy: Value) -> Value {
             } else if name == &crate::builtins::descriptor_key("name") {
                 if let Value::Object(fields) = &*value {
                     let mut entries = fields.properties.clone();
-                    if let Some((_, mut value)) =
-                        entries.iter_mut().find(|(name, _)| name == "value")
-                    {
+                    if let Some((_, mut value)) = entries.iter_mut().find(|(name, _)| name == "value") {
                         *value = Value::String(String::new());
                     }
                     *value = Value::Object(Rc::new(crate::value::ObjectData::new(
@@ -254,8 +252,7 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
             return proxy_has(&proxy.target, prop);
         }
         return Ok(Value::Boolean(crate::with_scope::has_property(
-            &proxy.target,
-            prop,
+            &proxy.target, prop,
         )?));
     }
     Ok(Value::Boolean(crate::with_scope::has_property(
@@ -468,10 +465,7 @@ fn prototype_matches(target: &Value, prototype: &Value) -> Result<bool, VmError>
     let current = crate::builtins::object::get_prototype_of(Some(target))?;
     let current = crate::locals::resolved_replacement(current);
     let prototype = crate::locals::resolved_replacement(prototype.clone());
-    Ok(crate::builtins::same_value(
-        Some(&current),
-        Some(&prototype),
-    ))
+    Ok(crate::builtins::same_value(Some(&current), Some(&prototype)))
 }
 
 fn proxy_target_is_extensible(target: &Value) -> Result<bool, VmError> {
@@ -488,9 +482,9 @@ fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError
         if crate::builtins::same_value(Some(&current), Some(&target)) {
             return Ok(true);
         }
-        current = crate::locals::resolved_replacement(crate::builtins::object::get_prototype_of(
-            Some(&current),
-        )?);
+        current = crate::locals::resolved_replacement(
+            crate::builtins::object::get_prototype_of(Some(&current))?,
+        );
     }
     Ok(false)
 }
