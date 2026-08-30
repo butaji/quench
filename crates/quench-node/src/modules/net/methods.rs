@@ -473,7 +473,56 @@ fn connect_with_receiver(
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
     add_listener_cb(state, &object, args.last(), "connect")?;
+    if let Some(options) = args.first().filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+        let signal = execute::get_property(options, "signal");
+        if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+                state.borrow_mut().net.pending_errors.push((object.clone(), abort_error()));
+            } else {
+                let listener = host_api::bound_capability_with_arguments(
+                    crate::host::capability_ref(crate::registry::SPEC_NET_SOCKET_ABORT),
+                    vec![object.clone()],
+                );
+                let listener_options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
+                crate::modules::event_target::add_event_listener(
+                    state,
+                    Some(&signal),
+                    &[Value::String("abort".into()), listener, listener_options],
+                )?;
+            }
+        }
+    }
     Ok(object)
+}
+
+/// AbortSignal callback for a net socket. The socket is bound as the first
+/// argument so the signal remains the event receiver and listener identity.
+pub fn socket_abort(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(socket) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    // `AbortSignal` dispatch is synchronous, but net errors are delivered on
+    // the next loop turn so listeners attached immediately after `abort()`
+    // still observe the failure (the Node contract used by Agent tests).
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .push((socket.clone(), "error".into(), vec![abort_error()]));
+    socket_destroy(state, Some(socket), &[])
+}
+
+fn abort_error() -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("The operation was aborted".into())],
+    );
+    let error = execute::set_property(error, "name", Value::String("AbortError".into()));
+    execute::set_property(error, "code", Value::String("ABORT_ERR".into()))
 }
 
 fn configure_onread(socket: &Value, options: &Value) {

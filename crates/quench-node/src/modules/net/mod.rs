@@ -27,7 +27,7 @@ mod pump;
 pub use methods::{
     complete_lookup, connect, connect_existing, connect_path, create_server, server_address, server_close,
     server_close_idle, server_listen, server_ref, server_unref, socket_address, socket_construct,
-    socket_destroy, socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
+    socket_abort, socket_destroy, socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
     socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_timeout_fire,
     socket_unref, socket_write,
 };
@@ -301,6 +301,8 @@ fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         // Node exposes a nulled-out native handle after a socket closes.
         ("_handle", Value::Null),
+        // HTTP Agent exposes parser=null while a keep-alive socket is idle.
+        ("parser", Value::Null),
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
         ("allowHalfOpen", Value::Boolean(false)),

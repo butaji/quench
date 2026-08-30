@@ -166,10 +166,23 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         emit(state, &js, "connect", Vec::new())?;
     }
     for (sock, bytes) in events.datas {
-        let (js, arg) = {
+        let js = sock.borrow().js.clone();
+        // A parser-detached HTTP agent socket has no public `data` listener;
+        // any bytes arriving while it is in freeSockets are unsolicited and
+        // poison the next response. Destroy it before dispatching stream data.
+        if crate::modules::http::is_idle_socket(state, &js) {
+            execute::set_property_in_place(&js, "destroyed", Value::Boolean(true));
+            crate::modules::http_client::mark_socket_destroyed_in_agents(state, &js);
+            crate::modules::http_client::req_error(state, Some(&js), &[])?;
+            // Keep the safety transition local to the net state as well:
+            // a pooled request may already have lost its HTTP association,
+            // but unsolicited bytes must still destroy this socket.
+            crate::modules::net::socket_destroy(state, Some(&js), &[])?;
+            continue;
+        }
+        let arg = {
             let guard = sock.borrow();
-            let arg = data_value(&guard, &bytes);
-            (guard.js.clone(), arg)
+            data_value(&guard, &bytes)
         };
         let callback = execute::get_property(&js, ONREAD_CALLBACK_PROP);
         if quench_runtime::is_callable(&callback) {
