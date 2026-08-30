@@ -46,11 +46,19 @@ fn temporal_epoch_nanoseconds(
     value: &crate::value::Value,
 ) -> Result<i128, crate::execute::VmError> {
     match crate::execute::get_property_result(value, "epochNanoseconds")? {
-        crate::value::Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
-            crate::value::error::throw_range_error("Invalid epochNanoseconds")
-        }),
-        _ => Err(crate::value::error::throw_type_error("Invalid epochNanoseconds")),
+        crate::value::Value::BigInt(value) => value
+            .parse::<i128>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid epochNanoseconds")),
+        _ => Err(crate::value::error::throw_type_error(
+            "Invalid epochNanoseconds",
+        )),
     }
+}
+
+fn parse_epoch_text(value: &str) -> Result<i128, crate::execute::VmError> {
+    value
+        .parse::<i128>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid epochNanoseconds"))
 }
 
 pub(crate) fn zoned_construct(
@@ -1084,19 +1092,9 @@ pub(crate) fn execute(
 }
 
 mod stubs {
-    use crate::{execute::VmError, value::Value};
-    use chrono::Datelike;
     use super::{temporal_epoch_nanoseconds, temporal_property_number};
-
-    fn validate_now_timezone(arguments: &[Value]) -> Result<(), VmError> {
-        if let Some(value) = arguments
-            .first()
-            .filter(|value| !matches!(value, Value::Undefined))
-        {
-            super::parse_timezone_identifier(value)?;
-        }
-        Ok(())
-    }
+    use crate::{execute::VmError, value::Value};
+    use chrono::{Datelike, Timelike};
 
     pub(super) fn execute(
         builtin: crate::ops::Builtin,
@@ -1122,10 +1120,13 @@ mod stubs {
                         "Invalid ZonedDateTime",
                     ));
                 };
-                let ordering = left
-                    .parse::<i128>()
-                    .unwrap_or(0)
-                    .cmp(&right.parse::<i128>().unwrap_or(0));
+                let left = left.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?;
+                let right = right.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?;
+                let ordering = left.cmp(&right);
                 Ok(Value::Number(match ordering {
                     std::cmp::Ordering::Less => -1.0,
                     std::cmp::Ordering::Equal => 0.0,
@@ -1199,30 +1200,13 @@ mod stubs {
                 return Some(Ok(Value::String("UTC".into())));
             }
             crate::ops::Builtin::TemporalNowPlainDateISO => {
-                if let Err(error) = validate_now_timezone(arguments) {
-                    return Some(Err(error));
-                }
-                return Some(super::plain_date::construct(&[
-                    Value::Number(1970.0),
-                    Value::Number(1.0),
-                    Value::Number(1.0),
-                ]));
+                return Some(now_plain_date(arguments));
             }
             crate::ops::Builtin::TemporalNowPlainDateTimeISO => {
-                if let Err(error) = validate_now_timezone(arguments) {
-                    return Some(Err(error));
-                }
-                return Some(super::plain_date_time::construct(&[
-                    Value::Number(1970.0),
-                    Value::Number(1.0),
-                    Value::Number(1.0),
-                ]));
+                return Some(now_plain_date_time(arguments));
             }
             crate::ops::Builtin::TemporalNowPlainTimeISO => {
-                if let Err(error) = validate_now_timezone(arguments) {
-                    return Some(Err(error));
-                }
-                return Some(super::plain_time::construct(&[]));
+                return Some(now_plain_time(arguments));
             }
             crate::ops::Builtin::TemporalNowZonedDateTimeISO => {
                 let timezone = match arguments
@@ -1236,7 +1220,7 @@ mod stubs {
                     None => "UTC".into(),
                 };
                 return Some(Ok(super::zoned_record(
-                    0,
+                    super::now_epoch_nanoseconds(),
                     timezone,
                     crate::ops::Builtin::TemporalZonedDateTimePrototype,
                 )));
@@ -1249,6 +1233,57 @@ mod stubs {
                 Value::Builtin(prototype),
             )]),
         ))))
+    }
+
+    fn now_timezone(arguments: &[Value]) -> Result<String, VmError> {
+        arguments
+            .first()
+            .filter(|value| !matches!(value, Value::Undefined))
+            .map(super::parse_timezone_identifier)
+            .transpose()
+            .map(|timezone| timezone.unwrap_or_else(|| "UTC".into()))
+    }
+
+    fn now_components(timezone: &str) -> Result<[Value; 9], VmError> {
+        let epoch = super::now_epoch_nanoseconds();
+        let local = epoch + super::timezone_offset_nanos(timezone, epoch);
+        let seconds = local.div_euclid(1_000_000_000);
+        let nanos = local.rem_euclid(1_000_000_000) as u32;
+        let date = chrono::DateTime::from_timestamp(
+            i64::try_from(seconds)
+                .map_err(|_| crate::value::error::throw_range_error("Invalid current time"))?,
+            nanos,
+        )
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid current time"))?;
+        Ok([
+            Value::Number(date.year() as f64),
+            Value::Number(date.month() as f64),
+            Value::Number(date.day() as f64),
+            Value::Number(date.hour() as f64),
+            Value::Number(date.minute() as f64),
+            Value::Number(date.second() as f64),
+            Value::Number(date.nanosecond() as f64 / 1_000_000.0),
+            Value::Number((date.nanosecond() / 1_000 % 1_000) as f64),
+            Value::Number((date.nanosecond() % 1_000) as f64),
+        ])
+    }
+
+    fn now_plain_date(arguments: &[Value]) -> Result<Value, VmError> {
+        let timezone = now_timezone(arguments)?;
+        let values = now_components(&timezone)?;
+        super::plain_date::construct(&values[..3])
+    }
+
+    fn now_plain_date_time(arguments: &[Value]) -> Result<Value, VmError> {
+        let timezone = now_timezone(arguments)?;
+        let values = now_components(&timezone)?;
+        super::plain_date_time::construct(&values)
+    }
+
+    fn now_plain_time(arguments: &[Value]) -> Result<Value, VmError> {
+        let timezone = now_timezone(arguments)?;
+        let values = now_components(&timezone)?;
+        super::plain_time::construct(&values[3..])
     }
 
     fn zoned_from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
@@ -1879,7 +1914,7 @@ mod stubs {
                 .map(|value| value.to_ascii_lowercase());
             let date_serial = if matches!(
                 (calendar.as_str(), era_text.as_deref()),
-                (("ethiopic" | "ethioaa"), Some("aa"))
+                ("ethiopic" | "ethioaa", Some("aa"))
             ) {
                 super::plain_date::date_serial(year as f64, month as f64, day as f64)
             } else if let Some(code) = month_code_text.as_deref() {
@@ -2096,7 +2131,7 @@ mod stubs {
         let _offset = option_string("offset", &["prefer", "use", "ignore", "reject"], "reject")?;
         let _overflow = option_string("overflow", &["constrain", "reject"], "constrain")?;
         let epoch = match epoch {
-            Value::BigInt(value) => value.parse().unwrap_or(0),
+            Value::BigInt(value) => super::parse_epoch_text(&value)?,
             _ => {
                 return Err(crate::value::error::throw_type_error(
                     "Invalid epochNanoseconds",
@@ -2231,7 +2266,7 @@ mod stubs {
                 let epoch = property("epochNanoseconds")?;
                 let value = match epoch {
                     Value::BigInt(value) => {
-                        value.parse::<i128>().unwrap_or(0).div_euclid(1_000_000)
+                        super::parse_epoch_text(&value)?.div_euclid(1_000_000)
                     }
                     _ => 0,
                 };
@@ -2248,7 +2283,7 @@ mod stubs {
             }
             crate::ops::Builtin::TemporalZonedDateTimeHoursInDayGetter => {
                 if let Value::BigInt(epoch) = property("epochNanoseconds")? {
-                    let epoch = epoch.parse::<i128>().unwrap_or(0);
+                    let epoch = super::parse_epoch_text(&epoch)?;
                     if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
                         return Err(crate::value::error::throw_range_error(
                             "ZonedDateTime day boundary is out of range",
@@ -3156,7 +3191,7 @@ mod stubs {
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             let current_epoch = match property("epochNanoseconds")? {
                 Value::BigInt(value) => {
-                    let epoch = value.parse::<i128>().unwrap_or(0);
+                    let epoch = super::parse_epoch_text(&value)?;
                     if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
                         return Err(crate::value::error::throw_range_error(
                             "Invalid epochNanoseconds",
@@ -3476,7 +3511,7 @@ mod stubs {
                         + values[9] as i128;
                     let epoch = match property("epochNanoseconds")? {
                         Value::BigInt(value) => {
-                            value.parse::<i128>().unwrap_or(0)
+                            super::parse_epoch_text(&value)?
                                 + i128::from(final_serial - old_serial) * 86_400_000_000_000
                                 + time_delta * sign as i128
                         }
@@ -3545,7 +3580,7 @@ mod stubs {
                         + values[9] as i128;
                     let epoch = match property("epochNanoseconds")? {
                         Value::BigInt(value) => {
-                            value.parse::<i128>().unwrap_or(0)
+                            super::parse_epoch_text(&value)?
                                 + i128::from(final_serial - old_serial) * 86_400_000_000_000
                                 + time_delta * sign as i128
                         }
@@ -3602,7 +3637,7 @@ mod stubs {
             } else {
                 match property("epochNanoseconds")? {
                     Value::BigInt(value) => {
-                        value.parse::<i128>().unwrap_or(0) + time_delta * sign as i128
+                        super::parse_epoch_text(&value)? + time_delta * sign as i128
                     }
                     _ => {
                         return Err(crate::value::error::throw_type_error(
@@ -3622,7 +3657,7 @@ mod stubs {
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeStartOfDay {
             let epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                Value::BigInt(value) => super::parse_epoch_text(&value)?,
                 _ => {
                     return Err(crate::value::error::throw_type_error(
                         "Invalid epochNanoseconds",
@@ -3716,9 +3751,9 @@ mod stubs {
                 .as_ref()
                 .map(crate::conversion::to_number)
                 .transpose()?;
-            if increment_number.is_some_and(|value| {
-                !value.is_finite() || value <= 0.0 || value > 100_000_000.0
-            }) {
+            if increment_number
+                .is_some_and(|value| !value.is_finite() || value <= 0.0 || value > 100_000_000.0)
+            {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid roundingIncrement",
                 ));
@@ -3765,7 +3800,7 @@ mod stubs {
                 ));
             }
             let left_epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                Value::BigInt(value) => super::parse_epoch_text(&value)?,
                 _ => {
                     return Err(crate::value::error::throw_type_error(
                         "Invalid epochNanoseconds",
@@ -3774,7 +3809,7 @@ mod stubs {
             };
             let right_epoch = match crate::execute::get_property_result(&other, "epochNanoseconds")?
             {
-                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                Value::BigInt(value) => super::parse_epoch_text(&value)?,
                 _ => {
                     return Err(crate::value::error::throw_type_error(
                         "Invalid epochNanoseconds",
@@ -3965,8 +4000,8 @@ mod stubs {
                         std::slice::from_ref(&candidate),
                     )
                     .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))??;
-                    let candidate_delta = temporal_epoch_nanoseconds(&added)?
-                        - temporal_epoch_nanoseconds(start)?;
+                    let candidate_delta =
+                        temporal_epoch_nanoseconds(&added)? - temporal_epoch_nanoseconds(start)?;
                     if candidate_delta > actual {
                         days -= 1;
                     } else if candidate_delta < actual {
@@ -3983,9 +4018,8 @@ mod stubs {
                 )
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))??;
                 let residual = (actual
-                    - (temporal_epoch_nanoseconds(&added)?
-                        - temporal_epoch_nanoseconds(start)?))
-                    .abs();
+                    - (temporal_epoch_nanoseconds(&added)? - temporal_epoch_nanoseconds(start)?))
+                .abs();
                 let sign = if actual < 0 { -1.0 } else { 1.0 };
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[3] = Value::Number(days as f64);
@@ -4022,9 +4056,17 @@ mod stubs {
                     (&other, receiver)
                 };
                 let operation_factor = if fixed_wall_timezone {
-                    if since { -1_i32 } else { 1 }
+                    if since {
+                        -1_i32
+                    } else {
+                        1
+                    }
                 } else if since {
-                    if left_epoch >= right_epoch { 1 } else { -1 }
+                    if left_epoch >= right_epoch {
+                        1
+                    } else {
+                        -1
+                    }
                 } else if right_epoch >= left_epoch {
                     1
                 } else {
@@ -4071,12 +4113,12 @@ mod stubs {
                             start_month as u32,
                         ) as i32
                 {
-                    let month = crate::conversion::to_number(
-                        &crate::execute::get_property_result(&anchor, "month")?,
-                    )? as u32;
-                    let year = crate::conversion::to_number(
-                        &crate::execute::get_property_result(&anchor, "year")?,
-                    )? as i32;
+                    let month = crate::conversion::to_number(&crate::execute::get_property_result(
+                        &anchor, "month",
+                    )?)? as u32;
+                    let year = crate::conversion::to_number(&crate::execute::get_property_result(
+                        &anchor, "year",
+                    )?)? as i32;
                     let anchor_day = temporal_property_number(&anchor, "day")? as i32;
                     i128::from(
                         super::plain_date::days_in_month_for_record(year, month) as i32
@@ -4121,7 +4163,11 @@ mod stubs {
                     != temporal_property_number(start, "hour")?
                 {
                     residual += if fixed_wall_timezone {
-                        if residual < 0 { 3_600_000_000_000 } else { -3_600_000_000_000 }
+                        if residual < 0 {
+                            3_600_000_000_000
+                        } else {
+                            -3_600_000_000_000
+                        }
                     } else {
                         3_600_000_000_000
                     };
@@ -4492,7 +4538,7 @@ mod stubs {
                             object,
                             "epochNanoseconds",
                         )? {
-                            Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                            Value::BigInt(value) => super::parse_epoch_text(&value)?,
                             _ => 0,
                         };
                         let timezone = crate::conversion::to_string(
@@ -5080,7 +5126,7 @@ mod stubs {
                 crate::value::error::throw_range_error("Invalid roundingIncrement")
             })?;
             let epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                Value::BigInt(value) => super::parse_epoch_text(&value)?,
                 _ => {
                     return Err(crate::value::error::throw_type_error(
                         "Invalid epochNanoseconds",
@@ -5214,7 +5260,7 @@ mod stubs {
                 }
             };
             let epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                Value::BigInt(value) => super::parse_epoch_text(&value)?,
                 _ => {
                     return Err(crate::value::error::throw_type_error(
                         "Invalid epochNanoseconds",
@@ -5506,7 +5552,7 @@ mod stubs {
             let quotient = fraction / quantum;
             let remainder = fraction % quantum;
             let epoch = match property("epochNanoseconds")? {
-                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                Value::BigInt(value) => super::parse_epoch_text(&value)?,
                 _ => 0,
             };
             let mode = rounding_mode.as_deref().unwrap_or("trunc");
@@ -5634,8 +5680,12 @@ mod stubs {
                 ));
             }
             (
-                parts[parts.len() - 2].parse::<f64>().unwrap_or(0.0),
-                parts[parts.len() - 1].parse::<f64>().unwrap_or(0.0),
+                parts[parts.len() - 2]
+                    .parse::<f64>()
+                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainMonthDay"))?,
+                parts[parts.len() - 1]
+                    .parse::<f64>()
+                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainMonthDay"))?,
             )
         } else {
             (
@@ -5677,8 +5727,12 @@ mod stubs {
                 ));
             }
             (
-                parts[parts.len() - 2].parse::<f64>().unwrap_or(0.0),
-                parts[parts.len() - 1].parse::<f64>().unwrap_or(0.0),
+                parts[parts.len() - 2]
+                    .parse::<f64>()
+                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainYearMonth"))?,
+                parts[parts.len() - 1]
+                    .parse::<f64>()
+                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainYearMonth"))?,
             )
         } else {
             (
@@ -5712,9 +5766,11 @@ mod stubs {
 }
 
 fn now_epoch_nanoseconds() -> i128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos() as i128)
+    let milliseconds = crate::date::current_time_ms();
+    if !milliseconds.is_finite() {
+        return 0;
+    }
+    (milliseconds * 1_000_000.0) as i128
 }
 
 pub(crate) fn construct_stub(

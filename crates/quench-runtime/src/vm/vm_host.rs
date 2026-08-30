@@ -63,7 +63,7 @@ fn dispatch_host_capability(
         HostCapabilityKind::AgentSleep
         | HostCapabilityKind::AgentTryYield
         | HostCapabilityKind::AgentTrySleep => agent_sleep(kind, arguments),
-        HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
+        HostCapabilityKind::AgentSetTimeout => agent_set_timeout(arguments),
         HostCapabilityKind::AgentMonotonicNow => Ok(agent_monotonic_now()),
         HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
         HostCapabilityKind::PromiseHook => Err(VmError::NotCallable),
@@ -97,7 +97,11 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
     let callbacks = AGENT_CALLBACKS.with(|callbacks| callbacks.borrow().clone());
     for callback in callbacks {
         crate::atomics::begin_agent_callback();
-        let result = crate::functions::execute_target(&callback, &Value::Undefined, &[buffer.clone()]);
+        let result = crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            std::slice::from_ref(&buffer),
+        );
         crate::atomics::end_agent_callback();
         result?;
     }
@@ -131,6 +135,7 @@ fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn agent_get_report() -> Value {
+    run_due_agent_timers();
     AGENT_REPORTS.with(|reports| {
         let reports = reports.borrow();
         let consumed = AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow().clone());
@@ -157,10 +162,58 @@ fn agent_sleep(kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, V
         std::thread::sleep(std::time::Duration::from_secs_f64(delay / 1_000.0));
     }
     let _ = kind;
+    run_due_agent_timers();
     AGENT_REPORTS.with(|reports| {
         crate::atomics::expire_agent_waiters(&mut reports.borrow_mut());
     });
     Ok(Value::Undefined)
+}
+
+fn agent_set_timeout(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments
+        .first()
+        .cloned()
+        .ok_or_else(|| type_error("$262.agent.setTimeout expects a callback"))?;
+    if !crate::conversion::is_callable(&callback) {
+        return Err(type_error("$262.agent.setTimeout expects a callback"));
+    }
+    let delay = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    let delay = if delay.is_finite() && delay > 0.0 {
+        delay
+    } else {
+        0.0
+    };
+    AGENT_TIMERS.with(|timers| {
+        timers.borrow_mut().push(AgentTimer {
+            deadline: std::time::Instant::now()
+                + std::time::Duration::from_secs_f64(delay / 1_000.0),
+            callback,
+        });
+    });
+    Ok(Value::Undefined)
+}
+
+fn run_due_agent_timers() {
+    let now = std::time::Instant::now();
+    let due = AGENT_TIMERS.with(|timers| {
+        let mut timers = timers.borrow_mut();
+        let mut due = Vec::new();
+        let mut pending = Vec::with_capacity(timers.len());
+        for timer in timers.drain(..) {
+            if timer.deadline <= now {
+                due.push(timer.callback);
+            } else {
+                pending.push(timer);
+            }
+        }
+        *timers = pending;
+        due
+    });
+    for callback in due {
+        crate::atomics::begin_agent_callback();
+        let _ = crate::functions::execute_target(&callback, &Value::Undefined, &[]);
+        crate::atomics::end_agent_callback();
+    }
 }
 
 fn agent_monotonic_now() -> Value {
@@ -335,11 +388,18 @@ thread_local! {
     static AGENT_CALLBACKS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static AGENT_REPORTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static AGENT_REPORT_CONSUMED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+    static AGENT_TIMERS: RefCell<Vec<AgentTimer>> = const { RefCell::new(Vec::new()) };
+}
+
+struct AgentTimer {
+    deadline: std::time::Instant,
+    callback: Value,
 }
 
 pub(crate) fn reset_agent_state() {
     AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().clear());
     AGENT_REPORTS.with(|reports| reports.borrow_mut().clear());
     AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow_mut().clear());
+    AGENT_TIMERS.with(|timers| timers.borrow_mut().clear());
     crate::atomics::reset_agent_state();
 }

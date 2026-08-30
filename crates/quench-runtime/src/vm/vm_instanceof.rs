@@ -56,6 +56,7 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
     matches!(
         constructor,
         Builtin::Error
+            | Builtin::DOMException
             | Builtin::RangeError
             | Builtin::ReferenceError
             | Builtin::SyntaxError

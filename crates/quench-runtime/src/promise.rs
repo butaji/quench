@@ -267,6 +267,28 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
         PromiseContinuation::AsyncGeneratorYield { generator, result } => {
             process_async_continuation(generator, result, true, false, state)
         }
+        PromiseContinuation::ArrayFromAsync {
+            result,
+            iterator,
+            receiver,
+            mapper,
+            this_arg,
+            values,
+            index,
+            sync_values,
+            pending_mapper,
+        } => crate::arrays::process_async_continuation(
+            result,
+            iterator,
+            receiver,
+            mapper,
+            this_arg,
+            values,
+            index,
+            sync_values,
+            pending_mapper,
+            state,
+        ),
     }
 }
 

@@ -478,6 +478,15 @@ pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
+/// Construct a DOMException for host APIs that report Web IDL failures.
+pub fn dom_exception(message: &str, name: &str) -> Value {
+    dom_exception_value(&[
+        Value::String(message.to_string()),
+        Value::String(name.to_string()),
+    ])
+    .unwrap_or_else(|_| error(Builtin::Error, &[Value::String(message.to_string())]))
+}
+
 include!("builtins_error_helpers.rs");
 fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
     match target {

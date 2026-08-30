@@ -609,9 +609,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalPlainTimeSecondGetter
         | Builtin::TemporalPlainTimeMillisecondGetter
         | Builtin::TemporalPlainTimeMicrosecondGetter
-        | Builtin::TemporalPlainTimeNanosecondGetter
-        | Builtin::TemporalInstantEpochNanosecondsGetter
-        | Builtin::TemporalInstantEpochMillisecondsGetter => Some(0.0),
+        | Builtin::TemporalPlainTimeNanosecondGetter => Some(0.0),
         Builtin::TemporalPlainDate => Some(3.0),
         Builtin::TemporalDurationFrom => Some(1.0),
         Builtin::TemporalDurationCompare => Some(2.0),
