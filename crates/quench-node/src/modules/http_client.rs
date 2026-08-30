@@ -15,6 +15,7 @@ use crate::modules::net;
 
 /// Hidden property mapping a ClientRequest object to its state.
 const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
+const AGENT_MARKER_PROP: &str = "\0quench:http:agent";
 pub(crate) const CLIENT_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 pub(crate) const RES_ASYNC_RESOURCE_PROP: &str = "\0quench:http:res:async-resource";
 const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
@@ -106,6 +107,7 @@ pub fn agent_construct(
     object = execute::set_property(object, "sockets", host_api::object(Vec::new()));
     object = execute::set_property(object, "freeSockets", host_api::object(Vec::new()));
     object = execute::set_property(object, "requests", host_api::object(Vec::new()));
+    object = execute::set_property(object, AGENT_MARKER_PROP, Value::Boolean(true));
     object = execute::set_property(object, "options", options.clone());
     object = execute::set_property(object, "keepAlive", match option("keepAlive") {
         Value::Boolean(value) => Value::Boolean(value),
@@ -219,6 +221,36 @@ pub fn agent_connect(
     }
     set_request_property(Some(&request), "finished", Value::Undefined);
     req_end(state, Some(&request), &[])
+}
+
+pub(crate) fn agent_keylog_attach(
+    state: &Rc<RefCell<HostState>>,
+    agent: &Value,
+    listener: &Value,
+) -> Result<(), VmError> {
+    let sockets = ["freeSockets", "sockets"]
+        .into_iter()
+        .flat_map(|pool_name| {
+            let pools = execute::get_property(agent, pool_name);
+            execute::own_enumerable_keys(&pools)
+                .into_iter()
+                .flat_map(move |name| {
+                    let list = execute::get_property(&pools, &name);
+                    execute::own_enumerable_keys(&list)
+                        .into_iter()
+                        .map(move |index| execute::get_property(&list, &index))
+                })
+        })
+        .filter(|socket| matches!(socket, Value::Object(_) | Value::ObjectAlias(_)))
+        .collect::<Vec<_>>();
+    for socket in sockets {
+        crate::modules::events::method_on(
+            state,
+            Some(&socket),
+            &[Value::String("keylog".into()), listener.clone()],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn res_set_encoding(
@@ -2109,6 +2141,56 @@ fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
     output
 }
 
+fn pool_response_socket(
+    state: &Rc<RefCell<HostState>>,
+    client_id: u64,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let agent_target = {
+        let guard = state.borrow();
+        guard.http.clientreqs.get(&client_id).and_then(|request| {
+            request
+                .agent
+                .clone()
+                .map(|agent| (agent, request.target.clone()))
+        })
+    };
+    let Some((agent, target)) = agent_target else {
+        return Ok(());
+    };
+    let keep_alive = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .and_then(|request| {
+            request
+                .agent
+                .as_ref()
+                .filter(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
+                .and_then(|_| request.res.as_ref())
+        })
+        .is_some_and(response_allows_reuse);
+    let alive = net::net_id(socket).is_some_and(|id| {
+        state
+            .borrow()
+            .net
+            .sockets
+            .get(&id)
+            .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
+    });
+    if keep_alive && alive {
+        let name = agent_name(&target, &agent);
+        move_agent_socket_to_free(&agent, &name, socket);
+        if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0) {
+            let destroy = crate::host::capability(crate::registry::SPEC_NET_SOCKET_DESTROY);
+            subscribe_event(state, socket, "timeout", destroy)?;
+        }
+    }
+    net::emit(state, socket, "free", Vec::new())?;
+    emit_agent_free(state, &agent, &target, socket)
+}
+
 /// Socket `'end'` → the response's `'end'`.
 pub fn res_end_handler(
     state: &Rc<RefCell<HostState>>,
@@ -2168,6 +2250,7 @@ pub fn res_end_handler(
         if let Some(request) = client_value(state, client_id, true) {
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
         }
+        pool_response_socket(state, client_id, socket)?;
         net::emit(state, &res, "end", Vec::new())?;
         let should_close = {
             let mut guard = state.borrow_mut();
@@ -2190,56 +2273,6 @@ pub fn res_end_handler(
             crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
         } else if let Some(request) = client_value(state, client_id, true) {
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
-        }
-        let agent_target = {
-            let guard = state.borrow();
-            guard.http.clientreqs.get(&client_id).and_then(|request| {
-                request
-                    .agent
-                    .clone()
-                    .map(|agent| (agent, request.target.clone()))
-            })
-        };
-        if let Some((agent, target)) = agent_target {
-            // The socket is observable to `free` listeners. Put it in the
-            // Agent's free pool before emitting that event so a listener that
-            // submits another request synchronously observes the same socket,
-            // matching Node's reuse ordering.
-            let keep_alive = state
-                .borrow()
-                .http
-                .clientreqs
-                .get(&client_id)
-                .and_then(|request| {
-                    request
-                        .agent
-                        .as_ref()
-                        .filter(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
-                        .and_then(|_| request.res.as_ref())
-                })
-                .is_some_and(response_allows_reuse);
-            let alive = net::net_id(socket).is_some_and(|id| {
-                state
-                    .borrow()
-                    .net
-                    .sockets
-                    .get(&id)
-                    .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
-            });
-            if keep_alive && alive {
-                let name = agent_name(&target, &agent);
-                move_agent_socket_to_free(&agent, &name, socket);
-                if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0) {
-                    // Agent idle timeouts destroy the pooled socket after the
-                    // timeout event. Install this host transition before
-                    // exposing `free`, so user listeners observe
-                    // `socket.destroyed === true` and cannot reuse it.
-                    let destroy = crate::host::capability(crate::registry::SPEC_NET_SOCKET_DESTROY);
-                    subscribe_event(state, socket, "timeout", destroy)?;
-                }
-            }
-            net::emit(state, socket, "free", Vec::new())?;
-            emit_agent_free(state, &agent, &target, socket)?;
         }
         let pooled = state
             .borrow()
