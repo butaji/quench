@@ -391,6 +391,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQ_TIMEOUT_FIRE => crate::modules::http_client::req_timeout_fire,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_call,
         CAP_HTTP_AGENT_GET_NAME => crate::modules::http_client::agent_get_name,
+        CAP_HTTP_AGENT_CONNECT => crate::modules::http_client::agent_connect,
         CAP_HTTP_REQ_RESUME => crate::modules::http::request_resume,
         CAP_HTTP_REQ_DESTROY => crate::modules::http::request_destroy,
         CAP_HTTP_REQ_ABORT => crate::modules::http_client::req_abort,

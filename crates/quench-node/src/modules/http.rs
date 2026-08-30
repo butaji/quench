@@ -32,9 +32,10 @@ pub struct HttpState {
     pub clients: HashMap<u64, u64>,
     /// AbortSignal target id -> ClientRequest id.
     pub client_signals: HashMap<u64, u64>,
-    pub agent_connections: Vec<(Value, String)>,
     /// Requests deferred by an Agent's maxSockets limit, in submission order.
     pub agent_pending: Vec<u64>,
+    pub global_agent: Option<Value>,
+    pub agent_prototype: Option<Value>,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -89,8 +90,9 @@ impl HttpState {
             clientreqs: HashMap::new(),
             clients: HashMap::new(),
             client_signals: HashMap::new(),
-            agent_connections: Vec::new(),
             agent_pending: Vec::new(),
+            global_agent: None,
+            agent_prototype: None,
         }
     }
 }
@@ -885,7 +887,7 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
 }
 
 /// The `http` module namespace.
-pub fn build() -> Value {
+pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let agent = crate::host::capability(crate::registry::SPEC_HTTP_AGENT);
     let agent_prototype = host_api::object(vec![
         (
@@ -897,7 +899,11 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_HTTP_AGENT_GET_NAME),
         ),
     ]);
+    state.borrow_mut().http.agent_prototype = Some(agent_prototype.clone());
     let agent = quench_runtime::execute::set_property(agent, "prototype", agent_prototype);
+    let global_agent = crate::modules::http_client::agent_construct(state, &[])
+        .unwrap_or(Value::Undefined);
+    state.borrow_mut().http.global_agent = Some(global_agent.clone());
     let mut module = crate::host::namespace_object(vec![
         (
             "createServer",
@@ -920,6 +926,7 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
         ),
         ("Agent", agent),
+        ("globalAgent", global_agent),
         (
             "IncomingMessage",
             crate::host::capability(crate::registry::SPEC_HTTP_INCOMING),
