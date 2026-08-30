@@ -1118,7 +1118,8 @@ pub fn incoming_destroy(
             .pending_events
             .push((receiver.clone(), "close".into(), Vec::new()));
     }
-    if client_response && error.is_some() {
+    if client_response {
+        execute::set_property_in_place(receiver, INCOMING_CLOSE_PENDING_PROP, Value::Boolean(true));
         let socket = state
             .borrow()
             .http
