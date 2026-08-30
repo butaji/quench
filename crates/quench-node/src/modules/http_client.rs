@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
-use quench_runtime::value::Value;
+use quench_runtime::value::{ObjectAliasValue, Value};
 
 use crate::host::HostState;
 use crate::modules::net;
@@ -2266,7 +2266,11 @@ fn client_id(receiver: Option<&Value>) -> Option<u64> {
 }
 
 fn custom_connection(agent: &Value) -> Option<Value> {
-    let method = execute::get_property(agent, "createConnection");
+    // The built-in Agent exposes `createConnection` on its prototype. That
+    // method is the ordinary transport path, not a user-owned custom hook;
+    // only an own property opts a request into the callback contract.
+    let descriptor = execute::get_own_property_descriptor(agent, "createConnection").ok()?;
+    let method = execute::get_property(&descriptor, "value");
     quench_runtime::is_callable(&method).then_some(method)
 }
 
@@ -2365,17 +2369,34 @@ fn build_incoming(
         }
     }
     let res = crate::modules::events::new_emitter_object(state)?;
-    let request_resource = state
+    let (request_resource, request_value) = state
         .borrow()
         .http
         .clientreqs
         .get(&client_id)
-        .map(|request| execute::get_property(&request.req, CLIENT_ASYNC_RESOURCE_PROP));
+        .map(|request| {
+            (
+                execute::get_property(&request.req, CLIENT_ASYNC_RESOURCE_PROP),
+                request.req.clone(),
+            )
+        })
+        .unwrap_or((Value::Undefined, Value::Undefined));
+    // Node exposes the originating ClientRequest as `res.req`. Keep this
+    // relationship identity-preserving without retaining a request↔response
+    // strong cycle: the host state owns the request, while the alias follows
+    // that same object whenever JavaScript reads the property.
+    let request_alias = match request_value {
+        Value::Object(object) => Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(
+            Rc::downgrade(&object),
+        )))),
+        other => other,
+    };
     let props = vec![
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
         ("headers".to_string(), host_api::object(headers)),
+        ("req".to_string(), request_alias),
         (
             "setEncoding".to_string(),
             crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
@@ -2400,7 +2421,7 @@ fn build_incoming(
         ("closed".to_string(), Value::Boolean(false)),
         (
             RES_ASYNC_RESOURCE_PROP.to_string(),
-            request_resource.unwrap_or(Value::Undefined),
+            request_resource,
         ),
         (
             crate::modules::http::INCOMING_CLOSE_PENDING_PROP.to_string(),
