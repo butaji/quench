@@ -14,6 +14,10 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+pub(crate) fn reset_tagged_template_cache() {
+    TAGGED_TEMPLATE_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
 pub(crate) fn execute_tagged_template(
     registers: &mut RegisterFile,
     op: &crate::ops::Op,
