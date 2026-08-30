@@ -1701,26 +1701,40 @@ fn client_value(state: &Rc<RefCell<HostState>>, client_id: u64, req: bool) -> Op
 
 /// Emit leftover buffered bytes as `'data'` once `'response'` fired.
 fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmError> {
-    let (res, rest) = {
+    let (res, rest, consumed) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
             return Ok(());
         };
-        req.response_received = req.response_received.saturating_add(req.buffer.len());
+        let consumed = req
+            .res
+            .as_ref()
+            .and_then(response_content_length)
+            .map(|expected| expected.saturating_sub(req.response_received).min(req.buffer.len()))
+            .unwrap_or(req.buffer.len());
+        req.response_received = req.response_received.saturating_add(consumed);
         if req.buffer.windows(5).any(|window| window == b"0\r\n\r\n") {
             req.response_chunked_done = true;
         }
-        (req.res.clone(), std::mem::take(&mut req.buffer))
+        let buffer = std::mem::take(&mut req.buffer);
+        (req.res.clone(), buffer, consumed)
     };
     if let Some(res) = res {
-        if !rest.is_empty() {
-            let body = response_body_bytes(&res, &rest);
+        if consumed > 0 {
+            let body = response_body_bytes(&res, &rest[..consumed]);
             if !body.is_empty() {
                 net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
             }
         }
     }
     Ok(())
+}
+
+fn response_content_length(response: &Value) -> Option<usize> {
+    let headers = execute::get_property(response, "headers");
+    execute::to_js_string(&execute::get_property(&headers, "content-length"))
+        .ok()
+        .and_then(|value| value.parse().ok())
 }
 
 fn finish_known_response(
