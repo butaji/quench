@@ -100,6 +100,7 @@ pub fn agent_construct(
 ) -> Result<Value, VmError> {
     let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
     let option = |name: &str| execute::get_property(&options, name);
+    let max_total_sockets = validate_agent_limit("maxTotalSockets", option("maxTotalSockets"))?;
     let mut object = crate::modules::events::new_emitter_object(state)?;
     if let Some(prototype) = state.borrow().http.agent_prototype.clone() {
         object = execute::set_prototype_of(&object, &prototype)?;
@@ -121,10 +122,7 @@ pub fn agent_construct(
         Value::Number(value) => Value::Number(value),
         _ => Value::Number(f64::INFINITY),
     });
-    object = execute::set_property(object, "maxTotalSockets", match option("maxTotalSockets") {
-        Value::Number(value) => Value::Number(value),
-        _ => Value::Number(f64::INFINITY),
-    });
+    object = execute::set_property(object, "maxTotalSockets", Value::Number(max_total_sockets));
     object = execute::set_property(object, "scheduling", match option("scheduling") {
         Value::String(value) => Value::String(value),
         _ => Value::String("lifo".into()),
@@ -158,6 +156,23 @@ pub fn agent_construct(
         ],
     )?;
     Ok(object)
+}
+
+fn validate_agent_limit(name: &str, value: Value) -> Result<f64, VmError> {
+    match value {
+        Value::Undefined => Ok(f64::INFINITY),
+        Value::Number(value) if value.is_infinite() && value.is_sign_positive() => Ok(value),
+        Value::Number(value) if value.is_finite() && value > 0.0 => Ok(value),
+        Value::Number(value) => Err(crate::modules::buffer_enc::out_of_range(
+            name,
+            "a positive number",
+            &execute::number_to_js_string(value),
+        )),
+        other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(&other)
+        ))),
+    }
 }
 
 /// `agent.getName(options)` — stable pool key derived from connection facts.
@@ -985,7 +1000,6 @@ pub fn req_end(
         let current_agent = current.agent.clone();
         let current_target = current.target.clone();
         let current_req = current.req.clone();
-        drop(current);
         match current_agent.as_ref() {
             None => false,
             Some(agent) => {
@@ -993,17 +1007,20 @@ pub fn req_end(
                     Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
                     _ => usize::MAX,
                 };
-                if max == usize::MAX {
+                let max_total = match execute::get_property(agent, "maxTotalSockets") {
+                    Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+                    _ => usize::MAX,
+                };
+                if max == usize::MAX && max_total == usize::MAX {
                     false
                 } else {
-                    let active = guard
+                    let active_for_name = guard
                         .http
                         .clientreqs
                         .values()
                         .filter(|request| {
                             request.dispatched
                                 && !request.response_closed
-                                && !request.aborted
                                 && request.agent.as_ref().is_some_and(|candidate| {
                                     execute::same_identity(candidate, agent)
                                         && agent_name(&request.target, agent)
@@ -1011,7 +1028,19 @@ pub fn req_end(
                                 })
                         })
                         .count();
-                    if active >= max {
+                    let active_total = guard
+                        .http
+                        .clientreqs
+                        .values()
+                        .filter(|request| {
+                            request.dispatched
+                                && !request.response_closed
+                                && request.agent.as_ref().is_some_and(|candidate| {
+                                    execute::same_identity(candidate, agent)
+                                })
+                        })
+                        .count();
+                    if active_for_name >= max || active_total >= max_total {
                         if !guard.http.agent_pending.contains(&id) {
                             guard.http.agent_pending.push(id);
                         }
@@ -1543,12 +1572,11 @@ pub fn req_close(
             crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
         }
     }
-    if response.as_ref().is_some_and(|value| {
-        matches!(execute::get_property(value, "complete"), Value::Boolean(true))
-    }) {
-        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
-            req.response_closed = true;
-        }
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+        // A socket close is terminal for an aborted/no-response request too.
+        // Mark it closed before Agent queue accounting so the released
+        // physical slot can be reused exactly once.
+        req.response_closed = true;
     }
     if let (Some(agent), Some(target)) = (agent.as_ref(), target.as_ref()) {
         let name = agent_name(target, agent);
@@ -1621,13 +1649,52 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
         let Ok(mut guard) = state.try_borrow_mut() else {
             return;
         };
-        let position = guard.http.agent_pending.iter().position(|id| {
-            guard.http.clientreqs.get(id).is_some_and(|request| {
-                request.agent.as_ref().is_some_and(|candidate| {
-                    execute::same_identity(candidate, agent)
-                        && agent_name(&request.target, agent) == name
-                })
+        let max_total = match execute::get_property(agent, "maxTotalSockets") {
+            Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+            _ => usize::MAX,
+        };
+        let active_total = guard
+            .http
+            .clientreqs
+            .values()
+            .filter(|request| {
+                request.dispatched
+                    && !request.response_closed
+                    && request.agent.as_ref().is_some_and(|candidate| {
+                        execute::same_identity(candidate, agent)
+                    })
             })
+            .count();
+        let position = guard.http.agent_pending.iter().position(|id| {
+            let Some(request) = guard.http.clientreqs.get(id) else {
+                return false;
+            };
+            let same_agent = request
+                .agent
+                .as_ref()
+                .is_some_and(|candidate| execute::same_identity(candidate, agent));
+            if !same_agent || active_total >= max_total {
+                return false;
+            }
+            let request_name = agent_name(&request.target, agent);
+            let max_sockets = match execute::get_property(agent, "maxSockets") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                _ => usize::MAX,
+            };
+            let active_name = guard
+                .http
+                .clientreqs
+                .values()
+                .filter(|candidate| {
+                    candidate.dispatched
+                        && !candidate.response_closed
+                        && candidate.agent.as_ref().is_some_and(|value| {
+                            execute::same_identity(value, agent)
+                                && agent_name(&candidate.target, agent) == request_name
+                        })
+                })
+                .count();
+            active_name < max_sockets && (request_name == name || active_total < max_total)
         });
         position.and_then(|index| {
             guard.http.agent_pending.get(index).copied().map(|id| {
@@ -2207,6 +2274,9 @@ fn pool_response_socket(
         .clientreqs
         .get(&client_id)
         .and_then(|request| {
+            if request.aborted {
+                return None;
+            }
             request
                 .agent
                 .as_ref()
@@ -2333,7 +2403,8 @@ pub fn res_end_handler(
             .clientreqs
             .get(&client_id)
             .is_some_and(|request| {
-                request
+                !request.aborted
+                    && request
                     .agent
                     .as_ref()
                     .is_some_and(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
@@ -2346,20 +2417,16 @@ pub fn res_end_handler(
         if pooled {
             // Idle HTTP agent sockets are retained for reuse but do not keep
             // the process alive. A later request refs the socket when reused.
-            if let (Some(agent), Some(target)) = (
-                state
-                    .borrow()
-                    .http
-                    .clientreqs
-                    .get(&client_id)
-                    .and_then(|request| request.agent.clone()),
-                state
-                    .borrow()
-                    .http
-                    .clientreqs
-                    .get(&client_id)
-                    .map(|request| request.target.clone()),
-            ) {
+            let agent_target = {
+                let guard = state.borrow();
+                guard.http.clientreqs.get(&client_id).and_then(|request| {
+                    request
+                        .agent
+                        .clone()
+                        .map(|agent| (agent, request.target.clone()))
+                })
+            };
+            if let Some((agent, target)) = agent_target {
                 let name = agent_name(&target, &agent);
                 drain_agent_pending(state, &agent, &name);
             }
