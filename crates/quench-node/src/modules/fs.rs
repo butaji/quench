@@ -941,17 +941,17 @@ pub fn create_read_stream(
         &open,
         vec![
             stream.clone(),
-            path.map(Value::String).unwrap_or(Value::String(String::new())),
+            Value::String(path.unwrap_or_default()),
             options,
         ],
     );
     Ok(stream)
 }
 
-fn readable_stream(state: &Rc<RefCell<HostState>>, options: &Value) -> Result<Value, VmError> {
+fn readable_stream(state: &Rc<RefCell<HostState>>, _options: &Value) -> Result<Value, VmError> {
     let module = crate::modules::stream::build(state)?;
     let constructor = execute::get_property_result(&module, "Readable")?;
-    execute::construct_value(&constructor, std::slice::from_ref(options))
+    execute::construct_value(&constructor, &[host_api::object(Vec::new())])
         .or_else(|_| crate::modules::events::new_emitter_object(state))
 }
 
@@ -1037,11 +1037,7 @@ pub fn read_stream_open(
                 execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
                 execute::set_property_in_place(&stream, "fd", Value::Null);
             }
-            return crate::modules::events::method_emit(
-                state,
-                Some(stream),
-                &[Value::String("error".into()), error],
-            );
+            return emit_stream_event(state, stream, "error", vec![error]);
         }
     };
     let start = stream_number_option(&options, "start").unwrap_or(0);
@@ -1052,11 +1048,7 @@ pub fn read_stream_open(
     let start = start.min(end);
     let fd = Value::Number(3.0);
     execute::set_property_in_place(&stream, "fd", fd.clone());
-    crate::modules::events::method_emit(
-        state,
-        Some(stream),
-        &[Value::String("open".into()), fd],
-    )?;
+    emit_stream_event(state, stream, "open", vec![fd])?;
     let chunk = &bytes[start..end];
     let encoding = execute::get_property(&options, "encoding");
     let data = if let Value::String(encoding) = encoding {
@@ -1066,23 +1058,30 @@ pub fn read_stream_open(
     };
     execute::set_property_in_place(&stream, "bytesRead", Value::Number(chunk.len() as f64));
     if !chunk.is_empty() {
-        crate::modules::events::method_emit(
-            state,
-            Some(stream),
-            &[Value::String("data".into()), data],
-        )?;
+        emit_stream_event(state, stream, "data", vec![data])?;
     }
-    crate::modules::events::method_emit(state, Some(stream), &[Value::String("end".into())])?;
+    emit_stream_event(state, stream, "end", Vec::new())?;
     if !matches!(execute::get_property(&options, "autoClose"), Value::Boolean(false)) {
         execute::set_property_in_place(&stream, "fd", Value::Null);
         execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-        crate::modules::events::method_emit(
-            state,
-            Some(stream),
-            &[Value::String("close".into())],
-        )?;
+        emit_stream_event(state, stream, "close", Vec::new())?;
     }
     Ok(Value::Undefined)
+}
+
+fn emit_stream_event(
+    state: &Rc<RefCell<HostState>>,
+    stream: &Value,
+    event: &str,
+    mut args: Vec<Value>,
+) -> Result<Value, VmError> {
+    let emit = execute::get_property(stream, "emit");
+    if quench_runtime::is_callable(&emit) {
+        args.insert(0, Value::String(event.into()));
+        return execute::call(&emit, stream, &args);
+    }
+    args.insert(0, Value::String(event.into()));
+    crate::modules::events::method_emit(state, Some(stream), &args)
 }
 
 fn stream_number_option(options: &Value, key: &str) -> Option<usize> {
