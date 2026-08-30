@@ -19,7 +19,7 @@ const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let (object, _id) = new_net_object(state, server_props())?;
     register_server(state, &object, None)?;
-    add_listener_cb(state, &object, args.first(), "connection")?;
+    add_listener_cb(state, &object, args.first(), "connection", false)?;
     Ok(object)
 }
 
@@ -485,7 +485,7 @@ fn connect_with_receiver(
         encoding: None,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
-    add_listener_cb(state, &object, args.last(), "connect")?;
+    add_listener_cb(state, &object, args.last(), "connect", true)?;
     if let Some(options) = args.first().filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
         let signal = execute::get_property(options, "signal");
         if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -762,7 +762,7 @@ pub fn server_listen(
             }
         };
         register_server(state, &receiver, Some(listener))?;
-        add_listener_cb(state, &receiver, args.first(), "listening")?;
+        add_listener_cb(state, &receiver, args.first(), "listening", true)?;
         return Ok(receiver);
     }
     if let Some(path) = args.first().filter(|value| {
@@ -783,7 +783,7 @@ pub fn server_listen(
             let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
             state.borrow_mut().net.paths.insert(path.clone(), port);
             register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
-            add_listener_cb(state, &receiver, args.last(), "listening")?;
+            add_listener_cb(state, &receiver, args.last(), "listening", true)?;
             return Ok(receiver);
         }
     }
@@ -800,7 +800,7 @@ pub fn server_listen(
     };
     register_server(state, &receiver, Some(listener))?;
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
-    add_listener_cb(state, &receiver, args.last(), "listening")?;
+    add_listener_cb(state, &receiver, args.last(), "listening", true)?;
     Ok(receiver.clone())
 }
 
@@ -828,20 +828,22 @@ fn bind_listener(port: u16, host: Option<&str>) -> std::io::Result<TcpListener> 
     Ok(listener)
 }
 
-/// Register a callable `cb` as a one-shot listener for `event`.
+/// Register a callable callback for a lifecycle event.
 fn add_listener_cb(
     state: &Rc<RefCell<HostState>>,
     receiver: &Value,
     cb: Option<&Value>,
     event: &str,
+    once: bool,
 ) -> Result<(), VmError> {
     if let Some(cb) = cb {
         if quench_runtime::is_callable(cb) {
-            crate::modules::events::method_once(
-                state,
-                Some(receiver),
-                &[Value::String(event.to_string()), cb.clone()],
-            )?;
+            let args = &[Value::String(event.to_string()), cb.clone()];
+            if once {
+                crate::modules::events::method_once(state, Some(receiver), args)?;
+            } else {
+                crate::modules::events::method_on(state, Some(receiver), args)?;
+            }
         }
     }
     Ok(())
@@ -908,7 +910,7 @@ pub fn server_close(
     // active responses remain owned by their normal EOF/close transitions.
     server_close_idle(state, Some(&receiver), &[])?;
     super::set_server_listening(&receiver, false)?;
-    add_listener_cb(state, &receiver, args.first(), "close")?;
+    add_listener_cb(state, &receiver, args.first(), "close", true)?;
     let no_connections = !state.borrow().net.sockets.values().any(|socket| {
         socket.borrow().server_id == Some(id) && socket.borrow().state != SocketState::Closed
     });
