@@ -190,7 +190,7 @@ fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> 
     if own.is_none() {
         return false;
     }
-    metadata.is_none_or(|value| writable_data_descriptor(&value))
+    metadata.map_or(true, |value| writable_data_descriptor(&value))
 }
 
 fn writable_data_descriptor(value: &crate::value::Value) -> bool {

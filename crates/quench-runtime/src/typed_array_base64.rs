@@ -119,14 +119,16 @@ fn base64_options(arguments: &[Value]) -> Result<Base64Options, VmError> {
     })
 }
 
-fn uint8_array_from_bytes(bytes: &[u8]) -> Value {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(bytes.len()));
+fn uint8_array_from_bytes(bytes: &[u8]) -> Result<Value, VmError> {
+    let buffer = crate::value::ArrayBufferData::try_new(bytes.len())
+        .map(Rc::new)
+        .ok_or_else(|| crate::value::error::throw_range_error("ArrayBuffer allocation failed"))?;
     buffer.bytes.borrow_mut().copy_from_slice(bytes);
-    Value::Uint8Array(Rc::new(crate::value::Uint8ArrayData::new(
+    Ok(Value::Uint8Array(Rc::new(crate::value::Uint8ArrayData::new(
         buffer,
         0,
         bytes.len(),
-    )))
+    ))))
 }
 
 fn from_base64(arguments: &[Value]) -> Result<Value, VmError> {
@@ -136,7 +138,7 @@ fn from_base64(arguments: &[Value]) -> Result<Value, VmError> {
     if decoded.failed {
         return Err(syntax_error());
     }
-    Ok(uint8_array_from_bytes(&decoded.bytes))
+    uint8_array_from_bytes(&decoded.bytes)
 }
 
 fn from_hex(arguments: &[Value]) -> Result<Value, VmError> {
@@ -145,7 +147,7 @@ fn from_hex(arguments: &[Value]) -> Result<Value, VmError> {
     if decoded.failed {
         return Err(syntax_error());
     }
-    Ok(uint8_array_from_bytes(&decoded.bytes))
+    uint8_array_from_bytes(&decoded.bytes)
 }
 
 fn uint8_receiver(receiver: Option<&Value>) -> Result<&crate::value::Uint8ArrayData, VmError> {
@@ -256,7 +258,7 @@ fn subarray(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     };
     let end_omitted = arguments
         .get(1)
-        .is_none_or(|value| matches!(value, Value::Undefined));
+        .map_or(true, |value| matches!(value, Value::Undefined));
     let default = match view {
         Value::Float64Array(_) => Builtin::Float64Array,
         Value::Float32Array(_) => Builtin::Float32Array,

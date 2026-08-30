@@ -507,9 +507,9 @@ fn modifier_mode(
     disabling: Option<&ast::Modifier>,
     enabled: impl Fn(&ast::Modifier) -> bool,
 ) -> Option<bool> {
-    if enabling.is_some_and(|modifier| enabled(modifier)) {
+    if enabling.is_some_and(&enabled) {
         Some(true)
-    } else if disabling.is_some_and(|modifier| enabled(modifier)) {
+    } else if disabling.is_some_and(enabled) {
         Some(false)
     } else {
         None

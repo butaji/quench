@@ -234,7 +234,7 @@ fn construct_inner(
         CALENDAR_YEAR_BOUNDS
             .iter()
             .find(|(name, _, _)| *name == calendar)
-            .is_none_or(|(_, min_year, max_year)| {
+            .map_or(true, |(_, min_year, max_year)| {
                 (f64::from(*min_year)..=f64::from(*max_year)).contains(&year)
             })
     };
@@ -914,7 +914,7 @@ fn is_iso_calendar_string(value: &str) -> bool {
         if fields.next().is_some() || !digits(year, 4, 6) || !digits(month, 2, 2) {
             return false;
         }
-        return day.is_none_or(|day| digits(day, 2, 2));
+        return day.map_or(true, |day| digits(day, 2, 2));
     }
     let fields: Vec<_> = base.split('-').collect();
     match fields.as_slice() {

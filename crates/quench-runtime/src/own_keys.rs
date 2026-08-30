@@ -101,7 +101,7 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
                         .find_map(|(name, value)| (name == "enumerable").then_some(value)),
                     _ => None,
                 })
-                .is_none_or(|value| matches!(value, Value::Boolean(true)));
+                .map_or(true, |value| matches!(value, Value::Boolean(true)));
             if !enumerable {
                 continue;
             }

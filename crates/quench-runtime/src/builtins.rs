@@ -316,6 +316,10 @@ pub(crate) fn intrinsic_override_keys(builtin: Builtin) -> Vec<String> {
     overrides::keys(builtin)
 }
 
+pub(crate) fn intrinsic_prototype_state_changed(builtin: Builtin) -> bool {
+    overrides::has_state(builtin)
+}
+
 /// Read the data value of a runtime-defined intrinsic property override, if
 /// the recorded descriptor carries one. Accessor descriptors are left to the
 /// caller to invoke.

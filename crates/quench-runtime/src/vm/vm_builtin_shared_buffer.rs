@@ -173,7 +173,8 @@ pub(crate) fn slice_to_immutable(
         .max(start);
     ensure_slice_source(buffer, end)?;
     let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
-    let mut result = crate::value::ArrayBufferData::new(bytes.len());
+    let mut result = crate::value::ArrayBufferData::try_new(bytes.len())
+        .ok_or_else(|| crate::value::error::throw_range_error("ArrayBuffer allocation failed"))?;
     result.bytes.borrow_mut().copy_from_slice(&bytes);
     result.immutable = true;
     Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))

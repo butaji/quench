@@ -1038,6 +1038,8 @@ pub struct ObjectData {
     // Derived tri-state cache for deletion tombstones. The canonical property
     // vector remains authoritative; this only avoids repeated absence scans.
     deleted_marker_state: std::cell::Cell<u8>,
+    extensible_state: std::cell::Cell<u8>,
+    plain_index_state: std::cell::Cell<u8>,
 }
 
 impl Drop for ObjectData {
@@ -1067,6 +1069,8 @@ impl Clone for ObjectData {
             created: self.created.clone(),
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
+            extensible_state: std::cell::Cell::new(0),
+            plain_index_state: std::cell::Cell::new(0),
         }
     }
 }
@@ -1228,6 +1232,24 @@ impl ObjectData {
     ) -> Self {
         crate::execution_trace::object_lifecycle(true);
         crate::execution_trace::object_shape(&properties);
+        let extensible_state = if properties
+            .iter()
+            .any(|(name, _)| name == "\0quench:non_extensible")
+        {
+            2
+        } else {
+            1
+        };
+        let plain_index_state = if properties.iter().any(|(name, _)| {
+            name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator")
+        }) || properties.iter().any(|(name, value)| {
+            name == "\0prototype"
+                && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype))
+        }) {
+            2
+        } else {
+            1
+        };
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
@@ -1238,7 +1260,33 @@ impl ObjectData {
             created,
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
+            extensible_state: std::cell::Cell::new(extensible_state),
+            plain_index_state: std::cell::Cell::new(plain_index_state),
         }
+    }
+
+    pub(crate) fn extensibility_cached(&self) -> Option<bool> {
+        match self.extensible_state.get() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_extensibility_cached(&self, extensible: bool) {
+        self.extensible_state.set(if extensible { 1 } else { 2 });
+    }
+
+    pub(crate) fn plain_index_cached(&self) -> Option<bool> {
+        match self.plain_index_state.get() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_plain_index_cached(&self, plain: bool) {
+        self.plain_index_state.set(if plain { 1 } else { 2 });
     }
 
     #[inline]
@@ -1353,6 +1401,10 @@ struct InternedObjectLayout {
 
 thread_local! {
     static OBJECT_LAYOUTS: RefCell<Vec<InternedObjectLayout>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn reset_object_layout_cache() {
+    OBJECT_LAYOUTS.with(|layouts| layouts.borrow_mut().clear());
 }
 
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {

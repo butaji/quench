@@ -102,7 +102,7 @@ fn recognize_word_call(function: &crate::value::FunctionValue) -> Option<WordCal
         && returned.opcode == crate::ir::Opcode::Return
         && returned.a == add.a
         && trailing_undefined_return(code))
-    .then(|| WordCallPlan::AddConstant(*value))
+    .then_some(WordCallPlan::AddConstant(*value))
 }
 
 fn trailing_undefined_return(code: crate::machine::CodeView<'_>) -> bool {

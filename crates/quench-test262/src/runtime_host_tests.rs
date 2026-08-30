@@ -19,6 +19,47 @@ fn stage_report_requires_complete_path_coverage() {
 }
 
 #[test]
+fn stage_report_rejects_duplicate_or_unknown_failures() {
+    let paths = vec![PathBuf::from("a.js"), PathBuf::from("b.js")];
+    let duplicate = crate::StageReport {
+        total: 2,
+        passed: 0,
+        failed: 2,
+        failures: vec![
+            (paths[0].clone(), "first".to_string()),
+            (paths[0].clone(), "duplicate".to_string()),
+        ],
+    };
+    assert!(!duplicate.covers(&paths));
+
+    let unknown = crate::StageReport {
+        total: 2,
+        passed: 1,
+        failed: 1,
+        failures: vec![(PathBuf::from("other.js"), "unknown".to_string())],
+    };
+    assert!(!unknown.covers(&paths));
+    let outcomes = crate::StageReport::outcomes(&unknown, &paths);
+    assert_eq!(outcomes.len(), paths.len());
+    assert!(matches!(
+        outcomes.get(&paths[0]),
+        Some(crate::TestOutcome::Pass)
+    ));
+    assert!(matches!(
+        outcomes.get(&paths[1]),
+        Some(crate::TestOutcome::Pass)
+    ));
+
+    let overflowing = crate::StageReport {
+        total: paths.len(),
+        passed: usize::MAX,
+        failed: 1,
+        failures: Vec::new(),
+    };
+    assert!(!overflowing.covers(&paths));
+}
+
+#[test]
 fn sequential_script_units_share_global_function_bindings() {
     let mut host = super::RuntimeHost;
     host.run_harnessed_script(
@@ -37,6 +78,43 @@ fn array_map_call_accepts_array_like_receiver() {
          if (result[0] !== 'a' || result[1] !== 'b') throw new Error('map.call');",
     )
     .expect("Array.prototype.map.call must support array-like receivers");
+}
+
+#[test]
+fn typed_array_array_like_reads_mutated_object_prototype() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "Object.prototype[0] = 7;\n\
+         var result = new Uint8Array({length: 1});\n\
+         if (result[0] !== 7) throw new Error('inherited array-like index');",
+    )
+    .expect("typed-array array-like construction must observe inherited indices");
+}
+
+#[test]
+fn typed_array_propagates_array_like_iterator_errors() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var source = {length: 1, [Symbol.iterator]: function() { throw new Error('boom'); }};\n\
+         var threw = false;\n\
+         try { new Uint8Array(source); } catch (error) { threw = error.message === 'boom'; }\n\
+         if (!threw) throw new Error('iterator error was swallowed');",
+    )
+    .expect("typed-array construction must propagate iterator errors");
+}
+
+#[test]
+fn typed_array_array_like_preserves_iterator_receiver_identity() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var source = {length: 1, 0: 7};\n\
+         Object.defineProperty(source, Symbol.iterator, {get: function() {\n\
+           if (this !== source) throw new Error('wrong receiver');\n\
+           return undefined;\n\
+         }});\n\
+         if (new Uint8Array(source)[0] !== 7) throw new Error('array-like value');",
+    )
+    .expect("typed-array source accessors must receive the original object");
 }
 
 #[test]

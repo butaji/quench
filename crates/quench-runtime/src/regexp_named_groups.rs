@@ -104,7 +104,7 @@ fn paths_can_coexist(left: &[(usize, usize)], right: &[(usize, usize)]) -> bool 
         right
             .iter()
             .find(|(other_id, _)| other_id == id)
-            .is_none_or(|(_, other_branch)| other_branch == branch)
+            .map_or(true, |(_, other_branch)| other_branch == branch)
     })
 }
 
