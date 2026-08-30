@@ -2536,6 +2536,29 @@ pub fn net_connect(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // Agent.createSocket follows the Node callback contract
+    // `(request, options, callback)`, while the shared net connector accepts
+    // `(options, callback)`. Keep that mechanical adapter at the capability
+    // boundary so all Agent implementations still converge on one connector
+    // state machine.
+    let normalized;
+    let args = if receiver
+        .is_some_and(|value| crate::modules::net::net_id(value).is_none())
+        && matches!(args.first(), Some(Value::Object(_) | Value::ObjectAlias(_)))
+        && matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_)))
+        && matches!(
+            execute::get_property(args.first().unwrap(), "port"),
+            Value::Undefined
+        )
+        && !matches!(execute::get_property(args.get(1).unwrap(), "port"), Value::Undefined)
+    {
+        normalized = std::iter::once(args[1].clone())
+            .chain(args.iter().skip(2).cloned())
+            .collect::<Vec<_>>();
+        normalized.as_slice()
+    } else {
+        args
+    };
     match receiver {
         Some(receiver) if crate::modules::net::net_id(receiver).is_some() => {
             crate::modules::net::connect_existing(state, receiver, args)
