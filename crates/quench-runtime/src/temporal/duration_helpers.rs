@@ -1210,24 +1210,6 @@ fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {
     })
 }
 
-fn duration_value(value: &Value) -> i128 {
-    [
-        ("years", 31_536_000_000_000_000_i128),
-        ("months", 2_592_000_000_000_000),
-        ("weeks", 604_800_000_000_000),
-        ("days", 86_400_000_000_000),
-        ("hours", 3_600_000_000_000),
-        ("minutes", 60_000_000_000),
-        ("seconds", 1_000_000_000),
-        ("milliseconds", 1_000_000),
-        ("microseconds", 1_000),
-        ("nanoseconds", 1),
-    ]
-    .iter()
-    .map(|(name, scale)| number_property(value, name) as i128 * scale)
-    .sum()
-}
-
 fn exact_time_difference(left: &Value, right: &Value) -> i128 {
     let left = time_nanoseconds(left);
     let right = time_nanoseconds(right);
