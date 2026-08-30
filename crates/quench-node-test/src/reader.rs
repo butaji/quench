@@ -173,8 +173,11 @@ impl NodeRunner {
         let source = format!(
             "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{support_surface}\n{async_resource_surface}\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
         );
+        // Node's two global spellings are one identity. Declare the alias in
+        // the runner realm so fixtures using `global.gc`, `global.process`,
+        // and identity checks observe the same host surface as `globalThis`.
         let source =
-            format!("{globals_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+            format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc;\n{globals_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         self.host
             .state()
             .borrow_mut()
