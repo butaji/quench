@@ -103,6 +103,9 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
   localhostIPv4: "127.0.0.1",
   localhostIPv6: "::1",
   hasIPv6: true,
+  // Keep the socket fixture name in the shared helper object so every
+  // `require('../common')` spelling observes the same path fact.
+  PIPE: `node-test.${process.pid}.sock`,
   expectsError: (expected, exact = 1) => globalThis.__nodeCommon.mustCall((error) => {
     if (!error) throw new Error("Expected filesystem error");
     if (typeof expected === "function") {
