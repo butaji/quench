@@ -62,6 +62,7 @@ pub fn build_value() -> Value {
                 "dirxml",
                 "error",
                 "groupCollapsed",
+                "_format",
             ] {
                 if let Ok(method) = quench_runtime::execute::get_property_result(&prototype, name) {
                     module = quench_runtime::execute::set_property(module, name, method);
@@ -84,7 +85,9 @@ const CONSOLE_CLASS: &str = r#"(class Console {
     if (!this._stderr) this._stderr = globalThis?.process?.stderr;
   }
   _format(output, args) {
-    const util = globalThis.__nodeUtil || globalThis.require?.("util");
+    const util = (typeof require === "function"
+        ? require("util")
+        : undefined);
     const format = util?.format;
     const formatWithOptions = util?.formatWithOptions;
     const configured = this._inspectOptions &&
