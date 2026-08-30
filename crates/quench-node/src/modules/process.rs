@@ -280,6 +280,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ("hrtime", hrtime),
         ("cpuUsage", crate::host::process_cpu_usage_capability()),
         ("threadCpuUsage", crate::host::process_cpu_usage_capability()),
+        (
+            "initgroups",
+            crate::host::capability(crate::registry::SPEC_PROCESS_INITGROUPS),
+        ),
         ("uptime", crate::host::process_uptime_capability()),
         (
             "availableMemory",
