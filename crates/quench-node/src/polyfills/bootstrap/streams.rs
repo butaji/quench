@@ -221,7 +221,7 @@ class NodeAbortSignal {
 }
 class NodeAbortController {
   constructor() {
-    this._signal = new NodeAbortSignal(undefined, true);
+    this.signal = new NodeAbortSignal(undefined, true);
   }
   abort(reason) {
     if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
@@ -263,7 +263,7 @@ NodeAbortController.prototype[Symbol.toStringTag] = "AbortController";
 Object.defineProperty(NodeAbortController.prototype, "signal", {
   get() {
     if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
-    return this._signal;
+    return this.signal;
   },
 });
 globalThis.AbortSignal = NodeAbortSignal;

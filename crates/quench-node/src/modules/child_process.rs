@@ -4,7 +4,6 @@
 //! CLI without a shell.
 
 use std::io::Write;
-use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
 
 use quench_runtime::execute::{self, VmError};
@@ -12,44 +11,6 @@ use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
-
-/// Execute one shell command at the host boundary, preserving the ordinary
-/// `exec()` output contract for commands that use shell syntax.
-pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::Result<Output> {
-    let mut process = if cfg!(windows) {
-        let mut shell = Command::new("cmd");
-        shell.args(["/C", command]);
-        shell
-    } else {
-        let mut shell = Command::new("sh");
-        shell.args(["-c", command]);
-        shell
-    };
-    if let Some(options) = options {
-        if let Some(cwd) = opt_str(options, "cwd") {
-            process.current_dir(cwd);
-        }
-        if let Some(env) = opt_env(options) {
-            process.env_clear().envs(env);
-        }
-    }
-    let self_path = std::env::current_exe().ok();
-    if self_path
-        .as_ref()
-        .and_then(|path| path.to_str())
-        .is_some_and(|path| command.contains(path))
-    {
-        process.env("QUENCH_CHILD_RUNNER", "1");
-        process.env("QUENCH_PARENT_PID", std::process::id().to_string());
-    }
-    process.output()
-}
-
-pub(crate) fn needs_shell(command: &str) -> bool {
-    command
-        .chars()
-        .any(|character| matches!(character, '<' | '>' | '|' | '&' | ';'))
-}
 
 /// `child_process.spawnSync(command[, args][, options])`. Returns a
 /// result object with `pid`, `status`, `signal`, `stdout`, `stderr`.

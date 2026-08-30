@@ -91,10 +91,7 @@ fn recognize_word_call(function: &crate::value::FunctionValue) -> Option<WordCal
     let (_, crate::ops::Constant::Number(value)) = code.constant_at(1)? else {
         return None;
     };
-    (matches!(
-        parameter.opcode,
-        crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked
-    )
+    (parameter.opcode == crate::ir::Opcode::LoadLocal
         && parameter.b == parameter_slot
         && constant.opcode == crate::ir::Opcode::LoadConst
         && word_add_operator(add)

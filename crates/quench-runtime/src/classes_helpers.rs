@@ -28,10 +28,6 @@ fn emit_default_constructor(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
 
 fn emit_object(ops: &mut Vec<Op>, next: &mut u16, properties: Vec<(String, u16)>) -> u16 {
     let dst = take_register(next);
-    let properties = properties
-        .into_iter()
-        .map(|(name, value)| (name.into(), value))
-        .collect();
     ops.push(Op::MakeObject { dst, properties });
     dst
 }

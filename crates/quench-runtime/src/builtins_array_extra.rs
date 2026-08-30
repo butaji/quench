@@ -41,7 +41,7 @@ pub(crate) fn array_to_spliced(
         crate::conversion::to_number(&arguments[1])?.max(0.0).trunc() as usize
     }.min(length - start);
     let new_length = length.saturating_sub(delete_count).saturating_add(arguments.len().saturating_sub(2));
-    if (new_length as u64) > 9_007_199_254_740_991u64 {
+    if new_length > 9_007_199_254_740_991usize {
         return Err(crate::value::error::throw_type_error("Array length exceeds maximum safe integer"));
     }
     if new_length > u32::MAX as usize {

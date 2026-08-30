@@ -16,9 +16,6 @@ impl QuenchNodeHost {
                     let name = arguments.first().map(safe_value_string).unwrap_or_default();
                     Ok(Value::String(format!("{}/{}", tmpdir_base(), name)))
                 }
-                HostCapabilityKind::Custom(CapabilityName::TmpdirHasEnoughSpace) => {
-                    Ok(Value::Boolean(false))
-                }
                 HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl) => {
                     let name = arguments.first().map(safe_value_string).unwrap_or_default();
                     Ok(quench_runtime::host_api::object(vec![(
@@ -29,14 +26,11 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::CommonFsNextdir) => {
                     let name = match arguments.first() {
                         Some(_) => arguments.first().map(safe_value_string).unwrap_or_default(),
-                        None => format!(
-                            "copy_{}",
-                            NODE_COPY_SEQUENCE.with(|seq| {
-                                let n = seq.get();
-                                seq.set(n + 1);
-                                n
-                            })
-                        ),
+                        None => format!("copy_{}", NODE_COPY_SEQUENCE.with(|seq| {
+                            let n = seq.get();
+                            seq.set(n + 1);
+                            n
+                        })),
                     };
                     Ok(Value::String(format!("{}/{}", tmpdir_base(), name)))
                 }

@@ -1,17 +1,9 @@
 (function (timers) {
   "use strict";
-  function abortError(signal) {
-    const error = Object.assign(new Error("The operation was aborted"), {
+  function abortError() {
+    return Object.assign(new Error("The operation was aborted"), {
       name: "AbortError", code: "ABORT_ERR"
     });
-    if (signal && signal.reason !== undefined) error.cause = signal.reason;
-    return error;
-  }
-  function invalidDelay(delay) {
-    if (delay === undefined || typeof delay === "number") return null;
-    const error = new TypeError('The "delay" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    return error;
   }
   function promiseTimer(schedule, cancel, value, options) {
     options = options === undefined ? {} : options;
@@ -49,7 +41,7 @@
         settled = true;
         cancel(timer);
         cleanup();
-        reject(abortError(signal));
+        reject(abortError());
       };
       timer = schedule(finish);
       if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
@@ -60,8 +52,6 @@
     });
   }
   function setTimeout(delay, value, options) {
-    const delayError = invalidDelay(delay);
-    if (delayError) return Promise.reject(delayError);
     if (options && options.signal !== undefined &&
         (!options.signal || typeof options.signal.addEventListener !== "function")) {
       const error = new TypeError("The signal option must be an AbortSignal");
@@ -79,13 +69,13 @@
   }
   function setInterval(delay, value, options) {
     options = options === undefined ? {} : options;
-    let optionError = null;
     if (!options || typeof options !== "object") {
-      optionError = new TypeError("The options argument must be an object");
-      optionError.code = "ERR_INVALID_ARG_TYPE";
-    } else if (options.ref !== undefined && typeof options.ref !== "boolean") {
-      optionError = new TypeError("The options.ref property must be of type boolean");
-      optionError.code = "ERR_INVALID_ARG_TYPE";
+      throw new TypeError("The options argument must be an object");
+    }
+    if (options.ref !== undefined && typeof options.ref !== "boolean") {
+      const error = new TypeError("The options.ref property must be of type boolean");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
     }
     let timer;
     let closed = false;
@@ -104,13 +94,12 @@
       removeAbortListener();
       while (waiters.length > 0) waiters.shift().reject(error);
     };
-    const signal = optionError ? undefined : options.signal;
-    if (!optionError && signal !== undefined &&
+    const signal = options.signal;
+    if (signal !== undefined &&
         (!signal || typeof signal.addEventListener !== "function")) {
-      optionError = new TypeError("The signal option must be an AbortSignal");
-      optionError.code = "ERR_INVALID_ARG_TYPE";
+      throw new TypeError("The signal option must be an AbortSignal");
     }
-    const onAbort = () => reject(abortError(signal));
+    const onAbort = () => reject(abortError());
     const removeAbortListener = () => {
       if (signal) signal.removeEventListener("abort", onAbort);
     };
@@ -135,18 +124,13 @@
       }
     };
     iterator[Symbol.asyncIterator] = function () { return this; };
-    if (optionError) {
-      failure = optionError;
-      closed = true;
-    } else {
-      timer = timers.setInterval(function () {
-        if (!closed) settle({ value, done: false });
-      }, delay);
-      if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
-      if (signal) {
-        if (signal.aborted) onAbort();
-        else signal.addEventListener("abort", onAbort);
-      }
+    timer = timers.setInterval(function () {
+      if (!closed) settle({ value, done: false });
+    }, delay);
+    if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort);
     }
     return iterator;
   }

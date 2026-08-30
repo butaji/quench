@@ -9,9 +9,6 @@ use crate::{environment::Environment, execute::VmError, value::Value};
 
 thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
-    // The owning Rc above is the canonical state. This derived pointer keeps
-    // hot local loads from cloning/borrowing that Rc on every bytecode op.
-    static CURRENT_ENVIRONMENT_PTR: Cell<*const Environment> = const { Cell::new(std::ptr::null()) };
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_REALM: RefCell<Option<crate::ops::RealmId>> = const { RefCell::new(None) };
     static REPLACEMENTS: RefCell<ReplacementMap<Replacement>> = RefCell::new(ReplacementMap::default());
@@ -100,7 +97,6 @@ impl Drop for StrictEvalGuard {
 
 pub(crate) struct EnvironmentGuard {
     previous: Option<Rc<Environment>>,
-    previous_pointer: *const Environment,
     previous_global: Option<Rc<Environment>>,
     previous_global_realm: Option<crate::ops::RealmId>,
 }
@@ -158,13 +154,6 @@ impl Drop for IterationBinding {
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
-        let current_pointer = CURRENT_ENVIRONMENT.with(|current| {
-            current
-                .borrow()
-                .as_ref()
-                .map_or(std::ptr::null(), Rc::as_ptr)
-        });
-        let previous_pointer = CURRENT_ENVIRONMENT_PTR.with(|pointer| pointer.replace(current_pointer));
         // Slot zero is the global object binding.  Install it before any
         // identifier/property resolution so host values attached to the
         // running context are observed through the actual global object.
@@ -184,7 +173,6 @@ impl EnvironmentGuard {
         });
         Self {
             previous,
-            previous_pointer,
             previous_global,
             previous_global_realm,
         }
@@ -197,7 +185,6 @@ impl EnvironmentGuard {
 
 impl Drop for EnvironmentGuard {
     fn drop(&mut self) {
-        CURRENT_ENVIRONMENT_PTR.with(|pointer| pointer.set(self.previous_pointer));
         CURRENT_ENVIRONMENT.with(|current| current.replace(self.previous.take()));
         GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous_global.take()));
         GLOBAL_LEXICAL_REALM.with(|value| value.replace(self.previous_global_realm));
@@ -210,15 +197,6 @@ pub(crate) fn current() -> Rc<Environment> {
         .unwrap_or_default()
 }
 
-#[inline(always)]
-fn with_current_ref<R>(use_environment: impl FnOnce(Option<&Environment>) -> R) -> R {
-    CURRENT_ENVIRONMENT_PTR.with(|pointer| {
-        // SAFETY: the pointer is derived from the owning CURRENT_ENVIRONMENT
-        // Rc and is restored whenever its guard leaves scope.
-        use_environment(unsafe { pointer.get().as_ref() })
-    })
-}
-
 pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
     GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.borrow().clone())
 }
@@ -227,8 +205,8 @@ pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
         || crate::vm::global_builtin_exists(name)
         || matches!(crate::vm::current_global_object(), Value::Object(object) if object
-            .physical_slot_for_name(name)
-            .is_some())
+            .iter()
+            .any(|(key, _)| key == name))
 }
 
 pub(crate) fn global_has_lexical_name(name: &str) -> bool {
@@ -241,7 +219,7 @@ pub(crate) fn has_name(name: &str) -> bool {
 }
 
 pub(crate) fn is_installed() -> bool {
-    with_current_ref(|environment| environment.is_some())
+    CURRENT_ENVIRONMENT.with(|current| current.borrow().is_some())
 }
 
 pub(crate) fn store(
@@ -283,8 +261,9 @@ pub(crate) fn store_proven(
     slot: u16,
     source: u16,
 ) -> Result<(), VmError> {
-    let fast = with_current_ref(|current| {
-        let environment = current?;
+    let fast = CURRENT_ENVIRONMENT.with(|current| {
+        let current = current.borrow();
+        let environment = current.as_ref()?;
         if environment.is_deleted_slot(slot)
             || environment.is_immutable_slot(slot)
             || environment.is_uninitialized(slot)
@@ -309,8 +288,9 @@ pub(crate) fn move_proven_local(
     source: u16,
     target: u16,
 ) -> Result<(), VmError> {
-    let fast = with_current_ref(|current| {
-        let environment = current?;
+    let fast = CURRENT_ENVIRONMENT.with(|current| {
+        let current = current.borrow();
+        let environment = current.as_ref()?;
         move_proven_local_in(environment, registers, dst, source, target).then_some(true)
     });
     if fast == Some(true) {
@@ -561,35 +541,31 @@ pub(crate) fn load_proven(
     slot: u16,
 ) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
-    let loaded = with_current_ref(|current| {
-        let Some(environment) = current else {
-            return false;
-        };
-        if environment.is_deleted_slot(slot) {
-            return false;
-        }
-        environment.load_proven_into(registers, dst, slot)
+    if current().is_deleted_slot(slot) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access deleted binding",
+        ));
+    }
+    let loaded = CURRENT_ENVIRONMENT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .is_some_and(|environment| environment.load_proven_into(registers, dst, slot))
     });
     if !loaded {
-        let environment = current();
-        if environment.is_deleted_slot(slot) {
-            return Err(crate::value::error::throw_reference_error(
-                "Cannot access deleted binding",
-            ));
-        }
-        environment.load_into(registers, dst, slot);
+        current().load_into(registers, dst, slot);
     }
     Ok(())
 }
 
 #[inline(always)]
-fn load_checked_in(
-    environment: &Environment,
+pub(crate) fn load_checked(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     slot: u16,
     name: &str,
 ) -> Result<(), VmError> {
+    let environment = current();
     if environment.is_deleted_slot(slot) {
         return Err(crate::value::error::throw_reference_error(&format!(
             "Cannot access deleted binding '{name}'"
@@ -601,25 +577,8 @@ fn load_checked_in(
         )));
     }
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
-    if !environment.load_existing_proven_into(registers, dst, slot) {
-        environment.load_into(registers, dst, slot);
-    }
+    environment.load_into(registers, dst, slot);
     Ok(())
-}
-
-pub(crate) fn load_checked(
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    slot: u16,
-    name: &str,
-) -> Result<(), VmError> {
-    let fast = with_current_ref(|current| {
-        current.map(|environment| load_checked_in(environment, registers, dst, slot, name))
-    });
-    if let Some(result) = fast {
-        return result;
-    }
-    load_checked_in(&current(), registers, dst, slot, name)
 }
 
 pub(crate) fn update(

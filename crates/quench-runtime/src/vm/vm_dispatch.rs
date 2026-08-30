@@ -2,7 +2,6 @@
 enum DispatchClass {
     Call,
     Global,
-    Branch,
     Other,
 }
 const _: () = assert!(std::mem::size_of::<DispatchClass>() <= 1);
@@ -15,8 +14,6 @@ fn classify_dispatch(op: &Op) -> DispatchClass {
         DispatchClass::Call
     } else if is_global_declaration_op(op) {
         DispatchClass::Global
-    } else if matches!(op, Op::Branch { .. }) {
-        DispatchClass::Branch
     } else {
         // All remaining opcodes share the same slow-path handoff. Keeping
         // this as one class avoids carrying speculative sub-classifications
@@ -35,12 +32,6 @@ fn run_op(
     match classify_dispatch(op) {
         DispatchClass::Call => return run_call_completion(registers, op, context).map(Some),
         DispatchClass::Global => crate::vm::begin_global_declaration_batch(),
-        DispatchClass::Branch => {
-            if crate::vm::is_global_declaration_batch_active() {
-                crate::vm::flush_global_declaration_batch(registers);
-            }
-            return crate::branch::execute_with_context(registers, op, context).map(Some);
-        }
         DispatchClass::Other => {
             if crate::vm::is_global_declaration_batch_active() {
                 crate::vm::flush_global_declaration_batch(registers);
@@ -50,7 +41,7 @@ fn run_op(
     if let Some(result) = run_simple_op(registers, op)? {
         return Ok(result.map(crate::completion::Completion::Return));
     }
-    if let Some(result) = run_control_op(registers, op, context)? {
+    if let Some(result) = run_control_op(registers, op)? {
         return Ok(Some(result));
     }
     run_dispatch_op(registers, op).map(|value| value.map(crate::completion::Completion::Return))
@@ -253,14 +244,13 @@ fn run_make_builtin(registers: &mut crate::register_file::RegisterFile, op: &Op)
 fn run_control_op(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
-    context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::completion::Completion;
     use Op::*;
     match op {
         ForIn { .. } => crate::loops::execute_for_in(registers, op).map(Some),
         ForOf { .. } => crate::loops::execute_for_of(registers, op).map(Some),
-        Branch { .. } => crate::branch::execute_with_context(registers, op, context).map(Some),
+        Branch { .. } => crate::branch::execute(registers, op).map(Some),
         Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
         With { .. } => crate::with_scope::execute(registers, op).map(Some),
         PrivateScope { .. } => crate::private_environment::execute_scope(registers, op).map(Some),
@@ -342,22 +332,10 @@ fn run_make_object(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), VmError> {
-    let (dst, is_global_view) = match op {
-        Op::MakeObject { dst, properties } => {
-            execute_object(registers, *dst, properties)?;
-            (*dst, false)
-        }
-        Op::MakeGlobalObjectView { dst, properties } => {
-            execute_global_object(registers, *dst, properties)?;
-            (*dst, true)
-        }
-        _ => return Ok(()),
-    };
-    {
-        let dst = dst;
-        let is_global_view = is_global_view;
-        if is_global_view {
-            let view = crate::execute::read_register(registers, dst)?.clone();
+    if let Op::MakeObject { dst, properties } | Op::MakeGlobalObjectView { dst, properties } = op {
+        execute_object(registers, *dst, properties)?;
+        if matches!(op, Op::MakeGlobalObjectView { .. }) {
+            let view = crate::execute::read_register(registers, *dst)?.clone();
             if let Value::Object(view) = view {
                 let owner = match crate::vm::current_global_object() {
                     Value::Object(owner) => owner,
@@ -380,11 +358,11 @@ fn run_make_object(
                         )),
                     ),
                 ));
-                crate::execute::write_value(registers, dst, value);
+                crate::execute::write_value(registers, *dst, value);
             }
         }
-        if let Value::Object(object) = read_register(registers, dst)? {
-            if !is_global_view {
+        if let Value::Object(object) = read_register(registers, *dst)? {
+            if matches!(op, Op::MakeObject { .. }) {
                 realm::initialize_current_global(object);
             }
         }
@@ -606,25 +584,6 @@ fn execute_array(
 include!("vm_array_build.rs");
 
 fn execute_object(
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    properties: &[(crate::value::PropertyName, u16)],
-) -> Result<(), VmError> {
-    let values = properties
-        .iter()
-        .map(|(key, index)| Ok((key.clone(), read_register(registers, *index)?)))
-        .collect::<Result<Vec<_>, VmError>>()?;
-    write_value(
-        registers,
-        dst,
-        Value::Object(Rc::new(crate::value::ObjectData::new_property_names(
-            values,
-        ))),
-    );
-    Ok(())
-}
-
-fn execute_global_object(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     properties: &[(String, u16)],

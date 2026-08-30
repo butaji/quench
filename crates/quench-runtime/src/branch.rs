@@ -12,16 +12,6 @@ pub(crate) fn execute(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Completion, VmError> {
-    let context = crate::vm::current_context_or_default();
-    execute_with_context(registers, op, &context)
-}
-
-#[inline]
-pub(crate) fn execute_with_context(
-    registers: &mut crate::register_file::RegisterFile,
-    op: &Op,
-    context: &crate::vm::VmContext,
-) -> Result<Completion, VmError> {
     let Op::Branch {
         condition,
         then_ops,
@@ -38,7 +28,7 @@ pub(crate) fn execute_with_context(
     let Some(selected) = selected.code() else {
         return missing_return();
     };
-    crate::vm::execute_code_completion_with_context(selected, registers, context)
+    crate::vm::execute_code_completion_in_current_frame(selected, registers)
 }
 
 #[cfg(test)]

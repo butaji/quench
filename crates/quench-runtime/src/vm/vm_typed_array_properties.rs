@@ -1,7 +1,3 @@
-fn typed_array_method(receiver: Value, prototype: Builtin, key: &str) -> Value {
-    crate::vm::bind_receiver_property(crate::builtins::property(prototype, key), &receiver)
-}
-
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
     if let Some(value) = buffer.own_property(key) {
         return value;
@@ -91,7 +87,7 @@ fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> V
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Float64Array(std::rc::Rc::new(view.clone())), Builtin::Float64ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Float64ArrayPrototype, key),
     }
 }
 
@@ -124,7 +120,7 @@ fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> V
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Float32Array(std::rc::Rc::new(view.clone())), Builtin::Float32ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Float32ArrayPrototype, key),
     }
 }
 fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
@@ -143,7 +139,7 @@ fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => Value::Number(crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64),
-        _ => typed_array_method(Value::Int8Array(std::rc::Rc::new(view.clone())), Builtin::Int8ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Int8ArrayPrototype, key),
     }
 }
 fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value {
@@ -164,7 +160,7 @@ fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Int16Array(std::rc::Rc::new(view.clone())), Builtin::Int16ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Int16ArrayPrototype, key),
     }
 }
 fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value {
@@ -185,7 +181,7 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Int32Array(std::rc::Rc::new(view.clone())), Builtin::Int32ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Int32ArrayPrototype, key),
     }
 }
 fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
@@ -227,7 +223,7 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Uint16Array(std::rc::Rc::new(view.clone())), Builtin::Uint16ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Uint16ArrayPrototype, key),
     }
 }
 
@@ -270,10 +266,10 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
             if let Some(prototype) = view.meta.prototype() {
                 let inherited = crate::vm::get_property(&prototype, key);
                 if !matches!(inherited, Value::Undefined) {
-                    return crate::vm::bind_receiver_property(inherited, &Value::Uint8Array(std::rc::Rc::new(view.clone())));
+                    return inherited;
                 }
             }
-            typed_array_method(Value::Uint8Array(std::rc::Rc::new(view.clone())), Builtin::Uint8ArrayPrototype, key)
+            crate::builtins::property(Builtin::Uint8ArrayPrototype, key)
         }
     }
 }
@@ -295,7 +291,7 @@ fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Val
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Uint32Array(std::rc::Rc::new(view.clone())), Builtin::Uint32ArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Uint32ArrayPrototype, key),
     }
 }
 fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key: &str) -> Value {
@@ -316,6 +312,6 @@ fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key:
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => typed_array_method(Value::Uint8ClampedArray(std::rc::Rc::new(view.clone())), Builtin::Uint8ClampedArrayPrototype, key),
+        _ => crate::builtins::property(Builtin::Uint8ClampedArrayPrototype, key),
     }
 }

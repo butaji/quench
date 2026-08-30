@@ -235,10 +235,7 @@ fn initialize_statement_ops(global: bool, script_this_global: bool) -> (Vec<Op>,
     } else {
         ops.push(Op::MakeObject {
             dst: object,
-            properties: properties
-                .iter()
-                .map(|(name, value)| (name.clone().into(), *value))
-                .collect(),
+            properties: properties.clone(),
         });
     }
     next_register = next_register.saturating_add(1);

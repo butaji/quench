@@ -11,21 +11,10 @@ pub(crate) fn require_common_module(name: &str) -> Option<Value> {
             ),
             ("path".into(), Value::String(tmpdir_base().into())),
             (
-                "hasEnoughSpace".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::TmpdirHasEnoughSpace,
-                )),
-            ),
-            (
                 "fileURL".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl)),
             ),
         ]));
-    }
-    if name.ends_with("/common/tick") || name.ends_with("/common/tick.js") {
-        return Some(capability_function(HostCapabilityKind::Custom(
-            CapabilityName::CommonTick,
-        )));
     }
     if name.ends_with("/common/fs") || name.ends_with("/common/fs.js") || name == "../common/fs" {
         return Some(quench_runtime::host_api::object(vec![
@@ -65,10 +54,10 @@ pub(crate) fn require_common_module(name: &str) -> Option<Value> {
 pub(crate) fn empty_module_stub(name: &str) -> Option<Value> {
     match name {
         "perf_hooks" | "node:perf_hooks" => Some(quench_runtime::host_api::object(vec![
-            (
-                "performance".into(),
-                quench_runtime::host_api::object(vec![("now".into(), Value::Undefined)]),
-            ),
+            ("performance".into(), quench_runtime::host_api::object(vec![(
+                "now".into(),
+                Value::Undefined,
+            )])),
             ("PerformanceObserver".into(), Value::Undefined),
         ])),
         "node:fs/promises" => Some(quench_runtime::host_api::object(vec![

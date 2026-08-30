@@ -257,19 +257,20 @@ fn request_head(
 }
 
 fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<(), VmError> {
-    let data_cap = crate::host::capability(crate::registry::SPEC_HTTP_RESDATA);
+    let data_cap = crate::host::capability(crate::registry::NodeSpec::new("http:resdata", 0x0F0B));
     crate::modules::events::method_on(
         state,
         Some(socket),
         &[Value::String("data".to_string()), data_cap],
     )?;
-    let end_cap = crate::host::capability(crate::registry::SPEC_HTTP_RESEND);
+    let end_cap = crate::host::capability(crate::registry::NodeSpec::new("http:resend", 0x0F0C));
     crate::modules::events::method_on(
         state,
         Some(socket),
         &[Value::String("end".to_string()), end_cap],
     )?;
-    let close_cap = crate::host::capability(crate::registry::SPEC_HTTP_REQCLOSE);
+    let close_cap =
+        crate::host::capability(crate::registry::NodeSpec::new("http:reqclose", 0x0F11));
     crate::modules::events::method_on(
         state,
         Some(socket),

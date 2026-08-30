@@ -19,7 +19,7 @@ const fixtures = [
 const runner = `
 let __quenchBenchSucceeded = true;
 const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
-  ? console.log.bind(console)
+  ? console.log
   : print;
 BenchmarkSuite.RunSuites({
   NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },
@@ -115,11 +115,12 @@ for (const fixture of selected) {
     outputEqual: nodeRuns.at(-1).stdout === quenchRuns.at(-1).stdout
   };
   console.log(JSON.stringify(summary));
+  const sample = quenchRuns.at(-1);
   results[fixture.slice(0, -3)] = {
-    node: summary.node,
-    quench: summary.quench,
+    Score: sample.score,
+    __time_ms: sample.wallNs / 1e6,
     valid,
-    output_equal: summary.outputEqual
+    timed_out: sample.timedOut
   };
 }
 if (output) writeFileSync(output, JSON.stringify({ results }, null, 2) + "\n");
