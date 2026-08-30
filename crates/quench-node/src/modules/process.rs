@@ -23,6 +23,7 @@ pub struct ProcessState {
     pub before_exit_handlers: Vec<(Value, bool)>,
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
+    pub uncaught_exception_capture_callback: Option<Value>,
     pub warning_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_mode: UnhandledRejectionMode,
@@ -62,6 +63,7 @@ impl ProcessState {
             exit_handlers: Vec::new(),
             before_exit_handlers: Vec::new(),
             uncaught_exception_handlers: Vec::new(),
+            uncaught_exception_capture_callback: None,
             warning_handlers: Vec::new(),
             unhandled_rejection_handlers: Vec::new(),
             unhandled_rejection_mode: UnhandledRejectionMode::Throw,
@@ -299,6 +301,18 @@ fn method_props() -> Vec<(&'static str, Value)> {
         (
             "unref",
             crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+        ),
+        (
+            "setUncaughtExceptionCaptureCallback",
+            crate::host::capability(
+                crate::registry::SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK,
+            ),
+        ),
+        (
+            "hasUncaughtExceptionCaptureCallback",
+            crate::host::capability(
+                crate::registry::SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK,
+            ),
         ),
         ("uptime", crate::host::process_uptime_capability()),
         (
