@@ -84,7 +84,7 @@ fn parse_zone_offset_minutes(value: &str) -> Option<i32> {
             4 => Some((&value[..2], &value[2..])),
             _ => None,
         },
-        |parts| Some(parts),
+        Some,
     )?;
     let hours = hours.parse::<i32>().ok()?;
     let minutes = minutes.parse::<i32>().ok()?;

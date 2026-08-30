@@ -80,6 +80,18 @@ pub(crate) fn keys(builtin: Builtin) -> Vec<String> {
     })
 }
 
+/// Whether runtime code has changed any observable state on this intrinsic.
+/// Keeping the four mutation classes behind one query lets fast paths guard
+/// against prototype drift without duplicating the override representation.
+pub(crate) fn has_state(builtin: Builtin) -> bool {
+    INTRINSIC_OVERRIDES
+        .with(|overrides| overrides.borrow().keys().any(|(owner, _)| *owner == builtin))
+        || INTRINSIC_REMOVED.with(|removed| removed.borrow().iter().any(|(owner, _)| *owner == builtin))
+        || INTRINSIC_PROTOTYPE_OVERRIDES
+            .with(|overrides| overrides.borrow().contains_key(&builtin))
+        || INTRINSIC_NON_EXTENSIBLE.with(|values| values.borrow().contains(&builtin))
+}
+
 pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
     changed();
     mark_array_prototype_dirty(builtin);

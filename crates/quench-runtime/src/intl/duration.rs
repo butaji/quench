@@ -441,7 +441,7 @@ fn digital_parts_result(slots: &[(String, Value)], fields: DurationFields) -> Ve
         let mut fraction = format!("{adjusted_remainder:09}");
         if let Some(digits) = slots.iter().find_map(|(key, value)| {
             (key == "fractionalDigits")
-                .then(|| match value {
+                .then_some(match value {
                     Value::Number(number) => Some(*number as usize),
                     _ => None,
                 })

@@ -250,7 +250,7 @@ impl ModuleGraph {
         if self.unit(entry).is_none() {
             return Err("module entry references an unknown unit".to_string());
         }
-        let mut state = HashMap::new();
+        let mut state = vec![0u8; self.units.len()];
         let mut order = Vec::new();
         self.visit(entry, &mut state, &mut order)?;
         Ok(order)
@@ -259,20 +259,23 @@ impl ModuleGraph {
     fn visit(
         &self,
         id: ModuleId,
-        state: &mut HashMap<ModuleId, u8>,
+        state: &mut [u8],
         order: &mut Vec<ModuleId>,
     ) -> Result<(), String> {
-        if state.get(&id).copied() == Some(2) {
+        let Some(status) = state.get(id.0 as usize).copied() else {
+            return Err("module edge references an unknown unit".to_string());
+        };
+        if status == 2 {
             return Ok(());
         }
-        if state.get(&id).copied() == Some(1) {
+        if status == 1 {
             return Ok(());
         }
-        state.insert(id, 1);
+        state[id.0 as usize] = 1;
         for dependency in self.edges.get(&id).into_iter().flatten() {
             self.visit(*dependency, state, order)?;
         }
-        state.insert(id, 2);
+        state[id.0 as usize] = 2;
         order.push(id);
         Ok(())
     }
