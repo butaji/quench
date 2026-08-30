@@ -227,7 +227,7 @@ pub(crate) fn set_socket_state(socket: &Value, pending: bool, connecting: bool, 
 /// need the runtime replacement path; direct objects can use the allocation-
 /// free host mutation path.
 pub(crate) fn set_socket_property(socket: &Value, key: &str, value: Value) {
-    if key == "pending" && matches!(value, Value::Boolean(false)) {
+    if matches!(key, "pending" | "readable") && matches!(value, Value::Boolean(false)) {
         let updated = execute::set_property(socket.clone(), key, value);
         execute::replace_value(socket, &updated);
     } else {

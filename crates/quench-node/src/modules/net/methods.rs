@@ -67,6 +67,9 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
                 );
             }
         }
+        if let Value::Boolean(value) = execute::get_property(options, "allowHalfOpen") {
+            execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(value));
+        }
     }
     let object = install_methods(
         object,
@@ -526,6 +529,9 @@ fn connect_with_receiver(
                 super::NO_DELAY_PROP,
                 Value::Boolean(true),
             );
+        }
+        if let Value::Boolean(value) = execute::get_property(options, "allowHalfOpen") {
+            execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(value));
         }
     }
     let handle = host_api::object(vec![
