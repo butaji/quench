@@ -5,33 +5,22 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
-    sync::OnceLock,
 };
 
 #[derive(Debug)]
 pub struct StringUnitsData {
     units: Vec<u16>,
-    hash: OnceLock<u64>,
 }
 
 impl StringUnitsData {
     pub fn new(units: Vec<u16>) -> Self {
-        Self {
-            units,
-            hash: OnceLock::new(),
-        }
-    }
-
-    pub fn cached_hash(&self, hash: impl FnOnce(&[u16]) -> u64) -> u64 {
-        *self.hash.get_or_init(|| hash(&self.units))
+        Self { units }
     }
 
     /// Append UTF-16 units while preserving the flat canonical representation.
-    /// Callers must have exclusive ownership of this value; replacing the
-    /// hash cache keeps derived state coherent after mutation.
+    /// Callers must have exclusive ownership of this value.
     pub fn append_units(&mut self, units: &[u16]) {
         self.units.extend_from_slice(units);
-        self.hash = OnceLock::new();
     }
 }
 
