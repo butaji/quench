@@ -36,6 +36,10 @@ pub use pump::{finalize, poll};
 const LOCAL_HOST: &str = "127.0.0.1";
 /// Hidden property that stores the host-side net id on a JS object.
 const NET_ID_PROP: &str = "\0quench:net:id";
+pub(crate) const ONREAD_BUFFER_PROP: &str = "\0quench:net:onread:buffer";
+pub(crate) const ONREAD_CALLBACK_PROP: &str = "\0quench:net:onread:callback";
+pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
+pub(crate) const ONREAD_EOF_PROP: &str = "\0quench:net:onread:eof";
 const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -67,6 +71,7 @@ pub struct NetSocket {
     pub refed: bool,
     pub server_id: Option<u64>,
     pub write_buf: Vec<u8>,
+    pub read_buf: Vec<u8>,
     pub bytes_read: u64,
     pub bytes_written: u64,
     pub read_eof: bool,
@@ -177,6 +182,7 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
         vec![
             ("bytesRead".to_string(), Value::Number(0.0)),
             ("bytesWritten".to_string(), Value::Number(0.0)),
+            ("bufferSize".to_string(), Value::Number(0.0)),
             (
                 "writableHighWaterMark".to_string(),
                 Value::Number(16_384.0),
