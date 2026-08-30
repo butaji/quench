@@ -137,6 +137,9 @@ fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
 fn agent_get_report() -> Value {
     run_due_agent_timers();
     AGENT_REPORTS.with(|reports| {
+        crate::atomics::expire_agent_waiters(&mut reports.borrow_mut());
+    });
+    AGENT_REPORTS.with(|reports| {
         let reports = reports.borrow();
         let consumed = AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow().clone());
         if let Some(index) = (0..reports.len()).find(|&index| {

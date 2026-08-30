@@ -23,6 +23,7 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::SymbolValueOf
             | Builtin::SymbolPrototypeToPrimitive
             | Builtin::SymbolDescriptionGetter
+            | Builtin::AbstractModuleSourceToStringTagGetter
             | Builtin::StringToString
             | Builtin::StringValueOf
             | Builtin::BoxedValueOf
@@ -31,6 +32,7 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeGetProto
             | Builtin::ObjectPrototypeSetProto
             | Builtin::ObjectPrototypeValueOf
+            | Builtin::FunctionPrototype
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
             | Builtin::FunctionPrototypeHasInstance
@@ -152,6 +154,7 @@ fn execute_simple_conversion(
         Builtin::SymbolToString => symbol_to_string(receiver),
         Builtin::SymbolValueOf | Builtin::SymbolPrototypeToPrimitive => symbol_value_of(receiver),
         Builtin::SymbolDescriptionGetter => symbol_description(receiver),
+        Builtin::AbstractModuleSourceToStringTagGetter => Ok(Value::Undefined),
         Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => crate::builtins::prototype_to_string_result(receiver),
@@ -175,6 +178,7 @@ fn execute_simple_conversion(
                 .map(|_| Value::Undefined)
         })(),
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
+        Builtin::FunctionPrototype => Ok(Value::Undefined),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
         }
