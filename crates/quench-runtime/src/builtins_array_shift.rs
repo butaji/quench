@@ -13,7 +13,7 @@ pub(crate) fn array_shift(receiver: Option<&Value>) -> Result<Value, crate::exec
         return Ok(Value::Undefined);
     }
     if let Value::Array(array) = &receiver {
-        if array.is_packed_ordinary() {
+        if array.is_packed_ordinary() && array.get_index(0).is_some() {
             let first = array.first().unwrap_or(Value::Undefined);
             let mut values = array.snapshot();
             values.remove(0);
@@ -23,7 +23,9 @@ pub(crate) fn array_shift(receiver: Option<&Value>) -> Result<Value, crate::exec
         }
     }
     let first = match &receiver {
-        Value::Array(array) => array.first().unwrap_or(Value::Undefined),
+        Value::Array(array) if array.get_index(0).is_some() => {
+            array.first().unwrap_or(Value::Undefined)
+        }
         _ => crate::execute::get_property_result(&receiver, "0")?,
     };
     let mut target = crate::locals::resolved_replacement(receiver.clone());
