@@ -264,6 +264,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "kill",
             crate::host::capability(crate::registry::SPEC_PROCESS_KILL),
         ),
+        (
+            "binding",
+            crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),
+        ),
         ("_kill", Value::Undefined),
         (
             "abort",

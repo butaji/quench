@@ -1312,23 +1312,39 @@ pub fn internal_binding(
         return Ok(host_api::object(vec![("TTY".into(), tty)]));
     }
     if name == "util" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![
-            (
-                "privateSymbols".to_string(),
-                crate::host::namespace_object_from_pairs(vec![(
-                    "arrow_message_private_symbol".to_string(),
-                    Value::String("Symbol.node:arrowMessage\0".into()),
-                )]),
-            ),
-            (
-                "arrayBufferViewHasBuffer".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
-            ),
-            (
-                "getProxyDetails".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
-            ),
-        ]));
+        let existing = { state.borrow().util_module.clone() };
+        let util = if let Some(module) = existing {
+            module
+        } else {
+            let module = crate::host::namespace_object_from_pairs(crate::modules::util::build());
+            state.borrow_mut().util_module = Some(module.clone());
+            module
+        };
+        let types = execute::get_property(&util, "types");
+        let names = [
+            "isAnyArrayBuffer",
+            "isArrayBuffer",
+            "isArrayBufferView",
+            "isAsyncFunction",
+            "isDataView",
+            "isDate",
+            "isExternal",
+            "isMap",
+            "isMapIterator",
+            "isNativeError",
+            "isPromise",
+            "isRegExp",
+            "isSet",
+            "isSetIterator",
+            "isTypedArray",
+            "isUint8Array",
+        ];
+        return Ok(crate::host::namespace_object_from_pairs(
+            names
+                .iter()
+                .map(|name| ((*name).to_string(), execute::get_property(&types, name)))
+                .collect(),
+        ));
     }
     if name == "js_stream" {
         return Ok(crate::host::namespace_object_from_pairs(vec![(
@@ -1356,7 +1372,48 @@ pub fn internal_binding(
             ),
         ]));
     }
-    Ok(crate::host::namespace_object_from_pairs(Vec::new()))
+    // Both public `process.binding()` and the internal helper use this
+    // capability. Unknown names must remain observable errors; known
+    // allowlisted bindings that have no modeled surface are represented by
+    // an empty namespace so callers still observe a binding object.
+    if matches!(
+        name.as_str(),
+        "contextify"
+            | "fs_event_wrap"
+            | "icu"
+            | "inspector"
+            | "natives"
+            | "pipe_wrap"
+            | "spawn_sync"
+            | "stream_wrap"
+            | "tcp_wrap"
+            | "tls_wrap"
+            | "udp_wrap"
+            | "zlib"
+    ) {
+        return Ok(crate::host::namespace_object_from_pairs(Vec::new()));
+    }
+    let prefix = if name == "debug" {
+        "No such binding: "
+    } else if _receiver.is_some() {
+        "No such module: "
+    } else {
+        "No such binding: "
+    };
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(format!("{prefix}{name}"))],
+    );
+    let error = if _receiver.is_some() {
+        quench_runtime::execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_UNKNOWN_BUILTIN_MODULE".into()),
+        )
+    } else {
+        error
+    };
+    Err(VmError::Thrown(error))
 }
 
 pub fn internal_js_stream_construct(
