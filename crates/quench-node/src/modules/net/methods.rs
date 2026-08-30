@@ -122,6 +122,7 @@ pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value,
             let (object, _) = new_net_object(state, socket_props())?;
             let error = host_api::object(vec![
                 ("name".into(), Value::String("Error".into())),
+                ("message".into(), Value::String(format!("connect ENOENT {path}"))),
                 ("code".into(), Value::String("ENOENT".into())),
                 ("syscall".into(), Value::String("connect".into())),
             ]);
