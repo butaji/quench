@@ -20,6 +20,7 @@ pub(crate) mod relative;
 pub(crate) mod segmenter;
 mod support;
 mod supported_values;
+mod time_zone_data;
 pub(crate) mod tolocale;
 
 pub(crate) use support::{
@@ -169,7 +170,13 @@ fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn supported_segmenter_locale(locale: &str) -> bool {
-    !locale.eq_ignore_ascii_case("zxx")
+    const LANGUAGES: &[&str] = &[
+        "ar", "bg", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr",
+        "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "nb", "nl",
+        "pl", "pt", "ro", "ru", "sk", "sl", "sr", "sv", "th", "tr", "uk", "vi", "zh",
+    ];
+    let language = locale.split('-').next().unwrap_or_default();
+    LANGUAGES.contains(&language) && !locale.eq_ignore_ascii_case("zxx")
 }
 
 fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
