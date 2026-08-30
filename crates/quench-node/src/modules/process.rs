@@ -464,7 +464,8 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
     let pb = std::path::PathBuf::from(&path);
     match std::env::set_current_dir(&pb) {
         Ok(()) => {
-            state.borrow_mut().process.cwd = std::env::current_dir().unwrap_or(pb);
+            let previous = state.borrow().process.cwd.clone();
+            state.borrow_mut().process.cwd = lexical_cwd(&previous, &pb);
             Ok(Value::Undefined)
         }
         Err(error) => Err(VmError::Thrown(host_api::object(vec![
@@ -490,6 +491,25 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             ),
         ]))),
     }
+}
+
+fn lexical_cwd(previous: &std::path::Path, requested: &std::path::Path) -> std::path::PathBuf {
+    let joined = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        previous.join(requested)
+    };
+    let mut normalized = std::path::PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {

@@ -317,6 +317,20 @@ pub fn install_with_argv(
         let name = spec.name.rsplit([':', '.']).next().unwrap_or(spec.name);
         context = context.with_persistent_host_value(name, crate::host::capability(*spec));
     }
+    // Shared support fragments use these canonical host objects while the
+    // fixture is bootstrapping. Keep `__nodePath` identical to require('path')
+    // and expose mkdir as the one filesystem capability used by tmpdir.
+    let path_module = crate::modules::path::build();
+    host.state()
+        .borrow_mut()
+        .module_cache
+        .insert("path".into(), path_module.clone());
+    context = context
+        .with_persistent_host_value("__nodePath", path_module)
+        .with_persistent_host_value(
+            "__quench_fs_mkdir",
+            crate::host::capability(crate::registry::SPEC_FS_MKDIRSYNC),
+        );
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
     context = context.with_host_value(

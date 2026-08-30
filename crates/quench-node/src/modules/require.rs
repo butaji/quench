@@ -32,16 +32,40 @@ fn global_constructor_or_capability(
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
-    // ESM test helpers resolve `common/index.mjs` through its CJS bridge.
-    // Reuse the single support object so call-check wrappers retain identity
-    // regardless of whether the fixture is CJS or ESM.
-    if spec.ends_with("/common/index") || spec == "../common/index" {
+    // The Node test helpers are one host-owned resource.  Resolve every
+    // spelling of the common entry point and tmpdir helper before filesystem
+    // resolution; otherwise `common/index.js` loads a second JS copy whose
+    // `./tmpdir` points at the checkout's `.tmp.0` directory.
+    if spec == "../common"
+        || spec == "../common/index"
+        || spec.ends_with("/common")
+        || spec.ends_with("/common/index")
+    {
         let common = quench_runtime::execute::get_property(
             &quench_runtime::vm::current_global_object(),
             "__nodeCommon",
         );
         if matches!(common, Value::Object(_) | Value::ObjectAlias(_)) {
             return Ok(common);
+        }
+    }
+    if spec == "../common/tmpdir"
+        || spec == "../common/tmpdir.js"
+        || spec.ends_with("/common/tmpdir")
+        || spec.ends_with("/common/tmpdir.js")
+        || (matches!(spec.as_str(), "./tmpdir" | "./tmpdir.js")
+            && state.borrow().dir_stack.last().is_some_and(|dir| {
+                std::path::Path::new(dir)
+                    .file_name()
+                    .is_some_and(|name| name == "common")
+            }))
+    {
+        let tmpdir = quench_runtime::execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "__nodeTmpdir",
+        );
+        if matches!(tmpdir, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(tmpdir);
         }
     }
     if matches!(spec.as_str(), "child_process" | "node:child_process") {
