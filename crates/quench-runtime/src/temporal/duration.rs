@@ -210,7 +210,11 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                     1_000,
                     1,
                 ][unit_index - 3];
-                return Ok(Value::Number(delta as f64 / divisor as f64));
+                let whole = delta.div_euclid(divisor);
+                let remainder = delta.rem_euclid(divisor);
+                return Ok(Value::Number(
+                    whole as f64 + remainder as f64 / divisor as f64,
+                ));
             }
         } else if unit_index <= 1 {
             if let Some(relative) = relative_zoned.as_ref() {
@@ -767,6 +771,15 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             let rounded = round_number(hours / increment, &rounding_mode(options)?) * increment;
             if let Some(length) = zoned_day_length_hours(&relative) {
                 let mut result = vec![Value::Number(0.0); 10];
+                if (length - 24.0).abs() < 1e-9 {
+                    let day_count = duration_field(object, "days") as f64;
+                    let residual = hours - day_count * length;
+                    let rounded =
+                        round_number(residual / increment, &rounding_mode(options)?) * increment;
+                    result[3] = Value::Number(day_count);
+                    result[4] = Value::Number(rounded);
+                    return construct(&result);
+                }
                 if rounded == 24.0 && length < 24.0 {
                     result[3] = Value::Number(1.0);
                     result[4] = Value::Number(12.0);
@@ -785,9 +798,14 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         if index == 1 {
             let total = zoned_total_calendar(&duration, &relative, 1)?;
             let rounded = round_number(total, &rounding_mode(options)?);
-            let months = rounded as i128;
             let mut result = vec![Value::Number(0.0); 10];
-            result[1] = Value::Number(months as f64);
+            let months = rounded as i128;
+            if requested_largest == Some(0) {
+                result[0] = Value::Number((months / 12) as f64);
+                result[1] = Value::Number((months % 12) as f64);
+            } else {
+                result[1] = Value::Number(months as f64);
+            }
             return construct(&result);
         }
         if !has_calendar && largest == 3 && (index == 3 || requested_largest == Some(3)) {
@@ -808,7 +826,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     if index >= 4
         && !has_calendar
         && relative_is_zoned(options)
-        && requested_largest.is_none_or(|largest| largest >= 4)
+        && largest >= 4
     {
         if duration_field(object, "days") != 0 {
             if let Some(relative) = relative_option(options).and_then(|value| zoned_relative_value(&value)) {
@@ -868,7 +886,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             }
         }
     }
-    if has_calendar
+    if (has_calendar || (index == 3 && duration_field(object, "days") != 0))
         && requested_largest.is_some()
         && largest < index
         && largest <= 2
