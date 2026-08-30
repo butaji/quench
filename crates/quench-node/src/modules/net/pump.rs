@@ -128,6 +128,7 @@ fn accept_one(
         bytes_written: 0,
         read_eof: false,
         close_emitted: false,
+        close_deferred: false,
         finish_emitted: false,
         connect_announced: true,
         peer: Some(peer),
@@ -472,6 +473,10 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 && pending_write_len(&guard) == 0
                 && (!allow_half_open || guard.finish_emitted);
             if done {
+                if !guard.close_deferred {
+                    guard.close_deferred = true;
+                    continue;
+                }
                 if !guard.finish_emitted
                     && !matches!(
                         execute::get_property(&guard.js, "allowHalfOpen"),
