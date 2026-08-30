@@ -191,6 +191,7 @@ const __nodeStreamExports = {
       stream.removeListener?.("end", onEnd);
       stream.removeListener?.("finish", onFinish);
       stream.removeListener?.("error", onError);
+      stream.removeListener?.("close", onClose);
       callback(error);
     };
     const settle = () => {
@@ -205,14 +206,17 @@ const __nodeStreamExports = {
       settle();
     };
     const onError = (error) => done(error);
+    const onClose = () => done();
     stream.once?.("end", onEnd);
     stream.once?.("finish", onFinish);
     stream.once?.("error", onError);
+    stream.once?.("close", onClose);
     settle();
     return () => {
       stream.removeListener?.("end", onEnd);
       stream.removeListener?.("finish", onFinish);
       stream.removeListener?.("error", onError);
+      stream.removeListener?.("close", onClose);
     };
   },
   isDisturbed: (stream) => Boolean(stream?._readableState?.dataEmitted),
