@@ -613,6 +613,11 @@ pub const SPEC_NET_SOCKET_PAUSE: NodeSpec = NodeSpec::new("net:socket:pause", 0x
 pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 0x1012);
 pub const SPEC_NET_SOCKET_SET_TIMEOUT: NodeSpec = NodeSpec::new("net:socket:setTimeout", 0x1017);
 pub const SPEC_NET_SOCKET_TIMEOUT_FIRE: NodeSpec = NodeSpec::new("net:socket:timeoutFire", 0x1018);
+pub const SPEC_NET_ASYNC_ITERATOR: NodeSpec = NodeSpec::new("net:asyncIterator", 0x1028);
+pub const SPEC_NET_ASYNC_ITERATOR_NEXT: NodeSpec =
+    NodeSpec::new("net:asyncIterator:next", 0x1029);
+pub const SPEC_NET_ASYNC_ITERATOR_RETURN: NodeSpec =
+    NodeSpec::new("net:asyncIterator:return", 0x102A);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);

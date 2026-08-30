@@ -590,7 +590,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let module = quench_runtime::execute::get_property(&global, "\0quench:dns_module");
             (!matches!(module, Value::Undefined)).then_some(module)
         }
-        "net" => Some(crate::modules::net::build()),
+        "net" => Some(crate::modules::net::build_with_state(Some(state))),
         "tty" => {
             let tty = quench_runtime::execute::get_property(
                 &quench_runtime::vm::current_global_object(),
