@@ -735,6 +735,14 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             crate::host::capability(SPEC_ASYNC_RESOURCE_TRIGGER),
         ),
     ]);
+    let global = quench_runtime::vm::current_global_object();
+    let current = execute::get_property(&global, "__nodeCurrentAsyncResource");
+    let stores = execute::get_property(&current, "__nodeAsyncStores");
+    let resource = if matches!(stores, Value::Undefined) {
+        resource
+    } else {
+        execute::set_property(resource, "__nodeAsyncStores", stores)
+    };
     let resource = execute::define_property(
         resource,
         "domain",
@@ -798,6 +806,22 @@ pub fn attach_resource(
 ) -> Result<Value, VmError> {
     let parent_id = state.borrow().async_hooks.current_id;
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(parent_id);
+    let inherited: Vec<(u64, Value)> = state
+        .borrow()
+        .async_hooks
+        .local_stores
+        .iter()
+        .filter_map(|((resource_id, local_id), value)| {
+            (*resource_id == parent_id).then(|| (*local_id, value.clone()))
+        })
+        .collect();
+    for (local_id, value) in inherited {
+        state
+            .borrow_mut()
+            .async_hooks
+            .local_stores
+            .insert((id, local_id), value);
+    }
     execute::set_property_in_place(&resource, ASYNC_ID, Value::Number(id as f64));
     execute::set_property_in_place(&resource, TRIGGER_ID, Value::Number(trigger as f64));
     let id_value = Value::Number(id as f64);

@@ -449,6 +449,22 @@ pub(crate) fn emit(
     event: &str,
     args: Vec<Value>,
 ) -> Result<(), VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let previous_resource = execute::get_property(&global, "__nodeCurrentAsyncResource");
+    let resource = [
+        crate::modules::http_client::CLIENT_ASYNC_RESOURCE_PROP,
+        crate::modules::http_client::RES_ASYNC_RESOURCE_PROP,
+        crate::modules::http::REQ_ASYNC_RESOURCE_PROP,
+    ]
+    .into_iter()
+    .map(|key| execute::get_property(receiver, key))
+    .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+    if let Some(resource) = resource.as_ref() {
+        crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
+    }
+    if let Some(resource) = resource.as_ref() {
+        execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", resource.clone());
+    }
     if event == "close"
         && matches!(
             execute::get_property(receiver, crate::modules::http::INCOMING_CLOSE_PENDING_PROP),
@@ -467,23 +483,34 @@ pub(crate) fn emit(
         .and_then(|id| state.borrow().emitters.get(id))
         .map(|emitter| emitter.borrow().listeners_of(event).to_vec())
         .unwrap_or_default();
-    if listeners.is_empty() {
+    let result = if listeners.is_empty() {
         if event == "error" {
-            return Err(unhandled_error(args.first()));
+            Err(unhandled_error(args.first()))
+        } else {
+            Ok(())
         }
-        return Ok(());
-    }
-    for listener in &listeners {
-        if listener.once {
-            if let Some(id) = id {
-                if let Some(emitter) = state.borrow().emitters.get(id) {
-                    emitter.borrow_mut().remove(event, &listener.callback);
+    } else {
+        let mut result = Ok(());
+        for listener in &listeners {
+            if listener.once {
+                if let Some(id) = id {
+                    if let Some(emitter) = state.borrow().emitters.get(id) {
+                        emitter.borrow_mut().remove(event, &listener.callback);
+                    }
                 }
             }
+            if let Err(error) = execute::call(&listener.callback, receiver, &args) {
+                result = Err(error);
+                break;
+            }
         }
-        execute::call(&listener.callback, receiver, &args)?;
+        result
+    };
+    if resource.is_some() {
+        crate::modules::async_hooks::resource_after(state, None, &[])?;
     }
-    Ok(())
+    execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", previous_resource);
+    result
 }
 
 fn unhandled_error(arg: Option<&Value>) -> VmError {
