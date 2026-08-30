@@ -1,15 +1,12 @@
 // VM micro-case 090
-// family=control-flow; level=2; depth=40
+// family=typed-memory; operation=typed-sort-copy; variant=10; work_units=86; memory=external
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-const table = new Map(); let hash = 2166136261; for (let i = 0; i < 80; i++) { hash ^= (i * 2654435761) >>> 0; hash = Math.imul(hash, 16777619) >>> 0; table.set(i, hash); }
-let found = 0; for (let i = 79; i >= 0; i--) if (table.has(i)) found += table.get(i) & 1;
-assert(table.size === 80 && found >= 0, "hash lookup");
-return [table.size, found, hash];
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const values = new Int32Array(86); for (let i = 0; i < values.length; i++) values[i] = (86 - i) ^ 9; const copy = Array.from(values).sort((a, b) => a - b); return copy[0] + copy.at(-1);
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));

@@ -1,15 +1,12 @@
 // VM micro-case 073
-// family=control-flow; level=2; depth=23
+// family=collections; operation=weakmap-identity; variant=3; work_units=32; memory=ephemeral
 "use strict";
-const assert = (condition, message) => {
-  if (!condition) throw new Error("micro assertion failed: " + message);
-};
-const same = (a, b) => Object.is(a, b);
-const result = (() => {
-let label = "";
-for (let i = 0; i < 23; i++) { switch (i % 3) { case 0: label += "a"; break; case 1: label += "b"; break; default: label += "c"; } }
-assert(label.length === 23, "switch");
-return label;
-})();
+const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
+function microRun() {
+  const keys = Array.from({ length: 32 }, (_, i) => ({ id: i })); const weak = new WeakMap(keys.map((key) => [key, key.id + 2])); let total = 0; for (const key of keys) total += weak.get(key); return total;
+}
+globalThis.microRun = microRun;
+const result = microRun();
+assert(Number.isFinite(result), "result");
 const emit = typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : (typeof print === "function" ? print : () => {});
 emit("ok:" + JSON.stringify(result));
