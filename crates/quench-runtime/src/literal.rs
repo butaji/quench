@@ -91,6 +91,37 @@ fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
                 units.push(u16::from(unit));
                 continue;
             }
+            if escaped == '\\' {
+                if let Some(next) = chars.peek().copied().filter(|next| ('0'..='7').contains(next)) {
+                    let mut digits = String::from(next);
+                    chars.next();
+                    while digits.len() < 3 {
+                        let Some(next) = chars.peek().copied() else { break };
+                        if !('0'..='7').contains(&next) {
+                            break;
+                        }
+                        digits.push(next);
+                        chars.next();
+                    }
+                    let unit = u8::from_str_radix(&digits, 8).ok()?;
+                    units.push(u16::from(unit));
+                    continue;
+                }
+            }
+            if ('0'..='7').contains(&escaped) {
+                let mut digits = String::from(escaped);
+                while digits.len() < 3 {
+                    let Some(next) = chars.peek().copied() else { break };
+                    if !('0'..='7').contains(&next) {
+                        break;
+                    }
+                    digits.push(next);
+                    chars.next();
+                }
+                let unit = u8::from_str_radix(&digits, 8).ok()?;
+                units.push(u16::from(unit));
+                continue;
+            }
             let decoded = match escaped {
                 'n' => '\n',
                 'r' => '\r',
@@ -119,7 +150,7 @@ fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
 fn has_unicode_escape(raw: &str) -> bool {
     let mut escaped = false;
     for character in raw.chars() {
-        if character == 'u' && escaped {
+        if escaped {
             return true;
         }
         escaped = character == '\\' && !escaped;

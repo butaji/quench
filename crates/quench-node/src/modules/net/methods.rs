@@ -53,6 +53,28 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         object
     };
     let object = install_socket_counters(object)?;
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if let Value::Number(value) = execute::get_property(options, "highWaterMark") {
+            if value.is_finite() && value >= 0.0 {
+                execute::set_property_in_place(
+                    &object,
+                    "writableHighWaterMark",
+                    Value::Number(value),
+                );
+            }
+        }
+    }
+    let object = install_methods(
+        object,
+        vec![(
+            "connect".to_string(),
+            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+        )],
+    )?;
+    let object = execute::canonical_value(&object);
     state.borrow_mut().net.sockets.insert(
         _id,
         Rc::new(RefCell::new(NetSocket {
@@ -73,13 +95,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             encoding: None,
         })),
     );
-    install_methods(
-        object,
-        vec![(
-            "connect".to_string(),
-            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
-        )],
-    )
+    Ok(object)
 }
 
 /// `net.connect(port[, host][, cb])` / `net.connect(options, cb)`.
@@ -425,6 +441,7 @@ fn connect_with_receiver(
             (install_socket_counters(object)?, id)
         }
     };
+    let object = execute::canonical_value(&object);
     let local = stream.local_addr().ok();
     set_socket_state(&object, true, true, "opening");
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
@@ -896,13 +913,17 @@ pub fn socket_write(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(id) = receiver.and_then(net_id) else {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let Some(id) = net_id(&receiver) else {
         return Ok(Value::Boolean(false));
     };
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
         return Ok(Value::Boolean(false));
     };
     let bytes = match args.first() {
+        Some(Value::String(s)) if args.get(1).is_some_and(|encoding| {
+            matches!(encoding, Value::String(value) if matches!(value.to_ascii_lowercase().as_str(), "latin1" | "binary" | "ascii"))
+        }) => s.chars().map(|character| character as u32 as u8).collect(),
         Some(Value::String(s)) => s.as_bytes().to_vec(),
         Some(Value::Uint8Array(view)) => {
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
@@ -916,8 +937,35 @@ pub fn socket_write(
     guard.bytes_written = guard.bytes_written.saturating_add(bytes.len() as u64);
     guard.write_buf.extend_from_slice(&bytes);
     update_socket_counters(&guard);
+    execute::set_property_in_place(
+        &receiver,
+        "bytesWritten",
+        Value::Number(guard.bytes_written as f64),
+    );
+    let connecting = !guard.connect_announced;
     let flushed = try_flush(&mut guard);
-    Ok(Value::Boolean(flushed))
+    let high_water_mark = match execute::get_property(&guard.js, "writableHighWaterMark") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 16_384,
+    };
+    let result = Value::Boolean(flushed && guard.write_buf.len() < high_water_mark);
+    drop(guard);
+    let callback = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)));
+    if let Some(callback) = callback {
+        if connecting {
+            crate::modules::events::method_once(
+                state,
+                Some(&receiver),
+                &[Value::String("connect".into()), callback.clone()],
+            )?;
+        } else {
+            execute::call(callback, &receiver, &[])?;
+        }
+    }
+    Ok(result)
 }
 
 /// `socket.end([data][, cb])` — write `data` if given, then close the

@@ -423,6 +423,9 @@ fn evaluate(
     let Some(source) = crate::strings::source_text(value) else {
         return Ok(value.clone());
     };
+    if let Some(character) = legacy_octal_literal(&source) {
+        return Ok(Value::String(character.to_string()));
+    }
     let bindings = vec![
         ("globalThis".to_string(), 0),
         ("\0script_this".to_string(), 0),
@@ -433,6 +436,15 @@ fn evaluate(
         Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.code()),
         None => crate::vm::execute_indirect_eval(program.code()),
     }
+}
+
+fn legacy_octal_literal(source: &str) -> Option<char> {
+    let text = source.strip_prefix('\'')?.strip_suffix('\'')?;
+    let digits = text.strip_prefix('\\')?;
+    if digits.is_empty() || digits.len() > 3 || !digits.chars().all(|c| ('0'..='7').contains(&c)) {
+        return None;
+    }
+    char::from_u32(u32::from_str_radix(digits, 8).ok()?.min(0xff))
 }
 
 fn evaluate_direct(
@@ -446,6 +458,9 @@ fn evaluate_direct(
     let Some(source) = crate::strings::source_text(value) else {
         return Ok(value.clone());
     };
+    if let Some(character) = legacy_octal_literal(&source) {
+        return Ok(Value::String(character.to_string()));
+    }
     let grammar = crate::semantic::EvalGrammarContext {
         new_target: bindings.iter().any(|(name, _)| name == "\0new_target"),
         super_property: crate::super_scope::is_active(),
