@@ -2014,10 +2014,10 @@ pub fn socket_end(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(data) = args.first() {
-        if !matches!(data, Value::Undefined) {
-            socket_write(state, receiver, std::slice::from_ref(data))?;
-        }
+    if let Some(data) = args.first().filter(|data| {
+        !matches!(data, Value::Undefined) && !quench_runtime::is_callable(data)
+    }) {
+        socket_write(state, receiver, std::slice::from_ref(data))?;
     }
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
