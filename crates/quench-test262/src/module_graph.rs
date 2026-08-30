@@ -170,15 +170,11 @@ impl ModuleGraph {
     }
 
     pub fn link_unit_imports(&mut self, from: ModuleId) -> Result<(), String> {
-        let (kind, source, path) = {
+        let kind = {
             let unit = self
                 .unit(from)
                 .ok_or_else(|| "module unit is unknown".to_string())?;
-            (
-                unit.kind,
-                unit.source.clone(),
-                unit.path.display().to_string(),
-            )
+            unit.kind
         };
         if matches!(
             kind,
@@ -186,14 +182,24 @@ impl ModuleGraph {
         ) {
             return Ok(());
         }
-        let metadata = quench_runtime::reduce::inspect_module_source(&source)
-            .map_err(|errors| errors.join("; "))?;
+        let metadata = {
+            let source = &self
+                .unit(from)
+                .ok_or_else(|| "module unit is unknown".to_string())?
+                .source;
+            quench_runtime::reduce::inspect_module_source(source)
+                .map_err(|errors| errors.join("; "))?
+        };
         for request in &metadata.requests {
             if let Some(target) = self.resolve(from, &request.source) {
                 self.link(from, target)?;
             } else if self.deferred_modules.contains(&from) {
                 self.resolution_errors.insert(from, request.source.clone());
             } else {
+                let path = self.unit(from).map_or_else(
+                    || format!("<unknown:{:?}>", from),
+                    |unit| unit.path.display().to_string(),
+                );
                 return Err(format!(
                     "unresolved static module specifier `{}` from `{}`",
                     request.source, path
