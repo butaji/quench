@@ -47,6 +47,7 @@ pub struct ClientReq {
     pub agent: Option<Value>,
     pub lookup: Option<Value>,
     pub omit_host: bool,
+    pub high_water_mark: Option<f64>,
     pub socket: Option<Value>,
     pub dispatched: bool,
     pub timeout: Option<Value>,
@@ -247,6 +248,14 @@ fn response_data(response: &Value, bytes: &[u8]) -> Value {
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
+    let high_water_mark = args.first().and_then(|options| {
+        matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
+            match execute::get_property(options, "highWaterMark") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
+                _ => None,
+            }
+        })
+    }).flatten();
     let signal = args.first().and_then(|options| {
         matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
             execute::get_property(options, "signal")
@@ -305,6 +314,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             agent,
             lookup,
             omit_host,
+            high_water_mark,
             socket: None,
             dispatched: false,
             timeout: None,
@@ -948,9 +958,15 @@ pub fn req_end(
     if let Some(request) = state.borrow_mut().http.clientreqs.get_mut(&id) {
         request.dispatched = true;
     }
-    if let Some(data) = args.first() {
-        if !matches!(data, Value::Undefined) {
-            req_write(state, receiver, end_chunk_args(args))?;
+    if args
+        .first()
+        .is_some_and(|data| !matches!(data, Value::Undefined))
+    {
+        let bytes = request_chunk_bytes(end_chunk_args(args))?;
+        if !bytes.is_empty() {
+            if let Some(request) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+                request.body.extend_from_slice(&bytes);
+            }
         }
     }
     let (target, method, path, headers, body, agent, lookup, omit_host) = {
@@ -1001,6 +1017,7 @@ pub fn req_end(
     } else {
         None
     };
+    let reused = pooled.is_some();
     let socket = match (existing.or(pooled), custom) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
@@ -1062,6 +1079,21 @@ pub fn req_end(
         }
         (None, None) => send_request(state, &target, &method, &path, &headers, &body, omit_host)?,
     };
+    let high_water_mark = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .and_then(|req| req.high_water_mark);
+    if reused {
+        if let Some(value) = high_water_mark {
+            execute::set_property_in_place(
+                &socket,
+                "writableHighWaterMark",
+                Value::Number(value),
+            );
+        }
+    }
     let socket_id = net::net_id(&socket);
     let mut guard = state.borrow_mut();
     if let Some(req) = guard.http.clientreqs.get_mut(&id) {
