@@ -117,6 +117,15 @@ fn accept_one(
     if allow_half_open {
         execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(true));
     }
+    let pause_on_connect = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .is_some_and(|server| server.borrow().pause_on_connect);
+    if pause_on_connect {
+        execute::set_property_in_place(&object, ONREAD_PAUSED_PROP, Value::Boolean(true));
+    }
     let object = if is_pipe {
         object
     } else {

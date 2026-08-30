@@ -26,6 +26,9 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         if let Value::Boolean(value) = execute::get_property(options, "allowHalfOpen") {
             execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(value));
         }
+        if let Value::Boolean(value) = execute::get_property(options, "pauseOnConnect") {
+            execute::set_property_in_place(&object, "pauseOnConnect", Value::Boolean(value));
+        }
     }
     register_server(state, &object, None)?;
     let connection_listener = args
@@ -2358,23 +2361,43 @@ pub fn socket_set_encoding(
 
 /// `socket.pause()` / `socket.resume()` suspend and resume onread delivery.
 pub fn socket_pause(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
-        execute::set_property_in_place(receiver, ONREAD_PAUSED_PROP, Value::Boolean(true));
+        super::replace_socket_property(receiver, ONREAD_PAUSED_PROP, Value::Boolean(true));
+        if let Some(id) = net_id(receiver) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                let canonical = socket.borrow().js.clone();
+                execute::set_property_in_place(
+                    &canonical,
+                    ONREAD_PAUSED_PROP,
+                    Value::Boolean(true),
+                );
+            }
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 pub fn socket_resume(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
-        execute::set_property_in_place(receiver, ONREAD_PAUSED_PROP, Value::Boolean(false));
+        super::replace_socket_property(receiver, ONREAD_PAUSED_PROP, Value::Boolean(false));
+        if let Some(id) = net_id(receiver) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                let canonical = socket.borrow().js.clone();
+                execute::set_property_in_place(
+                    &canonical,
+                    ONREAD_PAUSED_PROP,
+                    Value::Boolean(false),
+                );
+            }
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
