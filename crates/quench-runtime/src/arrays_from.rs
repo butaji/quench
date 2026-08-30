@@ -5,6 +5,385 @@ pub(crate) fn from(
     from_impl(receiver, arguments, false)
 }
 
+pub(crate) fn from_async(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    reject_source(&source)?;
+    let async_method = crate::execute::get_property_result(&source, "Symbol.asyncIterator")?;
+    if crate::conversion::is_callable(&async_method) {
+        let method = async_method;
+        let iterator = crate::execute::call(&method, &source, &[])?;
+        let result = match crate::promise::new_promise() {
+            Value::Promise(promise) => promise,
+            _ => unreachable!(),
+        };
+        let state = (
+            Rc::clone(&result),
+            iterator,
+            receiver.cloned(),
+            mapper(arguments)?,
+            arguments.get(2).cloned().unwrap_or(Value::Undefined),
+            Vec::new(),
+            0,
+            None,
+            false,
+        );
+        start_async_step(state);
+        return Ok(Value::Promise(result));
+    }
+    let source_values = from(None, &[source])?;
+    let Value::Array(source_values) = source_values else {
+        return Ok(crate::promise::promise_resolve(&[source_values]));
+    };
+    let result = match crate::promise::new_promise() {
+        Value::Promise(promise) => promise,
+        _ => unreachable!(),
+    };
+    let state = (
+        Rc::clone(&result),
+        Value::Undefined,
+        receiver.cloned(),
+        mapper(arguments)?,
+        arguments.get(2).cloned().unwrap_or(Value::Undefined),
+        Vec::new(),
+        0,
+        Some(source_values.snapshot()),
+        false,
+    );
+    start_async_step(state);
+    Ok(Value::Promise(result))
+}
+
+type AsyncFromState = (
+    Rc<crate::value::PromiseData>,
+    Value,
+    Option<Value>,
+    Option<Value>,
+    Value,
+    Vec<Value>,
+    usize,
+    Option<Vec<Value>>,
+    bool,
+);
+
+fn start_async_step(state: AsyncFromState) {
+    let (
+        result,
+        iterator,
+        receiver,
+        mapper,
+        this_arg,
+        values,
+        index,
+        sync_values,
+        pending_mapper,
+    ) = state;
+    if pending_mapper {
+        return;
+    }
+    if let Some(sync_values) = sync_values {
+        if let Some(item) = sync_values.get(index).cloned() {
+            let item_index = index;
+            let mapped = match map_item(mapper.as_ref(), &this_arg, item, item_index) {
+                Ok(value) => value,
+                Err(crate::execute::VmError::Thrown(reason)) => {
+                    crate::promise::reject_promise(&result, reason);
+                    return;
+                }
+                Err(_) => {
+                    crate::promise::reject_promise(&result, Value::Undefined);
+                    return;
+                }
+            };
+            continue_after_map(
+                result,
+                iterator,
+                receiver,
+                mapper,
+                this_arg,
+                values,
+                index,
+                Some(sync_values),
+                mapped,
+            );
+            return;
+        }
+        match create_result(receiver.as_ref(), values, true) {
+            Ok(value) => crate::promise::resolve_promise(&result, value),
+            Err(crate::execute::VmError::Thrown(reason)) => {
+                crate::promise::reject_promise(&result, reason)
+            }
+            Err(_) => crate::promise::reject_promise(&result, Value::Undefined),
+        }
+        return;
+    }
+    let next = match crate::execute::get_property_result(&iterator, "next") {
+        Ok(next) if crate::conversion::is_callable(&next) => next,
+        Ok(_) => {
+            if let crate::execute::VmError::Thrown(reason) =
+                crate::value::error::throw_type_error("Async iterator next is not callable")
+            {
+                crate::promise::reject_promise(&result, reason);
+            }
+            return;
+        }
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            crate::promise::reject_promise(&result, reason);
+            return;
+        }
+        Err(_) => {
+            crate::promise::reject_promise(&result, Value::Undefined);
+            return;
+        }
+    };
+    let next_result = match crate::execute::call(&next, &iterator, &[]) {
+        Ok(value) => value,
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            crate::promise::reject_promise(&result, reason);
+            return;
+        }
+        Err(_) => {
+            crate::promise::reject_promise(&result, Value::Undefined);
+            return;
+        }
+    };
+    let continuation = |promise: &Rc<crate::value::PromiseData>| {
+        promise.continuations.borrow_mut().push(
+            crate::value::PromiseContinuation::ArrayFromAsync {
+                result: Rc::clone(&result),
+                iterator: iterator.clone(),
+                receiver: receiver.clone(),
+                mapper: mapper.clone(),
+                this_arg: this_arg.clone(),
+                values: values.clone(),
+                index,
+                sync_values: sync_values.clone(),
+                pending_mapper: false,
+            },
+        );
+    };
+    match next_result {
+        Value::Promise(promise) => match promise.state.borrow().clone() {
+            crate::value::PromiseState::Pending => continuation(&promise),
+            state => process_async_continuation(
+                result,
+                iterator,
+                receiver,
+                mapper,
+                this_arg,
+                values,
+                index,
+                sync_values,
+                pending_mapper,
+                &state,
+            ),
+        },
+        value => process_async_value(
+            result,
+            iterator,
+            receiver,
+            mapper,
+            this_arg,
+            values,
+            index,
+            sync_values,
+            value,
+        ),
+    }
+}
+
+pub(crate) fn process_async_continuation(
+    result: Rc<crate::value::PromiseData>,
+    iterator: Value,
+    receiver: Option<Value>,
+    mapper: Option<Value>,
+    this_arg: Value,
+    values: Vec<Value>,
+    index: usize,
+    sync_values: Option<Vec<Value>>,
+    pending_mapper: bool,
+    state: &crate::value::PromiseState,
+) {
+    if pending_mapper {
+        match state {
+            crate::value::PromiseState::Fulfilled(value) => {
+                let mut values = values;
+                values.push(value.clone());
+                start_async_step((
+                    result,
+                    iterator,
+                    receiver,
+                    mapper,
+                    this_arg,
+                    values,
+                    index + 1,
+                    sync_values,
+                    false,
+                ));
+            }
+            crate::value::PromiseState::Rejected(reason) => {
+                crate::promise::reject_promise(&result, reason.clone())
+            }
+            crate::value::PromiseState::Pending => {}
+        }
+        return;
+    }
+    match state {
+        crate::value::PromiseState::Fulfilled(value) => process_async_value(
+            result,
+            iterator,
+            receiver,
+            mapper,
+            this_arg,
+            values,
+            index,
+            sync_values,
+            value.clone(),
+        ),
+        crate::value::PromiseState::Rejected(reason) => {
+            crate::promise::reject_promise(&result, reason.clone())
+        }
+        crate::value::PromiseState::Pending => {}
+    }
+}
+
+fn process_async_value(
+    result: Rc<crate::value::PromiseData>,
+    iterator: Value,
+    receiver: Option<Value>,
+    mapper: Option<Value>,
+    this_arg: Value,
+    values: Vec<Value>,
+    index: usize,
+    sync_values: Option<Vec<Value>>,
+    next: Value,
+) {
+    if !crate::value::is_object(&next) {
+        reject_type_error(&result, "Async iterator result is not an object");
+        return;
+    }
+    let Ok(done) = crate::execute::get_property_result(&next, "done") else {
+        crate::promise::reject_promise(&result, Value::Undefined);
+        return;
+    };
+    if crate::execute::is_truthy(&done) {
+        match create_result(receiver.as_ref(), values, true) {
+            Ok(value) => crate::promise::resolve_promise(&result, value),
+            Err(crate::execute::VmError::Thrown(reason)) => {
+                crate::promise::reject_promise(&result, reason)
+            }
+            Err(_) => crate::promise::reject_promise(&result, Value::Undefined),
+        }
+        return;
+    }
+    let item = match crate::execute::get_property_result(&next, "value") {
+        Ok(value) => value,
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            crate::promise::reject_promise(&result, reason);
+            return;
+        }
+        Err(_) => {
+            crate::promise::reject_promise(&result, Value::Undefined);
+            return;
+        }
+    };
+    let mapped = match map_item(mapper.as_ref(), &this_arg, item, index) {
+        Ok(value) => value,
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            crate::promise::reject_promise(&result, reason);
+            return;
+        }
+        Err(_) => {
+            crate::promise::reject_promise(&result, Value::Undefined);
+            return;
+        }
+    };
+    continue_after_map(
+        result,
+        iterator,
+        receiver,
+        mapper,
+        this_arg,
+        values,
+        index,
+        sync_values,
+        mapped,
+    );
+}
+
+fn reject_type_error(result: &Rc<crate::value::PromiseData>, message: &str) {
+    if let crate::execute::VmError::Thrown(reason) =
+        crate::value::error::throw_type_error(message)
+    {
+        crate::promise::reject_promise(result, reason);
+    }
+}
+
+fn continue_after_map(
+    result: Rc<crate::value::PromiseData>,
+    iterator: Value,
+    receiver: Option<Value>,
+    mapper: Option<Value>,
+    this_arg: Value,
+    mut values: Vec<Value>,
+    index: usize,
+    sync_values: Option<Vec<Value>>,
+    mapped: Value,
+) {
+    let Value::Promise(promise) = mapped else {
+        values.push(mapped);
+        start_async_step((
+            result,
+            iterator,
+            receiver,
+            mapper,
+            this_arg,
+            values,
+            index + 1,
+            sync_values,
+            false,
+        ));
+        return;
+    };
+    let state = promise.state.borrow().clone();
+    match state {
+        crate::value::PromiseState::Fulfilled(value) => {
+            values.push(value);
+            start_async_step((
+                result,
+                iterator,
+                receiver,
+                mapper,
+                this_arg,
+                values,
+                index + 1,
+                sync_values,
+                false,
+            ));
+        }
+        crate::value::PromiseState::Rejected(reason) => {
+            crate::promise::reject_promise(&result, reason)
+        }
+        crate::value::PromiseState::Pending => {
+            promise.continuations.borrow_mut().push(
+                crate::value::PromiseContinuation::ArrayFromAsync {
+                    result,
+                    iterator,
+                    receiver,
+                    mapper,
+                    this_arg,
+                    values,
+                    index,
+                    sync_values,
+                    pending_mapper: true,
+                },
+            );
+        }
+    }
+}
+
 pub(crate) fn typed_from(
     receiver: Option<&Value>,
     arguments: &[Value],
