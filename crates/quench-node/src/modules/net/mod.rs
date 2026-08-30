@@ -50,6 +50,7 @@ pub(crate) const ONREAD_CALLBACK_PROP: &str = "\0quench:net:onread:callback";
 pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
 pub(crate) const ONREAD_EOF_PROP: &str = "\0quench:net:onread:eof";
 pub(crate) const NO_DELAY_PROP: &str = "\0quench:net:no-delay";
+const ASYNC_ITER_TARGET_PROP: &str = "\0quench:net:async-iter-target";
 const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,6 +129,15 @@ pub struct NetState {
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
     pub next_pipe_fd: i64,
+    pub async_streams: HashMap<u64, NetAsyncStream>,
+    pub socket_prototype: Option<Value>,
+}
+
+/// Buffered values and pending consumers for one server/socket iterator.
+pub struct NetAsyncStream {
+    pub queue: Vec<Value>,
+    pub waiters: Vec<Rc<quench_runtime::value::PromiseData>>,
+    pub ended: bool,
 }
 
 pub struct PendingLookup {
@@ -163,6 +173,8 @@ impl NetState {
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
             next_pipe_fd: 100,
+            async_streams: HashMap::new(),
+            socket_prototype: None,
         }
     }
 }
@@ -202,6 +214,14 @@ fn new_net_object(
         object,
         vec![(NET_ID_PROP.to_string(), Value::Number(id as f64))],
     )?;
+    state.borrow_mut().net.async_streams.insert(
+        id,
+        NetAsyncStream {
+            queue: Vec::new(),
+            waiters: Vec::new(),
+            ended: false,
+        },
+    );
     Ok((object, id))
 }
 
@@ -328,6 +348,7 @@ fn server_props() -> Vec<(&'static str, Value)> {
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
         ("unref", cap(crate::registry::SPEC_NET_SERVER_UNREF)),
         ("ref", cap(crate::registry::SPEC_NET_SERVER_REF)),
+        ("Symbol.asyncIterator", cap(crate::registry::SPEC_NET_ASYNC_ITERATOR)),
     ]
 }
 
@@ -403,6 +424,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
             "uncork",
             Value::Builtin(quench_runtime::ops::Builtin::Object),
         ),
+        ("Symbol.asyncIterator", cap(crate::registry::SPEC_NET_ASYNC_ITERATOR)),
     ]
 }
 
@@ -461,6 +483,148 @@ pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
     match execute::get_property(receiver, NET_ID_PROP) {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
+    }
+}
+
+/// Return the Rust-backed async iterator for a server or socket.
+pub fn async_iterator(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+    if async_target(&receiver).is_some() {
+        return Ok(receiver);
+    }
+    let id = net_id(&receiver).ok_or_else(|| execute::type_error("not a net object"))?;
+    let known = {
+        let host = state.borrow();
+        host.net.servers.contains_key(&id) || host.net.sockets.contains_key(&id)
+    };
+    if !known {
+        return Err(execute::type_error("not a live net object"));
+    }
+    let iterator = host_api::object(vec![
+        (
+            "next".to_string(),
+            cap(crate::registry::SPEC_NET_ASYNC_ITERATOR_NEXT),
+        ),
+        (
+            "return".to_string(),
+            cap(crate::registry::SPEC_NET_ASYNC_ITERATOR_RETURN),
+        ),
+        (
+            "Symbol.asyncIterator".to_string(),
+            cap(crate::registry::SPEC_NET_ASYNC_ITERATOR),
+        ),
+    ]);
+    install_methods(
+        iterator,
+        vec![(
+            ASYNC_ITER_TARGET_PROP.to_string(),
+            Value::Number(id as f64),
+        )],
+    )
+}
+
+/// Resolve one queued stream value, or suspend until the host produces one.
+pub fn async_iterator_next(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let id = async_target(receiver).ok_or_else(|| execute::type_error("not a net iterator"))?;
+    let promise = quench_runtime::value::PromiseData::allocate(
+        quench_runtime::value::PromiseState::Pending,
+    );
+    let outcome = {
+        let mut host = state.borrow_mut();
+        let stream = host
+            .net
+            .async_streams
+            .get_mut(&id)
+            .ok_or_else(|| execute::type_error("net iterator is closed"))?;
+        if !stream.queue.is_empty() {
+            let value = stream.queue.remove(0);
+            Some(iterator_result(value, false))
+        } else if stream.ended {
+            Some(iterator_result(Value::Undefined, true))
+        } else {
+            stream.waiters.push(Rc::clone(&promise));
+            None
+        }
+    };
+    if let Some(value) = outcome {
+        quench_runtime::resolve_promise(&promise, value);
+    }
+    Ok(Value::Promise(promise))
+}
+
+/// Finish an iterator without changing the underlying server/socket.
+pub fn async_iterator_return(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let promise = quench_runtime::value::PromiseData::allocate(
+        quench_runtime::value::PromiseState::Pending,
+    );
+    quench_runtime::resolve_promise(&promise, iterator_result(Value::Undefined, true));
+    Ok(Value::Promise(promise))
+}
+
+fn async_target(value: &Value) -> Option<u64> {
+    match execute::get_property(value, ASYNC_ITER_TARGET_PROP) {
+        Value::Number(id) if id.is_finite() && id >= 0.0 => Some(id as u64),
+        _ => None,
+    }
+}
+
+fn iterator_result(value: Value, done: bool) -> Value {
+    host_api::object(vec![
+        ("value".to_string(), value),
+        ("done".to_string(), Value::Boolean(done)),
+    ])
+}
+
+/// Queue a value for a server/socket, retaining it when iteration starts later.
+pub(crate) fn queue_async_value(state: &Rc<RefCell<HostState>>, id: u64, value: Value) {
+    let waiter = {
+        let mut host = state.borrow_mut();
+        let stream = host.net.async_streams.entry(id).or_insert(NetAsyncStream {
+            queue: Vec::new(),
+            waiters: Vec::new(),
+            ended: false,
+        });
+        if stream.ended {
+            None
+        } else if let Some(waiter) = stream.waiters.pop() {
+            Some(waiter)
+        } else {
+            stream.queue.push(value.clone());
+            None
+        }
+    };
+    if let Some(waiter) = waiter {
+        quench_runtime::resolve_promise(&waiter, iterator_result(value, false));
+    }
+}
+
+/// Mark a stream ended and wake every pending `next()` call.
+pub(crate) fn end_async_stream(state: &Rc<RefCell<HostState>>, id: u64) {
+    let waiters = {
+        let mut host = state.borrow_mut();
+        let stream = host.net.async_streams.entry(id).or_insert(NetAsyncStream {
+            queue: Vec::new(),
+            waiters: Vec::new(),
+            ended: false,
+        });
+        stream.ended = true;
+        std::mem::take(&mut stream.waiters)
+    };
+    for waiter in waiters {
+        quench_runtime::resolve_promise(&waiter, iterator_result(Value::Undefined, true));
     }
 }
 
@@ -700,7 +864,14 @@ fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
 }
 
 pub fn build() -> Value {
+    build_with_state(None)
+}
+
+pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
     let socket_prototype = host_api::object(Vec::new());
+    if let Some(state) = state {
+        state.borrow_mut().net.socket_prototype = Some(socket_prototype.clone());
+    }
     let global = quench_runtime::vm::current_global_object();
     execute::set_property_in_place(
         &global,

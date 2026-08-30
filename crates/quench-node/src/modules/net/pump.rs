@@ -122,6 +122,14 @@ fn accept_one(
     } else {
         install_methods(object, net_info_props(peer, local))?
     };
+    let object = state
+        .borrow()
+        .net
+        .socket_prototype
+        .clone()
+        .map_or(Ok(object.clone()), |prototype| {
+            execute::set_prototype_of(&object, &prototype)
+        })?;
     set_socket_state(&object, false, false, "open");
     let socket = Rc::new(RefCell::new(NetSocket {
         id,
@@ -153,6 +161,7 @@ fn accept_one(
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
     if let Some(js) = server_js {
+        super::queue_async_value(state, server_id, object.clone());
         let owner = state
             .borrow()
             .net
@@ -240,6 +249,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             let guard = sock.borrow();
             data_value(&guard, &bytes)
         };
+        super::queue_async_value(state, sock.borrow().id, arg.clone());
         let callback = execute::get_property(&js, ONREAD_CALLBACK_PROP);
         if quench_runtime::is_callable(&callback) {
             let consumed = emit_onread(&js, &bytes, &callback)?;
@@ -271,6 +281,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             execute::call(&callback, &js, &[Value::Number(0.0), buffer])?;
         }
         super::set_socket_property(&js, "readable", Value::Boolean(false));
+        super::end_async_stream(state, sock.borrow().id);
         emit(state, &js, "end", Vec::new())?;
     }
     Ok(())
@@ -468,6 +479,7 @@ fn poll_server_close(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     drop(host);
     for server in closed {
         let js = server.borrow().js.clone();
+        super::end_async_stream(state, server.borrow().id);
         emit(state, &js, "close", Vec::new())?;
     }
     Ok(())
