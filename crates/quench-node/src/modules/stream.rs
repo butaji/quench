@@ -64,7 +64,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
             crate::host::namespace_object_from_pairs(crate::modules::string_decoder::build()),
         ),
     ]);
-    let module = match quench_runtime::vm::call_value(&factory, &Value::Undefined, &[deps]) {
+    let mut module = match quench_runtime::vm::call_value(&factory, &Value::Undefined, &[deps]) {
         Ok(module) => module,
         Err(_) => {
             // Keep module loading total when the optional JS stream layer hits
@@ -91,6 +91,23 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
             ])
         }
     };
+    // Node exposes `stream` itself as the callable Stream constructor and
+    // hangs the family namespace off that same function.  Preserve one
+    // identity rather than returning a parallel object namespace.
+    if let Ok(mut stream) = quench_runtime::execute::get_property_result(&module, "Stream") {
+        if matches!(stream, Value::Function(_) | Value::BoundFunction(_)) {
+            for name in [
+                "Readable", "Writable", "Duplex", "Transform", "PassThrough", "Stream",
+                "duplexPair", "destroy", "finished", "pipeline", "compose", "isReadable",
+                "isWritable", "isErrored", "isDisturbed",
+            ] {
+                if let Ok(value) = quench_runtime::execute::get_property_result(&module, name) {
+                    stream = quench_runtime::execute::set_property(stream, name, value);
+                }
+            }
+            module = stream;
+        }
+    }
     state.borrow_mut().stream_module = Some(module.clone());
     Ok(module)
 }
