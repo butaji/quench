@@ -344,7 +344,7 @@ fn proven_leaf(
     code: crate::machine::CodeView<'_>,
 ) -> Result<bool, LeafReject> {
     let arguments_slot = function.captures.captured_len() as u16 + function.params;
-    if function.code.uses_slot(arguments_slot) || function.mapped_arguments {
+    if function.code.uses_slot(arguments_slot) {
         return Err(LeafReject::Opcode("Arguments"));
     }
     if function.captures.captured_len() != 0

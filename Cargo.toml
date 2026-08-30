@@ -7,6 +7,8 @@ members = [
     "crates/quench-node-test",
     "crates/quench-runtime",
     "crates/quench-test262",
+    "crates/quench-wasm",
+    "crates/quench-wasm-test",
 ]
 
 [profile.dev]

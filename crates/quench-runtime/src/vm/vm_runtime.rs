@@ -1,12 +1,20 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 
-fn run_ops_completion_step(
+fn run_ops(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
-) -> Result<CompletionStep, VmError> {
-    run_ops_completion_step_from(ops, 0, registers, context)
+) -> Result<Value, VmError> {
+    completion_result(run_ops_completion(ops, registers, context)?)
+}
+
+fn run_ops_completion(
+    ops: &[Op],
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
+    Ok(run_ops_completion_step(ops, registers, context)?.completion)
 }
 
 pub(crate) fn execute_ops_from(
@@ -35,6 +43,14 @@ pub(crate) fn execute_code_from(
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let step = run_code_completion_step_from(code, start, registers, context)?;
     Ok((step.completion, step.next))
+}
+
+fn run_ops_completion_step(
+    ops: &[Op],
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+) -> Result<CompletionStep, VmError> {
+    run_ops_completion_step_from(ops, 0, registers, context)
 }
 
 fn run_ops_completion_step_from(
@@ -77,7 +93,14 @@ fn run_code_completion_step_from(
             }
             _ => {}
         }
-        let result = match run_instruction(code, pc, instruction, registers, context) {
+        #[cfg(not(feature = "execution-trace"))]
+        let result = match run_instruction_hot(code, pc, instruction, registers) {
+            Some(result) => result,
+            None => run_instruction(code, pc, instruction, registers, context),
+        };
+        #[cfg(feature = "execution-trace")]
+        let result = run_instruction(code, pc, instruction, registers, context);
+        let result = match result {
             Ok(result) => result,
             Err(error) => return completion_step_after_error(registers, error, pc + 1),
         };
@@ -89,6 +112,169 @@ fn run_code_completion_step_from(
         }
     }
     completion_step_after_transition(registers, crate::completion::Completion::Normal, code.len())
+}
+
+/// Inline the representation-only compact operations that cannot suspend or
+/// invoke host code.  The traced build deliberately uses the canonical
+/// dispatcher so attribution remains complete and deterministic.
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_instruction_hot(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    instruction: crate::ir::Instruction,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    use crate::ir::Opcode;
+    let result = match instruction.opcode {
+        Opcode::LoadConst => {
+            let result = code
+                .constant_at(pc)
+                .ok_or(VmError::MissingReturn)
+                .map(|(_, value)| write_value(registers, instruction.a, value.into()));
+            result.map(|_| None)
+        }
+        Opcode::Move => {
+            let result = if instruction.flags == 1 {
+                crate::locals::move_proven_local(
+                    registers,
+                    instruction.a,
+                    instruction.b,
+                    instruction.c,
+                )
+            } else {
+                copy_register(registers, instruction.a, instruction.b)
+            };
+            result.map(|_| None)
+        }
+        Opcode::LoadLocal => crate::locals::load_proven(registers, instruction.a, instruction.b)
+            .map(|_| None),
+        Opcode::LoadLocalChecked => {
+            let name = code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                .unwrap_or("binding");
+            crate::locals::load_checked(registers, instruction.a, instruction.b, name)
+                .map(|_| None)
+        }
+        Opcode::StoreLocal => crate::locals::store_proven(registers, instruction.a, instruction.b)
+            .map(|_| None),
+        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div => {
+            let operator = match instruction.opcode {
+                Opcode::Add => crate::ops::BinaryOp::Add,
+                Opcode::Sub => crate::ops::BinaryOp::Subtract,
+                Opcode::Mul => crate::ops::BinaryOp::Multiply,
+                Opcode::Div => crate::ops::BinaryOp::Divide,
+                _ => unreachable!(),
+            };
+            vm_arithmetic::execute_binary(
+                registers,
+                instruction.a,
+                operator,
+                instruction.b,
+                instruction.c,
+            )
+            .map(|_| None)
+        }
+        Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)
+            .ok_or_else(|| VmError::EvalError("invalid compact binary operator".into()))
+            .and_then(|operator| {
+                vm_arithmetic::execute_binary(
+                    registers,
+                    instruction.a,
+                    operator,
+                    instruction.b,
+                    instruction.c,
+                )
+            })
+            .map(|_| None),
+        Opcode::AGetI => return run_array_get_hot(registers, instruction),
+        Opcode::GetN => return run_length_get_hot(code, pc, registers, instruction),
+        Opcode::ASetI => return run_array_set_hot(registers, instruction),
+        Opcode::Slow => {
+            let Some(crate::ops::Op::RequireObjectCoercible { src }) = code.cold(instruction)
+            else {
+                return None;
+            };
+            return (registers.word_is_non_nullish(usize::from(*src)) == Some(true))
+                .then_some(Ok(None));
+        }
+        Opcode::Return => read_register(registers, instruction.a)
+            .map(crate::completion::Completion::Return)
+            .map(Some),
+        _ => return None,
+    };
+    Some(result)
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_array_get_hot(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    let index = registers.read_array_index(usize::from(instruction.c));
+    let raw_array = registers.read_array(usize::from(instruction.b));
+    let array = raw_array.filter(|array| crate::locals::array_word_is_current(array));
+    if let Some((array, index)) = array.filter(|array| array.is_plain_dense_access()).zip(index) {
+        if let Some(number) = array.dense_number_at(index) {
+            registers.write_number(usize::from(instruction.a), number);
+            return Some(Ok(None));
+        }
+        if let Some(value) = array.dense_value_at(index) {
+            write_value(registers, instruction.a, value);
+            return Some(Ok(None));
+        }
+        write_value(registers, instruction.a, crate::value::Value::Undefined);
+        return Some(Ok(None));
+    }
+    None
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_length_get_hot(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    let metadata = code.metadata_at(pc)?;
+    if metadata.name.as_deref() != Some("length") {
+        return None;
+    }
+    let array = registers
+        .read_array(usize::from(instruction.b))
+        .filter(|array| crate::locals::array_word_is_current(array))?;
+    if array.is_arguments() {
+        registers.write(usize::from(instruction.a), array.arguments_length_value());
+    } else {
+        registers.write_number(usize::from(instruction.a), array.header_length() as f64);
+    }
+    Some(Ok(None))
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn run_array_set_hot(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Option<Result<Option<crate::completion::Completion>, VmError>> {
+    let index = registers.read_array_index(usize::from(instruction.b));
+    let number = registers.read_number(usize::from(instruction.c));
+    if let Some((index, number)) = index.zip(number) {
+        if let Some(array) = registers
+            .read_array(usize::from(instruction.a))
+            .filter(|array| crate::locals::array_word_is_current(array))
+        {
+            if array.set_plain_existing_f64(index, number)
+                || array.append_preallocated_f64(index, number)
+            {
+                return Some(Ok(None));
+            }
+        }
+    }
+    None
 }
 
 #[inline(never)]
@@ -315,30 +501,39 @@ fn run_instruction(
                     return Ok(None);
                 }
             }
-            if instruction.a != instruction.b {
-                let object = registers.read_object(usize::from(instruction.b));
-                let global_like = object.as_ref().is_some_and(|object| {
-                    crate::vm::current_global_object().object_identity() == Some(object.identity())
-                        || object
-                            .iter()
-                            .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
-                });
-                if let Some(payload) = object.as_ref().filter(|_| !global_like).and_then(|object| {
-                    get_named_cached_payload(object, &metadata.named_cache)
-                }) {
-                    match payload {
-                        NamedCachedPayload::Word(word) => {
-                            // SAFETY: the source register owns the containing
-                            // object until this complete word copy returns.
-                            unsafe { &*word }
-                                .copy_to_register(registers, usize::from(instruction.a));
-                        }
-                        NamedCachedPayload::Value(value) => {
-                            write_value(registers, instruction.a, value)
-                        }
+            let object = registers.read_object(usize::from(instruction.b));
+            let global_like = object.as_ref().is_some_and(|object| {
+                crate::vm::current_global_identity() == Some(object.identity())
+                    || object
+                        .hot_properties()
+                        .names()
+                        .any(|name| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+            });
+            if let Some(payload) = object.as_ref().filter(|_| !global_like).and_then(|object| {
+                get_named_cached_payload(object, &metadata.named_cache)
+            }) {
+                match payload {
+                    NamedCachedPayload::Word(word) => {
+                        // SAFETY: the source register owns the containing
+                        // object until this complete word copy returns. The
+                        // retain-before-replace sequence also handles an
+                        // in-place GetN where source and destination match.
+                        unsafe { &*word }
+                            .copy_to_register(registers, usize::from(instruction.a));
                     }
-                    return Ok(None);
+                    NamedCachedPayload::Cell(cell) => {
+                        // SAFETY: the source register keeps the containing
+                        // object alive until the word copy completes. The
+                        // destination may be the source register itself.
+                        unsafe { &*cell }.with_word(|word| {
+                            registers.write_owned(usize::from(instruction.a), word)
+                        });
+                    }
+                    NamedCachedPayload::Value(value) => {
+                        write_value(registers, instruction.a, value)
+                    }
                 }
+                return Ok(None);
             }
             let object = read_register(registers, instruction.b)?;
             let value = get_named_property_result(&object, key, &metadata.named_cache)?;

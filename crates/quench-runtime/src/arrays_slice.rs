@@ -13,7 +13,7 @@ pub(crate) fn slice(
     let end = slice_index(arguments.get(1), length, length)?;
     let count = (end - start).max(0);
     let species = slice_species(&this, count)?;
-    if species.is_none() && count > 4_294_967_295 {
+    if species.is_none() && (count as u64) > 4_294_967_295u64 {
         return Err(crate::value::error::throw_range_error(
             "Invalid array length",
         ));

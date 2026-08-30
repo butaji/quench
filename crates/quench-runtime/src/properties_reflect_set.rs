@@ -43,6 +43,23 @@ pub(crate) fn set_with_receiver(
     {
         return Ok(false);
     }
+    // Preserve identity for a direct write to an existing ordinary array
+    // element. This is the array analogue of the proven object-slot path;
+    // going through generic [[DefineOwnProperty]] can create a COW
+    // representative whose dense tail is no longer visible to the original
+    // array value.
+    if let (crate::value::Value::Array(target_array), crate::value::Value::Array(receiver_array)) =
+        (target, receiver)
+    {
+        if std::rc::Rc::ptr_eq(target_array, receiver_array) {
+            if let Some(index) = crate::arrays::array_index(key).map(|index| index as usize) {
+                if target_array.has_plain_dense_index(index) {
+                    replace_plain_array_index(receiver, target_array, index, value);
+                    return Ok(true);
+                }
+            }
+        }
+    }
     let resolved_target = crate::locals::resolved_replacement(target.clone());
     if set_proven_own_data(&resolved_target, key, value, receiver) {
         return Ok(true);
@@ -121,12 +138,15 @@ fn set_proven_own_data(
         if std::rc::Rc::ptr_eq(target, receiver_resolved)
             && index.is_some_and(|index| target.has_plain_dense_index(index))
         {
-            let updated = crate::builtins::set_property(
-                crate::value::Value::Array(std::rc::Rc::clone(receiver_resolved)),
-                key,
-                value.clone(),
-            );
-            crate::locals::replace_value(receiver, &updated);
+            // This is an ordinary existing dense slot: no prototype,
+            // accessor, descriptor, or length transition can observe the
+            // write. Mutate the canonical array storage directly so a COW
+            // replacement cannot lose the tail of an object-valued array.
+            // The previous generic defineProperty path could materialize a
+            // replacement with only the written prefix, which is observable
+            // through Array#length and breaks ordinary indexed assignment.
+            let index = index.expect("proven dense array index");
+            replace_plain_array_index(receiver, receiver_resolved, index, value);
             return true;
         }
     }
@@ -300,6 +320,14 @@ fn set_receiver_data(
     };
     if let crate::value::Value::Array(values) = &mut receiver_resolved {
         std::rc::Rc::make_mut(values).sync_length_to_storage();
+        if let Some(index) = crate::arrays::array_index(key).map(|index| index as usize) {
+            let data = std::rc::Rc::make_mut(values);
+            let plain = data.has_plain_dense_index(index);
+            if plain {
+                replace_plain_array_index(receiver, values, index, value);
+                return Ok(true);
+            }
+        }
     }
     if receiver_resolved.typed_array_meta().is_some()
         && crate::typed_array_ops::is_index_key(key)
@@ -323,6 +351,18 @@ fn set_receiver_data(
         }
     } else if rejects_new_property(receiver, key) {
         return Ok(false);
+    }
+    if let crate::value::Value::Array(values) = &mut receiver_resolved {
+        if let Some(index) = crate::arrays::array_index(key).map(|index| index as usize) {
+            let data = std::rc::Rc::make_mut(values);
+            let plain = index < data.logical_len()
+                && index < data.physical_len()
+                && data.descriptor(key).is_none();
+            if plain {
+                replace_plain_array_index(receiver, values, index, value);
+                return Ok(true);
+            }
+        }
     }
     let descriptor = receiver_data_descriptor(
         &receiver_resolved,
@@ -349,6 +389,20 @@ fn set_receiver_data(
         cell.replace(updated.clone());
     }
     Ok(true)
+}
+
+fn replace_plain_array_index(
+    receiver: &crate::value::Value,
+    values: &std::rc::Rc<crate::value::ArrayData>,
+    index: usize,
+    value: &crate::value::Value,
+) {
+    let mut data = values.as_ref().clone();
+    data.set_length(values.logical_len());
+    let value = value.clone();
+    data.set_index(index, value);
+    let updated = crate::value::Value::Array(std::rc::Rc::new(data));
+    crate::locals::replace_value(receiver, &updated);
 }
 
 fn non_configurable_redefinition(error: &crate::execute::VmError) -> bool {
