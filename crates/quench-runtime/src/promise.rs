@@ -157,7 +157,7 @@ fn process_promise_in_context(promise: &Rc<PromiseData>) {
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
         if matches!(state, PromiseState::Pending)
-            && matches!(&continuation, PromiseContinuation::Aggregate { .. })
+            && !matches!(&continuation, PromiseContinuation::Thenable { .. })
         {
             promise.continuations.borrow_mut().push(continuation);
         } else {
@@ -585,6 +585,20 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
 pub fn promise_resolve(arguments: &[Value]) -> Value {
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
     resolve_value(value)
+}
+
+pub(crate) fn promise_resolve_with_then(value: Value, then: Value) -> Value {
+    let promise = PromiseData::allocate(PromiseState::Pending);
+    promise
+        .continuations
+        .borrow_mut()
+        .push(PromiseContinuation::Thenable {
+            target: Rc::clone(&promise),
+            thenable: value,
+            then,
+        });
+    queue_promise(&promise);
+    Value::Promise(promise)
 }
 
 fn resolve_value(value: Value) -> Value {
