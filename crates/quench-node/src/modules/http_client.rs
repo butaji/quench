@@ -1224,15 +1224,11 @@ pub fn req_end(
             }
             let mut bytes = request_head(&request_host(&target), &method, &path, &headers, body.len(), omit_host).into_bytes();
             bytes.extend_from_slice(&body);
-            if matches!(target, RequestTarget::Unix { .. }) {
-                state.borrow_mut().net.pending_writes.push((socket.clone(), bytes));
-            } else {
-                state.borrow_mut().net.pending_request_writes.push((
-                    socket.clone(),
-                    bytes,
-                    receiver.cloned().unwrap_or(Value::Undefined),
-                ));
-            }
+            state.borrow_mut().net.pending_request_writes.push((
+                socket.clone(),
+                bytes,
+                receiver.cloned().unwrap_or(Value::Undefined),
+            ));
             let resume = execute::get_property(&socket, "resume");
             if quench_runtime::is_callable(&resume) {
                 execute::call(&resume, &socket, &[])?;
