@@ -207,9 +207,11 @@ pub(crate) fn set_socket_state(socket: &Value, pending: bool, connecting: bool, 
         properties.push(("destroyed", Value::Boolean(true)));
     }
     for (key, value) in properties {
-        execute::set_property_in_place(socket, key, value.clone());
-        let updated = execute::set_property(socket.clone(), key, value);
-        execute::replace_value(socket, &updated);
+        // Host-owned socket records are shared with requests, responses, and
+        // Agent pools. Mutate their existing object identity; replacing the
+        // value through ordinary copy-on-write semantics would make
+        // `res.socket === req.socket` and pooled-socket reuse diverge.
+        execute::set_property_in_place(socket, key, value);
     }
 }
 
