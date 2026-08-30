@@ -19,6 +19,14 @@ const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
 /// an emitter; the listener, if given, registers for `'connection'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let (object, _id) = new_net_object(state, server_props())?;
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if let Value::Boolean(value) = execute::get_property(options, "allowHalfOpen") {
+            execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(value));
+        }
+    }
     register_server(state, &object, None)?;
     let connection_listener = args
         .first()
@@ -1966,7 +1974,7 @@ pub fn socket_write(
     // Before the first connect turn, libuv reports the write as queued even
     // when the OS could accept it synchronously. Keep bufferSize observable
     // until the pump's connect transition flushes the queue.
-    let flushed = !connecting && try_flush(&mut guard);
+    let _flushed = !connecting && try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
     super::set_socket_property(&receiver, "bufferSize", Value::Number(pending as f64));
     super::set_socket_property(&receiver, "writableLength", Value::Number(pending as f64));
@@ -1974,9 +1982,7 @@ pub fn socket_write(
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 16_384,
     };
-    let result = Value::Boolean(
-        (connecting || flushed) && super::pending_write_len(&guard) < high_water_mark,
-    );
+    let result = Value::Boolean(super::pending_write_len(&guard) < high_water_mark);
     drop(guard);
     let callback = args
         .get(1)
