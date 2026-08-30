@@ -1518,6 +1518,10 @@ pub fn internal_binding(
             ]);
             return Ok(crate::host::namespace_object_from_pairs(vec![
                 ("constants".into(), constants),
+                (
+                    "Pipe".into(),
+                    crate::host::capability(crate::registry::SPEC_NET_PIPE),
+                ),
             ]));
         }
         return Ok(crate::host::namespace_object_from_pairs(Vec::new()));

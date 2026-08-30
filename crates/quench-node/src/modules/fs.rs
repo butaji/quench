@@ -1353,7 +1353,13 @@ const CONSTANT_ENTRIES: &[(&str, f64)] = &[
     ("S_IWUSR", 0o200 as f64),
     ("S_IXUSR", 0o100 as f64),
     ("S_IRWXG", 0o70 as f64),
+    ("S_IRGRP", 0o40 as f64),
+    ("S_IWGRP", 0o20 as f64),
+    ("S_IXGRP", 0o10 as f64),
     ("S_IRWXO", 0o7 as f64),
+    ("S_IROTH", 0o4 as f64),
+    ("S_IWOTH", 0o2 as f64),
+    ("S_IXOTH", 0o1 as f64),
 ];
 
 /// Dispatch table reused by the async and promises families.
