@@ -17,6 +17,7 @@ use crate::modules::net;
 const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
 const CLIENT_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
+const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
 /// `(host, port, method, path, headers)` for one outbound request.
@@ -42,9 +43,12 @@ pub struct ClientReq {
     pub body: Vec<u8>,
     pub req: Value,
     pub agent: Option<Value>,
+    pub lookup: Option<Value>,
     pub omit_host: bool,
     pub socket: Option<Value>,
     pub dispatched: bool,
+    pub timeout: Option<Value>,
+    pub timeout_set: bool,
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
     pub head_parsed: bool,
@@ -119,6 +123,10 @@ pub fn agent_construct(
     });
     object = execute::set_property(object, "defaultPort", Value::Number(80.0));
     object = execute::set_property(object, "protocol", Value::String("http:".into()));
+    object = execute::set_property(object, "timeout", match option("timeout") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => Value::Number(value),
+        _ => Value::Number(0.0),
+    });
     object = execute::set_property(object, "totalSocketCount", Value::Number(0.0));
     object = install_methods(
         object,
@@ -213,6 +221,13 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         let connector = execute::get_property(options, "createConnection");
         quench_runtime::is_callable(&connector).then(|| options.clone())
     });
+    let lookup = args.first().and_then(|options| {
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return None;
+        }
+        let lookup = execute::get_property(options, "lookup");
+        quench_runtime::is_callable(&lookup).then_some(lookup)
+    });
     let omit_host = args.first().is_some_and(|options| {
         matches!(
             execute::get_property(options, "headers"),
@@ -233,9 +248,12 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             body: Vec::new(),
             req: req.clone(),
             agent,
+            lookup,
             omit_host,
             socket: None,
             dispatched: false,
+            timeout: None,
+            timeout_set: false,
             buffer: Vec::new(),
             res: None,
             head_parsed: false,
@@ -272,6 +290,17 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
                 Some(&req),
                 &[Value::String("response".to_string()), cb.clone()],
             )?;
+        }
+    }
+    if let Some(options) = args.first().filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+        let timeout = execute::get_property(options, "timeout");
+        if !matches!(timeout, Value::Undefined) {
+            if !matches!(timeout, Value::Number(_)) {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "The \"timeout\" argument must be of type number".into(),
+                ));
+            }
+            req_set_timeout(state, Some(&req), &[timeout])?;
         }
     }
     Ok(req)
@@ -350,6 +379,7 @@ pub fn req_abort(
             req.agent.as_ref().and_then(custom_connection).is_some(),
         )
     };
+    clear_request_timeout(state, id)?;
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
@@ -411,6 +441,7 @@ pub fn req_destroy(
     if already_destroyed {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
+    clear_request_timeout(state, id)?;
     state
         .borrow_mut()
         .http
@@ -555,6 +586,151 @@ pub fn req_set_header(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+/// `req.setTimeout(msecs[, callback])` — schedule the request timeout event.
+/// The timer is attached to the request itself so it works before a socket is
+/// dispatched and follows the same lifecycle as the ClientRequest.
+pub fn req_set_timeout(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = client_id(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let timeout = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value,
+        Some(Value::Number(_)) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(
+                "The value of \"msecs\" is out of range".into(),
+            ))
+        }
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"msecs\" argument must be a number".into(),
+            ))
+        }
+    };
+    if let Some(callback) = args.get(1) {
+        if !quench_runtime::is_callable(callback) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"callback\" argument must be a function".into(),
+            ));
+        }
+    }
+    let request = receiver.cloned().unwrap_or(Value::Undefined);
+    let old_timer = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .and_then(|req| req.timeout.clone());
+    if let Some(timer) = old_timer {
+        crate::modules::timers::clear_timeout(state, &[timer])?;
+    }
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+        req.timeout = None;
+        req.timeout_set = true;
+    }
+    set_request_property(Some(&request), "timeout", Value::Number(timeout));
+    let timeout_cb = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_HTTP_REQ_TIMEOUT_FIRE.cap,
+            ),
+        },
+        vec![request.clone()],
+    );
+    set_request_property(Some(&request), "timeoutCb", timeout_cb.clone());
+    if let Some(callback) = args.get(1) {
+        let callback = if let Ok(bind) = execute::get_property_result(callback, "bind") {
+            execute::call(&bind, callback, &[request.clone()]).unwrap_or_else(|_| callback.clone())
+        } else {
+            callback.clone()
+        };
+        crate::modules::events::method_once(
+            state,
+            Some(&request),
+            &[Value::String("timeout".into()), callback],
+        )?;
+    }
+    let socket = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .and_then(|req| req.socket.clone());
+    if let Some(socket) = socket {
+        if timeout > 0.0 {
+            net::socket_set_timeout(
+                state,
+                Some(&socket),
+                &[Value::Number(timeout), timeout_cb],
+            )?;
+        } else {
+            subscribe_event(state, &socket, "timeout", timeout_cb)?;
+            net::socket_set_timeout(state, Some(&socket), &[Value::Number(timeout)])?;
+        }
+    } else if timeout > 0.0 {
+        let timer = crate::modules::timers::set_timeout(
+            state,
+            &[timeout_cb, Value::Number(timeout)],
+        )?;
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.timeout = Some(timer.clone());
+        }
+        set_request_property(Some(&request), CLIENT_TIMEOUT_PROP, timer);
+    } else {
+        set_request_property(Some(&request), CLIENT_TIMEOUT_PROP, Value::Undefined);
+    }
+    Ok(request)
+}
+
+/// Timer callback for one ClientRequest. Event listeners own the observable
+/// response (typically aborting the request); this transition only emits once.
+pub fn req_timeout_fire(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if matches!(args.get(1), Some(Value::Boolean(false))) {
+        return Ok(Value::Undefined);
+    }
+    let Some(request) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(id) = client_id(Some(request)) else {
+        return Ok(Value::Undefined);
+    };
+    let active = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
+        !req.aborted && !matches!(execute::get_property(&req.req, "destroyed"), Value::Boolean(true))
+    });
+    if !active {
+        return Ok(Value::Undefined);
+    }
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+        req.timeout = None;
+    }
+    let socket = {
+        state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&id)
+            .and_then(|req| req.socket.clone())
+    };
+    if let Some(socket) = socket {
+        state
+            .borrow_mut()
+            .net
+            .pending_lookups
+            .retain(|pending| !execute::same_identity(&pending.socket, &socket));
+    }
+    set_request_property(Some(request), CLIENT_TIMEOUT_PROP, Value::Undefined);
+    net::emit(state, request, "timeout", Vec::new())?;
+    Ok(Value::Boolean(true))
+}
+
 /// `req.end([chunk])` — write the body, connect, and send the request.
 pub fn req_end(
     state: &Rc<RefCell<HostState>>,
@@ -620,7 +796,7 @@ pub fn req_end(
             req_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (target, method, path, headers, body, agent, omit_host) = {
+    let (target, method, path, headers, body, agent, lookup, omit_host) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -638,6 +814,7 @@ pub fn req_end(
             req.headers.clone(),
             req.body.clone(),
             req.agent.clone(),
+            req.lookup.clone(),
             req.omit_host,
         )
     };
@@ -710,6 +887,18 @@ pub fn req_end(
             }
             socket
         }
+        (None, None) if lookup.is_some() => {
+            let host = target_host(&target);
+            let mut options = vec![
+                ("host".into(), Value::String(host.clone())),
+                ("hostname".into(), Value::String(host)),
+                ("lookup".into(), lookup.clone().unwrap()),
+            ];
+            if let RequestTarget::Tcp { port, .. } = &target {
+                options.push(("port".into(), Value::Number(*port as f64)));
+            }
+            net::connect(state, &[host_api::object(options)])?
+        }
         (None, None) => send_request(state, &target, &method, &path, &headers, &body, omit_host)?,
     };
     let socket_id = net::net_id(&socket);
@@ -727,6 +916,97 @@ pub fn req_end(
     }
     drop(guard);
     subscribe_socket(state, &socket)?;
+    let (request, request_timeout, timeout_cb, agent_timeout) = {
+        let guard = state.borrow();
+        let Some(req) = guard.http.clientreqs.get(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
+        (
+            req.req.clone(),
+            execute::get_property(&req.req, "timeout"),
+            execute::get_property(&req.req, "timeoutCb"),
+            req.agent.as_ref().map(|agent| execute::get_property(agent, "timeout")),
+        )
+    };
+    if lookup.is_some() {
+        let pending_timer = {
+            state
+                .borrow()
+                .http
+                .clientreqs
+                .get(&id)
+                .and_then(|req| req.timeout.clone())
+        };
+        if let Some(timer) = pending_timer {
+            crate::modules::timers::clear_timeout(state, &[timer])?;
+            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+                req.timeout = None;
+            }
+        }
+    }
+    let request_timeout_set = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .is_some_and(|req| req.timeout_set);
+    let request_timeout_cb = if quench_runtime::is_callable(&timeout_cb) {
+        timeout_cb
+    } else {
+        quench_runtime::host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_HTTP_REQ_TIMEOUT_FIRE.cap,
+                ),
+            },
+            vec![request.clone()],
+        )
+    };
+    set_request_property(Some(&request), "timeoutCb", request_timeout_cb.clone());
+    if lookup.is_some() && agent_timeout.is_some() {
+        if let Value::Number(value) = agent_timeout.clone().unwrap_or(Value::Number(0.0)) {
+            if value.is_finite() && value > 0.0 {
+                let agent_cb = quench_runtime::host_api::bound_capability_with_arguments(
+                    quench_runtime::ops::HostCapabilityRef {
+                        realm: quench_runtime::ops::RealmId::ROOT,
+                        kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                            crate::registry::SPEC_HTTP_REQ_TIMEOUT_FIRE.cap,
+                        ),
+                    },
+                    vec![request.clone(), Value::Boolean(false)],
+                );
+                net::socket_set_timeout(
+                    state,
+                    Some(&socket),
+                    &[Value::Number(value), agent_cb],
+                )?;
+            }
+        }
+    }
+    let effective_timeout = if request_timeout_set {
+        request_timeout
+    } else {
+        agent_timeout.unwrap_or(Value::Number(0.0))
+    };
+    if lookup.is_some() {
+        if let Value::Number(value) = effective_timeout {
+            if value.is_finite() && value > 0.0 {
+                net::socket_set_timeout(
+                    state,
+                    Some(&socket),
+                    &[Value::Number(value), request_timeout_cb],
+                )?;
+            }
+        }
+    } else if request_timeout_set {
+        subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
+    }
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .push((request, "socket".into(), vec![socket]));
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -910,6 +1190,7 @@ pub fn req_close(
         }
         return Ok(Value::Undefined);
     };
+    clear_request_timeout(state, client_id)?;
     let request = state
         .borrow()
         .http
@@ -1038,14 +1319,7 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
 fn agent_name(target: &RequestTarget, agent: &Value) -> String {
     let options = match target {
         RequestTarget::Tcp { host, port } => host_api::object(vec![
-            (
-                "host".into(),
-                Value::String(if host == "127.0.0.1" {
-                    "localhost".into()
-                } else {
-                    host.clone()
-                }),
-            ),
+            ("host".into(), Value::String(host.clone())),
             ("port".into(), Value::Number(*port as f64)),
         ]),
         RequestTarget::Unix { path } => host_api::object(vec![(
@@ -1528,6 +1802,10 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_HEADER),
             ),
             (
+                "setTimeout".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_TIMEOUT),
+            ),
+            (
                 "abort".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_ABORT),
             ),
@@ -1540,6 +1818,8 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             ("aborted".to_string(), Value::Boolean(false)),
             ("destroyed".to_string(), Value::Boolean(false)),
             ("finished".to_string(), Value::Boolean(false)),
+            ("timeout".to_string(), Value::Number(0.0)),
+            (CLIENT_TIMEOUT_PROP.to_string(), Value::Undefined),
             (
                 CLIENT_CLOSE_PENDING_PROP.to_string(),
                 Value::Boolean(false),
@@ -1603,6 +1883,30 @@ fn set_request_property(receiver: Option<&Value>, key: &str, value: Value) {
         let updated = execute::set_property(receiver.clone(), key, value);
         execute::replace_value(receiver, &updated);
     }
+}
+
+fn clear_request_timeout(state: &Rc<RefCell<HostState>>, id: u64) -> Result<(), VmError> {
+    let timer = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .and_then(|req| req.timeout.clone());
+    if let Some(timer) = timer {
+        crate::modules::timers::clear_timeout(state, &[timer])?;
+    }
+    let request = {
+        let mut guard = state.borrow_mut();
+        let request = guard.http.clientreqs.get(&id).map(|req| req.req.clone());
+        if let Some(req) = guard.http.clientreqs.get_mut(&id) {
+            req.timeout = None;
+        }
+        request
+    };
+    if let Some(request) = request {
+        set_request_property(Some(&request), CLIENT_TIMEOUT_PROP, Value::Undefined);
+    }
+    Ok(())
 }
 
 fn chunk_bytes(value: Option<&Value>) -> Vec<u8> {
