@@ -37,5 +37,19 @@ const iterable = {
     async (value) => value * 2
   );
   assert.deepStrictEqual([custom[0], custom[1]], [2, 4]);
+
+  let second = 2;
+  const arrayLike = {
+    length: 2,
+    0: 1,
+    get 1() {
+      return second;
+    }
+  };
+  const changed = await Array.fromAsync(arrayLike, async (value) => {
+    if (value === 1) second = 3;
+    return value;
+  });
+  assert.deepStrictEqual(changed, [1, 3]);
   console.log("ok");
 })();
