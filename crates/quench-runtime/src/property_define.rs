@@ -348,6 +348,7 @@ fn builtin_prototype(builtin: Builtin) -> Option<Value> {
         | Builtin::RegExpPrototype
         | Builtin::DatePrototype
         | Builtin::ErrorPrototype
+        | Builtin::DOMExceptionPrototype
         | Builtin::SymbolPrototype
         | Builtin::PromisePrototype
         | Builtin::MapPrototype

@@ -127,15 +127,10 @@ pub fn atob(args: &[Value]) -> Result<String, VmError> {
 }
 
 fn invalid_character_error() -> VmError {
-    let error = Value::object(vec![
-        (
-            "constructor".into(),
-            Value::Builtin(quench_runtime::ops::Builtin::Error),
-        ),
-        ("name".into(), Value::String("InvalidCharacterError".into())),
-        ("code".into(), Value::Number(5.0)),
-    ]);
-    VmError::Thrown(error)
+    VmError::Thrown(quench_runtime::builtins::dom_exception(
+        "Invalid character",
+        "InvalidCharacterError",
+    ))
 }
 
 /// Validate a Buffer size argument; returns the size as `usize`.
