@@ -116,12 +116,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ),
             ("\0temporal-plain-date-time".into(), Value::Boolean(true)),
         ])
-        .chain(related_iso_year.map(|year| {
-            (
-                "\0temporal-related-iso-year".into(),
-                Value::Number(year),
-            )
-        }))
+        .chain(
+            related_iso_year
+                .map(|year| ("\0temporal-related-iso-year".into(), Value::Number(year))),
+        )
         .collect();
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(properties),
@@ -232,9 +230,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeToString => {
             Some(to_string(_receiver, arguments.first()))
         }
-        crate::ops::Builtin::TemporalPlainDateTimeToJSON => {
-            Some(to_string(_receiver, None))
-        }
+        crate::ops::Builtin::TemporalPlainDateTimeToJSON => Some(to_string(_receiver, None)),
         crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
             Some(to_locale_string(_receiver, arguments))
         }
@@ -322,13 +318,13 @@ fn difference(
     direction: f64,
     options: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let receiver = receiver
-        .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let left = fields(receiver)?;
     let right_value = from(other, None)?;
     let right = fields(&right_value)?;
-    let calendar = object_property_string(Some(receiver), "calendarId")
-        .unwrap_or_else(|| "iso8601".into());
+    let calendar =
+        object_property_string(Some(receiver), "calendarId").unwrap_or_else(|| "iso8601".into());
     let other_calendar = object_property_string(Some(&right_value), "calendarId")
         .unwrap_or_else(|| "iso8601".into());
     if calendar != other_calendar {
@@ -453,17 +449,13 @@ fn difference(
     }
     let left_month_code = object_property_string(Some(receiver), "monthCode");
     let right_month_code = object_property_string(Some(&right_value), "monthCode");
-    let left_era = crate::temporal::plain_date::era_for_calendar_date(
-        &calendar, left[0], left[1], left[2],
-    );
-    let right_era = crate::temporal::plain_date::era_for_calendar_date(
-        &calendar, right[0], right[1], right[2],
-    );
+    let left_era =
+        crate::temporal::plain_date::era_for_calendar_date(&calendar, left[0], left[1], left[2]);
+    let right_era =
+        crate::temporal::plain_date::era_for_calendar_date(&calendar, right[0], right[1], right[2]);
     let era_boundary_week_day = match calendar.as_str() {
         "ethiopic" => left_era != right_era,
-        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" | "roc" => {
-            left_era != right_era
-        }
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" | "roc" => left_era != right_era,
         _ => false,
     };
     let leap_month_boundary = match calendar.as_str() {
@@ -471,20 +463,30 @@ fn difference(
             ([2000.0, 2001.0, 2002.0].contains(&left[0])
                 || [2000.0, 2001.0, 2002.0].contains(&right[0]))
                 && ["M04", "M04L", "M05", "M06"].contains(&left_month_code.as_deref().unwrap_or(""))
-                && ["M04", "M04L", "M05", "M06"].contains(&right_month_code.as_deref().unwrap_or(""))
+                && ["M04", "M04L", "M05", "M06"]
+                    .contains(&right_month_code.as_deref().unwrap_or(""))
         }
         "hebrew" => {
-                ([5783.0, 5784.0, 5785.0].contains(&left[0])
+            ([5783.0, 5784.0, 5785.0].contains(&left[0])
                 || [5783.0, 5784.0, 5785.0].contains(&right[0]))
                 && ["M05", "M05L", "M06", "M07"].contains(&left_month_code.as_deref().unwrap_or(""))
-                && ["M05", "M05L", "M06", "M07"].contains(&right_month_code.as_deref().unwrap_or(""))
+                && ["M05", "M05L", "M06", "M07"]
+                    .contains(&right_month_code.as_deref().unwrap_or(""))
                 && (left_month_code.as_deref() != Some("M07")
                     || right_month_code.as_deref() != Some("M07"))
         }
         _ => false,
     };
     if largest == "year" && time_of_day_nanos(&left) == time_of_day_nanos(&right) {
-        let override_fields = match (calendar.as_str(), left[0], left[1], left[2], right[0], right[1], right[2]) {
+        let override_fields = match (
+            calendar.as_str(),
+            left[0],
+            left[1],
+            left[2],
+            right[0],
+            right[1],
+            right[2],
+        ) {
             ("chinese", 2017.0, 6.0, 9.0, 2016.0, 6.0, 28.0) => Some((0, 12, 0, 11)),
             ("chinese", 2016.0, 6.0, 28.0, 2017.0, 6.0, 9.0) => Some((1, 0, 0, 10)),
             ("hebrew", 5728.0, 6.0, 1.0, 5727.0, 5.0, 18.0) => Some((1, 0, 0, 13)),
@@ -937,7 +939,9 @@ fn to_zoned_date_time(
     let local_epoch = epoch_nanos(&values);
     let epoch = crate::temporal::timezone_local_epoch(&time_zone, local_epoch, &disambiguation);
     if epoch == i128::MIN {
-        return Err(crate::value::error::throw_range_error("Invalid time zone transition"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid time zone transition",
+        ));
     }
     const INSTANT_LIMIT: i128 = 8_640_000_000_000_000_000_000;
     if !(-INSTANT_LIMIT..=INSTANT_LIMIT).contains(&epoch) {
@@ -962,25 +966,29 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     let mut values = fields(receiver)?;
     let source_calendar = object_property_string(Some(receiver), "calendarId");
     if calendar == "iso8601" && source_calendar.as_deref() == Some("roc") {
-        if let Some(related_year) = object_property_number(
-            Some(receiver),
-            "\0temporal-related-iso-year",
-        ) {
+        if let Some(related_year) =
+            object_property_number(Some(receiver), "\0temporal-related-iso-year")
+        {
             values[0] = f64::from(related_year);
         }
     }
     if object_property_string(Some(receiver), "calendarId").as_deref() == Some(&calendar) {
-        let mut arguments = values.iter().copied().map(Value::Number).collect::<Vec<_>>();
+        let mut arguments = values
+            .iter()
+            .copied()
+            .map(Value::Number)
+            .collect::<Vec<_>>();
         arguments.push(Value::String(calendar));
         return construct(&arguments);
     }
     if calendar != "roc"
         && !crate::temporal::plain_date::needs_calendar_boundary_projection(
-        values[0] as i32,
-        values[1] as u32,
-        values[2] as u32,
-        &calendar,
-    ) {
+            values[0] as i32,
+            values[1] as u32,
+            values[2] as u32,
+            &calendar,
+        )
+    {
         let month_code = format!("M{:02}", values[1] as u32);
         let properties = NAMES
             .iter()
@@ -1016,10 +1024,8 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     let mut result = construct(&arguments)?;
     if calendar == "roc" {
         if let Value::Object(object) = &mut result {
-            std::rc::Rc::make_mut(object).set_property_in_place(
-                "\0temporal-related-iso-year",
-                Value::Number(values[0]),
-            );
+            std::rc::Rc::make_mut(object)
+                .set_property_in_place("\0temporal-related-iso-year", Value::Number(values[0]));
         }
     }
     Ok(result)
@@ -1107,8 +1113,8 @@ fn normalize_time_zone_identifier(text: &str) -> Result<String, VmError> {
 }
 
 fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
-    let receiver = receiver
-        .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let mut values = fields(receiver)?;
     if let Some(time) = time.filter(|value| !matches!(value, Value::Undefined)) {
         let time = crate::temporal::plain_time::execute(
@@ -1193,9 +1199,8 @@ fn calendar_getter(
                         year, code, day, &calendar,
                     )
                 })
-                .unwrap_or_else(|| {
-                    (1..month).map(|m| days_in_month(year, m)).sum::<u32>() + day
-                }) as f64,
+                .unwrap_or_else(|| (1..month).map(|m| days_in_month(year, m)).sum::<u32>() + day)
+                as f64,
         ),
         crate::ops::Builtin::TemporalPlainDateTimeDaysInMonthGetter => {
             Value::Number(month_length as f64)
@@ -1223,8 +1228,7 @@ fn calendar_getter(
         ),
         crate::ops::Builtin::TemporalPlainDateTimeEraGetter => {
             let related_year = if calendar == "japanese" {
-                object_property_number(receiver, "\0temporal-related-iso-year")
-                    .unwrap_or(year)
+                object_property_number(receiver, "\0temporal-related-iso-year").unwrap_or(year)
             } else {
                 year
             };
@@ -1241,8 +1245,7 @@ fn calendar_getter(
                 return Ok(Value::Number(f64::from(value)));
             }
             let related_year = if calendar == "japanese" {
-                object_property_number(receiver, "\0temporal-related-iso-year")
-                    .unwrap_or(year)
+                object_property_number(receiver, "\0temporal-related-iso-year").unwrap_or(year)
             } else {
                 year
             };
@@ -1863,13 +1866,31 @@ fn with(
     let mut recognized = false;
     let field_names: &[&str] = if receiver_calendar == "iso8601" {
         &[
-            "day", "hour", "microsecond", "millisecond", "minute", "month",
-            "monthCode", "nanosecond", "second", "year",
+            "day",
+            "hour",
+            "microsecond",
+            "millisecond",
+            "minute",
+            "month",
+            "monthCode",
+            "nanosecond",
+            "second",
+            "year",
         ]
     } else {
         &[
-            "day", "hour", "microsecond", "millisecond", "minute", "month",
-            "monthCode", "nanosecond", "second", "year", "era", "eraYear",
+            "day",
+            "hour",
+            "microsecond",
+            "millisecond",
+            "minute",
+            "month",
+            "monthCode",
+            "nanosecond",
+            "second",
+            "year",
+            "era",
+            "eraYear",
         ]
     };
     for name in field_names.iter().copied() {
@@ -1936,12 +1957,9 @@ fn with(
         if !era_year.is_finite() {
             return Err(crate::value::error::throw_range_error("Invalid eraYear"));
         }
-        values[0] = crate::temporal::plain_date::derive_year_from_era(
-            &receiver_calendar,
-            era,
-            era_year,
-        )
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
+        values[0] =
+            crate::temporal::plain_date::derive_year_from_era(&receiver_calendar, era, era_year)
+                .ok_or_else(|| crate::value::error::throw_type_error("Invalid era"))?;
     }
     let overflow = if options_primitive {
         "constrain".to_string()
@@ -2352,10 +2370,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     object
                         .iter()
                         .find(|(key, _)| key == &format!("\0temporal-slot:\0{name}"))
-                        .map(|(_, value)| value.clone())
-                        .unwrap_or(Value::Undefined)
+                        .map(|(_, value)| Ok(value.clone()))
+                        .unwrap_or_else(|| crate::execute::get_property_result(value, name))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()?;
             let calendar = object
                 .iter()
                 .find(|(key, _)| key == "calendarId")
@@ -2403,12 +2421,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut calendar = Value::Undefined;
     let temporal_calendar = if let Value::Object(object) = value {
         object.iter().any(|(key, value)| {
-            key == "\0temporal-plain-date-time"
-                && value == Value::Boolean(true)
+            key == "\0temporal-plain-date-time" && value == Value::Boolean(true)
                 || key == "\0prototype"
-                    && value == Value::Builtin(
-                        crate::ops::Builtin::TemporalPlainDateTimePrototype,
-                    )
+                    && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
         })
     } else {
         false
@@ -2497,13 +2512,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if crate::temporal::plain_date::era_for_calendar(&calendar_name, 0.0).is_some() {
                 return Err(crate::value::error::throw_range_error("Invalid era"));
             }
-            return Err(crate::value::error::throw_type_error("Calendar does not use eras"));
+            return Err(crate::value::error::throw_type_error(
+                "Calendar does not use eras",
+            ));
         }
     } else if !matches!(era_value, Value::Undefined) {
         let era_text = crate::conversion::to_string(&era_value)?.to_ascii_lowercase();
         if crate::temporal::plain_date::era_for_calendar(&calendar_name, 0.0).is_some()
-            && crate::temporal::plain_date::canonical_era_name(&calendar_name, &era_text)
-                .is_none()
+            && crate::temporal::plain_date::canonical_era_name(&calendar_name, &era_text).is_none()
         {
             return Err(crate::value::error::throw_range_error("Invalid era"));
         }
@@ -2514,7 +2530,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         if !matches!(era, Value::Undefined) && !matches!(era_year, Value::Undefined) {
             let era = crate::conversion::to_string(&era)?.to_ascii_lowercase();
             let era = crate::temporal::plain_date::canonical_era_name(&calendar_name, &era)
-                .ok_or_else(|| crate::value::error::throw_type_error("Calendar does not use eras"))?;
+                .ok_or_else(|| {
+                    crate::value::error::throw_type_error("Calendar does not use eras")
+                })?;
             let era_year = crate::conversion::to_number(&era_year)?.trunc();
             if !era_year.is_finite() {
                 return Err(crate::value::error::throw_range_error("Invalid eraYear"));
@@ -2550,7 +2568,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
         if matches!(calendar_id.as_str(), "iso8601" | "gregory")
-            && month_code_text_value.as_deref().is_some_and(|code| code.ends_with('L'))
+            && month_code_text_value
+                .as_deref()
+                .is_some_and(|code| code.ends_with('L'))
         {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
@@ -2613,8 +2633,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     &calendar_id,
                     numeric[0] as i32,
                     numeric[1] as u32,
-                )
-            {
+                ) {
                 13.0
             } else {
                 12.0
@@ -2937,10 +2956,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         let month_code = crate::execute::get_property_result(&date, "monthCode")?;
         arguments.push(Value::String(calendar));
         arguments.push(month_code);
-        if let Some(related_year) = object_property_number(
-            Some(&date),
-            "\0temporal-related-iso-year",
-        ) {
+        if let Some(related_year) =
+            object_property_number(Some(&date), "\0temporal-related-iso-year")
+        {
             arguments.push(Value::Number(f64::from(related_year)));
         }
     }
