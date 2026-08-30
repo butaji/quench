@@ -443,6 +443,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_ISIPV6 => net_is_ipv6,
         CAP_NET_GET_ASF_TIMEOUT => net_get_asf_timeout,
         CAP_NET_SET_ASF_TIMEOUT => net_set_asf_timeout,
+        CAP_NET_GET_ASF => net_get_asf,
+        CAP_NET_SET_ASF => net_set_asf,
         CAP_NET_SERVER_LISTEN => crate::modules::net::server_listen,
         CAP_NET_SERVER_CLOSE => crate::modules::net::server_close,
         CAP_NET_SERVER_CLOSE_IDLE => crate::modules::net::server_close_idle,
