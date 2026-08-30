@@ -1820,6 +1820,24 @@ pub(crate) fn apply_deferred_request_timeout(
         .and_then(|req| req.pending_timeout.take());
     if let Some(timeout) = timeout {
         net::socket_set_timeout(state, Some(socket), &[Value::Number(timeout)])?;
+        // The request may hold a VM alias of the canonical net socket. Keep
+        // the observable timeout value synchronized on that alias before the
+        // connect event is emitted.
+        execute::set_property_in_place(socket, "timeout", Value::Number(timeout));
+        if let Some(request_socket) = state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&id)
+            .map(|request| execute::get_property(&request.req, "socket"))
+            .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        {
+            execute::set_property_in_place(
+                &request_socket,
+                "timeout",
+                Value::Number(timeout),
+            );
+        }
     }
     Ok(())
 }
@@ -2659,6 +2677,16 @@ fn pool_response_socket(
             .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
     });
     if keep_alive && alive {
+        // A request timeout belongs to the request, not to an idle pooled
+        // socket. Clear the host timer before invoking the Agent policy;
+        // custom keepSocketAlive implementations may then install their own
+        // reusable-socket timeout.
+        if !matches!(
+            execute::get_property(&agent, "timeout"),
+            Value::Number(value) if value.is_finite() && value > 0.0
+        ) {
+            net::socket_set_timeout(state, Some(socket), &[Value::Number(0.0)])?;
+        }
         let keep_socket_alive = execute::get_property(&agent, "keepSocketAlive");
         let keep_result = if quench_runtime::is_callable(&keep_socket_alive) {
             Some(execute::call(&keep_socket_alive, &agent, &[socket.clone()])?)

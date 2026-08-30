@@ -96,6 +96,8 @@ pub struct NetState {
     pub paths: HashMap<String, u16>,
     pub pending_writes: Vec<(Value, Vec<u8>)>,
     pub pending_request_writes: Vec<(Value, Vec<u8>, Value)>,
+    /// Canonical socket timeout timers, independent of VM alias properties.
+    pub timeout_timers: HashMap<u64, Value>,
 }
 
 pub struct PendingLookup {
@@ -124,6 +126,7 @@ impl NetState {
             paths: HashMap::new(),
             pending_writes: Vec::new(),
             pending_request_writes: Vec::new(),
+            timeout_timers: HashMap::new(),
         }
     }
 }

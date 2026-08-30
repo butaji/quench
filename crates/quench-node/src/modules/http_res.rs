@@ -357,6 +357,17 @@ pub fn res_flush_headers(
             res.http10,
         )
     };
+    let mut headers = headers;
+    if !http10
+        && !headers.iter().any(|(key, _)| {
+            key.eq_ignore_ascii_case("content-length")
+                || key.eq_ignore_ascii_case("transfer-encoding")
+        })
+    {
+        // Flushing an unfinished keep-alive response must leave framing open;
+        // Content-Length: 0 would make the client complete it immediately.
+        headers.push(("transfer-encoding".into(), "chunked".into()));
+    }
     let payload = host_api::bytes(&compose(
         status,
         &text,
