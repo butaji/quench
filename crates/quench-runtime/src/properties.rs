@@ -901,24 +901,6 @@ fn mark_properties(properties: &mut Vec<(String, crate::value::Value)>) {
     }
 }
 
-fn reject_restricted_property_write(
-    target: &crate::value::Value,
-    key: &str,
-) -> Result<(), crate::execute::VmError> {
-    if matches!(&target, crate::value::Value::Array(values) if values.is_strict_arguments() && key == "callee")
-    {
-        return Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        ));
-    }
-    if crate::vm::has_restricted_function_property(target, key) {
-        return Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
     // Prototype objects do not truly own `length`/`name`; assigning them
     // creates an own property that shadows the callable metadata.

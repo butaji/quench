@@ -302,27 +302,6 @@ fn reduce_for_init(
     crate::reduce_support::finish_program(fragment, None)
 }
 
-fn reduce_body_fragment(
-    statement: &ForStatement<'_>,
-    _parent_ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-    dst: u16,
-) -> Result<Vec<Op>, Vec<String>> {
-    reduce_body_fragment_with_slots(
-        statement,
-        _parent_ops,
-        facts,
-        next_register,
-        next_slot,
-        locals,
-        dst,
-        &mut Vec::new(),
-    )
-}
-
 fn reduce_body_fragment_with_slots(
     statement: &ForStatement<'_>,
     _parent_ops: &mut Vec<Op>,
