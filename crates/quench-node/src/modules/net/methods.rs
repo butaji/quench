@@ -1054,10 +1054,13 @@ pub fn socket_destroy(
     }
     if emit_close {
         set_socket_state(&receiver, true, false, "closed");
-        emit(state, &receiver, "close", Vec::new())?;
-        // Destruction is terminal: remove the host record after observers
-        // receive the close event so a closing server can finish.
-        state.borrow_mut().net.sockets.remove(&id);
+        // Node delivers socket close on the next loop turn, allowing a
+        // listener attached immediately after `destroy()` to observe it.
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "close".into(), Vec::new()));
     }
     Ok(receiver)
 }
