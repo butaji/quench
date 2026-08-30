@@ -44,6 +44,7 @@ pub(crate) const BOUND_ID_PROP: &str = "\0quench:net:bound-id";
 pub(crate) const BOUND_HANDLE_PROP: &str = "\0quench:net:bound-handle";
 pub(crate) const BOUND_LOCAL_ADDRESS_PROP: &str = "\0quench:net:bound-local-address";
 pub(crate) const BOUND_LOCAL_PORT_PROP: &str = "\0quench:net:bound-local-port";
+pub(crate) const LOOKUP_ADDRESSES_PROP: &str = "\0quench:net:lookup-addresses";
 pub(crate) const ONREAD_BUFFER_PROP: &str = "\0quench:net:onread:buffer";
 pub(crate) const ONREAD_CALLBACK_PROP: &str = "\0quench:net:onread:callback";
 pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
@@ -109,10 +110,13 @@ pub struct NetState {
     pub pending_errors: Vec<(Value, Value)>,
     pub lookup_result: Option<Value>,
     pub lookup_in_call: bool,
+    pub auto_select_family: bool,
+    pub auto_select_family_attempt_timeout: u64,
     pub pending_lookups: Vec<PendingLookup>,
     pub pending_events: Vec<(Value, String, Vec<Value>)>,
     pub paths: HashMap<String, u16>,
     pub pending_writes: Vec<(Value, Vec<u8>)>,
+    pub pending_connect_writes: HashMap<u64, Vec<u8>>,
     pub pending_request_writes: Vec<(Value, Vec<u8>, Value)>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
@@ -142,10 +146,13 @@ impl NetState {
             pending_errors: Vec::new(),
             lookup_result: None,
             lookup_in_call: false,
+            auto_select_family: true,
+            auto_select_family_attempt_timeout: 2500,
             pending_lookups: Vec::new(),
             pending_events: Vec::new(),
             paths: HashMap::new(),
             pending_writes: Vec::new(),
+            pending_connect_writes: HashMap::new(),
             pending_request_writes: Vec::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
@@ -745,6 +752,14 @@ pub fn build() -> Value {
         (
             "setDefaultAutoSelectFamilyAttemptTimeout",
             crate::host::capability(crate::registry::SPEC_NET_SET_ASF_TIMEOUT),
+        ),
+        (
+            "getDefaultAutoSelectFamily",
+            crate::host::capability(crate::registry::SPEC_NET_GET_ASF),
+        ),
+        (
+            "setDefaultAutoSelectFamily",
+            crate::host::capability(crate::registry::SPEC_NET_SET_ASF),
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
