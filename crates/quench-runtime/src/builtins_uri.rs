@@ -89,15 +89,15 @@ fn decode_run(
     preserve_reserved: bool,
     decoded: &mut Vec<u16>,
 ) -> Result<(), VmError> {
-    let (bytes, escapes) = percent_run(units, index)?;
+    let start = *index;
+    let bytes = percent_run(units, index)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| uri_error())?;
-    append_decoded(&escapes, preserve_reserved, text, decoded);
+    append_decoded(units, start, preserve_reserved, text, decoded);
     Ok(())
 }
 
-fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<String>), VmError> {
+fn percent_run(units: &[u16], index: &mut usize) -> Result<Vec<u8>, VmError> {
     let mut bytes = Vec::new();
-    let mut escapes = Vec::new();
     while units.get(*index) == Some(&u16::from(b'%')) {
         let escape = units.get(*index + 1..*index + 3).ok_or_else(uri_error)?;
         if !escape
@@ -109,21 +109,27 @@ fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<String>
         let text = String::from_utf16_lossy(escape);
         let byte = u8::from_str_radix(&text, 16).map_err(|_| uri_error())?;
         bytes.push(byte);
-        escapes.push(String::from_utf16_lossy(&units[*index..*index + 3]));
         *index += 3;
     }
-    Ok((bytes, escapes))
+    Ok(bytes)
 }
 
-fn append_decoded(escapes: &[String], preserve_reserved: bool, text: &str, decoded: &mut Vec<u16>) {
-    let mut index = 0;
-    for character in text.chars() {
+fn append_decoded(
+    units: &[u16],
+    start: usize,
+    preserve_reserved: bool,
+    text: &str,
+    decoded: &mut Vec<u16>,
+) {
+    for (index, character) in text.char_indices() {
         if preserve_reserved && URI_RESERVED.contains(character) {
-            decoded.extend(escapes[index].encode_utf16());
+            let raw_start = start + index * 3;
+            let raw_end = raw_start + character.len_utf8() * 3;
+            decoded.extend(&units[raw_start..raw_end]);
         } else {
-            decoded.extend(character.to_string().encode_utf16());
+            let mut encoded = [0; 2];
+            decoded.extend(character.encode_utf16(&mut encoded).iter().copied());
         }
-        index += character.len_utf8();
     }
 }
 
