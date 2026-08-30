@@ -256,9 +256,6 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
             thenable,
             then,
         } => process_thenable(target, thenable, then),
-        PromiseContinuation::Aggregate { aggregate, index } => {
-            aggregate_settle(&aggregate, index, state);
-        }
         PromiseContinuation::AsyncGenerator {
             generator,
             result,

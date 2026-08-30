@@ -21,10 +21,6 @@ pub(crate) enum PromiseContinuation {
         pending: ArrayFromAsyncPending,
         target: Option<Value>,
     },
-    Aggregate {
-        aggregate: Rc<PromiseAggregate>,
-        index: usize,
-    },
     Thenable {
         target: Rc<PromiseData>,
         thenable: Value,

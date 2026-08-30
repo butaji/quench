@@ -5483,9 +5483,6 @@ mod stubs {
                     precision = 0;
                 }
                 "second" => {
-                    millisecond = 0;
-                    microsecond = 0;
-                    nanosecond = 0;
                     precision = 0;
                 }
                 "millisecond" => precision = 3,
@@ -5596,9 +5593,6 @@ mod stubs {
                     }
                 }
             }
-            millisecond = (fraction / 1_000_000) as u32;
-            microsecond = (fraction / 1_000 % 1_000) as u32;
-            nanosecond = (fraction % 1_000) as u32;
         }
         if (smallest.is_some() || precision != usize::MAX)
             && !timezone.starts_with(['+', '-'])

@@ -13,17 +13,6 @@ pub fn write_value(registers: &mut crate::register_file::RegisterFile, index: u1
     let index = usize::from(index);
     registers.write(index, value);
 }
-/// Unchecked variant for hot arithmetic paths where the compiler already
-/// guarantees the register index is in bounds.
-#[inline]
-pub(crate) fn write_value_unchecked(
-    registers: &mut crate::register_file::RegisterFile,
-    index: u16,
-    value: Value,
-) {
-    registers.write(usize::from(index), value);
-}
-
 #[inline]
 pub fn read_register(
     registers: &crate::register_file::RegisterFile,
