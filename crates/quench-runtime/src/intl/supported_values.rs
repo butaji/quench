@@ -92,9 +92,9 @@ pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[
 ];
 
 pub(crate) fn supported_time_zones() -> Vec<Value> {
-    chrono_tz::TZ_VARIANTS
+    super::time_zone_data::CANONICAL_TIME_ZONES
         .iter()
-        .map(|timezone| Value::String(timezone.name().to_string()))
+        .map(|timezone| Value::String((*timezone).to_string()))
         .collect()
 }
 
