@@ -67,8 +67,8 @@ impl ModuleMetadata {
         metadata.mark_source_exports();
         metadata.has_top_level_await = statements.iter().any(statement_has_tla);
         metadata.dynamic_import_specifiers = dynamic_import_specifiers(statements);
-        for specifier in metadata.dynamic_import_specifiers.clone() {
-            push_unique(&mut metadata.import_specifiers, &specifier);
+        for specifier in &metadata.dynamic_import_specifiers {
+            push_unique(&mut metadata.import_specifiers, specifier);
         }
         metadata
     }
