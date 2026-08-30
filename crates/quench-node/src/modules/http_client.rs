@@ -372,6 +372,65 @@ pub fn res_set_encoding(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+pub fn res_pipe(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let response = receiver.cloned().unwrap_or(Value::Undefined);
+    let destination = args.first().cloned().unwrap_or(Value::Undefined);
+    let data = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_HTTP_RES_PIPE_DATA),
+        vec![destination.clone()],
+    );
+    crate::modules::events::method_on(
+        state,
+        Some(&response),
+        &[Value::String("data".into()), data],
+    )?;
+    let end = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_HTTP_RES_PIPE_END),
+        vec![destination.clone()],
+    );
+    crate::modules::events::method_once(
+        state,
+        Some(&response),
+        &[Value::String("end".into()), end],
+    )?;
+    net::emit(state, &destination, "pipe", vec![response])?;
+    Ok(destination)
+}
+
+pub fn res_pipe_data(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let destination = args.first().cloned().unwrap_or(Value::Undefined);
+    let write = execute::get_property(&destination, "write");
+    if quench_runtime::is_callable(&write) {
+        execute::call(
+            &write,
+            &destination,
+            &[args.get(1).cloned().unwrap_or(Value::Undefined)],
+        )?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn res_pipe_end(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let destination = args.first().cloned().unwrap_or(Value::Undefined);
+    let end = execute::get_property(&destination, "end");
+    if quench_runtime::is_callable(&end) {
+        execute::call(&end, &destination, &[])?;
+    }
+    Ok(Value::Undefined)
+}
+
 /// `IncomingMessage.setTimeout(msecs[, callback])` delegates the timer to the
 /// response's socket and relays its timeout transition back to the response.
 pub fn res_set_timeout(
@@ -2301,10 +2360,11 @@ pub fn data_handler(
                 .get(&client_id)
                 .and_then(|req| req.socket.clone())
             {
+                ensure_http_handle(&socket);
                 set_response_property(&res, "socket", socket.clone());
                 // IncomingMessage exposes the same connection identity via
                 // both historical `connection` and modern `socket` names.
-                set_response_property(&res, "connection", socket);
+                set_response_property(&res, "connection", socket.clone());
             }
             if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                 req.res = Some(res.clone());
@@ -2421,6 +2481,18 @@ fn response_content_length(response: &Value) -> Option<usize> {
     execute::to_js_string(&execute::get_property(&headers, "content-length"))
         .ok()
         .and_then(|value| value.parse().ok())
+}
+
+fn ensure_http_handle(socket: &Value) {
+    if !matches!(execute::get_property(socket, "_handle"), Value::Null | Value::Undefined) {
+        return;
+    }
+    let handle = host_api::object(vec![
+        ("close".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("asyncReset".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+    ]);
+    let updated = execute::set_property(socket.clone(), "_handle", handle);
+    execute::replace_value(socket, &updated);
 }
 
 fn response_allows_reuse(response: &Value) -> bool {
@@ -3143,12 +3215,18 @@ fn build_incoming(
     // relationship identity-preserving without retaining a request↔response
     // strong cycle: the host state owns the request, while the alias follows
     // that same object whenever JavaScript reads the property.
-    let request_alias = match request_value {
+    let request_alias = match request_value.clone() {
         Value::Object(object) => Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(
             Rc::downgrade(&object),
         )))),
         other => other,
     };
+    if !matches!(request_value, Value::Undefined | Value::Null) {
+        let domain = execute::get_property(&request_value, "domain");
+        if !matches!(domain, Value::Undefined | Value::Null) {
+            execute::set_property_in_place(&res, "domain", domain);
+        }
+    }
     let props = vec![
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
@@ -3158,6 +3236,10 @@ fn build_incoming(
         (
             "setEncoding".to_string(),
             crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
+        ),
+        (
+            "pipe".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_RES_PIPE),
         ),
         (
             "setTimeout".to_string(),

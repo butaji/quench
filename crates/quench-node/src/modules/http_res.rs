@@ -181,7 +181,15 @@ pub fn res_write(
         )
     };
     let payload = if first_write {
-        compose(status, &text, &headers, &bytes, keep_alive, http10, send_date)
+        compose(
+            status,
+            &text,
+            &headers,
+            &bytes,
+            response_keep_alive(&headers, keep_alive),
+            http10,
+            send_date,
+        )
     } else {
         if chunked {
             chunk_frame(&bytes)
@@ -276,6 +284,7 @@ pub fn res_end(
         )
     };
     let status = status_code(receiver, status);
+    let keep_alive = response_keep_alive(&headers, keep_alive);
     if !headers_sent {
         let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive, http10, send_date));
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
@@ -400,7 +409,11 @@ fn compose(
     {
         out.extend_from_slice(b"Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n");
     }
-    let connection = if keep_alive { "keep-alive" } else { "close" };
+    let connection = headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("connection"))
+        .map(|(_, value)| value.as_str())
+        .unwrap_or(if keep_alive { "keep-alive" } else { "close" });
     let transfer_encoding = headers
         .iter()
         .filter(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
@@ -422,6 +435,14 @@ fn compose(
         out.extend_from_slice(body);
     }
     out
+}
+
+fn response_keep_alive(headers: &[(String, String)], fallback: bool) -> bool {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("connection"))
+        .map(|(_, value)| !value.eq_ignore_ascii_case("close"))
+        .unwrap_or(fallback)
 }
 
 fn chunk_frame(body: &[u8]) -> Vec<u8> {
