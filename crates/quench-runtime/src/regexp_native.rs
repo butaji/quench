@@ -213,6 +213,20 @@ fn property_matches(
     }
 }
 
+fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
+    matches!(
+        (name, value),
+        ("Any", _)
+            | ("Other", None)
+            | ("C", None)
+            | ("General_Category" | "gc", Some("Other" | "C" | "Surrogate" | "Cs"))
+            | (
+                "Script" | "sc" | "Script_Extensions" | "scx",
+                Some("Unknown" | "Zzzz")
+            )
+    )
+}
+
 fn find_property_repeat_str(
     name: &str,
     value: Option<&str>,
@@ -262,7 +276,19 @@ fn find_property_repeat_units(
     let mut index = 0;
     let mut count = 0;
     while index < input.len() {
-        let (character, width) = next_code_point(input, index, unicode)?;
+        let Some((character, width)) = next_code_point(input, index, unicode) else {
+            let unit = *input.get(index)?;
+            if !(0xD800..=0xDFFF).contains(&unit) {
+                return None;
+            }
+            let matched = surrogate_property_matches(name, value);
+            if if negative { matched } else { !matched } {
+                return None;
+            }
+            index += 1;
+            count += 1;
+            continue;
+        };
         if !property_matches(matcher, negative, character) {
             return None;
         }
