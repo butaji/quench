@@ -806,6 +806,7 @@ pub fn server_close(
         server.listening = false;
         server.closed = true;
     }
+    crate::modules::http::server_close(state, &receiver);
     // Closing a server stops new accepts but leaves established connections
     // alive. Their ordinary EOF/close transitions are what release the
     // server and allow the registered close callback to fire.
