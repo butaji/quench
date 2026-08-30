@@ -40,6 +40,7 @@ pub(crate) const ONREAD_BUFFER_PROP: &str = "\0quench:net:onread:buffer";
 pub(crate) const ONREAD_CALLBACK_PROP: &str = "\0quench:net:onread:callback";
 pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
 pub(crate) const ONREAD_EOF_PROP: &str = "\0quench:net:onread:eof";
+pub(crate) const NO_DELAY_PROP: &str = "\0quench:net:no-delay";
 const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
