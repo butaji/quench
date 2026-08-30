@@ -206,7 +206,9 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
                 && (!socket.read_eof
                     || !socket.close_deferred
                     || socket.state == SocketState::Closing)
-                && (socket.stream.is_some() || socket.server_id.is_some() || custom_handle)
+                && (socket.stream.is_some()
+                    || socket.server_id.is_some()
+                    || (custom_handle && (socket.read_eof || socket.state == SocketState::Closing)))
                 && (!paused || pending_write_len(&socket) > 0)
         })
 }
