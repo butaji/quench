@@ -223,7 +223,9 @@ pub(crate) fn execute_set_property(
         }
     }
     if let crate::value::Value::Object(object_data) = &target {
-        if crate::builtins::object_alias::plain_index_write(object_data, &key) {
+        if crate::builtins::object_alias::plain_index_write(object_data, &key)
+            && !rejects_new_property(&target, &key)
+        {
             let updated =
                 crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
             crate::execute::write_value(registers, object, updated);
@@ -295,7 +297,9 @@ fn try_plain_index_dynamic_write(
         return Ok(false);
     };
     let key = index.to_string();
-    if !crate::builtins::object_alias::plain_index_write(object_data, &key) {
+    if !crate::builtins::object_alias::plain_index_write(object_data, &key)
+        || rejects_new_property(&target, &key)
+    {
         return Ok(false);
     }
     let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);

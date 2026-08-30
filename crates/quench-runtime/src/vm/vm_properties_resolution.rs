@@ -477,6 +477,25 @@ pub(crate) fn get_property_with_receiver(
             value = owner;
         }
     }
+    if let Value::Object(properties) = &value {
+        let internal = match key {
+            "name" => Some("\0domexception_name"),
+            "message" => Some("\0domexception_message"),
+            "code" => Some("\0domexception_code"),
+            _ => None,
+        };
+        if properties
+            .iter()
+            .any(|(name, value)| name == "\0domexception" && matches!(value, Value::Boolean(true)))
+        {
+            if let Some(internal) = internal {
+                if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == internal)
+                {
+                    return Ok(value.clone());
+                }
+            }
+        }
+    }
     if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
     }
