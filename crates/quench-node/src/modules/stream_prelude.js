@@ -1813,9 +1813,20 @@
   Object.defineProperty(Writable, Symbol.hasInstance, {
     value(value) {
       if (!value) return false;
-      if (value._writableState) return true;
+      // Duplex/Transform use composition: their prototypes inherit from
+      // Readable and copy Writable's methods, so the canonical Writable check
+      // must retain the implementation-state fact.  User subclasses still
+      // use their own prototype chain below, keeping sibling constructors
+      // distinct.
+      if (this === Writable && value._writableState) return true;
+      // `Writable` is inherited by user constructors.  The receiver of
+      // @@hasInstance is therefore the constructor being tested, not always
+      // Writable itself; checking an implementation slot would make every
+      // subclass instance appear to belong to every sibling constructor.
+      const prototype = this && this.prototype;
+      if (!prototype) return false;
       for (let proto = value; proto; proto = Object.getPrototypeOf(proto)) {
-        if (proto === Writable.prototype) return true;
+        if (proto === prototype) return true;
       }
       return false;
     }
