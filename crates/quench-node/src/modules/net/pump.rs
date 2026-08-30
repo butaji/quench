@@ -98,6 +98,7 @@ fn accept_one(
         refed: true,
         server_id: Some(server_id),
         write_buf: Vec::new(),
+        read_buf: Vec::new(),
         bytes_read: 0,
         bytes_written: 0,
         read_eof: false,
@@ -170,13 +171,85 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             let arg = data_value(&guard, &bytes);
             (guard.js.clone(), arg)
         };
-        emit(state, &js, "data", vec![arg])?;
+        let callback = execute::get_property(&js, ONREAD_CALLBACK_PROP);
+        if quench_runtime::is_callable(&callback) {
+            let consumed = emit_onread(&js, &bytes, &callback)?;
+            if consumed < bytes.len() {
+                // A callback may pause the socket. Retain unread bytes until
+                // resume makes the same onread source available again.
+                sock.borrow_mut().read_buf.extend_from_slice(&bytes[consumed..]);
+            }
+        } else {
+            emit(state, &js, "data", vec![arg])?;
+        }
     }
     for sock in events.eofs {
         let js = sock.borrow().js.clone();
+        if !sock.borrow().read_buf.is_empty() {
+            execute::set_property_in_place(&js, ONREAD_EOF_PROP, Value::Boolean(true));
+            continue;
+        }
+        let callback = execute::get_property(&js, ONREAD_CALLBACK_PROP);
+        if quench_runtime::is_callable(&callback) {
+            let source = execute::get_property(&js, ONREAD_BUFFER_PROP);
+            let buffer = if quench_runtime::is_callable(&source) {
+                execute::call(&source, &js, &[])?
+            } else {
+                source
+            };
+            execute::call(&callback, &js, &[Value::Number(0.0), buffer])?;
+        }
         emit(state, &js, "end", Vec::new())?;
     }
     Ok(())
+}
+
+fn emit_onread(
+    socket: &Value,
+    bytes: &[u8],
+    callback: &Value,
+) -> Result<usize, VmError> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let source = execute::get_property(socket, ONREAD_BUFFER_PROP);
+        let buffer = if quench_runtime::is_callable(&source) {
+            execute::call(&source, socket, &[])?
+        } else {
+            source
+        };
+        let (start, capacity) = match &buffer {
+            Value::Uint8Array(view) => (view.byte_offset, view.length),
+            Value::DataView(view) => (view.byte_offset, view.byte_length),
+            _ => return Err(VmError::NotCallable),
+        };
+        if capacity == 0 {
+            break;
+        }
+        let count = (bytes.len() - offset).min(capacity);
+        match &buffer {
+            Value::Uint8Array(view) => {
+                view.buffer.bytes.borrow_mut()[start..start + count]
+                    .copy_from_slice(&bytes[offset..offset + count]);
+            }
+            Value::DataView(view) => {
+                view.buffer.bytes.borrow_mut()[start..start + count]
+                    .copy_from_slice(&bytes[offset..offset + count]);
+            }
+            _ => unreachable!(),
+        }
+        let result = execute::call(
+            callback,
+            socket,
+            &[Value::Number(count as f64), buffer],
+        )?;
+        offset += count;
+        if matches!(result, Value::Boolean(false))
+            || matches!(execute::get_property(socket, ONREAD_PAUSED_PROP), Value::Boolean(true))
+        {
+            break;
+        }
+    }
+    Ok(offset)
 }
 
 /// Gather connect / data / end events for one tick, releasing borrows.
@@ -195,6 +268,21 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         };
         let mut guard = sock.borrow_mut();
         if guard.state == SocketState::Closed {
+            continue;
+        }
+        if matches!(execute::get_property(&guard.js, ONREAD_PAUSED_PROP), Value::Boolean(true)) {
+            continue;
+        }
+        if !guard.read_buf.is_empty() {
+            let pending = std::mem::take(&mut guard.read_buf);
+            events.datas.push((sock.clone(), pending));
+            continue;
+        }
+        if guard.read_eof
+            && matches!(execute::get_property(&guard.js, ONREAD_EOF_PROP), Value::Boolean(true))
+        {
+            execute::set_property_in_place(&guard.js, ONREAD_EOF_PROP, Value::Boolean(false));
+            events.eofs.push(sock.clone());
             continue;
         }
         if guard.state != SocketState::Closed && !guard.connect_announced {
