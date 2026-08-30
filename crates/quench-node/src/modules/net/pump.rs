@@ -6,7 +6,7 @@ use std::io::Read;
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 
 use crate::host::HostState;
 
@@ -138,6 +138,7 @@ fn accept_one(
         read_eof: false,
         close_emitted: false,
         close_deferred: false,
+        write_shutdown_pending: false,
         finish_emitted: false,
         connect_announced: true,
         peer: Some(peer),
@@ -368,10 +369,12 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         if flushed
             && guard.state == SocketState::Closing
             && pending_write_len(&guard) == 0
+            && guard.write_shutdown_pending
         {
             if let Some(stream) = guard.stream.as_mut() {
                 let _ = stream.shutdown(Shutdown::Write);
             }
+            guard.write_shutdown_pending = false;
         }
     }
     events
