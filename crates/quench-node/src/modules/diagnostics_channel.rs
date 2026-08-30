@@ -56,7 +56,7 @@ impl ChannelData {
 
 pub struct DiagnosticsState {
     next_id: u64,
-    channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>)>,
+    channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>, Value)>,
     by_id: HashMap<u64, Rc<RefCell<ChannelData>>>,
 }
 
@@ -118,16 +118,19 @@ pub fn channel(
 ) -> Result<Value, VmError> {
     let name = args.first().cloned().unwrap_or(Value::Undefined);
     let key = channel_key(&name)?;
-    if let Some((id, _)) = state.borrow().diagnostics.channels.get(&key) {
-        return Ok(channel_object(*id, name));
+    if let Some((_, _, object)) = state.borrow().diagnostics.channels.get(&key) {
+        return Ok(object.clone());
     }
     let mut host = state.borrow_mut();
     let id = host.diagnostics.next_id;
     host.diagnostics.next_id += 1;
     let data = Rc::new(RefCell::new(ChannelData::new(name.clone())));
-    host.diagnostics.channels.insert(key, (id, data.clone()));
+    let object = channel_object(id, name);
+    host.diagnostics
+        .channels
+        .insert(key, (id, data.clone(), object.clone()));
     host.diagnostics.by_id.insert(id, data);
-    Ok(channel_object(id, name))
+    Ok(object)
 }
 
 pub fn new_channel(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
