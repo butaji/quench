@@ -177,7 +177,7 @@ impl NodeRunner {
         // the runner realm so fixtures using `global.gc`, `global.process`,
         // and identity checks observe the same host surface as `globalThis`.
         let source =
-            format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc;\n{globals_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+            format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         self.host
             .state()
             .borrow_mut()
