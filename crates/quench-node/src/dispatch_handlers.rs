@@ -1512,6 +1512,14 @@ pub fn internal_binding(
             | "udp_wrap"
             | "zlib"
     ) {
+        if name == "pipe_wrap" {
+            let constants = crate::host::namespace_object_from_pairs(vec![
+                ("SOCKET".into(), Value::Number(0.0)),
+            ]);
+            return Ok(crate::host::namespace_object_from_pairs(vec![
+                ("constants".into(), constants),
+            ]));
+        }
         return Ok(crate::host::namespace_object_from_pairs(Vec::new()));
     }
     let prefix = if name == "debug" {
