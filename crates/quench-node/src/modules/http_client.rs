@@ -2262,6 +2262,15 @@ pub fn data_handler(
     let (pending_head, head_parsed) = append_and_probe(state, client_id, &bytes);
     match pending_head {
         Some(head) => {
+            if let Some(error) = invalid_response_header(&head) {
+                if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                    req.parse_error = true;
+                }
+                let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+                net::emit(state, &request, "error", vec![error])?;
+                net::socket_destroy(state, Some(socket), &[])?;
+                return Ok(Value::Undefined);
+            }
             if response_status(&head) == Some(100) {
                 if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                     req.head_parsed = false;
@@ -2340,10 +2349,10 @@ fn append_and_probe(
     let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
         return (None, false);
     };
-    req.buffer.extend_from_slice(bytes);
     if req.head_parsed {
         return (None, true);
     }
+    req.buffer.extend_from_slice(bytes);
     match head_end(&req.buffer) {
         Some((idx, len)) => {
             let head = req.buffer[..idx].to_vec();
@@ -2809,6 +2818,22 @@ fn invalid_response_constant() -> Value {
         &[Value::String(message.into())],
     );
     execute::set_property(error, "code", Value::String("HPE_INVALID_CONSTANT".into()))
+}
+
+fn invalid_response_header(head: &[u8]) -> Option<Value> {
+    if !head
+        .windows(2)
+        .enumerate()
+        .any(|(index, pair)| pair[0] == b'\r' && (index + 1 >= head.len() || pair[1] != b'\n'))
+        && !head.last().is_some_and(|byte| *byte == b'\r')
+    {
+        return None;
+    }
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("Parse Error: Missing expected LF after CR".into())],
+    );
+    Some(execute::set_property(error, "code", Value::String("HPE_LF_EXPECTED".into())))
 }
 
 fn abort_incomplete_response(
