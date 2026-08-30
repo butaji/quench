@@ -407,6 +407,10 @@ fn env_object() -> Value {
         .collect();
     pairs.push(("\0quench:process_env".into(), Value::Boolean(true)));
     pairs.push((
+        "\0quench:process_env_tz_setter".into(),
+        crate::host::capability(crate::registry::SPEC_PROCESS_ENV_SET),
+    ));
+    pairs.push((
         "\0quench:descriptor:\0quench:process_env".into(),
         host_api::object(vec![
             ("writable".into(), Value::Boolean(false)),

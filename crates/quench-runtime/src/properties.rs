@@ -325,8 +325,12 @@ pub(crate) fn execute_set_named_cached(
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
     let target = crate::execute::read_register(registers, object)?;
+    let process_env_tz = crate::execute::get_property(&target, "\0quench:process_env")
+        == crate::value::Value::Boolean(true)
+        && key == "TZ";
     let regexp_target = crate::regexp::has_regexp_internal_slot(&target);
-    if !regexp_target
+    if !process_env_tz
+        && !regexp_target
         && transition_index(cache.get()).is_some()
         && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
@@ -334,7 +338,7 @@ pub(crate) fn execute_set_named_cached(
         return Ok(());
     }
     let transition = named_write_source(&target, key);
-    if !regexp_target {
+    if !process_env_tz && !regexp_target {
         if let crate::value::Value::Object(data) = &target {
             if data.has_replacement() {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
@@ -461,6 +465,16 @@ fn finish_set_property(
     } else {
         value
     };
+    // Host-backed environment objects may publish a side-effect hook for
+    // names whose mutation affects process-wide semantics (for example TZ).
+    // Keep the hook hidden from JavaScript descriptors while preserving the
+    // ordinary process.env string-coercion rules above.
+    if process_env && key == "TZ" {
+        let hook = crate::execute::get_property(target, "\0quench:process_env_tz_setter");
+        if crate::conversion::is_callable(&hook) {
+            crate::functions::execute_target(&hook, target, std::slice::from_ref(&value))?;
+        }
+    }
     let setter = {
         let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
         if own_data_property(target, key) {
