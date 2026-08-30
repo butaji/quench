@@ -32,6 +32,7 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeGetProto
             | Builtin::ObjectPrototypeSetProto
             | Builtin::ObjectPrototypeValueOf
+            | Builtin::FunctionPrototype
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
             | Builtin::FunctionPrototypeHasInstance
@@ -177,6 +178,7 @@ fn execute_simple_conversion(
                 .map(|_| Value::Undefined)
         })(),
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
+        Builtin::FunctionPrototype => Ok(Value::Undefined),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
         }
