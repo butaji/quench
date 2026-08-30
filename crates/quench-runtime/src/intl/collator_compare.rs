@@ -51,7 +51,6 @@ fn icu_ordering(left: &str, right: &str, locale: &str, spec: &CompareSpec<'_>) -
     {
         return None;
     }
-    let collation = locale_collation(locale).unwrap_or_else(|| "standard".to_string());
     if spec.usage == "search" && !provider_has_collation(locale, "search") {
         return None;
     }

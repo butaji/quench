@@ -23,7 +23,7 @@ fn error_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Error => "Error", TypeError | TypeErrorPrototype => "TypeError", RangeError | RangeErrorPrototype => "RangeError",
         ReferenceError | ReferenceErrorPrototype => "ReferenceError", SyntaxError | SyntaxErrorPrototype => "SyntaxError", EvalError | EvalErrorPrototype => "EvalError",
-        URIError | URIErrorPrototype => "URIError", AggregateError | AggregateErrorPrototype => "AggregateError", SuppressedError => "SuppressedError", _ => return None,
+        URIError | URIErrorPrototype => "URIError", AggregateError | AggregateErrorPrototype => "AggregateError", SuppressedError => "SuppressedError", DOMException | DOMExceptionPrototype => "DOMException", _ => return None,
     })
 }
 fn object_prototype_method(key: &str) -> Option<crate::ops::Builtin> {

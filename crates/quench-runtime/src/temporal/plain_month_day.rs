@@ -406,8 +406,8 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 "Invalid PlainMonthDay",
             ));
         }
-        let month = month.parse::<f64>().unwrap_or(0.0);
-        let day = day.parse::<f64>().unwrap_or(0.0);
+        let month = parse_component(month, "Invalid PlainMonthDay")?;
+        let day = parse_component(day, "Invalid PlainMonthDay")?;
         if !month.is_finite()
             || !day.is_finite()
             || !(1.0..=12.0).contains(&month)
@@ -463,7 +463,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         if calendar != "iso8601" && calendar != "gregory" {
             return construct_calendar_month_day(&month_code, day, year, &calendar);
         }
-        let month = month_code.trim_start_matches('M').parse().unwrap_or(0.0);
+        let month = parse_component(month_code.trim_start_matches('M'), "Invalid monthCode")?;
         let day = apply_overflow(year, month, day, reject)?;
         return Ok(set_calendar_id(
             construct_with_year(month, day, year)?,
@@ -770,13 +770,19 @@ fn parse_month_code(value: &str) -> Result<f64, VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
-    let month = value[1..3].parse::<f64>().unwrap_or(0.0);
+    let month = parse_component(&value[1..3], "Invalid monthCode")?;
     if !((bytes.len() == 3) || (bytes.len() == 4 && bytes[3] == b'L'))
         || !(1.0..=12.0).contains(&month)
     {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
     Ok(month)
+}
+
+fn parse_component(value: &str, message: &'static str) -> Result<f64, VmError> {
+    value
+        .parse::<f64>()
+        .map_err(|_| crate::value::error::throw_range_error(message))
 }
 
 fn month_code_syntax_valid(value: &str) -> bool {
@@ -1017,7 +1023,7 @@ fn to_plain_date(
     }
     let year = crate::conversion::to_number(&year_value)?;
     let (month, day) = fields(receiver)?;
-    let month = month.trim_start_matches('M').parse().unwrap_or(0.0);
+    let month = parse_component(month.trim_start_matches('M'), "Invalid PlainMonthDay")?;
     let mut day = day;
     let boundary = (year == -271_821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
         || (year == 275_760.0 && (month > 9.0 || month == 9.0 && day > 13.0));
@@ -1101,7 +1107,8 @@ fn with(
     };
     let month = month_code
         .as_deref()
-        .map(|code| code.trim_start_matches('M').parse().unwrap_or(0.0))
+        .map(|code| parse_component(code.trim_start_matches('M'), "Invalid monthCode"))
+        .transpose()?
         .or(month_number)
         .unwrap_or_else(|| {
             original_month

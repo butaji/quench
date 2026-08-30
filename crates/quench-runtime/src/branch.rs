@@ -84,16 +84,6 @@ mod tests {
     }
 }
 
-pub(crate) fn reduce(
-    statement: &oxc::ast::ast::Statement<'_>,
-    facts: &mut crate::facts::ProgramDb,
-    locals: &HashMap<String, u16>,
-) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
-    let mut next_register = crate::reduce_support::register_base(locals);
-    let mut next_slot = crate::reduce_support::register_base(locals);
-    reduce_with_registers(statement, facts, &mut next_register, &mut next_slot, locals)
-}
-
 pub(crate) fn reduce_with_registers(
     statement: &oxc::ast::ast::Statement<'_>,
     facts: &mut crate::facts::ProgramDb,
