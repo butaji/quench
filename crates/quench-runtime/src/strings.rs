@@ -342,6 +342,17 @@ pub(crate) fn is_short_units(units: &[u16]) -> bool {
 /// compact layouts must be derived from these values, never stored as a
 /// competing semantic buffer.
 pub(crate) fn from_units(units: Vec<u16>) -> Value {
+    // Keep large UTF-16 results in their native immutable owner.  Re-encoding
+    // them as UTF-8 would make every indexed operation (charCodeAt, charAt,
+    // codePointAt) rescan the complete string to recover code units.  The
+    // representation is not observable; both variants expose the same
+    // ECMAScript string, while the canonical owner lets read-only algorithms
+    // borrow O(1)-indexed units.
+    if units.len() > 4096 {
+        return Value::StringUnits(std::rc::Rc::new(
+            crate::value::StringUnitsData::new(units),
+        ));
+    }
     match String::from_utf16(&units) {
         Ok(value) => Value::String(value),
         Err(_) => Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units))),
@@ -580,7 +591,7 @@ pub(crate) fn repeat(
     // Keep ordinary one-unit strings in their compact UTF-8 representation;
     // this avoids a transient UTF-16 allocation for Node's documented maximum
     // string-length boundary while preserving the same observable value.
-    if source.len() == value.encode_utf16().count() {
+    if value.len() == source.len() {
         return Ok(Value::String(value.repeat(count)));
     }
     let mut result = Vec::with_capacity(total_units);
