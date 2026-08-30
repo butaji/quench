@@ -5770,7 +5770,10 @@ fn now_epoch_nanoseconds() -> i128 {
     if !milliseconds.is_finite() {
         return 0;
     }
-    (milliseconds * 1_000_000.0) as i128
+    // Convert the millisecond clock to an integer before scaling. Multiplying
+    // the f64 timestamp first loses low bits at current epoch magnitudes and
+    // can make the observed instant appear one millisecond older than Date.now.
+    (milliseconds.trunc() as i128) * 1_000_000
 }
 
 pub(crate) fn construct_stub(
