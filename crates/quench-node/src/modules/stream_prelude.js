@@ -982,34 +982,44 @@
       state.operatorError = error;
       state.ended = true;
     });
-    const pull = async () => {
+    const pull = () => {
       if (state.sourceDone) return null;
-      const step = await source.next();
-      if (!step || step.done) state.sourceDone = true;
-      return step;
+      const finish = (step) => {
+        if (!step || step.done) state.sourceDone = true;
+        return step;
+      };
+      const step = source.next();
+      return step && typeof step.then === "function" ? step.then(finish) : finish(step);
     };
-    const enqueue = async () => {
-      const step = await pull();
-      if (!step || step.done) return false;
-      let result;
-      try {
-        result = mapper(step.value, { signal });
-      } catch (error) {
-        result = Promise.reject(error);
-      }
-      const task = { done: false, value: undefined };
-      task.promise = Promise.resolve(result).then((value) => {
-        task.done = true;
-        task.value = value;
-        return value;
-      });
-      state.pending.push(task);
-      return true;
+    const enqueue = () => {
+      const process = (step) => {
+        if (!step || step.done) return false;
+        let result;
+        try { result = mapper(step.value, { signal }); }
+        catch (error) { result = Promise.reject(error); }
+        const task = { done: false, value: undefined };
+        task.promise = Promise.resolve(result).then((value) => {
+          task.done = true;
+          task.value = value;
+          return value;
+        });
+        state.pending.push(task);
+        return true;
+      };
+      const step = pull();
+      return step && typeof step.then === "function" ? step.then(process) : process(step);
     };
     const fill = async () => {
-      while (state.pending.slice(state.head).filter((task) => !task.done).length < concurrency && !state.sourceDone) {
-        if (!(await enqueue())) break;
+      const waiters = [];
+      let reserved = 0;
+      while (state.pending.slice(state.head).length + reserved < concurrency && !state.sourceDone) {
+        const result = enqueue();
+        if (result && typeof result.then === "function") {
+          reserved++;
+          waiters.push(result);
+        }
       }
+      if (state.pending.length === state.head && waiters.length) await Promise.race(waiters);
     };
     const next = async () => {
       if (state.operatorError) throw state.operatorError;
