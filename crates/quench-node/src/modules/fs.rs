@@ -899,24 +899,33 @@ pub fn create_read_stream(
         Some(Value::Null | Value::Undefined)
             if matches!(execute::get_property(&options, "fd"), Value::Number(_)) =>
         {
-            String::new()
+            None
         }
-        value => path_arg(value)?,
+        value => Some(path_arg(value)?),
     };
-    let mut stream = readable_stream(state, &options)?;
-    stream = execute::set_property(stream, "path", Value::String(path.clone()));
-    stream = execute::set_property(stream, "bytesRead", Value::Number(0.0));
-    stream = execute::set_property(stream, "fd", Value::Null);
-    stream = execute::set_property(stream, "readable", Value::Boolean(true));
-    stream = execute::set_property(stream, "closed", Value::Boolean(false));
-    stream = execute::set_property(stream, "destroyed", Value::Boolean(false));
-    stream = execute::set_property(
-        stream,
+    let stream = readable_stream(state, &options)?;
+    execute::set_property_in_place(
+        &stream,
+        "path",
+        path.clone().map(Value::String).unwrap_or(Value::Undefined),
+    );
+    execute::set_property_in_place(&stream, "bytesRead", Value::Number(0.0));
+    let fd = execute::get_property(&options, "fd");
+    execute::set_property_in_place(
+        &stream,
+        "fd",
+        if matches!(fd, Value::Number(_)) { fd } else { Value::Null },
+    );
+    execute::set_property_in_place(&stream, "readable", Value::Boolean(true));
+    execute::set_property_in_place(&stream, "closed", Value::Boolean(false));
+    execute::set_property_in_place(&stream, "destroyed", Value::Boolean(false));
+    execute::set_property_in_place(
+        &stream,
         "close",
         crate::host::capability(crate::registry::SPEC_FS_READSTREAM_CLOSE),
     );
-    stream = execute::set_property(
-        stream,
+    execute::set_property_in_place(
+        &stream,
         "destroy",
         crate::host::capability(crate::registry::SPEC_FS_READSTREAM_DESTROY),
     );
@@ -925,12 +934,16 @@ pub fn create_read_stream(
     } else {
         30_000.0
     };
-    stream = execute::set_property(stream, "length", Value::Number(length));
+    execute::set_property_in_place(&stream, "length", Value::Number(length));
     let open = crate::host::capability(crate::registry::SPEC_FS_READSTREAM_OPEN);
     defer(
         state,
         &open,
-        vec![stream.clone(), Value::String(path), options],
+        vec![
+            stream.clone(),
+            path.map(Value::String).unwrap_or(Value::String(String::new())),
+            options,
+        ],
     );
     Ok(stream)
 }
@@ -997,16 +1010,33 @@ pub fn read_stream_open(
         _ => return Err(execute::type_error("path")),
     };
     let options = args.get(2).cloned().unwrap_or_else(|| host_api::object(Vec::new()));
-    let bytes = match std::fs::read(path) {
+    let fd_value = execute::get_property(&options, "fd");
+    let path = if path.is_empty() {
+        match fd_value {
+            Value::Number(fd) => state
+                .borrow()
+                .fs
+                .descriptors
+                .get(&(fd as i32))
+                .map(|descriptor| descriptor.path.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
+    } else {
+        path.to_string()
+    };
+    let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            let error = match crate::modules::fs_error::fs_error("open", Some(path), &error) {
+            let error = match crate::modules::fs_error::fs_error("open", Some(&path), &error) {
                 VmError::Thrown(value) => value,
                 other => return Err(other),
             };
-            execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
-            execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
-            execute::set_property_in_place(&stream, "fd", Value::Null);
+            if !matches!(execute::get_property(&options, "autoClose"), Value::Boolean(false)) {
+                execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+                execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+                execute::set_property_in_place(&stream, "fd", Value::Null);
+            }
             return crate::modules::events::method_emit(
                 state,
                 Some(stream),
