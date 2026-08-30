@@ -33,7 +33,7 @@ pub use methods::{
     socket_reset_and_destroy,
     socket_onread,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
-    socket_set_type_of_service, socket_get_type_of_service,
+    socket_set_type_of_service, socket_get_type_of_service, socket_handle_close,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
@@ -54,6 +54,7 @@ pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
 pub(crate) const ONREAD_EOF_PROP: &str = "\0quench:net:onread:eof";
 pub(crate) const NO_DELAY_PROP: &str = "\0quench:net:no-delay";
 pub(crate) const TOS_PROP: &str = "\0quench:net:tos";
+pub(crate) const HANDLE_CLOSED_PROP: &str = "\0quench:net:handle-closed";
 const ASYNC_ITER_TARGET_PROP: &str = "\0quench:net:async-iter-target";
 const READ_CHUNK: usize = 16 * 1024;
 
@@ -697,6 +698,15 @@ pub(crate) fn peer_write_error() -> Value {
         &[Value::String("write EPIPE".into())],
     );
     let error = execute::set_property(error, "code", Value::String("EPIPE".into()));
+    execute::set_property(error, "syscall", Value::String("write".into()))
+}
+
+pub(crate) fn handle_write_error(code: &str, message: &str) -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    let error = execute::set_property(error, "code", Value::String(code.into()));
     execute::set_property(error, "syscall", Value::String("write".into()))
 }
 
