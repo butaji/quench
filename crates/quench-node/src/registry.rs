@@ -556,6 +556,7 @@ pub const SPEC_HTTP_OUTGOING: NodeSpec = NodeSpec::new("http:OutgoingMessage", 0
 pub const SPEC_HTTP_OUTGOING_WRITE: NodeSpec = NodeSpec::new("http:OutgoingMessage:write", 0x0F27);
 pub const SPEC_HTTP_OUTGOING_END: NodeSpec = NodeSpec::new("http:OutgoingMessage:end", 0x0F28);
 pub const SPEC_HTTP_OUTGOING_DESTROY: NodeSpec = NodeSpec::new("http:OutgoingMessage:destroy", 0x0F29);
+pub const SPEC_HTTP_AGENT_ADD_REQUEST: NodeSpec = NodeSpec::new("http:Agent:addRequest", 0x0F2A);
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
 pub const SPEC_NET_SOCKET: NodeSpec = NodeSpec::new("net:Socket", 0x1013);
@@ -1112,6 +1113,7 @@ pub const CAP_HTTP_REQ_SET_HEADER: CapId = SPEC_HTTP_REQ_SET_HEADER.cap;
 pub const CAP_HTTP_REQ_SET_TIMEOUT: CapId = SPEC_HTTP_REQ_SET_TIMEOUT.cap;
 pub const CAP_HTTP_REQ_TIMEOUT_FIRE: CapId = SPEC_HTTP_REQ_TIMEOUT_FIRE.cap;
 pub const CAP_HTTP_AGENT_CONNECT: CapId = SPEC_HTTP_AGENT_CONNECT.cap;
+pub const CAP_HTTP_AGENT_ADD_REQUEST: CapId = SPEC_HTTP_AGENT_ADD_REQUEST.cap;
 pub const CAP_HTTP_REQ_WRITE: CapId = SPEC_HTTP_REQ_WRITE.cap;
 pub const CAP_HTTP_RESDATA: CapId = SPEC_HTTP_RESDATA.cap;
 pub const CAP_HTTP_RESEND: CapId = SPEC_HTTP_RESEND.cap;
