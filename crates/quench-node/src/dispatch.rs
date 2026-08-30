@@ -302,6 +302,8 @@ const CAP_NET_BLOCK_LIST_ADD_ADDRESS: u16 = 2294;
 const CAP_NET_BLOCK_LIST_CHECK: u16 = 2295;
 const CAP_NET_SOCKET_ADDRESS: u16 = 0x100D;
 const CAP_NET_SOCKET_SET_NO_DELAY: u16 = 0x100E;
+const CAP_NET_SOCKET_SET_TOS: u16 = 0x102D;
+const CAP_NET_SOCKET_GET_TOS: u16 = 0x102E;
 const CAP_NET_SOCKET_SET_KEEP_ALIVE: u16 = 0x100F;
 const CAP_NET_SOCKET_SET_ENCODING: u16 = 0x1010;
 const CAP_NET_SOCKET_PAUSE: u16 = 0x1011;
@@ -812,6 +814,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_BLOCK_LIST_CHECK => crate::modules::net::block_list_check,
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
+        CAP_NET_SOCKET_SET_TOS => crate::modules::net::socket_set_type_of_service,
+        CAP_NET_SOCKET_GET_TOS => crate::modules::net::socket_get_type_of_service,
         CAP_NET_SOCKET_SET_KEEP_ALIVE => crate::modules::net::socket_set_keep_alive,
         CAP_NET_SOCKET_SET_TIMEOUT => crate::modules::net::socket_set_timeout,
         CAP_NET_SOCKET_TIMEOUT_FIRE => crate::modules::net::socket_timeout_fire,
