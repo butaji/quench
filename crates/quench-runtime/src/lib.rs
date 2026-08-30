@@ -125,6 +125,8 @@ pub mod vm;
 mod with_scope;
 
 /// Drop per-realm derived caches between independent fixture executions.
+/// Resetters replace their containers so a pathological fixture's capacity is
+/// not retained by the worker for the rest of a stage.
 pub fn reset_fixture_caches() {
     construct::reset_weak_refs();
     global_environment::reset_global_bindings();
