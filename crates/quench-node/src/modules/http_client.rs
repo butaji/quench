@@ -1570,17 +1570,17 @@ fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
             list
         }
     };
-    let push = execute::get_property(&list, "push");
-    if quench_runtime::is_callable(&push) {
-        let _ = execute::call(&push, &list, &[socket.clone()]);
-        return;
-    }
     let length = match execute::get_property(&list, "length") {
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 0,
     };
-    execute::set_property_in_place(&list, &length.to_string(), socket.clone());
-    execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
+    if matches!(list, Value::Array(_)) {
+        execute::set_array_element_in_place(&list, length, socket.clone());
+        execute::set_array_length_in_place(&list, length + 1);
+    } else {
+        execute::set_property_in_place(&list, &length.to_string(), socket.clone());
+        execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
+    }
 }
 
 fn add_agent_request(agent: &Value, name: &str, request: &Value) {
@@ -1595,9 +1595,16 @@ fn add_agent_request(agent: &Value, name: &str, request: &Value) {
             list
         }
     };
-    let push = execute::get_property(&list, "push");
-    if quench_runtime::is_callable(&push) {
-        let _ = execute::call(&push, &list, &[request.clone()]);
+    let length = match execute::get_property(&list, "length") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    if matches!(list, Value::Array(_)) {
+        execute::set_array_element_in_place(&list, length, request.clone());
+        execute::set_array_length_in_place(&list, length + 1);
+    } else {
+        execute::set_property_in_place(&list, &length.to_string(), request.clone());
+        execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
     }
 }
 
@@ -1860,6 +1867,13 @@ fn response_content_length(response: &Value) -> Option<usize> {
         .and_then(|value| value.parse().ok())
 }
 
+fn response_allows_reuse(response: &Value) -> bool {
+    let headers = execute::get_property(response, "headers");
+    !execute::to_js_string(&execute::get_property(&headers, "connection"))
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("close"))
+}
+
 fn response_status(head: &[u8]) -> Option<u16> {
     String::from_utf8_lossy(head)
         .split_whitespace()
@@ -2064,6 +2078,43 @@ pub fn res_end_handler(
             })
         };
         if let Some((agent, target)) = agent_target {
+            // The socket is observable to `free` listeners. Put it in the
+            // Agent's free pool before emitting that event so a listener that
+            // submits another request synchronously observes the same socket,
+            // matching Node's reuse ordering.
+            let keep_alive = state
+                .borrow()
+                .http
+                .clientreqs
+                .get(&client_id)
+                .and_then(|request| {
+                    request
+                        .agent
+                        .as_ref()
+                        .filter(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
+                        .and_then(|_| request.res.as_ref())
+                })
+                .is_some_and(response_allows_reuse);
+            let alive = net::net_id(socket).is_some_and(|id| {
+                state
+                    .borrow()
+                    .net
+                    .sockets
+                    .get(&id)
+                    .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
+            });
+            if keep_alive && alive {
+                let name = agent_name(&target, &agent);
+                move_agent_socket_to_free(&agent, &name, socket);
+                if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0) {
+                    // Agent idle timeouts destroy the pooled socket after the
+                    // timeout event. Install this host transition before
+                    // exposing `free`, so user listeners observe
+                    // `socket.destroyed === true` and cannot reuse it.
+                    let destroy = crate::host::capability(crate::registry::SPEC_NET_SOCKET_DESTROY);
+                    subscribe_event(state, socket, "timeout", destroy)?;
+                }
+            }
             net::emit(state, socket, "free", Vec::new())?;
             emit_agent_free(state, &agent, &target, socket)?;
         }
@@ -2072,9 +2123,12 @@ pub fn res_end_handler(
             .http
             .clientreqs
             .get(&client_id)
-        .and_then(|request| request.agent.as_ref())
-            .is_some_and(|agent| {
-                matches!(execute::get_property(agent, "keepAlive"), Value::Boolean(true))
+            .is_some_and(|request| {
+                request
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
+                    && request.res.as_ref().is_some_and(response_allows_reuse)
             });
         if pooled {
             // Idle HTTP agent sockets are retained for reuse but do not keep
@@ -2094,17 +2148,6 @@ pub fn res_end_handler(
                     .map(|request| request.target.clone()),
             ) {
                 let name = agent_name(&target, &agent);
-                let alive = net::net_id(socket).is_some_and(|id| {
-                    state
-                        .borrow()
-                        .net
-                        .sockets
-                        .get(&id)
-                        .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
-                });
-                if alive {
-                    move_agent_socket_to_free(&agent, &name, socket);
-                }
                 drain_agent_pending(state, &agent, &name);
             }
             net::socket_unref(state, Some(socket), &[])?;
