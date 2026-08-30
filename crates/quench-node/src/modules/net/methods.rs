@@ -15,6 +15,27 @@ use super::*;
 
 const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
 
+fn write_chunk_type_error(value: &Value) -> VmError {
+    let detail = match value {
+        Value::Undefined => " Received undefined".into(),
+        Value::Boolean(value) => format!(" Received type boolean ({value})"),
+        Value::Number(value) => {
+            let rendered = if value.is_infinite() {
+                if value.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_string()
+            } else {
+                value.to_string()
+            };
+            format!(" Received type number ({rendered})")
+        }
+        Value::Array(_) => " Received an instance of Array".into(),
+        Value::Object(_) | Value::ObjectAlias(_) => " Received an instance of Object".into(),
+        _ => " Received an invalid value".into(),
+    };
+    crate::modules::buffer_enc::invalid_arg_type(format!(
+        "The \"chunk\" argument must be of type string or an instance of Buffer, TypedArray, or DataView.{detail}"
+    ))
+}
+
 /// `net.createServer([connectionListener])` — a server object backed by
 /// an emitter; the listener, if given, registers for `'connection'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -2041,6 +2062,16 @@ pub fn socket_write(
         return Ok(Value::Boolean(false));
     };
     let bytes = match args.first() {
+        Some(Value::Null) => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_STREAM_NULL_VALUES".into())),
+                (
+                    "message".into(),
+                    Value::String("May not write null values to stream".into()),
+                ),
+            ])))
+        }
         Some(Value::String(s)) if args.get(1).is_some_and(|encoding| {
             matches!(encoding, Value::String(value) if matches!(value.to_ascii_lowercase().as_str(), "latin1" | "binary" | "ascii"))
         }) => s.chars().map(|character| character as u32 as u8).collect(),
@@ -2049,7 +2080,8 @@ pub fn socket_write(
         Some(Value::Uint8Array(view)) => {
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
-        _ => return Ok(Value::Boolean(false)),
+        Some(value) => return Err(write_chunk_type_error(value)),
+        None => return Err(write_chunk_type_error(&Value::Undefined)),
     };
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
         let pending = state
