@@ -901,10 +901,7 @@ mod tests {
             load_store(Builtin::AtomicsLoad, &[view.clone()]),
             Ok(Value::Number(0.0))
         );
-        assert_eq!(
-            notify(&[view, Value::Number(0.0)]),
-            Ok(Value::Number(0.0))
-        );
+        assert_eq!(notify(&[view, Value::Number(0.0)]), Ok(Value::Number(0.0)));
     }
 
     #[test]
