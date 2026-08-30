@@ -87,6 +87,8 @@ pub struct NetSocket {
     pub bytes_written: u64,
     pub read_eof: bool,
     pub close_emitted: bool,
+    /// Keep EOF/finish observable for one turn before close finalization.
+    pub close_deferred: bool,
     pub finish_emitted: bool,
     pub connect_announced: bool,
     pub peer: Option<SocketAddr>,
