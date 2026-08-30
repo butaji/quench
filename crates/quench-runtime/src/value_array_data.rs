@@ -316,6 +316,15 @@ impl ArrayData {
         self.kind.get().is_packed()
     }
 
+    /// Snapshot a dense ordinary array without routing each index through
+    /// generic property lookup.  `None` preserves the distinction between a
+    /// packed storage fact and arrays whose holes/accessors require ordinary
+    /// observable dispatch.
+    #[inline]
+    pub fn packed_values(&self) -> Option<Vec<Value>> {
+        self.is_packed().then(|| self.snapshot())
+    }
+
     pub fn logical_len(&self) -> usize {
         self.argument_live.as_ref().map_or_else(
             || {
