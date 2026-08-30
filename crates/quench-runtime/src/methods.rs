@@ -127,6 +127,18 @@ pub(crate) fn execute_registered(
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
+    if instruction.flags == 1 {
+        if let Value::Builtin(
+            builtin @ (crate::ops::Builtin::StringCharAt
+            | crate::ops::Builtin::StringCharCodeAt),
+        ) = callee
+        {
+            let argument = read_register(registers, first)?;
+            let value = execute_builtin_with_receiver(builtin, &[argument], Some(&receiver))?;
+            write_value(registers, instruction.a, value);
+            return Ok(None);
+        }
+    }
     crate::execution_trace::call_method(
         usize::from(instruction.flags),
         false,
@@ -198,7 +210,7 @@ fn finish_named_call(
             destination,
             callee,
             receiver,
-            arguments.to_vec(),
+            arguments.to_vec().into(),
         )));
     }
     let value = execute_named_callee(

@@ -7,7 +7,7 @@
 //! Node API surface. The host is forbidden from knowing about
 //! this crate, the runner, the fixtures, or Node test policy.
 //!
-//! See `docs/adr/0002-quench-node-scope.md`.
+//! Keep runner policy separate from the Node host and runtime semantics.
 
 pub mod reader;
 pub mod runner;
