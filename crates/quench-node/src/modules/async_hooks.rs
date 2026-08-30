@@ -122,12 +122,7 @@ fn record_hook_error(state: &Rc<RefCell<HostState>>, error: VmError) {
     }
 }
 
-fn call_hook(
-    state: &Rc<RefCell<HostState>>,
-    callback: &Value,
-    receiver: &Value,
-    args: &[Value],
-) {
+fn call_hook(state: &Rc<RefCell<HostState>>, callback: &Value, receiver: &Value, args: &[Value]) {
     if let Err(error) = execute::call(callback, receiver, args) {
         record_hook_error(state, error);
     }
