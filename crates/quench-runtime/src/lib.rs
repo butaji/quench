@@ -132,6 +132,7 @@ pub fn reset_fixture_caches() {
     module_bindings::reset_module_jobs();
     private_environment::reset_fixture_state();
     reflect::reset_fixture_state();
+    intl::tolocale::symbol::reset_fixture_state();
     promise::reset_fixture_state();
     templates::reset_tagged_template_cache();
     value::reset_object_layout_cache();
