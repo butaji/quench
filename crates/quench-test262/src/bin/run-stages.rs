@@ -329,7 +329,10 @@ fn run_stage_files(
     files: Vec<PathBuf>,
 ) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
     const WORK_BATCH: usize = 32;
-    const WORKER_STACK_SIZE: usize = 256 * 1024 * 1024;
+    // OXC and the reducer need more than the platform default for deeply
+    // nested fixtures, but 256 MiB per worker makes a four-worker RegExp
+    // stage reserve a gigabyte before the engine heap is counted.
+    const WORKER_STACK_SIZE: usize = 64 * 1024 * 1024;
     let worker_count = env::var("QUENCH_STAGE_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
