@@ -71,6 +71,7 @@ pub struct NetSocket {
     pub bytes_written: u64,
     pub read_eof: bool,
     pub close_emitted: bool,
+    pub finish_emitted: bool,
     pub connect_announced: bool,
     pub peer: Option<SocketAddr>,
     pub local: Option<SocketAddr>,
