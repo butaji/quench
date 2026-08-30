@@ -23,6 +23,7 @@ const CLIENT_EXPECT_CONTINUE_PROP: &str = "\0quench:http:req:expect-continue";
 const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 const CLIENT_SOCKET_SUBSCRIBED_PROP: &str = "\0quench:http:req:socket-subscribed";
+const CLIENT_PATH_PROP: &str = "\0quench:http:req:path";
 
 /// `(host, port, method, path, headers)` for one outbound request.
 #[derive(Clone)]
@@ -501,7 +502,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         .iter()
         .any(|(name, value)| name.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue"));
     let (req, id) = build_req_object(state)?;
-    set_request_property(Some(&req), "path", Value::String(opts.path.clone()));
+    req_path_set(state, Some(&req), &[Value::String(opts.path.clone())])?;
     set_request_property(Some(&req), "method", Value::String(opts.method.clone()));
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
@@ -757,7 +758,7 @@ pub fn req_destroy(
             .net
             .pending_events
             .push((request.clone(), "error".into(), vec![error]));
-    } else if response.is_none() {
+    } else if response.is_none() && socket.is_some() {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String("socket hang up".into())],
@@ -2897,7 +2898,50 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             (CLIENT_ASYNC_RESOURCE_PROP.to_string(), async_resource),
         ],
     )?;
+    object = execute::define_property(
+        object,
+        "path",
+        host_api::object(vec![
+            (
+                "get".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_PATH_GET),
+            ),
+            (
+                "set".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_PATH_SET),
+            ),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]),
+    )?;
+    execute::set_property_in_place(&object, CLIENT_PATH_PROP, Value::String(String::new()));
     Ok((object, id))
+}
+
+pub fn req_path_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver
+        .map(|request| execute::get_property(request, CLIENT_PATH_PROP))
+        .unwrap_or(Value::Undefined))
+}
+
+pub fn req_path_set(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let path = execute::to_js_string(&value)?;
+    if path.chars().any(|character| !(('\u{21}'..='\u{FF}').contains(&character))) {
+        return Err(unescaped_path_error());
+    }
+    if let Some(request) = receiver {
+        execute::set_property_in_place(request, CLIENT_PATH_PROP, Value::String(path));
+    }
+    Ok(Value::Undefined)
 }
 
 fn set_response_property(response: &Value, key: &str, value: Value) {
