@@ -95,11 +95,10 @@ fn object_property_without_domexception(
             if crate::vm::current_context_or_default().host_value_is_persistent(key) {
                 // Persistent virtual bindings are published on first read so
                 // callbacks can observe them after the installing frame.
-                let _ = crate::execute::set_property_in_place(
-                    &Value::Object(properties.clone()),
-                    key,
-                    value.clone(),
-                );
+                unsafe {
+                    (&mut *(std::rc::Rc::as_ptr(&properties) as *mut crate::value::ObjectData))
+                        .set_non_enumerable_property_in_place(key, value.clone());
+                }
             }
             return value;
         }
