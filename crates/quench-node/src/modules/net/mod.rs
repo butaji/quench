@@ -31,6 +31,7 @@ pub use methods::{
     pipe_construct, socket_address, socket_construct, socket_destroy, socket_end,
     socket_pause, socket_ref,
     socket_reset_and_destroy,
+    socket_onread,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
 };
@@ -196,10 +197,16 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
                 execute::get_property(&socket.js, ONREAD_PAUSED_PROP),
                 Value::Boolean(true)
             );
+            let custom_handle = matches!(
+                execute::get_property(&socket.js, "_handle"),
+                Value::Object(_) | Value::ObjectAlias(_)
+            );
             socket.refed
                 && socket.state != SocketState::Closed
-                && !socket.read_eof
-                && (socket.stream.is_some() || socket.server_id.is_some())
+                && (!socket.read_eof
+                    || !socket.close_deferred
+                    || socket.state == SocketState::Closing)
+                && (socket.stream.is_some() || socket.server_id.is_some() || custom_handle)
                 && (!paused || pending_write_len(&socket) > 0)
         })
 }
