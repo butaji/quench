@@ -383,7 +383,7 @@ pub(crate) fn array_push(
     let final_length = length.checked_add(arguments.len()).ok_or_else(|| {
         crate::value::error::throw_type_error("Array length exceeds maximum safe integer")
     })?;
-    if final_length > 9_007_199_254_740_991usize {
+    if (final_length as u64) > 9_007_199_254_740_991u64 {
         return Err(crate::value::error::throw_type_error(
             "Array length exceeds maximum safe integer",
         ));

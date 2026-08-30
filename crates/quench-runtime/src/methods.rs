@@ -10,6 +10,13 @@ pub(crate) fn execute(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), VmError> {
+    execute_call_method(registers, op)
+}
+
+fn execute_call_method(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::CallMethod {
         dst,
         object,
@@ -30,16 +37,6 @@ pub(crate) fn execute(
         registered_callee,
         call_target_name(&callee),
     );
-    if spreads.iter().all(|spread| !spread) {
-        if let Value::Function(function) = &callee {
-            if let Some(value) =
-                crate::loops::execute_crypto_integer_registers(function, &receiver, registers, args)
-            {
-                write_value(registers, *dst, value);
-                return Ok(());
-            }
-        }
-    }
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
@@ -53,17 +50,20 @@ pub(crate) fn execute(
     Ok(())
 }
 
+#[inline(never)]
 pub(crate) fn execute_named(
     registers: &mut crate::register_file::RegisterFile,
     instruction: crate::ir::Instruction,
     key: &str,
     cache: &std::cell::Cell<u64>,
-) -> Result<(), VmError> {
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    crate::execution_trace::named_call(key);
     if instruction.flags == 0 && execute_named_word(registers, instruction, cache).is_some() {
-        return Ok(());
+        return Ok(None);
     }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
-    let callee = crate::vm::get_named_property_result(&receiver, key, cache)?;
+    let callee = named_known_callee(&receiver, cache)
+        .map_or_else(|| crate::vm::get_named_property_result(&receiver, key, cache), Ok)?;
     let argument = (instruction.flags == 1)
         .then(|| read_register(registers, instruction.c))
         .transpose()?;
@@ -78,16 +78,15 @@ pub(crate) fn execute_named(
         .map(std::slice::from_ref)
         .unwrap_or_default();
     let argument_registers = (instruction.flags == 1).then_some(instruction.c);
-    let value = execute_named_callee(
+    finish_named_call(
+        registers,
+        instruction.a,
+        instruction.b,
         callee,
-        &receiver,
+        receiver,
         argument_values,
         argument_registers.as_slice(),
-        instruction.b,
-        registers,
-    )?;
-    write_value(registers, instruction.a, value);
-    Ok(())
+    )
 }
 
 fn execute_named_word(
@@ -120,54 +119,32 @@ pub(crate) fn execute_registered(
     instruction: crate::ir::Instruction,
     code: crate::machine::CodeView<'_>,
     pc: usize,
-) -> Result<(), VmError> {
+) -> Result<Option<crate::completion::Completion>, VmError> {
     if instruction.flags == 0 {
         return Err(VmError::MissingReturn);
     }
     let metadata_window = code.operand_window_at(pc);
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
-    if instruction.flags == 6 {
-        let consecutive = [first, first + 1, first + 2, first + 3, first + 4, first + 5];
-        let argument_registers = metadata_window.unwrap_or(&consecutive);
-        if let (Some(function), Some(receiver)) = (
-            registers.function_ptr(usize::from(instruction.c)),
-            registers.read_object(usize::from(instruction.b)),
-        ) {
-            if let Some(value) = crate::loops::execute_crypto_integer_words(
-                function,
-                receiver,
-                registers,
-                argument_registers,
-            ) {
-                crate::execution_trace::call_method(6, false, true, "Function");
-                registers.write_number(usize::from(instruction.a), value);
-                return Ok(());
-            }
-        }
-    }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
+    if instruction.flags == 1 {
+        if let Value::Builtin(
+            builtin @ (crate::ops::Builtin::StringCharAt
+            | crate::ops::Builtin::StringCharCodeAt),
+        ) = callee
+        {
+            let argument = read_register(registers, first)?;
+            let value = execute_builtin_with_receiver(builtin, &[argument], Some(&receiver))?;
+            write_value(registers, instruction.a, value);
+            return Ok(None);
+        }
+    }
     crate::execution_trace::call_method(
         usize::from(instruction.flags),
         false,
         true,
         call_target_name(&callee),
     );
-    if instruction.flags == 6 {
-        if let Value::Function(function) = &callee {
-            let consecutive = [first, first + 1, first + 2, first + 3, first + 4, first + 5];
-            let argument_registers = metadata_window.unwrap_or(&consecutive);
-            if let Some(value) = crate::loops::execute_crypto_integer_registers(
-                function,
-                &receiver,
-                registers,
-                argument_registers,
-            ) {
-                write_value(registers, instruction.a, value);
-                return Ok(());
-            }
-        }
-    }
     let consecutive;
     let argument_registers = if let Some(window) = metadata_window {
         window
@@ -179,16 +156,73 @@ pub(crate) fn execute_registered(
         .iter()
         .map(|register| read_register(registers, *register))
         .collect::<Result<_, _>>()?;
+    finish_named_call(
+        registers,
+        instruction.a,
+        instruction.b,
+        callee,
+        receiver,
+        &arguments,
+        argument_registers,
+    )
+}
+
+fn named_known_callee(
+    receiver: &Value,
+    cache: &std::cell::Cell<u64>,
+) -> Option<Value> {
+    let Value::Object(object) = receiver else {
+        return None;
+    };
+    let crate::vm::NamedCachedPayload::Word(slot) =
+        crate::vm::get_named_cached_payload(object, cache)?
+    else {
+        return None;
+    };
+    // SAFETY: receiver owns the method slot for this call.
+    let callee = unsafe { &*slot }.load();
+    matches!(
+        callee,
+        Value::Function(_) | Value::Builtin(_) | Value::BoundFunction(_)
+    )
+    .then_some(callee)
+}
+
+fn finish_named_call(
+    registers: &mut crate::register_file::RegisterFile,
+    destination: u16,
+    receiver_register: u16,
+    callee: Value,
+    receiver: Value,
+    arguments: &[Value],
+    argument_registers: &[u16],
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    if let Value::Function(function) = &callee {
+        if let Some(value) =
+            crate::functions::try_execute_specialized(function, &receiver, arguments)?
+        {
+            crate::execution_trace::kernel("CallKnown", false);
+            write_value(registers, destination, value);
+            return Ok(None);
+        }
+        return Ok(Some(crate::vm::vm_ops::take_call_continuation(
+            registers,
+            destination,
+            callee,
+            receiver,
+            arguments.to_vec().into(),
+        )));
+    }
     let value = execute_named_callee(
         callee,
         &receiver,
-        &arguments,
+        arguments,
         argument_registers,
-        instruction.b,
+        receiver_register,
         registers,
     )?;
-    write_value(registers, instruction.a, value);
-    Ok(())
+    write_value(registers, destination, value);
+    Ok(None)
 }
 
 fn execute_named_callee(

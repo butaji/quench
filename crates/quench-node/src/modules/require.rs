@@ -19,6 +19,17 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+fn global_constructor_or_capability(
+    global: &Value,
+    name: &str,
+    spec: crate::registry::NodeSpec,
+) -> Value {
+    match quench_runtime::execute::get_property(global, name) {
+        Value::Undefined => crate::host::capability(spec),
+        value => value,
+    }
+}
+
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     if matches!(spec.as_str(), "child_process" | "node:child_process") {
@@ -30,7 +41,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         let factory = quench_runtime::execute::get_property(&global, "__nodeChildProcessModule");
         if matches!(factory, Value::Function(_) | Value::BoundFunction(_)) {
             let module = quench_runtime::execute::call(&factory, &Value::Undefined, &[])?;
-            state.borrow_mut().module_cache.insert("child_process".into(), module.clone());
+            state
+                .borrow_mut()
+                .module_cache
+                .insert("child_process".into(), module.clone());
             return Ok(module);
         }
     }
@@ -140,11 +154,18 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             timers
         });
     }
-    if let Some(cached) = state.borrow().module_cache.get(&spec) {
+    // `node:` is a spelling of the same builtin, not a second module
+    // instance. Canonicalize the cache key before resolving so constructors,
+    // prototypes, and mutable module state retain identity across spellings.
+    let cache_key = spec.strip_prefix("node:").unwrap_or(&spec).to_string();
+    if let Some(cached) = state.borrow().module_cache.get(&cache_key) {
         return Ok(cached.clone());
     }
     if let Some(ns) = resolve(state, &spec) {
-        state.borrow_mut().module_cache.insert(spec, ns.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(cache_key, ns.clone());
         return Ok(ns);
     }
     load_file_module(state, &spec)
@@ -355,8 +376,13 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {
             let global = quench_runtime::vm::current_global_object();
-            let event_target = quench_runtime::execute::get_property(&global, "EventTarget");
-            let event = quench_runtime::execute::get_property(&global, "Event");
+            let event_target = global_constructor_or_capability(
+                &global,
+                "EventTarget",
+                crate::registry::SPEC_EVENT_TARGET_NEW,
+            );
+            let event =
+                global_constructor_or_capability(&global, "Event", crate::registry::SPEC_EVENT);
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
@@ -393,7 +419,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 );
                 constructor
             };
-            let custom_event = quench_runtime::execute::get_property(&global, "CustomEvent");
+            let custom_event = global_constructor_or_capability(
+                &global,
+                "CustomEvent",
+                crate::registry::SPEC_CUSTOM_EVENT,
+            );
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
@@ -412,10 +442,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 Value::Number(1.0),
             );
             Some(crate::host::namespace_object_from_pairs(vec![
-                (
-                    "Event".to_string(),
-                    event,
-                ),
+                ("Event".to_string(), event),
                 ("CustomEvent".to_string(), custom_event),
                 (
                     "defineEventHandler".to_string(),
@@ -481,11 +508,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "https" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "request".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:request", 0x1600)),
+                crate::host::capability(crate::registry::SPEC_HTTPS_REQUEST),
             ),
             (
                 "get".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601)),
+                crate::host::capability(crate::registry::SPEC_HTTPS_GET),
             ),
         ])),
         "zlib" => Some(crate::modules::zlib::build()),
@@ -497,7 +524,18 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             )),
         )])),
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "cluster" => Some(crate::modules::cluster::build(state)),
+        "cluster" => {
+            if let Some(module) = state.borrow().cluster.module() {
+                return Some(module);
+            }
+            let global = quench_runtime::vm::current_global_object();
+            let existing = quench_runtime::execute::get_property(&global, "__nodeCluster");
+            if !matches!(existing, Value::Undefined) {
+                Some(existing)
+            } else {
+                Some(crate::modules::cluster::build(state))
+            }
+        }
         "inspector" => Some(crate::modules::inspector::build()),
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::modules::repl::build()),
@@ -505,7 +543,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
+            crate::host::capability(crate::registry::SPEC_SEA_IS_SEA),
         )])),
         // `node:test` exports the callable `test` function itself, with
         // `test`, `describe`, and `it` aliases plus `.skip` variants.
@@ -557,6 +595,31 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 (
                     "property".to_string(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY),
+                ),
+                (
+                    "timers".to_string(),
+                    quench_runtime::host_api::object(vec![
+                        (
+                            "enable".to_string(),
+                            crate::host::capability(
+                                crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE,
+                            ),
+                        ),
+                        (
+                            "tick".to_string(),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_TICK),
+                        ),
+                        (
+                            "setTime".to_string(),
+                            crate::host::capability(
+                                crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME,
+                            ),
+                        ),
+                        (
+                            "reset".to_string(),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_RESET),
+                        ),
+                    ]),
                 ),
             ]);
             let _ = attach(&test_fn, "mock", mock);
@@ -617,27 +680,15 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
             let constructor = crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR);
             let prototype = host_api::object(Vec::new());
-            let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
-            let global = quench_runtime::vm::current_global_object();
-            let _ = quench_runtime::execute::define_property(
-                global,
-                "__nodeChildProcessPrototype",
-                host_api::object(vec![
-                    ("value".into(), prototype),
-                    ("writable".into(), Value::Boolean(false)),
-                    ("enumerable".into(), Value::Boolean(false)),
-                    ("configurable".into(), Value::Boolean(false)),
-                ]),
-            );
+            let constructor =
+                quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
+            state.borrow_mut().child_process_prototype = Some(prototype);
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
                     "fork".to_string(),
                     crate::host::capability(crate::registry::SPEC_CP_FORK),
                 ),
-                (
-                    "ChildProcess".to_string(),
-                    constructor,
-                ),
+                ("ChildProcess".to_string(), constructor),
                 (
                     "spawnSync".to_string(),
                     crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),

@@ -21,7 +21,11 @@ fn encode(value: Value) -> TaggedValue {
     .expect("aligned execute payload pointer exceeds tag layout")
 }
 
+#[inline(always)]
 fn retain(word: TaggedValue) {
+    if !word.owns_rc() {
+        return;
+    }
     // SAFETY: every pointer originates in `encode`; every copied word retains
     // once, and every discarded word releases once using the same payload type.
     unsafe {
@@ -43,7 +47,11 @@ fn retain(word: TaggedValue) {
     }
 }
 
+#[inline(always)]
 fn release(word: TaggedValue) {
+    if !word.owns_rc() {
+        return;
+    }
     // SAFETY: each arm consumes exactly the typed strong reference owned by
     // `word`; the tag and pointer are created together in `encode`.
     unsafe {
@@ -393,6 +401,14 @@ impl SlotWord {
         // complete owning words throughout the replacement.
         let previous = unsafe { std::mem::replace(&mut (*self.0.get()).0, tagged) };
         release(previous);
+    }
+
+    #[inline(always)]
+    pub(crate) fn with_value<R>(&self, use_value: impl FnOnce(&Value) -> R) -> R {
+        // The decoded value owns any payload it needs. End the slot borrow
+        // before arbitrary consumers can update a related object view.
+        let value = self.load();
+        use_value(&value)
     }
 
     #[inline(always)]
@@ -855,13 +871,34 @@ impl RegisterFile {
             .then(|| number as usize)
     }
 
+    /// Return the complete nullish fact without decoding a heap-backed value.
+    /// `RequireObjectCoercible` only distinguishes `null`/`undefined`; all
+    /// other tagged values are known to pass that check.
+    #[inline(always)]
+    pub(crate) fn word_is_non_nullish(&self, index: usize) -> Option<bool> {
+        match self.words.get(index)?.decode() {
+            DecodedValue::Null | DecodedValue::Undefined => Some(false),
+            _ => Some(true),
+        }
+    }
+
     #[inline(always)]
     pub fn read_number(&self, index: usize) -> Option<f64> {
-        match self.words.get(index)?.decode() {
-            DecodedValue::Number(value) => Some(value),
-            DecodedValue::I31(value) => Some(f64::from(value)),
-            _ => None,
-        }
+        decoded_number(self.words.get(index)?.decode())
+    }
+
+    /// Decode two numeric words as one guarded Fast read. Keeping the pair
+    /// operation beside `read_number` makes the Dynamic→Fast fact canonical
+    /// while avoiding two separate `Option::zip` chains in binary ops.
+    #[inline(always)]
+    pub(crate) fn read_number_pair(
+        &self,
+        left: usize,
+        right: usize,
+    ) -> Option<(f64, f64)> {
+        let left = decoded_number(self.words.get(left)?.decode())?;
+        let right = decoded_number(self.words.get(right)?.decode())?;
+        Some((left, right))
     }
 
     /// Decide ToBoolean directly when the execute word contains the complete
@@ -1044,6 +1081,15 @@ impl RegisterFile {
     }
 }
 
+#[inline(always)]
+fn decoded_number(value: DecodedValue) -> Option<f64> {
+    match value {
+        DecodedValue::Number(value) => Some(value),
+        DecodedValue::I31(value) => Some(f64::from(value)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod truthiness_tests {
     use super::RegisterFile;
@@ -1147,6 +1193,13 @@ mod tests {
         assert!(destination.copy_from(0, &source, 0));
         assert_eq!(destination.read_number(0), Some(42.0));
         assert_eq!(source.read_number(0), Some(42.0));
+    }
+
+    #[test]
+    fn numeric_pair_decode_keeps_number_fast_facts() {
+        let registers = RegisterFile::from_values(vec![Value::Number(42.0), Value::Number(1.5)]);
+        assert_eq!(registers.read_number_pair(0, 1), Some((42.0, 1.5)));
+        assert_eq!(registers.read_number_pair(0, 4), None);
     }
 
     #[test]

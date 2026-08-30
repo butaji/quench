@@ -499,7 +499,7 @@ fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate:
     )?;
     let items: Vec<Value> = arguments.iter().skip(2).cloned().collect();
     let new_length = length - delete_count + items.len();
-    if new_length > 9_007_199_254_740_991usize {
+    if (new_length as u64) > 9_007_199_254_740_991u64 {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.splice result exceeds integer limit",
         ));

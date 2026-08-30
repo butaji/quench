@@ -443,17 +443,21 @@ fn to_zoned_date_time_iso(
     let epoch = get_epoch(receiver)?;
     let zone = match time_zone {
         Some(Value::String(value)) => value.clone(),
-        Some(Value::StringUnits(_)) => crate::conversion::to_string(
-            time_zone.expect("time zone present"),
-        )?,
+        Some(Value::StringUnits(_)) => {
+            crate::conversion::to_string(time_zone.expect("time zone present"))?
+        }
         _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
     };
     let zone = crate::temporal::parse_timezone_identifier(&Value::String(zone))?;
     let epoch = match epoch {
-        Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
-            crate::value::error::throw_range_error("Invalid epochNanoseconds")
-        })?,
-        _ => return Err(crate::value::error::throw_type_error("Invalid epochNanoseconds")),
+        Value::BigInt(value) => value
+            .parse::<i128>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid epochNanoseconds"))?,
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid epochNanoseconds",
+            ))
+        }
     };
     Ok(crate::temporal::zoned_record(
         epoch,

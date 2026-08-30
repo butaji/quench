@@ -91,6 +91,7 @@ pub(crate) fn validate_heritage(
 
 fn is_constructor(value: &crate::value::Value) -> bool {
     match value {
+        crate::value::Value::BindingCell(cell) => is_constructor(&cell.load()),
         crate::value::Value::Function(function) => crate::functions::is_constructible(function),
         crate::value::Value::BoundFunction(bound) => {
             is_constructor(&bound.target)
@@ -98,6 +99,7 @@ fn is_constructor(value: &crate::value::Value) -> bool {
         }
         crate::value::Value::Builtin(builtin) => {
             crate::builtin_meta::constructor_name(*builtin).is_some()
+                || matches!(builtin, crate::ops::Builtin::HostCapability(_))
         }
         crate::value::Value::Proxy(proxy) => {
             crate::proxy::get_handler_trap(proxy, "construct")

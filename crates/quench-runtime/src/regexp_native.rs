@@ -253,7 +253,10 @@ fn find_property_repeat_str(
         }
         count += character.len_utf8();
     }
-    (count > 0).then_some(NativeMatch { start: 0, end: count })
+    (count > 0).then_some(NativeMatch {
+        start: 0,
+        end: count,
+    })
 }
 
 fn find_property_repeat_units(
@@ -297,7 +300,10 @@ fn find_property_repeat_units(
         index += width;
         count += width;
     }
-    (count > 0).then_some(NativeMatch { start: 0, end: count })
+    (count > 0).then_some(NativeMatch {
+        start: 0,
+        end: count,
+    })
 }
 
 fn next_code_point(input: &[u16], index: usize, unicode: bool) -> Option<(char, usize)> {
@@ -305,10 +311,7 @@ fn next_code_point(input: &[u16], index: usize, unicode: bool) -> Option<(char, 
     if unicode && (0xD800..=0xDBFF).contains(&first) {
         let second = *input.get(index + 1)?;
         if (0xDC00..=0xDFFF).contains(&second) {
-            let code = 0x1_0000
-                + ((u32::from(first) - 0xD800) << 10)
-                + u32::from(second)
-                - 0xDC00;
+            let code = 0x1_0000 + ((u32::from(first) - 0xD800) << 10) + u32::from(second) - 0xDC00;
             return Some((char::from_u32(code)?, 2));
         }
     }

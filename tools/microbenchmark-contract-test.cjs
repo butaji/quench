@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
-const { validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
+const { COUNTER_FIELDS, COUNTER_VERSION, validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
 const root = path.resolve(__dirname, "..");
 const scripts = [
   ["value", "value-representation-benchmark.cjs", "QUENCH_VALUE_ITERATIONS", 257],
@@ -58,4 +58,14 @@ assert.throws(() => validateBenchmarkReport({
     { name: "x", iterations: 1, checksum: 0, wall_ms: 0 },
   ],
 }, 1), /unique/);
+const counters = Object.fromEntries(COUNTER_FIELDS.map((field) => [field, 0]));
+counters.allocated_bytes = null;
+assert.doesNotThrow(() => validateBenchmarkReport({ results: [{
+  name: "semantic-probe", iterations: 1, checksum: 0, wall_ms: 0,
+  counters: { version: COUNTER_VERSION, ...counters },
+}] }, 1));
+assert.throws(() => validateBenchmarkReport({ results: [{
+  name: "bad-counter", iterations: 1, checksum: 0, wall_ms: 0,
+  counters: { version: COUNTER_VERSION, ...counters, generic_calls: -1 },
+}] }, 1), /generic_calls/);
 console.log(`microbenchmark contracts passed (${scripts.length} benchmarks, Node/quench-node)`);
