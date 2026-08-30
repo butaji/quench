@@ -1,6 +1,11 @@
 //! Polyfill: `support`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.gc ||= (typeof gc === "function" ? gc : function () { return undefined; });
+Object.defineProperty(globalThis, "__nodeCallChecks", {
+  value: [],
+  writable: true,
+  configurable: true,
+});
 Object.defineProperty(globalThis, "__nodeCommon", { value: {
   mustCall: (fn = () => {}, exact = 1) => {
     if (typeof fn === "number") {
