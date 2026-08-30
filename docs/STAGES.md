@@ -1,9 +1,9 @@
 # Test262 stages
 
-The runner reads this ordered configuration. Stages are dependency order, not
-progress claims: use the pinned tree and declared harness, keep discovery and
-classification deterministic, and compare observable execution rather than
-inventory. Proposal staging is not conformance; benchmarks never alter it.
+The runner parses these ordered entries as data. Keep stage IDs and paths
+stable, resolve them against the pinned checkout, and compare observable
+execution. Stages are ordering only; they are not progress claims or a skip
+list.
 
 - Stage 0: `test/harness`
 - Stage 1: `language/arguments-object`

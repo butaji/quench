@@ -1,22 +1,8 @@
-# QuickJS is the JS layer on a Wasm VM
+# Shared ownership for JavaScript and Wasm
 
-quench-runtime is a Wasm VM first: Native | Fast | Dynamic and Arena | GC match the Wasm store 1:1. QuickJS is the slower JS layer on top of that VM, not the Wasm GC heap.
+The JavaScript layer and Wasm store share the runtime but keep their ownership
+rules explicit. Dynamic JavaScript objects, atoms, shapes, and cycle handling
+belong to the Dynamic runtime; Wasm instance data belongs to the shared store.
 
-**Considered Options**: fold QuickJS RC into Wasm `Storage::Gc`; keep wrapping `value::Value`; copy QuickJS as a JS layer.
-
-**Decision**: Wasm store GC is structs/arrays/exns. QuickJS (`dynamic::Runtime`) owns JS objects, atoms, shapes, and RC+cycle.
-
-| QuickJS fact | JS layer |
-|---|---|
-| `JSRuntime` owns heap, atoms, shapes, GC | `dynamic::Runtime` |
-| `JSContext` is a realm with a global | `dynamic::Context` |
-| `JSValue` tags; INT vs FLOAT64; RC iff tag < 0 | `dynamic::JsValue` / `Tag` |
-| Atoms are `u32`; high half is immediate ints | `dynamic::Atom` |
-| Shared shapes (proto + names + flags) | `dynamic::Shape` |
-| RC + cycle pass, no explicit C roots | `Runtime::dup` / `free` / `run_gc` |
-| Stack bytecode, max stack at compile time | `dynamic::Op` / `Bytecode` |
-| Direct bytecode, no parse-tree IR for JS | JS frontend; wasm still emits register HIR |
-
-Wasm Arena is linear memory and unboxed locals. Wasm GC is the store heap (shared across instances). `value::Value` + `HeapArena` root lists are the stale JS dual path.
-
-Crossings stay Guard and Box. JS values climb: Dynamic `JSValue` → Fast guarded i32/number → Native unboxed.
+Crossings remain Guard and Box. Do not reintroduce a second JavaScript heap,
+duplicate collector, or parallel value representation.
