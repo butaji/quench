@@ -831,9 +831,9 @@ pub fn server_close(
         server.closed = true;
     }
     crate::modules::http::server_close(state, &receiver);
-    // Closing a server stops new accepts but leaves established connections
-    // alive. Their ordinary EOF/close transitions are what release the
-    // server and allow the registered close callback to fire.
+    // Node closes completed keep-alive connections as part of server shutdown;
+    // active responses remain owned by their normal EOF/close transitions.
+    server_close_idle(state, Some(&receiver), &[])?;
     super::set_server_listening(&receiver, false)?;
     add_listener_cb(state, &receiver, args.first(), "close")?;
     let no_connections = !state.borrow().net.sockets.values().any(|socket| {
@@ -874,7 +874,7 @@ pub fn server_close_idle(
                     .http
                     .conns
                     .get(&socket.id)
-                    .is_some_and(|conn| conn.response_done);
+                    .is_some_and(|conn| conn.response_done || conn.req.is_none());
             is_idle.then(|| socket.js.clone())
         })
         .collect();
