@@ -18,6 +18,7 @@ const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
 pub(crate) const CLIENT_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 pub(crate) const RES_ASYNC_RESOURCE_PROP: &str = "\0quench:http:res:async-resource";
 const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
+const CLIENT_EXPECT_CONTINUE_PROP: &str = "\0quench:http:req:expect-continue";
 const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
@@ -276,6 +277,10 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             Value::Array(_)
         )
     });
+    let expect_continue = opts
+        .headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue"));
     let (req, id) = build_req_object(state)?;
     set_request_property(Some(&req), "path", Value::String(opts.path.clone()));
     set_request_property(Some(&req), "method", Value::String(opts.method.clone()));
@@ -344,6 +349,10 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             }
             req_set_timeout(state, Some(&req), &[timeout])?;
         }
+    }
+    if expect_continue {
+        set_request_property(Some(&req), CLIENT_EXPECT_CONTINUE_PROP, Value::Boolean(true));
+        let _ = req_end(state, Some(&req), &[])?;
     }
     Ok(req)
 }
@@ -558,8 +567,9 @@ pub fn req_write(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let bytes = chunk_bytes(args.first());
+    let bytes = request_chunk_bytes(args)?;
     if bytes.is_empty() {
+        invoke_write_callback(receiver, args)?;
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
     let (open, custom, dispatched) = {
@@ -597,7 +607,46 @@ pub fn req_write(
             }
         }
     }
+    invoke_write_callback(receiver, args)?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Preserve `req.end(chunk, encoding, callback)` conversion while keeping the
+/// completion callback out of the write path.
+fn end_chunk_args(args: &[Value]) -> &[Value] {
+    match args.get(1) {
+        Some(Value::String(_) | Value::StringUnits(_)) => &args[..2],
+        _ => &args[..1],
+    }
+}
+
+fn request_chunk_bytes(args: &[Value]) -> Result<Vec<u8>, VmError> {
+    let Some(value) = args.first() else {
+        return Ok(Vec::new());
+    };
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        let encoding = args
+            .get(1)
+            .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+            .map(execute::to_js_string)
+            .transpose()?
+            .unwrap_or_else(|| "utf8".into());
+        let encoding = crate::modules::buffer_enc::canonical_encoding(&encoding)
+            .ok_or_else(|| crate::modules::buffer_enc::unknown_encoding(&encoding))?;
+        return crate::modules::buffer_enc::encode_value(value, encoding);
+    }
+    Ok(chunk_bytes(Some(value)))
+}
+
+fn invoke_write_callback(receiver: Option<&Value>, args: &[Value]) -> Result<(), VmError> {
+    let callback = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)));
+    if let Some(callback) = callback {
+        execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
+    }
+    Ok(())
 }
 
 pub fn req_set_header(
@@ -802,6 +851,38 @@ pub fn req_end(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    let expect_started = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
+        matches!(execute::get_property(&req.req, CLIENT_EXPECT_CONTINUE_PROP), Value::Boolean(true))
+            && req.socket.is_some()
+    });
+    if expect_started {
+        if args.first().is_some_and(|data| !matches!(data, Value::Undefined)) {
+            req_write(state, receiver, end_chunk_args(args))?;
+        }
+        let (socket, body) = {
+            let mut guard = state.borrow_mut();
+            let Some(req) = guard.http.clientreqs.get_mut(&id) else {
+                return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+            };
+            (req.socket.clone(), std::mem::take(&mut req.body))
+        };
+        if let Some(socket) = socket {
+            let mut payload = Vec::new();
+            if !body.is_empty() {
+                payload.extend_from_slice(format!("{:x}\r\n", body.len()).as_bytes());
+                payload.extend_from_slice(&body);
+                payload.extend_from_slice(b"\r\n");
+            }
+            payload.extend_from_slice(b"0\r\n\r\n");
+            net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
+        }
+        if let Some(request) = receiver {
+            set_request_property(Some(request), "finished", Value::Boolean(true));
+            set_request_property(Some(request), CLIENT_EXPECT_CONTINUE_PROP, Value::Boolean(false));
+        }
+        invoke_end_callback(receiver, args)?;
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     let queued = {
         let mut guard = state.borrow_mut();
         let Some(current) = guard.http.clientreqs.get(&id) else {
@@ -861,7 +942,7 @@ pub fn req_end(
     }
     if let Some(data) = args.first() {
         if !matches!(data, Value::Undefined) {
-            req_write(state, receiver, std::slice::from_ref(data))?;
+            req_write(state, receiver, end_chunk_args(args))?;
         }
     }
     let (target, method, path, headers, body, agent, lookup, omit_host) = {
@@ -886,7 +967,10 @@ pub fn req_end(
             req.omit_host,
         )
     };
-    if let Some(req_value) = receiver {
+    let expect_header_start = receiver.is_some_and(|request| {
+        matches!(execute::get_property(request, CLIENT_EXPECT_CONTINUE_PROP), Value::Boolean(true))
+    });
+    if let Some(req_value) = receiver.filter(|_| !expect_header_start) {
         set_request_property(Some(req_value), "finished", Value::Boolean(true));
     }
     let host = target_host(&target);
@@ -1074,7 +1158,19 @@ pub fn req_end(
         .net
         .pending_events
         .push((request, "socket".into(), vec![socket]));
+    invoke_end_callback(receiver, args)?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn invoke_end_callback(receiver: Option<&Value>, args: &[Value]) -> Result<(), VmError> {
+    let callback = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)));
+    if let Some(callback) = callback {
+        execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
+    }
+    Ok(())
 }
 
 fn send_request(
@@ -1147,7 +1243,17 @@ fn request_head(
     let has_content_length = headers
         .iter()
         .any(|(key, _)| key.eq_ignore_ascii_case("content-length"));
-    if !has_content_length && (body_len > 0 || default_empty_body(method)) {
+    let expect_continue = headers.iter().any(|(key, value)| {
+        key.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue")
+    });
+    if !has_content_length && expect_continue {
+        if !headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
+        {
+            head.push_str("Transfer-Encoding: chunked\r\n");
+        }
+    } else if !has_content_length && (body_len > 0 || default_empty_body(method)) {
         head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }
     if !headers
@@ -1597,6 +1703,15 @@ pub fn data_handler(
     let (pending_head, head_parsed) = append_and_probe(state, client_id, &bytes);
     match pending_head {
         Some(head) => {
+            if response_status(&head) == Some(100) {
+                if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                    req.head_parsed = false;
+                }
+                if let Some(request) = client_value(state, client_id, true) {
+                    net::emit(state, &request, "continue", Vec::new())?;
+                }
+                return Ok(Value::Undefined);
+            }
             let raw_body = state
                 .borrow()
                 .http
@@ -1734,6 +1849,13 @@ fn response_content_length(response: &Value) -> Option<usize> {
     let headers = execute::get_property(response, "headers");
     execute::to_js_string(&execute::get_property(&headers, "content-length"))
         .ok()
+        .and_then(|value| value.parse().ok())
+}
+
+fn response_status(head: &[u8]) -> Option<u16> {
+    String::from_utf8_lossy(head)
+        .split_whitespace()
+        .nth(1)
         .and_then(|value| value.parse().ok())
 }
 
