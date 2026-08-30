@@ -139,6 +139,11 @@ pub(crate) fn reduce_for_in(
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
     }
+    // A lexical declaration in the loop body gets a fresh binding for every
+    // iteration even when the `for-in` head assigns to an existing `let`
+    // identifier (`for (key in object)`). Keep those body cells distinct so
+    // callbacks created during one iteration do not observe a later value.
+    let per_iteration = per_iteration || !body_slots.is_empty();
     *locals = outer_locals;
     ops.push(Op::ForIn {
         label: None,
