@@ -401,7 +401,6 @@ impl Test262Host for RuntimeHost {
         path: &Path,
     ) -> Result<(), String> {
         // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
-        reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
