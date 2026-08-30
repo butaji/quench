@@ -190,6 +190,36 @@ pub fn connection_handler(
     Ok(Value::Undefined)
 }
 
+/// Complete every server-side IncomingMessage when its transport closes.
+/// The connection owns the request identities, so teardown is emitted once
+/// per request and each async resource is destroyed after its observers run.
+pub(crate) fn connection_close(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let Some(socket_id) = net::net_id(socket) else {
+        return Ok(());
+    };
+    let requests = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .map(|conn| conn.requests.clone())
+        .unwrap_or_default();
+    for request in requests {
+        if matches!(execute::get_property(&request, REQ_CLOSE_PROP), Value::Boolean(true)) {
+            continue;
+        }
+        execute::set_property_in_place(&request, REQ_CLOSE_PROP, Value::Boolean(true));
+        net::emit(state, &request, "close", Vec::new())?;
+        let resource = execute::get_property(&request, REQ_ASYNC_RESOURCE_PROP);
+        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
+    }
+    state.borrow_mut().http.conns.remove(&socket_id);
+    Ok(())
+}
+
 /// Allocate the one internal AbortSignal representation used by HTTP
 /// IncomingMessage instances. The signal's own `aborted` property is the
 /// canonical mutable fact; callers only retain the object identity.
