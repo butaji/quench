@@ -318,16 +318,6 @@ pub(crate) fn calendar_days_in_month_for_code(
     calendar_date_for_code(year, code, 1, calendar).map(|date| u32::from(date.days_in_month()))
 }
 
-pub(crate) fn calendar_month_code_for_date(
-    year: i32,
-    month: u32,
-    day: u32,
-    calendar: &str,
-) -> Option<String> {
-    calendar_date(year, month, day, calendar)
-        .map(|date| date.month().to_input().code().0.to_string())
-}
-
 pub(crate) fn calendar_month_code_for_ordinal(
     year: i32,
     ordinal: u32,
@@ -1315,24 +1305,6 @@ fn difference(
     ])
 }
 
-fn largest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("days".into());
-    };
-    let value = crate::execute::get_property_result(options, "largestUnit")?;
-    if matches!(value, Value::Undefined) {
-        return Ok("days".into());
-    }
-    let value = crate::conversion::to_string(&value)?;
-    Ok(match value.as_str() {
-        "year" | "years" => "years",
-        "month" | "months" => "months",
-        "week" | "weeks" => "weeks",
-        _ => "days",
-    }
-    .into())
-}
-
 struct DifferenceSettings {
     largest: String,
     smallest: String,
@@ -1439,60 +1411,6 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
         increment,
         mode,
     })
-}
-
-fn smallest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("auto".into());
-    };
-    let value = crate::execute::get_property_result(options, "smallestUnit")?;
-    if matches!(value, Value::Undefined) {
-        return Ok("auto".into());
-    }
-    let value = option_string(&value)?;
-    Ok(match value.as_str() {
-        "year" | "years" => "years",
-        "month" | "months" => "months",
-        "week" | "weeks" => "weeks",
-        "day" | "days" => "days",
-        _ => "auto",
-    }
-    .into())
-}
-
-fn rounding_increment_option(options: Option<&Value>) -> Result<f64, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(1.0);
-    };
-    let value = crate::execute::get_property_result(options, "roundingIncrement")?;
-    if matches!(value, Value::Undefined) {
-        return Ok(1.0);
-    }
-    Ok(crate::conversion::to_number(&value)?.trunc().max(1.0))
-}
-
-fn rounding_mode_option(options: Option<&Value>) -> Result<String, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("trunc".into());
-    };
-    let value = crate::execute::get_property_result(options, "roundingMode")?;
-    if matches!(value, Value::Undefined) {
-        return Ok("trunc".into());
-    }
-    option_string(&value)
-}
-
-fn has_rounding_option(options: Option<&Value>) -> Result<bool, VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(false);
-    };
-    Ok(!matches!(
-        crate::execute::get_property_result(options, "roundingIncrement")?,
-        Value::Undefined
-    ) || !matches!(
-        crate::execute::get_property_result(options, "roundingMode")?,
-        Value::Undefined
-    ))
 }
 
 fn round_difference(value: f64, increment: f64, mode: &str) -> f64 {
@@ -1854,21 +1772,6 @@ fn is_fixed_timezone(value: &str) -> bool {
         && bytes[3] == b':'
         && value[1..3].parse::<u8>().is_ok()
         && value[4..6].parse::<u8>().is_ok()
-}
-
-fn fixed_timezone_offset(value: &str) -> i128 {
-    let bytes = value.as_bytes();
-    if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
-        return 0;
-    }
-    let Ok(hour) = value[1..3].parse::<i128>() else {
-        return 0;
-    };
-    let Ok(minute) = value[4..6].parse::<i128>() else {
-        return 0;
-    };
-    let sign = if bytes[0] == b'-' { -1 } else { 1 };
-    sign * (hour * 3_600 + minute * 60) * 1_000_000_000
 }
 
 fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<Value, VmError> {
@@ -2839,13 +2742,6 @@ pub(crate) fn is_temporal_date_like(value: &Value) -> bool {
     })
 }
 
-fn number_or_field(object: &Value, name: &str, default: f64) -> Result<f64, VmError> {
-    match crate::execute::get_property_result(object, name)? {
-        Value::Undefined => Ok(default),
-        value => Ok(crate::conversion::to_number(&value)?.trunc()),
-    }
-}
-
 fn option_string(value: &Value) -> Result<String, VmError> {
     if crate::value::is_object(value) {
         let method = crate::execute::get_property_result(value, "toString")?;
@@ -2855,11 +2751,6 @@ fn option_string(value: &Value) -> Result<String, VmError> {
         }
     }
     crate::conversion::to_string(value)
-}
-
-fn month_code_number(value: &Value) -> Result<f64, VmError> {
-    let code = month_code_text(value)?;
-    month_code_number_text(&code, false)
 }
 
 fn month_code_text(value: &Value) -> Result<String, VmError> {
@@ -2883,76 +2774,6 @@ fn invalid_receiver() -> VmError {
     crate::value::error::throw_type_error(
         "Temporal.PlainDate.prototype.withCalendar called on incompatible receiver",
     )
-}
-
-fn validate_date_options(options: Option<&Value>, difference: bool) -> Result<(), VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(());
-    };
-    if !crate::value::is_object(options) {
-        return Err(crate::value::error::throw_type_error("Invalid options"));
-    }
-    if !difference {
-        let overflow = crate::execute::get_property_result(options, "overflow")?;
-        if !matches!(overflow, Value::Undefined) {
-            let overflow = crate::conversion::to_string(&overflow)?;
-            if !matches!(overflow.as_str(), "constrain" | "reject") {
-                return Err(crate::value::error::throw_range_error("Invalid overflow"));
-            }
-        }
-        return Ok(());
-    }
-    let largest = crate::execute::get_property_result(options, "largestUnit")?;
-    if !matches!(largest, Value::Undefined) {
-        let largest = crate::conversion::to_string(&largest)?;
-        if !matches!(
-            largest.trim_end_matches('s'),
-            "auto" | "year" | "month" | "week" | "day"
-        ) {
-            return Err(crate::value::error::throw_range_error("Invalid unit"));
-        }
-    }
-    let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
-    if !matches!(increment, Value::Undefined) {
-        let increment = crate::conversion::to_number(&increment)?;
-        if !increment.is_finite() || increment.trunc() < 1.0 || increment.trunc() > 1_000_000_000.0
-        {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid roundingIncrement",
-            ));
-        }
-    }
-    let mode = crate::execute::get_property_result(options, "roundingMode")?;
-    if !matches!(mode, Value::Undefined) {
-        let mode = crate::conversion::to_string(&mode)?;
-        if !matches!(
-            mode.as_str(),
-            "ceil"
-                | "floor"
-                | "expand"
-                | "trunc"
-                | "halfCeil"
-                | "halfFloor"
-                | "halfExpand"
-                | "halfTrunc"
-                | "halfEven"
-        ) {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid roundingMode",
-            ));
-        }
-    }
-    let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
-    if !matches!(smallest, Value::Undefined) {
-        let smallest = crate::conversion::to_string(&smallest)?;
-        if !matches!(
-            smallest.trim_end_matches('s'),
-            "auto" | "year" | "month" | "week" | "day"
-        ) {
-            return Err(crate::value::error::throw_range_error("Invalid unit"));
-        }
-    }
-    Ok(())
 }
 
 fn has_date_fields(object: &crate::value::ObjectData) -> bool {
