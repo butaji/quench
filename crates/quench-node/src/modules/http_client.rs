@@ -3199,6 +3199,7 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
         Some(Value::StringUnits(url)) => http_url(&String::from_utf16_lossy(url)),
         Some(Value::Object(_) | Value::ObjectAlias(_)) => {
             let options = value.cloned().unwrap_or(Value::Undefined);
+            validate_agent_option(&options)?;
             let parser_option = execute::get_property(&options, "insecureHTTPParser");
             if !matches!(parser_option, Value::Undefined | Value::Null | Value::Boolean(_)) {
                 return Err(invalid_boolean_option_error(
@@ -3340,6 +3341,23 @@ fn unescaped_path_error() -> VmError {
         other => return other,
     };
     VmError::Thrown(error)
+}
+
+fn validate_agent_option(options: &Value) -> Result<(), VmError> {
+    let agent = execute::get_property(options, "agent");
+    let valid = matches!(agent, Value::Undefined | Value::Null | Value::Boolean(false))
+        || matches!(agent, Value::Object(_) | Value::ObjectAlias(_))
+            && (matches!(execute::get_property(&agent, AGENT_MARKER_PROP), Value::Boolean(true))
+                || ["addRequest", "createConnection", "createSocket"]
+                    .into_iter()
+                    .any(|name| quench_runtime::is_callable(&execute::get_property(&agent, name))));
+    if valid {
+        return Ok(());
+    }
+    Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+        "The \"options.agent\" property must be one of Agent-like Object, undefined, or false.{}",
+        crate::modules::util::invalid_arg_received(&agent)
+    )))
 }
 
 fn is_array_value(value: &Value) -> bool {
