@@ -18,6 +18,16 @@ const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
 /// `net.createServer([connectionListener])` — a server object backed by
 /// an emitter; the listener, if given, registers for `'connection'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(first) = args.first() {
+        let valid = quench_runtime::is_callable(first)
+            || matches!(first, Value::Object(_) | Value::ObjectAlias(_));
+        if !valid {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
+    }
     let (object, _id) = new_net_object(state, server_props())?;
     if let Some(options) = args
         .first()
@@ -377,6 +387,17 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             "connect".to_string(),
             crate::host::capability(crate::registry::SPEC_NET_CONNECT),
         )],
+    )?;
+    // Node installs one socket-owned end listener. Keep the listener count
+    // observable without inheriting stream.Duplex's no-half-open enforcer;
+    // the host pump owns the actual allowHalfOpen transition.
+    let _ = crate::modules::events::method_on(
+        state,
+        Some(&object),
+        &[
+            Value::String("end".into()),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ],
     )?;
     if let Some(options) = args
         .first()
@@ -2090,7 +2111,7 @@ pub fn socket_write(
                 &[Value::String("connect".into()), callback.clone()],
             )?;
         } else {
-            execute::call(callback, &receiver, &[])?;
+            execute::call(&callback, &receiver, &[])?;
         }
     }
     Ok(result)

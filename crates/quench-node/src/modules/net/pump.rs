@@ -215,7 +215,12 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             (guard.js.clone(), guard.peer, guard.local)
         };
         if let (Some(peer), Some(local)) = (peer, local) {
-            install_methods(js.clone(), net_info_props(peer, Some(local)))?;
+            // The socket is already visible to JS callbacks. Add address
+            // metadata in place so emitter identity and listener tables stay
+            // attached to the same object.
+            for (key, value) in net_info_props(peer, Some(local)) {
+                execute::set_property_in_place(&js, &key, value);
+            }
         }
         set_socket_state(&js, false, false, "open");
         if matches!(
@@ -291,6 +296,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             execute::call(&callback, &js, &[Value::Number(0.0), buffer])?;
         }
         super::set_socket_property(&js, "readable", Value::Boolean(false));
+        let js = execute::canonical_value(&js);
         super::end_async_stream(state, sock.borrow().id);
         emit(state, &js, "end", Vec::new())?;
     }
