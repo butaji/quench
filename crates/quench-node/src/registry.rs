@@ -560,6 +560,10 @@ pub const SPEC_HTTP_AGENT_ADD_REQUEST: NodeSpec = NodeSpec::new("http:Agent:addR
 pub const SPEC_HTTP_AGENT_KEEP_SOCKET_ALIVE: NodeSpec =
     NodeSpec::new("http:Agent:keepSocketAlive", 0x0F2B);
 pub const SPEC_HTTP_RES_SET_TIMEOUT: NodeSpec = NodeSpec::new("http:res:setTimeout", 0x0F2D);
+node_api! {
+    (SPEC_HTTP_REQ_PATH_GET, CAP_HTTP_REQ_PATH_GET, "http:req:path:get", 0x0F2E),
+    (SPEC_HTTP_REQ_PATH_SET, CAP_HTTP_REQ_PATH_SET, "http:req:path:set", 0x0F2F),
+}
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
 pub const SPEC_NET_SOCKET: NodeSpec = NodeSpec::new("net:Socket", 0x1013);
