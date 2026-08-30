@@ -309,6 +309,8 @@ const CAP_NET_SOCKET_RESUME: u16 = 0x1012;
 const CAP_NET_ASYNC_ITERATOR: u16 = crate::registry::SPEC_NET_ASYNC_ITERATOR.cap;
 const CAP_NET_ASYNC_ITERATOR_NEXT: u16 = crate::registry::SPEC_NET_ASYNC_ITERATOR_NEXT.cap;
 const CAP_NET_ASYNC_ITERATOR_RETURN: u16 = crate::registry::SPEC_NET_ASYNC_ITERATOR_RETURN.cap;
+const CAP_NET_SOCKET_RESET_AND_DESTROY: u16 =
+    crate::registry::SPEC_NET_SOCKET_RESET_AND_DESTROY.cap;
 const CAP_STRUCTURED_CLONE: u16 = crate::registry::SPEC_STRUCTURED_CLONE.cap;
 const CAP_FETCH: u16 = 0x1F21;
 const CAP_GC: u16 = 0x2117;
@@ -818,6 +820,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_ASYNC_ITERATOR => crate::modules::net::async_iterator,
         CAP_NET_ASYNC_ITERATOR_NEXT => crate::modules::net::async_iterator_next,
         CAP_NET_ASYNC_ITERATOR_RETURN => crate::modules::net::async_iterator_return,
+        CAP_NET_SOCKET_RESET_AND_DESTROY => crate::modules::net::socket_reset_and_destroy,
         CAP_REQUIRE => node_require,
         CAP_CJS_WRAP => cjs_wrap,
         CAP_UTIL_GETCALLSITES => util_get_call_sites,

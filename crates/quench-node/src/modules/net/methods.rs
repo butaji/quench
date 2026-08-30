@@ -1235,6 +1235,40 @@ pub fn socket_abort(
     socket_destroy(state, Some(socket), &[])
 }
 
+/// `socket.resetAndDestroy()` sends a reset for a live socket. An unconnected
+/// socket reports `ERR_SOCKET_CLOSED` asynchronously, after listeners bind.
+pub fn socket_reset_and_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let live = net_id(receiver)
+        .and_then(|id| state.borrow().net.sockets.get(&id).cloned())
+        .is_some_and(|socket| socket.borrow().state != SocketState::Closed);
+    if live {
+        socket_destroy(state, Some(receiver), &[])?;
+    } else {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("Socket is closed".into())],
+        );
+        let error = execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_SOCKET_CLOSED".into()),
+        );
+        state.borrow_mut().net.pending_events.push((
+            receiver.clone(),
+            "error".into(),
+            vec![error],
+        ));
+    }
+    Ok(receiver.clone())
+}
+
 fn abort_error() -> Value {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,

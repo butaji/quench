@@ -30,6 +30,7 @@ pub use methods::{
     bound_socket_address, bound_socket_close, bound_socket_construct, bound_socket_fd, pipe_bind,
     pipe_construct, socket_address, socket_construct, socket_destroy, socket_end,
     socket_pause, socket_ref,
+    socket_reset_and_destroy,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
 };
@@ -187,6 +188,7 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         let server = s.borrow();
         server.listening && server.refed && !server.closed
     }) || !host.net.pending_errors.is_empty()
+        || !host.net.pending_events.is_empty()
         || !host.net.pending_lookups.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
@@ -402,6 +404,10 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
+        (
+            "resetAndDestroy",
+            cap(crate::registry::SPEC_NET_SOCKET_RESET_AND_DESTROY),
+        ),
         ("unref", cap(crate::registry::SPEC_NET_SOCKET_UNREF)),
         ("ref", cap(crate::registry::SPEC_NET_SOCKET_REF)),
         ("address", cap(crate::registry::SPEC_NET_SOCKET_ADDRESS)),
