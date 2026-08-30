@@ -334,10 +334,14 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     match name {
         "console" => Some(crate::modules::console::build_value()),
-        "process" => Some(crate::modules::process::build(
-            &state.borrow().process.argv,
-            &state.borrow().process.exec_path,
-        )),
+        "process" => {
+            let process = state.borrow();
+            Some(crate::modules::process::build_with_title(
+                &process.process.argv,
+                &process.process.exec_path,
+                &process.process.title,
+            ))
+        }
         "buffer" => Some(crate::modules::buffer::build_module()),
         "internal/buffer" => Some(crate::host::namespace_object_from_pairs(vec![(
             "utf8Write".to_string(),
