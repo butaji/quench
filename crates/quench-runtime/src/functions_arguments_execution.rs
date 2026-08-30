@@ -231,26 +231,3 @@ fn execute_with_dynamic_scope(
         arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
     }
 }
-
-// Shared call-entry data for receiver-update paths.  Execution itself is
-// driven by `vm::execute_in_environment`; this record only keeps the
-// normalized receiver and argument slice together while installing guards.
-struct CallFrame {
-    function: std::rc::Rc<crate::value::FunctionValue>,
-    receiver: crate::value::Value,
-    arguments: Vec<crate::value::Value>,
-}
-
-impl CallFrame {
-    fn new(
-        function: std::rc::Rc<crate::value::FunctionValue>,
-        receiver: crate::value::Value,
-        arguments: Vec<crate::value::Value>,
-    ) -> Self {
-        Self {
-            receiver: crate::vm::bare_call_receiver(&function, &receiver),
-            function,
-            arguments,
-        }
-    }
-}
