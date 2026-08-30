@@ -276,20 +276,11 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
             values,
             index,
             array_like,
-            pending_mapper,
+            pending,
             target,
         } => crate::arrays::process_async_continuation(
-            result,
-            iterator,
-            receiver,
-            mapper,
-            this_arg,
-            values,
-            index,
-            array_like,
-            pending_mapper,
-            target,
-            state,
+            result, iterator, receiver, mapper, this_arg, values, index, array_like, pending,
+            target, state,
         ),
     }
 }
