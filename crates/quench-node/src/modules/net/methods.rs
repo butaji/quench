@@ -2199,13 +2199,19 @@ pub fn socket_write(
     );
     if guard.read_eof && !allow_half_open {
         drop(guard);
+        let error = super::handle_write_error(
+            "EPIPE",
+            "This socket has been ended by the other party",
+        );
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "error".into(), vec![error.clone()]));
         if let Some(callback) = callback {
             state.borrow_mut().event_loop.queue_microtask(
                 callback,
-                vec![super::handle_write_error(
-                    "EPIPE",
-                    "This socket has been ended by the other party",
-                )],
+                vec![error],
             );
         }
         socket_destroy(state, Some(&receiver), &[])?;
