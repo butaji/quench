@@ -55,11 +55,31 @@ impl LinkedModuleGraph {
         entry: Option<ModuleId>,
         prefix: &[&str],
     ) -> Result<Self, String> {
+        Self::compile_with_entry_prefix_and_program(graph, entry, prefix, None)
+    }
+
+    fn compile_with_entry_program(
+        graph: &mut ModuleGraph,
+        entry: ModuleId,
+        program: quench_runtime::reduce::ResidualProgram,
+    ) -> Result<Self, String> {
+        Self::compile_with_entry_prefix_and_program(graph, Some(entry), &[], Some(program))
+    }
+
+    fn compile_with_entry_prefix_and_program(
+        graph: &mut ModuleGraph,
+        entry: Option<ModuleId>,
+        prefix: &[&str],
+        mut entry_program: Option<quench_runtime::reduce::ResidualProgram>,
+    ) -> Result<Self, String> {
         graph.link_all_units()?;
         let mut units = std::collections::HashMap::new();
         for unit in graph.units() {
             let module = if Some(unit.id) == entry {
-                LinkedModule::compile_with_prefix(prefix, &unit.source)?
+                match entry_program.take() {
+                    Some(program) => LinkedModule::from_program(program),
+                    None => LinkedModule::compile_with_prefix(prefix, &unit.source)?,
+                }
             } else if unit.kind == ModuleKind::Json {
                 LinkedModule::compile_json(&unit.source)?
             } else if unit.kind == ModuleKind::Text {
@@ -169,9 +189,8 @@ impl LinkedModuleGraph {
 include!("runtime_host_linking.rs");
 
 impl LinkedModule {
-    pub fn compile(source: &str) -> Result<Self, String> {
-        let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-        Ok(Self {
+    fn from_program(program: quench_runtime::reduce::ResidualProgram) -> Self {
+        Self {
             program,
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
@@ -188,29 +207,17 @@ impl LinkedModule {
             resume_pc: Cell::new(0),
             resume_registers: RefCell::new(Vec::new()),
             async_suspended: Cell::new(false),
-        })
+        }
+    }
+
+    pub fn compile(source: &str) -> Result<Self, String> {
+        let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
+        Ok(Self::from_program(program))
     }
 
     pub fn compile_with_prefix(prefix: &[&str], source: &str) -> Result<Self, String> {
         let program = reduce_module_sequence(prefix, source).map_err(|errors| errors.join("; "))?;
-        Ok(Self {
-            program,
-            scope: ExecutionScope::new(),
-            fixed_exports: Vec::new(),
-            linked_exports: RefCell::new(HashMap::new()),
-            star_exports: RefCell::new(HashSet::new()),
-            ambiguous_exports: RefCell::new(HashSet::new()),
-            namespace_cell: RefCell::new(None),
-            deferred_namespace_cell: RefCell::new(None),
-            module_source: module_source_cell(),
-            evaluated: Cell::new(false),
-            started: Cell::new(false),
-            evaluating: Cell::new(false),
-            thrown: RefCell::new(None),
-            resume_pc: Cell::new(0),
-            resume_registers: RefCell::new(Vec::new()),
-            async_suspended: Cell::new(false),
-        })
+        Ok(Self::from_program(program))
     }
 
     pub fn compile_json(source: &str) -> Result<Self, String> {
@@ -401,16 +408,28 @@ impl Test262Host for RuntimeHost {
         path: &Path,
     ) -> Result<(), String> {
         // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
+        // Validate source-level early errors before graph resolution can mask a
+        // parse failure as an unresolved module specifier.
+        let program = reduce_module_sequence(harness, source)
+            .map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
             .ok_or_else(|| "module graph missing entry".to_string())?;
-        let linked =
-            LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
+        let linked = LinkedModuleGraph::compile_with_entry_program(&mut graph, entry, program)?;
+        quench_runtime::vm::reset_global_object();
+        quench_runtime::reset_fixture_caches();
+        quench_runtime::vm::reset_host_agent_state();
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         quench_runtime::execute::reset_replacements();
         let context = fresh_context();
-        quench_runtime::vm::with_current_context(&context, || linked.execute(&graph, entry))
+        let result = quench_runtime::vm::with_current_context(&context, || {
+            linked.execute(&graph, entry)
+        });
+        quench_runtime::vm::reset_host_agent_state();
+        quench_runtime::reset_fixture_caches();
+        quench_runtime::vm::reset_global_object();
+        result
     }
 }
 
