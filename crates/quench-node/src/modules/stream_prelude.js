@@ -1168,6 +1168,7 @@
           if (emitted >= limit) break;
           emitted++;
           yield value;
+          if (emitted >= limit) return;
         }
       },
       take(nextCount, nextOptions) {
