@@ -14,50 +14,31 @@
       const wrapper = (...args) => fn.apply(this, args);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.on(name, wrapper);
-      let deliveredLateError = false;
       if (name === "error" && this.destroyed && this._destroyError) {
         this._emitter.removeListener(name, wrapper);
-        deliveredLateError = true;
-        this._destroyErrorEmitted = true;
-        if (this._readableState) this._readableState.errorEmitted = true;
-        if (this._writableState) this._writableState.errorEmitted = true;
         fn.call(this, this._destroyError);
       } else if (name === "close" && this.destroyed && this._destroyClosePending) {
         this._emitter.removeListener(name, wrapper);
         fn.call(this);
       }
-      if (name === "data" && this._readableState) {
-        // A readable listener keeps a zero-HWM stream in manual-read mode.
-        const manualRead = this._readableState.highWaterMark === 0 &&
-          this.listenerCount("readable") > 0 ||
-          (!this._readableState.pipeRequested &&
-            this._readableState.readableListening &&
-            this._readableState.readableListenerTurnPending);
-        if (!manualRead) this.resume();
+      if (name === "data" && this._readableState &&
+                 this.listenerCount("readable") === 0) {
+        this.resume();
         // The first data listener starts pulling before the next promise
         // checkpoint, matching Node's lazy activation contract.
-        if (!manualRead && !this._readableState.reading && !this._readableState.ended) {
+        if (!this._readableState.reading && !this._readableState.ended) {
           requestRead(this);
         }
         // Deliver already-buffered/iterator data in this turn, but leave a
         // user-supplied _read pending so an immediate pause can cancel it.
         if (this._readableState.buffer.length > 0 || this.__quenchIterator) {
           flowReadable(this);
-          this._readableState.resumeScheduled = true;
         }
       }
       if (name === "readable" && this._readableState &&
-          !this._readableState.ended) {
-        this._readableState.readableListening = true;
+          !this._readableState.reading && !this._readableState.ended) {
         this._readableState.flowing = false;
-        this._readableState.needReadable = true;
-        if (!this._readableState.reading) requestRead(this);
-      }
-      if (name === "readable" && this._readableState) {
-        this._readableState.readableListening = true;
-        this._readableState.readableListenerTurnPending = true;
-        const state = this._readableState;
-        nextTick(() => { state.readableListenerTurnPending = false; });
+        requestRead(this);
       }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
@@ -65,7 +46,7 @@
       if (name === "end" && this.readable !== false &&
           this._readableState && this._readableState.endEmitted) {
         nextTick(() => fn.call(this));
-      } else if (name === "error" && this._destroyErrorEmitted && !deliveredLateError) {
+      } else if (name === "error" && this._destroyErrorEmitted) {
         nextTick(() => fn.call(this, this._destroyError));
       } else if (name === "close" && this._destroyCloseEmitted) {
         nextTick(() => fn.call(this));
@@ -86,32 +67,6 @@
       };
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.once(name, wrapper);
-      if (name === "data" && this._readableState) {
-        const manualRead = this._readableState.highWaterMark === 0 &&
-          this.listenerCount("readable") > 0 ||
-          (!this._readableState.pipeRequested &&
-            this._readableState.readableListening &&
-            this._readableState.readableListenerTurnPending);
-        if (!manualRead) this.resume();
-        if (!manualRead && !this._readableState.reading && !this._readableState.ended) {
-          requestRead(this);
-        }
-        if (this._readableState.buffer.length > 0 || this.__quenchIterator) {
-          flowReadable(this);
-          this._readableState.resumeScheduled = true;
-        }
-      }
-      if (name === "readable" && this._readableState) {
-        this._readableState.readableListening = true;
-        this._readableState.readableListenerTurnPending = true;
-        const state = this._readableState;
-        nextTick(() => { state.readableListenerTurnPending = false; });
-        if (!this._readableState.ended) {
-          this._readableState.flowing = false;
-          this._readableState.needReadable = true;
-          if (!this._readableState.reading) requestRead(this);
-        }
-      }
       return this;
     },
     prependListener(name, fn) {
@@ -197,39 +152,6 @@
     return options.objectMode ? 16 : 16384;
   }
 
-  function readableBufferLength(state) {
-    if (state.objectMode) return state.buffer.length;
-    return state.buffer.reduce((total, chunk) =>
-      total + (typeof chunk === "string" ? chunk.length : chunk?.byteLength ?? 1), 0);
-  }
-
-  function takeReadableChunk(state, size) {
-    if (state.objectMode || !(size > 0) || state.buffer.length < 2) {
-      return state.buffer.shift();
-    }
-    let remaining = size;
-    const parts = [];
-    while (state.buffer.length > 0 && remaining > 0) {
-      const chunk = state.buffer[0];
-      const length = typeof chunk === "string" ? chunk.length : chunk.byteLength;
-      if (length <= remaining) {
-        parts.push(state.buffer.shift());
-        remaining -= length;
-      } else {
-        parts.push(typeof chunk === "string"
-          ? chunk.slice(0, remaining)
-          : chunk.subarray(0, remaining));
-        state.buffer[0] = typeof chunk === "string"
-          ? chunk.slice(remaining)
-          : chunk.subarray(remaining);
-        remaining = 0;
-      }
-    }
-    if (parts.length === 1) return parts[0];
-    if (typeof Buffer !== "undefined") return Buffer.concat(parts);
-    return parts.join("");
-  }
-
   function validateEncoding(encoding) {
     const name = String(encoding).toLowerCase();
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
@@ -260,14 +182,8 @@
       completed = true;
       stream._constructing = false;
       if (error) {
-        if (stream._readableState) {
-          stream._readableState.errored = error;
-          stream._readableState.errorEmitted = true;
-        }
-        if (stream._writableState) {
-          stream._writableState.errored = error;
-          stream._writableState.errorEmitted = true;
-        }
+        if (stream._readableState) stream._readableState.errored = error;
+        if (stream._writableState) stream._writableState.errored = error;
         nextTick(() => stream._emitter.emit("error", error));
         return;
       }
@@ -288,60 +204,28 @@
   // ---- Readable ----
 
   function initReadable(stream, options) {
-    if (!stream._emitter) {
-      const captureRejections = options.captureRejections;
-      stream._emitter = new EventEmitter({
-        captureRejections: captureRejections === undefined ? false : captureRejections
-      });
-    }
-    stream._emitter.__quenchOwner = stream;
-    stream._captureRejections = options.captureRejections === true;
-    const state = {
+    if (!stream._emitter) stream._emitter = new EventEmitter();
+    stream._readableState = {
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
       buffer: [],
       flowing: null,
       flowScheduled: false,
       reading: false,
-      readingMore: false,
-      needReadable: false,
-      readableListening: false,
-      resumeScheduled: false,
-      resumeEventPending: false,
-      dataEmitted: false,
       readRequests: 0,
       ended: false,
       endEmitted: false,
       endScheduled: false,
       emittedReadable: false,
-      // Number of terminal readable notifications still observable after
-      // buffered EOF data is consumed. Node exposes two follow-up readable
-      // turns (data-at-EOF, then empty-EOF) before end.
-      readableEofPending: 0,
-      readableEofReadScheduled: false,
-      unshiftedSinceRead: false,
-      readableListenerTurnPending: false,
-      pipeRequested: false,
       errored: null,
-      errorEmitted: false,
       closeEmitted: false,
-      autoDestroying: false,
       encoding: options.encoding ? validateEncoding(options.encoding) : null,
       decoder: options.encoding ? new StringDecoder(options.encoding) : null,
-      decoderEnded: false,
       awaitDrainWriters: null,
       pipeCount: 0,
-      pipes: [],
-      pipeRecords: [],
       autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
-    Object.defineProperty(state, "length", {
-      configurable: true,
-      enumerable: true,
-      get() { return readableBufferLength(state); }
-    });
-    stream._readableState = state;
     stream.readable = options.readable !== false;
     stream.destroyed = false;
     stream.closed = false;
@@ -359,16 +243,9 @@
       else options.signal.addEventListener("abort", abort, { once: true });
     }
     if (options.autoDestroy !== false) {
-      const autoDestroyErrorListener = () => {
-        if (stream._readableState?.autoDestroying || stream._writableState?.autoDestroying) return;
-        if (!stream.destroyed) {
-          if (stream._readableState) stream._readableState.autoDestroying = true;
-          if (stream._writableState) stream._writableState.autoDestroying = true;
-          stream.destroy();
-        }
-      };
-      autoDestroyErrorListener.__quenchInternal = true;
-      stream._emitter.on("error", autoDestroyErrorListener);
+      stream._emitter.on("error", () => {
+        if (!stream.destroyed) stream.destroy();
+      });
     }
   }
 
@@ -381,19 +258,9 @@
 
   function flowReadable(stream) {
     const st = stream._readableState;
-    st.resumeScheduled = false;
-    st.readableEofReadScheduled = false;
-    if (st.resumeEventPending) {
-      st.resumeEventPending = false;
-      stream._emitter.emit("resume");
-    }
     if (stream.listenerCount("readable") > 0 &&
-        (st.buffer.length > 0 || st.ended) && !st.emittedReadable) {
+        (st.buffer.length > 0 || st.ended)) {
       st.emittedReadable = true;
-      st.needReadable = false;
-      if (st.ended && st.buffer.length === 0 && st.readableEofPending === 0) {
-        st.readingMore = false;
-      }
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
     }
@@ -401,13 +268,13 @@
       if (st.decoder && st.buffer.length > 0 && !st.ended && !st.reading) {
         requestRead(stream);
       }
+      if (!st.objectMode && st.decoder && st.buffer.length > 1 && typeof Buffer !== "undefined") {
+        st.buffer = [Buffer.concat(st.buffer)];
+      }
       while (st.flowing && st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         if (st.decoder && typeof chunk !== "string") chunk = st.decoder.write(chunk);
-        if (chunk !== "") {
-          st.dataEmitted = true;
-          stream._emitter.emit("data", chunk);
-        }
+        if (chunk !== "") stream._emitter.emit("data", chunk);
         if (st.awaitDrainWriters &&
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
@@ -429,30 +296,15 @@
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
-        st.highWaterMark !== 0 &&
-        !st.endScheduled && (st.flowing || stream.listenerCount("readable") > 0 ||
+        !st.endScheduled && (st.flowing ||
           (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
-      if (st.decoder && !st.decoderEnded) {
-        st.decoderEnded = true;
-        const tail = st.decoder.end();
-        if (tail !== "") {
-          st.buffer.push(tail);
-          flowReadable(stream);
-          return;
-        }
-      }
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
-        if (!stream.destroyed && st.buffer.length === 0 && st.ended && !st.endEmitted &&
-            st.readableEofPending === 0 && !st.readableEofReadScheduled &&
-            (st.flowing || stream.listenerCount("readable") > 0 ||
+        if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+            (st.flowing ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
-          st.needReadable = false;
-          st.reading = false;
-          st.readingMore = false;
-          stream.readable = false;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
             nextTick(() => stream.destroy());
@@ -506,10 +358,6 @@
       return this._readableState.endEmitted;
     }
 
-    get readableDidRead() {
-      return this._readableState.dataEmitted === true;
-    }
-
     get readableHighWaterMark() {
       return this._readableState.highWaterMark;
     }
@@ -548,11 +396,8 @@
 
     resume() {
       if (this.destroyed) return this;
-      const state = this._readableState;
-      state.paused = false;
-      state.flowing = true;
-      state.resumeScheduled = true;
-      state.resumeEventPending = true;
+      this._readableState.paused = false;
+      this._readableState.flowing = true;
       scheduleFlow(this);
       return this;
     }
@@ -574,11 +419,6 @@
       }
       if (chunk === null) {
         st.ended = true;
-        st.needReadable = false;
-        if (st.buffer.length > 0 && this.listenerCount("readable") > 0) {
-          st.readableEofPending = st.unshiftedSinceRead ? 2 :
-            ((!st.readableListenerTurnPending || this._isTransform) ? 1 : 0);
-        }
         if (this._isDuplex && !this.allowHalfOpen &&
             !this._writableState.ended && !this._writableState.finished) {
           setImmediate(() => {
@@ -595,7 +435,6 @@
           chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
         }
         st.buffer.push(normalizeReadableChunk(this, chunk));
-        if (st.needReadable || st.flowing) st.readingMore = true;
       }
       scheduleFlow(this);
       if (st.ended) return false;
@@ -606,7 +445,7 @@
       return buffered < st.highWaterMark;
     }
 
-    unshift(chunk, encoding) {
+    unshift(chunk) {
       const st = this._readableState;
       if (chunk === null) return false;
       if (!st.objectMode && typeof chunk !== "string" &&
@@ -618,168 +457,66 @@
           typeof chunk.byteLength === "number" && chunk.byteLength === 0) return true;
       if (typeof chunk === "string" && chunk.length === 0) return true;
       if (st.ended) st.ended = false;
-      if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
-        const sourceEncoding = encoding || st.defaultEncoding;
-        // Node stores unshifted strings in the stream's active encoding. If
-        // the supplied encoding already matches it, retain the string as-is;
-        // otherwise convert once and avoid feeding it back through the
-        // decoder, which would merge otherwise distinct unshift events.
-        if (st.encoding) {
-          if (st.encoding !== sourceEncoding) {
-            chunk = Buffer.from(chunk, sourceEncoding).toString(st.encoding);
-          }
-        } else {
-          chunk = Buffer.from(chunk, sourceEncoding);
-        }
-      }
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
-      st.unshiftedSinceRead = true;
       st.reading = st.readRequests > 0;
-      if (this.listenerCount("readable") > 0 && !st.flowing && st.needReadable) {
-        st.emittedReadable = false;
-        // `emitReadable` is next-tick even for unshift: the caller may still
-        // push EOF in the same turn, and the readable callback must observe
-        // the final ended/reading state.
-        scheduleFlow(this);
-      } else {
-        scheduleFlow(this);
-      }
+      scheduleFlow(this);
       return true;
     }
 
     read(size) {
       const st = this._readableState;
-      const scheduleReadableIfNeeded = () => {
-        if (st.buffer.length === 0 && st.ended &&
-            st.readableEofPending > 0 && !st.readableEofReadScheduled &&
-            this.listenerCount("readable") > 0 &&
-            !st.endEmitted) {
-          st.readableEofPending -= 1;
-          st.readableEofReadScheduled = true;
-          scheduleFlow(this);
-        }
-      };
-      // Node uses read(0) as a non-consuming pull probe.  It may invoke
-      // _read() to populate the buffer, but must leave every queued chunk
-      // available for the subsequent read/flow transition.
-      if (size === 0) {
-        if (!st.ended && !st.reading) requestRead(this);
-        return null;
-      }
       if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
-          if (!this._isTransform && size > 0) st.emittedReadable = true;
           nextTick(() => {
-            if (!this.destroyed && st.buffer.length === 0 && st.ended && !st.endEmitted &&
-                st.readableEofPending === 0 && !st.readableEofReadScheduled) {
+            if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
-              st.needReadable = false;
-              st.reading = false;
-              st.readingMore = false;
-              this.readable = false;
               this._emitter.emit("end");
-              if (st.autoDestroy && (!this._isDuplex || this._writableState?.finished)) {
-                this.destroy();
-              }
             }
           });
         }
       };
       if (st.buffer.length > 0) {
-        if (!st.objectMode && size > 0 && !st.ended &&
-            readableBufferLength(st) < size) {
-          st.needReadable = true;
-          if (!st.reading) requestRead(this);
-          return null;
-        }
-        // Node starts the next pull before removing a buffered chunk when
-        // the resulting length falls below the high-water mark.  The
-        // callback can observe `state.reading` during the data event, so the
-        // pull must precede extraction rather than follow emission.
-        if (!st.ended && !st.reading) {
-          const buffered = readableBufferLength(st);
-          const requested = size > 0 ? size : buffered;
-          if (st.needReadable || buffered - requested < st.highWaterMark) {
-            requestRead(this);
-          }
-        }
-        let chunk;
-        chunk = takeReadableChunk(st, size);
+        let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
-        scheduleReadableIfNeeded();
-        st.dataEmitted = true;
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
-        if (st.buffer.length === 0 && !st.ended) {
-          st.needReadable = this.listenerCount("readable") > 0;
-          if (!st.reading && st.highWaterMark !== 0) {
-            st.reading = true;
-            requestRead(this);
-            if (st.decoder && !st.objectMode) {
-              while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
-            }
-          }
-        }
-        if (chunk === "" && st.decoder) {
-          if (st.ended && !st.decoderEnded) {
-            st.decoderEnded = true;
-            chunk = st.decoder.end();
-          } else if (!st.ended) {
-            return this.read(size);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+          if (st.decoder && !st.objectMode) {
+            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
           }
         }
         return chunk;
       }
       if (!st.ended && !st.reading) {
-        st.needReadable = this.listenerCount("readable") > 0;
         requestRead(this);
       }
       if (st.buffer.length > 0) {
-        if (!st.ended && !st.reading) {
-          const buffered = readableBufferLength(st);
-          const requested = size > 0 ? size : buffered;
-          if (st.needReadable || buffered - requested < st.highWaterMark) {
-            requestRead(this);
-          }
-        }
-        let chunk = takeReadableChunk(st, size);
+        let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
-        scheduleReadableIfNeeded();
-        st.dataEmitted = true;
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
-        if (st.buffer.length === 0 && !st.ended) {
-          st.needReadable = this.listenerCount("readable") > 0;
-          if (!st.reading) {
-            st.reading = true;
-            requestRead(this);
-            if (st.decoder && !st.objectMode) {
-              while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
-            }
-          }
-        }
-        if (chunk === "" && st.decoder) {
-          if (st.ended && !st.decoderEnded) {
-            st.decoderEnded = true;
-            chunk = st.decoder.end();
-          } else if (!st.ended) {
-            return this.read(size);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+          if (st.decoder && !st.objectMode) {
+            while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
           }
         }
         return chunk;
       }
       finishIfEnded();
-      scheduleReadableIfNeeded();
       if (this._passThrough) finishWritable(this);
       return null;
     }
@@ -788,7 +525,6 @@
       const st = this._readableState;
       st.encoding = validateEncoding(encoding || "utf8");
       st.decoder = new StringDecoder(st.encoding);
-      st.decoderEnded = false;
       if (st.buffer.length > 0 && typeof Buffer !== "undefined") {
         const buffered = Buffer.concat(st.buffer);
         st.buffer = [];
@@ -800,11 +536,14 @@
 
     pipe(dest, options) {
       const source = this;
-      const state = source._readableState;
-      state.pipeCount += 1;
-      state.pipes.push(dest);
-      const ondata = (chunk) => {
+      const sourceState = source._readableState;
+      sourceState.pipeCount += 1;
+      if (sourceState.pipeCount > 1 && !sourceState.awaitDrainWriters) {
+        sourceState.awaitDrainWriters = new Set();
+      }
+      source.on("data", (chunk) => {
         if (dest.write(chunk) === false) {
+          const state = source._readableState;
           if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
           else if (state.awaitDrainWriters instanceof Set) state.awaitDrainWriters.add(dest);
           else if (state.awaitDrainWriters !== dest) {
@@ -815,77 +554,36 @@
             if (!writers) return;
             if (writers instanceof Set) writers.delete(dest);
             else if (writers === dest) state.awaitDrainWriters = null;
-            if (!state.awaitDrainWriters ||
-                (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0)) {
+            const drained = !state.awaitDrainWriters ||
+              (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0);
+            if (drained) {
               state.awaitDrainWriters = null;
               source.resume();
             }
           });
         }
-      };
-      const onend = () => { if (!options || options.end !== false) dest.end(); };
-      const onclose = () => { if (typeof dest.destroy === "function") dest.destroy(); };
-      const record = { dest, ondata, onend, onclose, cleaned: false };
-      const cleanup = () => {
-        if (record.cleaned) return;
-        record.cleaned = true;
-        source.removeListener("data", ondata);
-        source.removeListener("end", onend);
-        source.removeListener("end", cleanup);
-        source.removeListener("close", onclose);
-        source.removeListener("close", cleanup);
-        dest.removeListener("close", cleanup);
-        state.pipeRecords = state.pipeRecords.filter((item) => item !== record);
-        state.pipes = state.pipeRecords.map((item) => item.dest);
-        state.pipeCount = state.pipes.length;
-        record.dest.emit("unpipe", source);
-      };
-      record.cleanup = cleanup;
-      state.pipeRecords.push(record);
-      state.pipeRequested = true;
-      source.on("data", ondata);
-      state.pipeRequested = false;
-      source.on("end", onend);
-      source.on("end", cleanup);
-      source.on("close", onclose);
-      source.on("close", cleanup);
-      dest.once("close", cleanup);
-      if (dest._isDuplex) dest.once("end", () => source.pause());
+      });
+      if (!options || options.end !== false) {
+        source.on("end", () => dest.end());
+      }
+      dest.once("end", () => source.pause());
       dest.emit("pipe", source);
       return dest;
     }
 
     unpipe(dest) {
-      const state = this._readableState;
-      const records = state.pipeRecords.filter((record) => !dest || record.dest === dest);
-      for (const record of records) {
-        record.cleanup();
-      }
+      this.removeAllListeners("data");
+      if (dest) dest.emit("unpipe", this);
       return this;
     }
   }
   ReadableClass.from = function (source, options) {
     options = options || {};
-    if (source == null) {
-      const error = new TypeError("The \"iterable\" argument must be an Iterable");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    // A string is one logical readable chunk in Node, rather than an
-    // iteration over its UTF-16 code units. Preserve that source fact before
-    // adapting generic synchronous/asynchronous iterables.
-    let stringPending = typeof source === "string";
-    const asyncIterator = stringPending ? null : source[Symbol.asyncIterator];
+    if (source == null) throw new TypeError("Readable.from requires a source");
+    const asyncIterator = source[Symbol.asyncIterator];
     const iterator = asyncIterator ? asyncIterator.call(source) :
-      (stringPending ? null :
-        (source[Symbol.iterator] ? source[Symbol.iterator].call(source) : null));
-    const pull = stringPending
-      ? () => {
-          if (!stringPending) return { done: true };
-          stringPending = false;
-          return { value: source, done: false };
-        }
-      : iterator ? () => iterator.next() :
+      (source[Symbol.iterator] ? source[Symbol.iterator].call(source) : null);
+    const pull = iterator ? () => iterator.next() :
       (typeof source.read === "function" ? () => source.read() : null);
     if (!pull) throw new TypeError("source is not iterable or readable");
 
@@ -954,11 +652,6 @@
   };
 
   function operatorConcurrency(options) {
-    if (options !== undefined && (options === null || typeof options !== "object")) {
-      const error = new TypeError("The \"options\" argument must be of type object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
     const value = options?.concurrency ?? 1;
     const number = Number(value);
     if (!Number.isInteger(number) || number < 1) {
@@ -969,51 +662,10 @@
     return number;
   }
 
-  function operatorSignal(options) {
-    const signal = options?.signal;
-    if (signal !== undefined &&
-        (signal === null || typeof signal !== "object" ||
-         typeof signal.addEventListener !== "function")) {
-      const error = new TypeError("The \"options.signal\" property must be an instance of AbortSignal");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    return signal;
-  }
-
-  function readableSource(stream) {
-    if (stream.__quenchIterator) return stream.__quenchIterator;
-    if (typeof stream.read !== "function") return stream[Symbol.asyncIterator]?.();
-    return {
-      next() {
-        const value = stream.read();
-        if (value !== null) return { value, done: false };
-        if (stream._readableState?.ended || stream.readableEnded) {
-          return { value: undefined, done: true };
-        }
-        return new Promise((resolve, reject) => {
-          const onData = (chunk) => { cleanup(); resolve({ value: chunk, done: false }); };
-          const onEnd = () => { cleanup(); resolve({ value: undefined, done: true }); };
-          const onError = (error) => { cleanup(); reject(error); };
-          const cleanup = () => {
-            stream.removeListener("data", onData);
-            stream.removeListener("end", onEnd);
-            stream.removeListener("error", onError);
-          };
-          stream.once("data", onData);
-          stream.once("end", onEnd);
-          stream.once("error", onError);
-          requestRead(stream);
-        });
-      },
-      return() { stream.destroy?.(); return { value: undefined, done: true }; },
-    };
-  }
-
   function readableOperator(stream, mapper, filtering, options) {
     const concurrency = operatorConcurrency(options);
-    const signal = operatorSignal(options);
-    const source = readableSource(stream);
+    const signal = options?.signal;
+    const source = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
     const output = new ReadableClass({ objectMode: true });
     const state = {
       ended: false,
@@ -1026,45 +678,42 @@
       state.operatorError = error;
       state.ended = true;
     });
-    const pull = () => {
+    const pull = async () => {
       if (state.sourceDone) return null;
-      const finish = (step) => {
-        if (!step || step.done) state.sourceDone = true;
-        return step;
-      };
-      const step = source.next();
-      return step && typeof step.then === "function" ? step.then(finish) : finish(step);
+      const step = await source.next();
+      if (!step || step.done) state.sourceDone = true;
+      return step;
     };
-    const enqueue = () => {
-      const process = (step) => {
-        if (!step || step.done) return false;
-        let result;
-        try { result = mapper(step.value, { signal }); }
-        catch (error) { result = Promise.reject(error); }
-        const task = { done: false, value: undefined };
-        const complete = (value) => {
-          task.done = true;
-          task.value = value;
-          return value;
-        };
-        if (result && typeof result.then === "function") {
-          task.promise = Promise.resolve(result).then(complete);
-        } else {
-          task.promise = Promise.resolve(complete(result));
-        }
-        state.pending.push(task);
-        return true;
+    const enqueue = async () => {
+      const step = await pull();
+      if (!step || step.done) return false;
+      let result;
+      try {
+        result = mapper(step.value, { signal });
+      } catch (error) {
+        result = Promise.reject(error);
+      }
+      const task = { done: false, value: undefined };
+      const complete = (value) => {
+        task.done = true;
+        task.value = value;
+        return value;
       };
-      const step = pull();
-      return step && typeof step.then === "function" ? step.then(process) : process(step);
+      if (result && typeof result.then === "function") {
+        task.promise = Promise.resolve(result).then(complete);
+      } else {
+        task.promise = Promise.resolve(complete(result));
+      }
+      state.pending.push(task);
+      return true;
     };
     const fill = () => {
       const waiters = [];
       let reserved = 0;
       while (state.pending.slice(state.head).length + reserved < concurrency && !state.sourceDone) {
         const result = enqueue();
+        reserved++;
         if (result && typeof result.then === "function") {
-          reserved++;
           waiters.push(result);
         }
       }
@@ -1072,65 +721,37 @@
         ? Promise.race(waiters)
         : undefined;
     };
-    const next = () => {
+    const next = async () => {
       if (state.operatorError) throw state.operatorError;
       if (state.ended) return { value: undefined, done: true };
-      if (signal?.aborted) return Promise.reject(sliceAbortError());
+      if (signal?.aborted) throw sliceAbortError();
       const initialFill = fill();
-      const ready = () => {
-        if (state.head >= state.pending.length) {
-          state.ended = true;
-          return { value: undefined, done: true };
-        }
-        const task = state.pending[state.head];
-        if (task && !task.done) {
-          const wait = new Promise((resolve, reject) => {
-            let settled = false;
-            const finish = (error) => {
-              if (settled) return;
-              settled = true;
-              signal?.removeEventListener("abort", onAbort);
-              error ? reject(error) : resolve();
-            };
-            const onAbort = () => finish(sliceAbortError());
-            if (signal?.aborted) return onAbort();
-            signal?.addEventListener("abort", onAbort, { once: true });
-            state.pending.slice(state.head).filter((entry) => !entry.done)
-              .forEach((entry) => entry.promise.then(() => finish(), finish));
-          });
-          return wait.then(() => {
-            if (signal?.aborted) throw sliceAbortError();
-            const refill = fill();
-            return refill ? Promise.resolve(refill).then(ready) : ready();
-          });
-        }
-        state.head++;
-        const emit = () => {
-          const value = task.value;
-          if (filtering && !value.keep) return ready();
-          return { value: filtering ? value.value : value, done: false };
-        };
-        if (state.head >= state.pending.length && !state.sourceDone) {
-          const refill = fill();
-          return refill ? Promise.resolve(refill).then(emit) : emit();
-        }
-        return emit();
-      };
-      return initialFill ? Promise.resolve(initialFill).then(ready) : ready();
-    };
-    output.__quenchIterator = {
-      next,
-      return() {
+      if (initialFill) await initialFill;
+      if (state.head >= state.pending.length) {
         state.ended = true;
-        state.sourceDone = true;
-        source.return?.();
-        return Promise.resolve({ value: undefined, done: true });
+        return { value: undefined, done: true };
       }
+      while (state.pending[state.head] && !state.pending[state.head].done) {
+        await Promise.race(state.pending.slice(state.head).filter((task) => !task.done).map((task) => task.promise));
+        const refill = fill();
+        if (refill) await refill;
+      }
+      const task = state.pending[state.head++];
+      if (!task) {
+        state.ended = true;
+        return { value: undefined, done: true };
+      }
+      if (state.head >= state.pending.length && !state.sourceDone) await enqueue();
+      const value = task.value;
+      if (filtering && !value.keep) return next();
+      return { value: filtering ? value.value : value, done: false };
     };
+    output.__quenchIterator = { next, return() { state.ended = true; return Promise.resolve({ value: undefined, done: true }); } };
+    output.__debugState = state;
     output.__quenchIterator[Symbol.asyncIterator] = function () { return this; };
     output[Symbol.asyncIterator] = function () { return output.__quenchIterator; };
     output.toArray = function () {
-      const collect = (values) => Promise.resolve(output.__quenchIterator.next()).then((step) => {
+      const collect = (values) => output.__quenchIterator.next().then((step) => {
         if (step.done) return values;
         return collect(values.concat([step.value]));
       });
@@ -1211,8 +832,8 @@
 
   function sliceCount(count) {
     const number = Number(count);
-    if (Number.isNaN(number)) return 0;
-    if (number < 0 || number === -Infinity) {
+    if (!Number.isFinite(number) && number !== Infinity) return 0;
+    if (number < 0) {
       const error = new RangeError("The count argument must be non-negative");
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -1228,59 +849,72 @@
   }
 
   function sliceReadable(stream, count, drop, options) {
-    if (options !== undefined && (options === null || typeof options !== "object")) {
-      const error = new TypeError("The options argument must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (options?.signal !== undefined &&
-        (!options.signal || typeof options.signal.addEventListener !== "function")) {
-      const error = new TypeError("The signal argument must be an AbortSignal");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
     const limit = sliceCount(count);
     const signal = options?.signal;
-    const source = readableSource(stream);
-    const state = { skipped: 0, emitted: 0, done: limit === 0, destroyed: false };
-    const next = () => {
-      if (signal?.aborted) return Promise.reject(sliceAbortError());
-      if (state.done) {
-        return { value: undefined, done: true };
-      }
-      const consume = (step) => {
-        if (!step || step.done) { state.done = true; return { value: undefined, done: true }; }
-        if (state.skipped < drop) { state.skipped++; return next(); }
-        state.emitted++;
-        if (state.emitted >= limit) state.done = true;
-        return { value: step.value, done: false };
-      };
-      const step = source.next();
-      return step && typeof step.then === "function" ? step.then(consume) : consume(step);
-    };
-    const iterator = {
-      next,
-      return() { state.done = true; source.return?.(); return { value: undefined, done: true }; },
-      [Symbol.asyncIterator]() { return this; }
-    };
-    return {
+    const slice = {
       readable: true,
       destroyed: false,
-      __quenchIterator: iterator,
-      [Symbol.asyncIterator]() { return iterator; },
-      take(nextCount, nextOptions) { return sliceReadable(this, nextCount, 0, nextOptions); },
-      drop(nextCount, nextOptions) { return sliceReadable(this, Infinity, nextCount, nextOptions); },
-      toArray() {
-        const values = [];
-        const collect = () => Promise.resolve(iterator.next()).then((step) => {
-          if (step.done) return values;
-          values.push(step.value);
-          return collect();
-        });
-        return collect();
+      async *[Symbol.asyncIterator]() {
+        let skipped = 0;
+        let emitted = 0;
+        if (limit === 0) return;
+        if (signal?.aborted) throw sliceAbortError();
+        for await (const value of readableValues(stream)) {
+          if (signal?.aborted) throw sliceAbortError();
+          if (skipped < drop) {
+            skipped++;
+            continue;
+          }
+          if (emitted >= limit) break;
+          emitted++;
+          yield value;
+        }
       },
-      destroy(error) { state.destroyed = true; state.done = true; source.return?.(); stream.destroy?.(error); return this; }
+      take(nextCount, nextOptions) {
+        return sliceReadable(this, nextCount, 0, nextOptions);
+      },
+      drop(nextCount, nextOptions) {
+        return sliceReadable(this, Infinity, nextCount, nextOptions);
+      },
+      toArray() {
+        if (limit === 0) return [];
+        if (signal) {
+          return new Promise((resolve, reject) => {
+            const values = [];
+            let settled = false;
+            const finish = (error, result) => {
+              if (settled) return;
+              settled = true;
+              signal.removeEventListener?.("abort", abort);
+              if (error) reject(error);
+              else resolve(result);
+            };
+            const abort = () => finish(sliceAbortError());
+            signal.addEventListener?.("abort", abort, { once: true });
+            if (signal.aborted) return abort();
+            (async () => {
+              try {
+                await new Promise((next) => nextTick(next));
+                if (signal.aborted) return abort();
+                for await (const value of this) values.push(value);
+                await new Promise((next) => nextTick(next));
+                if (signal.aborted) abort();
+                else finish(null, values);
+              } catch (error) {
+                finish(error);
+              }
+            })();
+          });
+        }
+        return collectValues(this);
+      },
+      destroy(error) {
+        this.destroyed = true;
+        if (typeof stream.destroy === "function") stream.destroy(error);
+        return this;
+      }
     };
+    return slice;
   }
 
   ReadableClass.prototype.take = function (count, options) {
@@ -1310,25 +944,8 @@
     return readableTerminal(this, "find", predicate, undefined, false, options);
   };
   ReadableClass.prototype.toArray = function () {
-    const values = [];
-    if (!this.__quenchIterator && typeof this.read === "function") {
-      const collectReadable = () => {
-        let chunk;
-        while ((chunk = this.read()) !== null) values.push(chunk);
-        if (this._readableState?.ended || this.readableEnded) return Promise.resolve(values);
-        return new Promise((resolve, reject) => {
-          const onData = (value) => { values.push(value); collectReadable().then(resolve, reject); };
-          const onEnd = () => resolve(values);
-          const onError = (error) => reject(error);
-          this.once("data", onData);
-          this.once("end", onEnd);
-          this.once("error", onError);
-          requestRead(this);
-        });
-      };
-      return collectReadable();
-    }
     const iterator = this.__quenchIterator || this[Symbol.asyncIterator]();
+    const values = [];
     const collect = () => Promise.resolve(iterator.next()).then((step) => {
       if (step.done) return values;
       values.push(step.value);
@@ -1360,10 +977,7 @@
         next() {
           if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
           if (ended) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolve) => {
-            waiters.push(resolve);
-            requestRead(stream);
-          });
+          return new Promise((resolve) => waiters.push(resolve));
         },
         return() {
           finish();
@@ -1408,9 +1022,8 @@
         stream._readableState.closeEmitted = true;
         stream.closed = true;
         const endError = destroy ? destroyError : error;
-        if (endError && !stream._readableState.errorEmitted) {
+        if (endError) {
           stream._readableState.errored = endError;
-          stream._readableState.errorEmitted = true;
           stream._destroyError = endError;
           stream._destroyErrorEmitted = true;
           stream._emitter.emit("error", endError);
@@ -1439,13 +1052,6 @@
   ReadableClass.prototype.destroyed = false;
   Readable.from = ReadableClass.from;
 
-  function Stream(options) {
-    if (!(this instanceof Stream)) return new Stream(options || {});
-    initReadable(this, Object.assign({}, options || {}, { autoDestroy: false }));
-  }
-  Stream.prototype = Object.create(Readable.prototype);
-  Stream.prototype.constructor = Stream;
-
   function writableChunkLength(stream, chunk) {
     if (stream._writableState.objectMode) return 1;
     if (typeof chunk === "string") return chunk.length;
@@ -1455,14 +1061,7 @@
   }
 
   function initWritable(stream, options) {
-    if (!stream._emitter) {
-      const captureRejections = options.captureRejections;
-      stream._emitter = new EventEmitter({
-        captureRejections: captureRejections === undefined ? false : captureRejections
-      });
-    }
-    stream._emitter.__quenchOwner = stream;
-    stream._captureRejections = options.captureRejections === true;
+    if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._writableState = {
       objectMode: !!options.objectMode,
       writable: options.writable === false ? false : undefined,
@@ -1485,7 +1084,6 @@
       final: options.final || null,
       endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
-      autoDestroying: false,
       destroyed: false
     };
     stream._writableState.getBuffer = function () {
@@ -1497,16 +1095,9 @@
     if (options.writev) stream._writev = options.writev;
     if (options.destroy) stream._destroy = options.destroy;
     if (options.autoDestroy !== false) {
-      const autoDestroyErrorListener = () => {
-        if (stream._readableState?.autoDestroying || stream._writableState?.autoDestroying) return;
-        if (!stream.destroyed) {
-          if (stream._readableState) stream._readableState.autoDestroying = true;
-          if (stream._writableState) stream._writableState.autoDestroying = true;
-          stream.destroy();
-        }
-      };
-      autoDestroyErrorListener.__quenchInternal = true;
-      stream._emitter.on("error", autoDestroyErrorListener);
+      stream._emitter.on("error", () => {
+        if (!stream.destroyed) stream.destroy();
+      });
     }
   }
 
@@ -1582,7 +1173,7 @@
     // A duplex with autoDestroy cannot finish its writable side before its
     // readable side has emitted end.  In particular, Transform.end() may
     // queue readable completion and resume() in the same turn.
-    if (st.autoDestroy && stream._isTransform && !stream._readableState.endEmitted &&
+    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted &&
         !stream._finishedWantsWritableOnly) {
       if (!st.finishScheduled) {
         st.finishScheduled = true;
@@ -1773,21 +1364,6 @@
           });
           return;
         }
-        if (this.destroyed && st.ending && !callback) {
-          const destroyedError = Object.assign(
-            new Error("Cannot call write after a stream was destroyed"),
-            { code: "ERR_STREAM_DESTROYED" }
-          );
-          completeEndCallbacks(st, destroyedError);
-          return;
-        }
-        // Node publishes backpressure relief before invoking the write
-        // callback. A callback is allowed to enqueue the next write, so
-        // deriving this fact first preserves one drain notification per
-        // emptied write rather than collapsing adjacent writes.
-        const drained = (!this.destroyed || this._captureRejections) &&
-          st.pending.length === 0 && st.buffered <= st.highWaterMark;
-        if (drained) this._emitter.emit("drain");
         if (callback) callback();
         if (st.pending.length) {
           const pending = st.pending.splice(0);
@@ -1827,8 +1403,6 @@
           const next = pending.shift();
           st.pending.unshift(...pending);
           updateBufferedRequestCount(st);
-          st.buffered -= next.chunkLength;
-          updateNeedDrain(st);
           st.writing = false;
           const wasEnded = st.ended;
           st.ended = false;
@@ -1836,10 +1410,7 @@
           st.ended = wasEnded;
           return;
         }
-        if ((!this.destroyed || this._captureRejections) &&
-            !drained && st.buffered <= st.highWaterMark) {
-          this._emitter.emit("drain");
-        }
+        if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
         finishWritable(this);
       };
       try {
@@ -1915,20 +1486,9 @@
   Object.defineProperty(Writable, Symbol.hasInstance, {
     value(value) {
       if (!value) return false;
-      // Duplex/Transform use composition: their prototypes inherit from
-      // Readable and copy Writable's methods, so the canonical Writable check
-      // must retain the implementation-state fact.  User subclasses still
-      // use their own prototype chain below, keeping sibling constructors
-      // distinct.
-      if (this === Writable && value._writableState) return true;
-      // `Writable` is inherited by user constructors.  The receiver of
-      // @@hasInstance is therefore the constructor being tested, not always
-      // Writable itself; checking an implementation slot would make every
-      // subclass instance appear to belong to every sibling constructor.
-      const prototype = this && this.prototype;
-      if (!prototype) return false;
+      if (value._writableState) return true;
       for (let proto = value; proto; proto = Object.getPrototypeOf(proto)) {
-        if (proto === prototype) return true;
+        if (proto === Writable.prototype) return true;
       }
       return false;
     }
@@ -1966,15 +1526,13 @@
       const destroy = this._destroy;
       nextTick(() => {
         const finish = (destroyError) => {
-          // A custom _destroy callback controls completion: callback() means
-          // the destruction succeeded and suppresses the original error.
-          const endError = destroyError;
+          const endError = destroyError || stream._writableState.errored;
           if (endError) completeEndCallbacks(stream._writableState, endError);
-        if (endError && !stream._writableState.errorEmitted) {
+          if (destroyError && !stream._writableState.errorEmitted) {
           stream._writableState.errorEmitted = true;
-          stream._destroyError = endError;
+          stream._destroyError = destroyError;
           stream._destroyErrorEmitted = true;
-          stream._emitter.emit("error", endError);
+          stream._emitter.emit("error", destroyError);
         }
         stream._destroyCloseEmitted = true;
         stream._emitter.emit("close");
@@ -2009,42 +1567,30 @@
     }
   }
 
-  function Duplex(options) {
-    if (!(this instanceof Duplex)) return new Duplex(options || {});
-    options = options || {};
-    const readableOptions = Object.assign({}, options, {
-      objectMode: options.readableObjectMode ?? options.objectMode,
-      highWaterMark: options.readableHighWaterMark ?? options.highWaterMark,
-      __quenchCompatConstruct: true
-    });
-    const writableOptions = Object.assign({}, options, {
-      objectMode: options.writableObjectMode ?? options.objectMode,
-      highWaterMark: options.writableHighWaterMark ?? options.highWaterMark
-    });
-    initReadable(this, readableOptions);
-    this._isDuplex = true;
-    initWritable(this, writableOptions);
-    initConstruct(this, options);
-    this.allowHalfOpen = options.allowHalfOpen !== false;
-    if (options.readable === false) {
-      this.readable = false;
-      this._readableState.ended = true;
-      this._readableState.endEmitted = true;
-    }
-    if (options.writable === false) {
-      this.writable = false;
-      this._writableState.ended = true;
-      this._writableState.finished = true;
+  class Duplex extends Readable {
+    constructor(options) {
+      super(Object.assign({}, options || {}, { __quenchCompatConstruct: true }));
+      this._isDuplex = true;
+      initWritable(this, options || {});
+      initConstruct(this, options || {});
+      this.allowHalfOpen = !options || options.allowHalfOpen !== false;
+      if (options?.readable === false) {
+        this.readable = false;
+        this._readableState.ended = true;
+        this._readableState.endEmitted = true;
+      }
+      if (options?.writable === false) {
+        this.writable = false;
+        this._writableState.ended = true;
+        this._writableState.finished = true;
+      }
     }
   }
-  Duplex.prototype = Object.create(Readable.prototype);
-  Duplex.prototype.constructor = Duplex;
   mixWritable(Duplex.prototype);
 
   class Transform extends Duplex {
     constructor(options) {
       super(options || {});
-      this._isTransform = true;
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
       // When the writable side finishes, flush then end the readable side.
@@ -2084,123 +1630,6 @@
         callback();
       };
     }
-  }
-
-  // Duplex.from is a projection of existing readable/writable capabilities;
-  // the adapter owns no alternate stream semantics.
-  function duplexFromPair(readable, writable, options = {}) {
-    if (!readable && !writable) {
-      throw new TypeError('The "body" argument must be a stream or iterable');
-    }
-    const duplex = new Duplex(Object.assign({}, options, {
-      readable: Boolean(readable),
-      writable: Boolean(writable),
-      objectMode: Boolean(
-        readable?.readableObjectMode || readable?._readableState?.objectMode
-      )
-    }));
-    duplex._readableState.objectMode = Boolean(
-      readable?.readableObjectMode || readable?._readableState?.objectMode
-    );
-    duplex._writableState.objectMode = Boolean(
-      writable?.writableObjectMode || writable?._writableState?.objectMode
-    );
-    const onError = () => {};
-    onError.__quenchInternal = true;
-    duplex.on("error", onError);
-    if (readable) {
-      readable.once("error", (error) => {
-        if (writable && typeof writable.destroy === "function") writable.destroy(error);
-        duplex.destroy(error);
-      });
-      readable.once("end", () => duplex.push(null));
-      nextTick(() => {
-        try {
-          readable.on("data", (chunk) => duplex.push(chunk));
-        } catch (error) {
-          if (writable && typeof writable.destroy === "function") writable.destroy(error);
-          duplex.destroy(error);
-        }
-      });
-      duplex._read = () => {
-        if (typeof readable.resume === "function") readable.resume();
-      };
-    }
-    if (writable) {
-      duplex._write = (chunk, encoding, callback) => {
-        let settled = false;
-        const finish = (error) => {
-          if (settled) return;
-          settled = true;
-          callback(error);
-        };
-        const accepted = writable.write(chunk, encoding, finish);
-        if (accepted !== false && !settled) finish();
-      };
-      duplex._final = (callback) => writable.end(undefined, undefined, callback);
-      writable.once("error", (error) => duplex.destroy(error));
-    }
-    return duplex;
-  }
-
-  function duplexFromPromise(source, options = {}) {
-    const duplex = new Duplex(Object.assign({}, options, {
-      readable: true,
-      writable: false,
-      objectMode: true
-    }));
-    const onError = () => {};
-    onError.__quenchInternal = true;
-    duplex.on("error", onError);
-    Promise.resolve(source).then(
-      (value) => {
-        if (value !== undefined && value !== null) duplex.push(value);
-        duplex.push(null);
-      },
-      (error) => duplex.destroy(error)
-    );
-    return duplex;
-  }
-
-  function duplexFromGenerator(factory, options = {}) {
-    const queue = [];
-    const waiters = [];
-    let ended = false;
-    const source = {
-      [Symbol.asyncIterator]() { return this; },
-      next() {
-        if (queue.length) return Promise.resolve(queue.shift());
-        if (ended) return Promise.resolve({ done: true });
-        return new Promise((resolve) => waiters.push(resolve));
-      }
-    };
-    const duplex = new Duplex(Object.assign({}, options, {
-      readable: true,
-      writable: true
-    }));
-    const onError = () => {};
-    onError.__quenchInternal = true;
-    duplex.on("error", onError);
-    duplex._write = (chunk, _encoding, callback) => {
-      const resolve = waiters.shift();
-      if (resolve) resolve({ value: chunk, done: false });
-      else queue.push({ value: chunk, done: false });
-      callback();
-    };
-    duplex._final = (callback) => {
-      ended = true;
-      for (const resolve of waiters.splice(0)) resolve({ done: true });
-      callback();
-    };
-    Promise.resolve().then(async () => {
-      try {
-        for await (const value of factory(source)) duplex.push(value);
-        duplex.push(null);
-      } catch (error) {
-        duplex.destroy(error);
-      }
-    });
-    return duplex;
   }
 
   function finished(stream, options, callback) {
@@ -2252,37 +1681,7 @@
   function pipeline(...args) {
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
-    const streams = [];
-    for (let index = 0; index < args.length; index += 1) {
-      const stage = args[index];
-      if (typeof stage === "function") {
-        if (index > 0 && stage.constructor?.name === "GeneratorFunction") {
-          const error = new TypeError("The function must return an async iterable or stream");
-          error.code = "ERR_INVALID_RETURN_VALUE";
-          throw error;
-        }
-        if (stage.constructor?.name === "AsyncGeneratorFunction") {
-          streams.push(DuplexCompat.from(stage));
-          continue;
-        }
-        const result = stage(streams[index - 1]);
-        if (result === undefined) {
-          const error = new TypeError("The function must return a stream or iterable");
-          error.code = "ERR_INVALID_RETURN_VALUE";
-          throw error;
-        }
-        streams.push(DuplexCompat.from(result));
-        continue;
-      }
-      if (index === 0 && !stage?.pipe &&
-          (typeof stage === "string" ||
-           typeof stage?.[Symbol.iterator] === "function" ||
-           typeof stage?.[Symbol.asyncIterator] === "function")) {
-        streams.push(Readable.from(stage));
-      } else {
-        streams.push(stage);
-      }
-    }
+    const streams = args;
     if (streams.length < 2) {
       throw new TypeError("The streams argument must be an array or at least two streams");
     }
@@ -2450,88 +1849,7 @@
   };
   DuplexCompat.prototype = Duplex.prototype;
   Object.setPrototypeOf(DuplexCompat, Duplex);
-  const duplexPair = (options = {}) => {
-    const left = new Duplex(options);
-    const right = new Duplex(options);
-    const connect = (source, destination) => {
-      source._write = (chunk, encoding, callback) => {
-        destination.push(chunk, encoding);
-        callback?.();
-      };
-      source._final = (callback) => {
-        const flush = () => {
-          destination.push(null);
-          callback?.();
-        };
-        source._writableState.corked = 0;
-        nextTick(flush);
-      };
-    };
-    connect(left, right);
-    connect(right, left);
-    return [left, right];
-  };
   DuplexCompat.from = (source, options = {}) => {
-    if (typeof source === "function") {
-      const kind = source.constructor?.name;
-      if (kind === "AsyncGeneratorFunction" || kind === "GeneratorFunction") {
-        return duplexFromGenerator(source, options);
-      }
-      const result = source();
-      if (result === undefined) {
-        throw Object.assign(new TypeError("The function must return a stream or iterable"), {
-          code: "ERR_INVALID_RETURN_VALUE"
-        });
-      }
-      return DuplexCompat.from(result, options);
-    }
-    if (source && source._isDuplex) return source;
-    if (source && typeof source === "object" &&
-        (source.readable !== undefined || source.writable !== undefined) &&
-        (typeof source.readable === "object" || typeof source.writable === "object")) {
-      if (typeof source.readable?.getReader === "function" ||
-          typeof source.writable?.getWriter === "function") {
-        return DuplexCompat.fromWeb(source, options);
-      }
-      return duplexFromPair(source.readable, source.writable, options);
-    }
-    if (source && (typeof source.read === "function" || typeof source.write === "function")) {
-      return duplexFromPair(
-        typeof source.read === "function" ? source : null,
-        typeof source.write === "function" ? source : null,
-        options
-      );
-    }
-    if (source && typeof source.then === "function") {
-      return duplexFromPromise(source, options);
-    }
-    if (source && typeof source.arrayBuffer === "function" && source.size !== undefined) {
-      let reading = false;
-      return new Duplex(Object.assign({}, options, {
-        readable: true,
-        writable: false,
-        read() {
-          if (reading) return;
-          reading = true;
-          this.push(source._data);
-          this.push(null);
-        }
-      }));
-    }
-    if (source && typeof source.stream === "function") {
-      return DuplexCompat.fromWeb({ readable: source.stream() }, options);
-    }
-    if (source && (typeof source.getReader === "function" ||
-                   typeof source.getWriter === "function")) {
-      return DuplexCompat.fromWeb({
-        readable: typeof source.getReader === "function" ? source : undefined,
-        writable: typeof source.getWriter === "function" ? source : undefined
-      }, options);
-    }
-    if (source && (typeof source[Symbol.asyncIterator] === "function" ||
-                   typeof source[Symbol.iterator] === "function")) {
-      return duplexFromPair(Readable.from(source, options), null, options);
-    }
     const pair = source && source.readable && source.readable.getReader
       ? source
       : source && source.getReader
@@ -2540,107 +1858,33 @@
     if (pair) return DuplexCompat.fromWeb(pair, options);
     return Readable.from(source, options);
   };
-  DuplexCompat.fromWeb = (pair, options = {}) => {
-    const readable = pair?.readable;
-    const writable = pair?.writable;
-    const reader = readable && typeof readable.getReader === "function"
-      ? readable.getReader() : null;
-    const writer = writable && typeof writable.getWriter === "function"
-      ? writable.getWriter() : null;
-    if (!reader && !writer) return pair;
-    let reading = false;
-    return new Duplex({
-      ...options,
-      readable: !!reader,
-      writable: !!writer,
-      read() {
-        if (!reader || reading) return;
-        reading = true;
-        Promise.resolve(reader.read()).then(({ value, done }) => {
+  DuplexCompat.fromWeb = (pair, options) =>
+    (() => {
+      const readable = pair?.readable;
+      const reader = readable?.getReader?.();
+      if (!reader) return pair;
+      let reading = false;
+      return new Duplex({
+        ...options,
+        readable: true,
+        writable: false,
+        read() {
+          if (reading) return;
+          reading = true;
+          reader.read().then(({ value, done }) => {
           reading = false;
-          if (done) this.push(null);
-          else this.push(value);
-        }, (error) => {
-          reading = false;
-          this.destroy(error);
-        });
-      },
-      write(chunk, _encoding, callback) {
-        if (!writer) return callback();
-        Promise.resolve(writer.write(chunk)).then(() => callback(), callback);
-      },
-      final(callback) {
-        if (!writer) return callback();
-        Promise.resolve(writer.close()).then(() => callback(), callback);
-      },
-      destroy(error, callback) {
-        const closing = error ? writer?.abort(error) : undefined;
-        Promise.resolve(closing).then(() => reader?.cancel(error), () => {})
-          .then(() => callback(error), callback);
-      }
-    });
-  };
-
-  DuplexCompat.toWeb = (duplex, options = {}) => {
-    if (!duplex || typeof duplex.on !== "function" ||
-        typeof duplex.write !== "function") {
-      throw Object.assign(new TypeError("The duplex argument must be a Duplex"), {
-        code: "ERR_INVALID_ARG_TYPE"
+            if (done) {
+              this.push(null);
+              this.readable = false;
+            }
+            else this.push(value);
+          }, (error) => {
+            reading = false;
+            this.destroy(error);
+          });
+        }
       });
-    }
-    const web = globalThis.__quenchWebStreams || {};
-    const ReadableStream = web.ReadableStream || globalThis.ReadableStream;
-    const WritableStream = web.WritableStream || globalThis.WritableStream;
-    if (typeof ReadableStream !== "function" || typeof WritableStream !== "function") {
-      throw new Error("WebStreams are unavailable");
-    }
-    if (options.type !== undefined && options.readableType === undefined) {
-      process.emitWarning(
-        "Passing 'options.type' to Duplex.toWeb() is deprecated. Use 'options.readableType' instead.",
-        { name: "DeprecationWarning", code: "DEP0201" }
-      );
-    }
-    const readable = new ReadableStream({
-      start(controller) {
-        duplex.on("data", (chunk) => controller.enqueue(chunk));
-        duplex.once("end", () => controller.close());
-        duplex.once("error", (error) => controller.error(error));
-      },
-      cancel(reason) {
-        duplex.destroy?.(reason);
-      }
-    });
-    const writable = new WritableStream({
-      write(chunk) {
-        return new Promise((resolve, reject) => {
-          let settled = false;
-          const done = (error) => {
-            if (settled) return;
-            settled = true;
-            if (error) reject(error);
-            else resolve();
-          };
-          try { duplex.write(chunk, done); } catch (error) { done(error); }
-        });
-      },
-      close() {
-        return new Promise((resolve, reject) => {
-          try { duplex.end((error) => error ? reject(error) : resolve()); }
-          catch (error) { reject(error); }
-        });
-      },
-      abort(reason) {
-        duplex.destroy?.(reason);
-      }
-    });
-    return { readable, writable };
-  };
-
-  Stream.Readable = Readable;
-  Stream.Writable = Writable;
-  Stream.Duplex = DuplexCompat;
-  Stream.Transform = Transform;
-  Stream.PassThrough = PassThrough;
+    })();
 
   return {
     Readable,
@@ -2648,8 +1892,7 @@
     Duplex: DuplexCompat,
     Transform,
     PassThrough,
-    Stream,
-    duplexPair,
+    Stream: Readable,
     destroy,
     finished,
     pipeline,

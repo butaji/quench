@@ -325,20 +325,15 @@ pub(crate) fn execute_set_named_cached(
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
     let target = crate::execute::read_register(registers, object)?;
-    let process_env_tz = crate::execute::get_property(&target, "\0quench:process_env")
-        == crate::value::Value::Boolean(true)
-        && key == "TZ";
     let regexp_target = crate::regexp::has_regexp_internal_slot(&target);
-    if !process_env_tz
-        && !regexp_target
+    if !regexp_target
         && transition_index(cache.get()).is_some()
         && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
         return Ok(());
     }
-    let transition = named_write_source(&target, key);
-    if !process_env_tz && !regexp_target {
+    if !regexp_target {
         if let crate::value::Value::Object(data) = &target {
             if data.has_replacement() {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
@@ -377,6 +372,7 @@ pub(crate) fn execute_set_named_cached(
             },
         )?;
     }
+    let transition = named_write_source(&target, key);
     let updated = crate::execute::read_register(registers, object)?;
     if install_named_write_transition(cache, transition, &updated, key) {
         return Ok(());
@@ -465,16 +461,6 @@ fn finish_set_property(
     } else {
         value
     };
-    // Host-backed environment objects may publish a side-effect hook for
-    // names whose mutation affects process-wide semantics (for example TZ).
-    // Keep the hook hidden from JavaScript descriptors while preserving the
-    // ordinary process.env string-coercion rules above.
-    if process_env && key == "TZ" {
-        let hook = crate::execute::get_property(target, "\0quench:process_env_tz_setter");
-        if crate::conversion::is_callable(&hook) {
-            crate::functions::execute_target(&hook, target, std::slice::from_ref(&value))?;
-        }
-    }
     let setter = {
         let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
         if own_data_property(target, key) {
@@ -753,13 +739,7 @@ fn set_builtin_property(
 
 pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
     match target {
-        crate::value::Value::Object(properties) => {
-            if properties.extensibility_cached() == Some(true) {
-                false
-            } else {
-                marked_without_key(properties.as_ref(), key)
-            }
-        }
+        crate::value::Value::Object(properties) => marked_without_key(properties.as_ref(), key),
         crate::value::Value::Function(function) => {
             let properties = function.properties.borrow();
             marked_without_key(&properties[..], key)
@@ -800,13 +780,9 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
         crate::value::Value::Builtin(builtin) => {
             !crate::builtins::builtin_is_non_extensible(*builtin)
         }
-        crate::value::Value::Object(properties) => properties
-            .extensibility_cached()
-            .unwrap_or_else(|| {
-                let extensible = !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE);
-                properties.set_extensibility_cached(extensible);
-                extensible
-            }),
+        crate::value::Value::Object(properties) => {
+            !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
+        }
         crate::value::Value::Array(values) => values.property(NON_EXTENSIBLE).is_none(),
         crate::value::Value::Function(function) => !function
             .properties
@@ -909,6 +885,24 @@ fn mark_properties(properties: &mut Vec<(String, crate::value::Value)>) {
             crate::value::Value::Boolean(true),
         ));
     }
+}
+
+fn reject_restricted_property_write(
+    target: &crate::value::Value,
+    key: &str,
+) -> Result<(), crate::execute::VmError> {
+    if matches!(&target, crate::value::Value::Array(values) if values.is_strict_arguments() && key == "callee")
+    {
+        return Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        ));
+    }
+    if crate::vm::has_restricted_function_property(target, key) {
+        return Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {

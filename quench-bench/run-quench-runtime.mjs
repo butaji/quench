@@ -19,7 +19,7 @@ const fixtures = [
 const runner = `
 let __quenchBenchSucceeded = true;
 const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
-  ? console.log
+  ? console.log.bind(console)
   : print;
 BenchmarkSuite.RunSuites({
   NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },

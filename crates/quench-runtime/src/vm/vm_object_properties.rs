@@ -57,20 +57,14 @@ pub(crate) fn object_property(
             "name" => "\0domexception_name",
             "message" => "\0domexception_message",
             "code" => "\0domexception_code",
-            _ => return object_property_without_domexception(properties, receiver, key),
+            _ => "",
         };
-        if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == internal) {
-            return value.clone();
+        if !internal.is_empty() {
+            if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == internal) {
+                return value.clone();
+            }
         }
     }
-    object_property_without_domexception(properties, receiver, key)
-}
-
-fn object_property_without_domexception(
-    properties: &Rc<crate::value::ObjectData>,
-    receiver: &Value,
-    key: &str,
-) -> Value {
     // A global object may be copy-on-write replaced while a callback still
     // carries its earlier representative. Resolve that identity before
     // checking virtual host globals; otherwise host-provided bindings vanish
@@ -95,10 +89,11 @@ fn object_property_without_domexception(
             if crate::vm::current_context_or_default().host_value_is_persistent(key) {
                 // Persistent virtual bindings are published on first read so
                 // callbacks can observe them after the installing frame.
-                unsafe {
-                    (&mut *(std::rc::Rc::as_ptr(&properties) as *mut crate::value::ObjectData))
-                        .set_non_enumerable_property_in_place(key, value.clone());
-                }
+                let _ = crate::execute::set_property_in_place(
+                    &Value::Object(properties.clone()),
+                    key,
+                    value.clone(),
+                );
             }
             return value;
         }
@@ -118,12 +113,6 @@ fn object_builtin_property(properties: &crate::value::ObjectData, key: &str) -> 
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
-    if key == "length"
-        && properties.plain_index_cached() == Some(true)
-        && properties.names().next().is_some_and(|name| name == key)
-    {
-        return properties.slot_value(0);
-    }
     let deleted_key = crate::builtins::deleted_key(key);
     if properties.physical_slot_for_name(&deleted_key).is_some() {
         return Some(Value::Undefined);
@@ -145,7 +134,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                     crate::ops::Builtin::IntlDateTimeFormatFormat
                         | crate::ops::Builtin::IntlNumberFormatFormat,
                 )
-            )
+        )
         {
             return Some(crate::vm::bind_receiver_property(
                 value.clone(),

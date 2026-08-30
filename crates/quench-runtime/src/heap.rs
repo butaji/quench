@@ -171,9 +171,13 @@ pub const HEAP_HOT_PREFIX_BYTES: usize = std::mem::size_of::<u64>() * 8;
 const _: () = {
     assert!(HEAP_HOT_PREFIX_BYTES <= CACHE_LINE_BYTES);
     assert!(std::mem::offset_of!(HeapStats, reserved_bytes) == 0);
+    // `usize` is four bytes on wasm32 and eight bytes on the native hosts.
+    // `repr(C)` inserts any required padding before the following `u64`s, so
+    // the live-object counter may end before (but never after) the two cold
+    // counters that terminate the hot prefix.
     assert!(
         std::mem::offset_of!(HeapStats, live_objects) + std::mem::size_of::<usize>()
-            == HEAP_HOT_PREFIX_BYTES - std::mem::size_of::<u64>() * 2
+            <= HEAP_HOT_PREFIX_BYTES - std::mem::size_of::<u64>() * 2
     );
     assert!(std::mem::offset_of!(HeapStats, size_classes) >= HEAP_HOT_PREFIX_BYTES);
 };

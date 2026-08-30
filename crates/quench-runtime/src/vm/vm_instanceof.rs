@@ -19,9 +19,10 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if (matches!(crate::execute::get_property(&constructor, "name"), Value::String(name) if name == "DOMException")
         || intrinsic_builtin(&constructor) == Some(Builtin::Error))
         && matches!(
-        crate::execute::get_property(&value, "\0domexception"),
-        Value::Boolean(true)
-    ) {
+            crate::execute::get_property(&value, "\0domexception"),
+            Value::Boolean(true)
+        )
+    {
         return Ok(true);
     }
     if let Some(result) = builtin_instanceof(&value, &constructor) {
