@@ -927,6 +927,7 @@ pub fn socket_write(
             matches!(encoding, Value::String(value) if matches!(value.to_ascii_lowercase().as_str(), "latin1" | "binary" | "ascii"))
         }) => s.chars().map(|character| character as u32 as u8).collect(),
         Some(Value::String(s)) => s.as_bytes().to_vec(),
+        Some(Value::StringUnits(units)) => String::from_utf16_lossy(units).into_bytes(),
         Some(Value::Uint8Array(view)) => {
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
