@@ -91,9 +91,24 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
   localhostIPv4: "127.0.0.1",
   localhostIPv6: "::1",
   hasIPv6: true,
-  expectsError: (_expected) => (error) => {
+  expectsError: (expected, exact = 1) => globalThis.__nodeCommon.mustCall((error) => {
     if (!error) throw new Error("Expected filesystem error");
-  },
+    if (typeof expected === "function") {
+      const result = expected(error);
+      if (result === false) throw new Error("Error validation failed");
+      return true;
+    }
+    if (expected && typeof expected === "object") {
+      for (const key of Object.keys(expected)) {
+        const wanted = expected[key];
+        const actual = error[key];
+        if (wanted instanceof RegExp ? !wanted.test(actual) : actual !== wanted) {
+          throw new Error(`Unexpected error ${key}`);
+        }
+      }
+    }
+    return true;
+  }, exact),
   invalidArgTypeHelper: (input) => {
     if (input == null) return ` Received ${input}`;
     if (typeof input === "string") return ` Received type string ('${input}')`;
@@ -101,6 +116,9 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
       return ` Received function ${input.name}`;
     }
     if (typeof input === "object") {
+      if (Object.getPrototypeOf(input) === null) {
+        return " Received [Object: null prototype] {}";
+      }
       return ` Received an instance of ${input.constructor?.name || "Object"}`;
     }
     let rendered;
