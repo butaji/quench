@@ -4,6 +4,18 @@ pub const JS: &str = quench_js_check::checked_js!(
     r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   constructor(options = {}) {
     super();
+    if (options && typeof options === "object" && options.fd !== undefined) {
+      if (typeof options.fd !== "number") {
+        throw Object.assign(new TypeError('The "fd" argument must be of type number'), {
+          code: "ERR_INVALID_ARG_TYPE",
+        });
+      }
+      if (!Number.isInteger(options.fd) || options.fd < 0) {
+        throw Object.assign(new RangeError('The value of "fd" is out of range'), {
+          code: "ERR_OUT_OF_RANGE",
+        });
+      }
+    }
     this.readable = true;
     this.writable = true;
     this.readyState = "open";
@@ -25,6 +37,8 @@ pub const JS: &str = quench_js_check::checked_js!(
     this._nativeId = 0;
     this._nativeConnected = false;
     this.connecting = false;
+    // Node retains the legacy `_connecting` spelling as an observable alias.
+    this._connecting = false;
     this._nativeEnded = false;
     this._readableEnded = false;
     this._endPending = false;
@@ -276,6 +290,7 @@ pub const JS: &str = quench_js_check::checked_js!(
       return this;
     }
     this.connecting = true;
+    this._connecting = true;
     if (this._boundPort) {
       this.localPort = this._boundPort;
       this.localAddress = this._boundHost;
@@ -295,6 +310,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     queueMicrotask(() => {
       queueMicrotask(() => {
         this.connecting = false;
+        this._connecting = false;
         this.emit("connect");
         this.emit("ready");
         queueMicrotask(() => {

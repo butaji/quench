@@ -264,6 +264,7 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
             ("writableHighWaterMark".to_string(), Value::Number(16_384.0)),
             ("pending".to_string(), Value::Boolean(true)),
             ("connecting".to_string(), Value::Boolean(false)),
+            ("_connecting".to_string(), Value::Boolean(false)),
             (
                 "readyState".to_string(),
                 Value::String("closed".to_string()),
@@ -274,13 +275,18 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
 
 pub(crate) fn set_socket_state(socket: &Value, pending: bool, connecting: bool, ready_state: &str) {
     let mut properties = vec![
-        ("pending", Value::Boolean(pending)),
         ("connecting", Value::Boolean(connecting)),
+        ("_connecting", Value::Boolean(connecting)),
         ("readyState", Value::String(ready_state.to_string())),
     ];
     if ready_state == "closed" {
         properties.push(("destroyed", Value::Boolean(true)));
     }
+    // `pending=false` may need the runtime replacement path for a VM alias.
+    // Apply it last so the replacement snapshots the complete connection
+    // state instead of leaving `connecting` on the stale pre-replacement
+    // object.
+    properties.push(("pending", Value::Boolean(pending)));
     for (key, value) in properties {
         // Host-owned socket records are shared with requests, responses, and
         // Agent pools. Mutate their existing object identity; replacing the
@@ -406,6 +412,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("allowHalfOpen", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
         ("connecting", Value::Boolean(false)),
+        ("_connecting", Value::Boolean(false)),
         ("readyState", Value::String("open".into())),
         ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
