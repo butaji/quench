@@ -740,7 +740,7 @@ fn add_listener_cb(
 ) -> Result<(), VmError> {
     if let Some(cb) = cb {
         if quench_runtime::is_callable(cb) {
-            crate::modules::events::method_on(
+            crate::modules::events::method_once(
                 state,
                 Some(receiver),
                 &[Value::String(event.to_string()), cb.clone()],
