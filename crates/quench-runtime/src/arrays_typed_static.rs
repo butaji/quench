@@ -31,5 +31,5 @@ fn typed_array_of(
             "TypedArray.of called on a non-constructor",
         ));
     };
-    crate::arrays::of(Some(receiver), arguments)
+    crate::arrays::typed_of(Some(receiver), arguments)
 }
