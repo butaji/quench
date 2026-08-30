@@ -621,6 +621,10 @@ pub(crate) fn parse_options(value: Option<&Value>) -> Result<FsOptions, VmError>
     match value {
         None | Some(Value::Undefined) | Some(Value::Null) => {}
         Some(Value::String(encoding)) => set_encoding(&mut options, encoding)?,
+        Some(Value::StringUnits(units)) => {
+            let encoding = String::from_utf16_lossy(units);
+            set_encoding(&mut options, &encoding)?;
+        }
         Some(object @ (Value::Object(_) | Value::Proxy(_))) => {
             parse_option_object(&mut options, object)?
         }
@@ -674,19 +678,13 @@ fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), Vm
     if !matches!(buffer, Value::Undefined) {
         options.buffer = Some(buffer);
     }
-    if let Value::String(encoding) = get("encoding") {
-        if encoding.eq_ignore_ascii_case("buffer") {
-            options.encoding = Some("buffer".into());
-        } else {
-            match crate::modules::buffer_enc::canonical_encoding(&encoding) {
-                Some(canonical) => options.encoding = Some(canonical.to_string()),
-                None => {
-                    return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
-                        "The argument 'encoding' is invalid encoding. Received '{encoding}'"
-                    )))
-                }
-            }
+    match get("encoding") {
+        Value::String(encoding) => set_encoding(options, &encoding)?,
+        Value::StringUnits(units) => {
+            let encoding = String::from_utf16_lossy(&units);
+            set_encoding(options, &encoding)?;
         }
+        _ => {}
     }
     if let Value::String(flag) = get("flag") {
         options.flag = Some(flag);
