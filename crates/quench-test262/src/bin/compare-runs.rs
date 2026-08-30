@@ -28,31 +28,6 @@ const WORK_BATCH: usize = 32;
 const STACK_SIZE: usize = 512 * 1024 * 1024;
 const PER_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Tests that crash the runtime with a stack overflow independent of runner
-/// state. These are real runtime bugs, not determinism issues; the comparison
-/// skips them so the diff focuses on order/thread-induced divergence.
-const CRASHED_AT_RUNTIME: &[&str] = &[
-    "built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js",
-    "built-ins/Array/from/iter-set-elem-prop-non-writable.js",
-    "built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js",
-    "built-ins/Proxy/deleteProperty/call-parameters.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js",
-    "built-ins/Proxy/construct/trap-is-null.js",
-    "built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
-    "built-ins/Proxy/construct/trap-is-undefined-no-property.js",
-    "built-ins/Proxy/construct/trap-is-undefined.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js",
-    "built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js",
-    "built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js",
-];
-
-fn is_crash_fixture(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-    CRASHED_AT_RUNTIME
-        .iter()
-        .any(|needle| path_str.contains(needle))
-}
-
 #[derive(Default)]
 struct Outcomes {
     passed: usize,
@@ -97,11 +72,6 @@ fn main() -> ExitCode {
         Ok(sources) => sources,
         Err(error) => return fail(format!("load sources: {error}")),
     };
-    let sources: Vec<TestSource> = sources
-        .into_iter()
-        .filter(|source| !is_crash_fixture(&source.path))
-        .collect();
-
     let ind_outcome = run_individual(&root, &sources);
     write_mode(&args.out_dir, "individual", &ind_outcome);
     let seq_outcome = run_sequential(&root, &sources);
