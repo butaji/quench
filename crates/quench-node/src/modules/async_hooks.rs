@@ -26,10 +26,11 @@ const SCOPE_PREVIOUS: &str = "\0quench:async_hooks:scope:previous";
 const SCOPE_HAD_PREVIOUS: &str = "\0quench:async_hooks:scope:had_previous";
 const SCOPE_ACTIVE: &str = "\0quench:async_hooks:scope:active";
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Hook {
     id: u64,
     enabled: bool,
+    receiver: Value,
     init: Option<Value>,
     before: Option<Value>,
     after: Option<Value>,
@@ -121,8 +122,13 @@ fn record_hook_error(state: &Rc<RefCell<HostState>>, error: VmError) {
     }
 }
 
-fn call_hook(state: &Rc<RefCell<HostState>>, callback: &Value, args: &[Value]) {
-    if let Err(error) = execute::call(callback, &Value::Undefined, args) {
+fn call_hook(
+    state: &Rc<RefCell<HostState>>,
+    callback: &Value,
+    receiver: &Value,
+    args: &[Value],
+) {
+    if let Err(error) = execute::call(callback, receiver, args) {
         record_hook_error(state, error);
     }
 }
@@ -781,10 +787,11 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
     };
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
-    for callback in callbacks {
+    for (callback, receiver) in callbacks {
         call_hook(
             state,
             &callback,
+            &receiver,
             &[
                 id_value.clone(),
                 resource_type.clone(),
@@ -827,10 +834,11 @@ pub fn attach_resource(
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
     let resource_type = Value::String(resource_type.into());
-    for callback in active_callbacks(state, HookEvent::Init) {
+    for (callback, receiver) in active_callbacks(state, HookEvent::Init) {
         call_hook(
             state,
             &callback,
+            &receiver,
             &[
                 id_value.clone(),
                 resource_type.clone(),
@@ -874,10 +882,11 @@ pub fn worker_resource(
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let resource = execute::set_property(resource, ASYNC_ID, Value::Number(id as f64));
     let resource = execute::set_property(resource, TRIGGER_ID, Value::Number(trigger as f64));
-    for callback in active_callbacks(state, HookEvent::Init) {
+    for (callback, receiver) in active_callbacks(state, HookEvent::Init) {
         call_hook(
             state,
             &callback,
+            &receiver,
             &[
                 Value::Number(id as f64),
                 Value::String("WORKER".into()),
@@ -930,8 +939,8 @@ pub fn resource_before(
     host.async_hooks.current_resource = Some(resource);
     let callbacks = active_callbacks_from(&host.async_hooks, HookEvent::Before);
     drop(host);
-    for callback in callbacks {
-        call_hook(state, &callback, &[Value::Number(id as f64)]);
+    for (callback, receiver) in callbacks {
+        call_hook(state, &callback, &receiver, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
@@ -949,8 +958,8 @@ pub fn resource_after(
         host.async_hooks.current_resource = resource;
     }
     drop(host);
-    for callback in callbacks {
-        call_hook(state, &callback, &[Value::Number(id as f64)]);
+    for (callback, receiver) in callbacks {
+        call_hook(state, &callback, &receiver, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
@@ -974,8 +983,8 @@ pub fn resource_destroy(
         }
         active_callbacks_from(&host.async_hooks, HookEvent::Destroy)
     };
-    for callback in callbacks {
-        call_hook(state, &callback, &[Value::Number(id as f64)]);
+    for (callback, receiver) in callbacks {
+        call_hook(state, &callback, &receiver, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
@@ -1097,20 +1106,8 @@ pub fn create_hook(
     let after = hook_callback(&options, "after")?;
     let destroy = hook_callback(&options, "destroy")?;
     let resolve = hook_callback(&options, "promiseResolve")?;
-    let mut host = state.borrow_mut();
-    let id = host.async_hooks.next_hook_id;
-    host.async_hooks.next_hook_id += 1;
-    host.async_hooks.hooks.push(Hook {
-        id,
-        init,
-        before,
-        after,
-        destroy,
-        resolve,
-        ..Hook::default()
-    });
-    drop(host);
-    Ok(host_api::object(vec![
+    let id = state.borrow().async_hooks.next_hook_id;
+    let hook = host_api::object(vec![
         (HOOK_ID.to_string(), Value::Number(id as f64)),
         (
             "enable".to_string(),
@@ -1120,7 +1117,21 @@ pub fn create_hook(
             "disable".to_string(),
             crate::host::capability(SPEC_ASYNC_HOOK_DISABLE),
         ),
-    ]))
+    ]);
+    let mut host = state.borrow_mut();
+    host.async_hooks.next_hook_id += 1;
+    host.async_hooks.hooks.push(Hook {
+        id,
+        enabled: false,
+        init,
+        before,
+        after,
+        destroy,
+        resolve,
+        receiver: hook.clone(),
+    });
+    drop(host);
+    Ok(hook)
 }
 
 /// Engine-owned Promise lifecycle edge. Promise allocation is reported by
@@ -1158,8 +1169,8 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             host.async_hooks.current_id = id;
             host.async_hooks.current_resource = Some(resource);
             drop(host);
-            for callback in callbacks {
-                call_hook(state, &callback, &[Value::Number(id as f64)]);
+            for (callback, receiver) in callbacks {
+                call_hook(state, &callback, &receiver, &[Value::Number(id as f64)]);
             }
         }
     } else if event == "after" {
@@ -1174,8 +1185,8 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
                 .unwrap_or(Value::Number(0.0));
             (callbacks, id)
         };
-        for callback in callbacks {
-            call_hook(state, &callback, &[id.clone()]);
+        for (callback, receiver) in callbacks {
+            call_hook(state, &callback, &receiver, &[id.clone()]);
         }
         let mut host = state.borrow_mut();
         host.async_hooks.current_id = 1;
@@ -1190,8 +1201,8 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         };
         if let Some(resource) = resource {
             let id = id_property(&resource, ASYNC_ID).unwrap_or(Value::Number(0.0));
-            for callback in callbacks {
-                call_hook(state, &callback, &[id.clone()]);
+            for (callback, receiver) in callbacks {
+                call_hook(state, &callback, &receiver, &[id.clone()]);
             }
         }
     }
@@ -1254,21 +1265,24 @@ enum HookEvent {
     Resolve,
 }
 
-fn active_callbacks(state: &Rc<RefCell<HostState>>, event: HookEvent) -> Vec<Value> {
+fn active_callbacks(state: &Rc<RefCell<HostState>>, event: HookEvent) -> Vec<(Value, Value)> {
     active_callbacks_from(&state.borrow().async_hooks, event)
 }
 
-fn active_callbacks_from(state: &AsyncHooksState, event: HookEvent) -> Vec<Value> {
+fn active_callbacks_from(state: &AsyncHooksState, event: HookEvent) -> Vec<(Value, Value)> {
     state
         .hooks
         .iter()
         .filter(|hook| hook.enabled)
-        .filter_map(|hook| match event {
-            HookEvent::Init => hook.init.clone(),
-            HookEvent::Before => hook.before.clone(),
-            HookEvent::After => hook.after.clone(),
-            HookEvent::Destroy => hook.destroy.clone(),
-            HookEvent::Resolve => hook.resolve.clone(),
+        .filter_map(|hook| {
+            let callback = match event {
+                HookEvent::Init => hook.init.clone(),
+                HookEvent::Before => hook.before.clone(),
+                HookEvent::After => hook.after.clone(),
+                HookEvent::Destroy => hook.destroy.clone(),
+                HookEvent::Resolve => hook.resolve.clone(),
+            }?;
+            Some((callback, hook.receiver.clone()))
         })
         .collect()
 }
