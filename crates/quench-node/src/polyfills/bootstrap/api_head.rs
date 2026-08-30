@@ -87,11 +87,10 @@ Object.getOwnPropertyNames = (value) => {
   return Array.from(names, (name) => String(name));
 };
 const __nodeInvalidCharacter = () => {
-  const error = new Error(
+  const error = new DOMException(
     "The string contains invalid characters.",
     "InvalidCharacterError"
   );
-  error.code = 5;
   return error;
 };
 function nodeAtob(value) {

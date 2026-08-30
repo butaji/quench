@@ -10,6 +10,7 @@ struct AgentWaiter {
     followups: Vec<usize>,
     deadline: Option<Instant>,
     woken: bool,
+    async_promise: Option<Rc<crate::value::PromiseData>>,
 }
 
 thread_local! {
@@ -79,6 +80,13 @@ pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
         for waiter in waiters.drain(..) {
             let expired = waiter.deadline.is_some_and(|deadline| deadline <= now);
             if expired {
+                if let Some(promise) = waiter.async_promise {
+                    crate::promise::resolve_promise(
+                        &promise,
+                        Value::String("timed-out".to_string()),
+                    );
+                    continue;
+                }
                 if !waiter.woken {
                     let mut update = |report: usize| {
                         let value = match &reports[report] {
@@ -109,8 +117,6 @@ pub(crate) fn agent_time_bias() -> f64 {
     AGENT_TIME_BIAS.with(Cell::get)
 }
 
-pub(crate) fn expire_async_waiters() {}
-
 fn in_agent_callback() -> bool {
     IN_AGENT_CALLBACK.with(Cell::get)
 }
@@ -130,6 +136,11 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
     let index = match view {
         Value::Int32Array(view) => {
             let length = view.logical_len();
+            if !view.buffer.shared {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires a shared buffer",
+                ));
+            }
             if *view.buffer.detached.borrow() {
                 return Err(crate::value::error::throw_type_error(
                     "Atomics.notify requires an attached buffer",
@@ -145,6 +156,11 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
         }
         Value::BigInt64Array(view) => {
             let length = view.logical_len();
+            if !view.buffer.shared {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires a shared buffer",
+                ));
+            }
             if *view.buffer.detached.borrow() {
                 return Err(crate::value::error::throw_type_error(
                     "Atomics.notify requires an attached buffer",
@@ -180,6 +196,7 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
         Some(count) => count.ceil() as usize,
     };
     let mut woken = 0usize;
+    let mut promises = Vec::new();
     AGENT_WAITERS.with(|waiters| {
         let mut waiters = waiters.borrow_mut();
         for waiter in waiters.iter_mut() {
@@ -190,9 +207,16 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
             if matches {
                 woken += 1;
                 waiter.woken = true;
+                if let Some(promise) = waiter.async_promise.take() {
+                    waiter.deadline = Some(Instant::now());
+                    promises.push(promise);
+                }
             }
         }
     });
+    for promise in promises {
+        crate::promise::resolve_promise(&promise, Value::String("ok".to_string()));
+    }
     Ok(Value::Number(woken as f64))
 }
 
@@ -304,6 +328,7 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                 followups: Vec::new(),
                 deadline,
                 woken: false,
+                async_promise: None,
             })
         });
         AGENT_CURRENT_WAITER.with(|current| current.set(Some(waiter_id)));
@@ -317,6 +342,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
+        if !bigint_view_shared(view) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a shared buffer",
+            ));
+        }
         if builtin == Builtin::AtomicsLoad {
             let index = atomic_index(arguments.get(1))?;
             let value = bigint_old(view, index)?;
@@ -361,6 +391,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             "Atomics operation requires an Int32Array",
         ));
     };
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if builtin == Builtin::AtomicsLoad {
         let index = atomic_index(arguments.get(1))?;
         let value = view.get_number(index).ok_or_else(|| {
@@ -405,6 +440,11 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
+        if !bigint_view_shared(view) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a shared buffer",
+            ));
+        }
         if bigint_view_immutable(view) {
             return Err(crate::value::error::throw_type_error(
                 "Atomics operation requires a writable buffer",
@@ -431,6 +471,11 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
             "Atomics.exchange requires an integer typed array",
         ));
     };
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if view.immutable() {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a writable buffer",
@@ -442,7 +487,11 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
     })?;
     let old_number = view.get_number(index).unwrap_or(old as f64);
     let value = atomic_value(arguments.get(2))?;
-    view.set(index, value);
+    if !view.set(index, value) {
+        return Err(crate::value::error::throw_range_error(
+            "Atomics index is out of range",
+        ));
+    }
     Ok(Value::Number(old_number))
 }
 
@@ -517,7 +566,32 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
     let is_async =
         result == "timed-out" && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
     let result_value = if is_async {
-        crate::promise::promise_resolve(&[Value::String("ok".into())])
+        let promise = match crate::promise::new_promise() {
+            Value::Promise(promise) => promise,
+            _ => unreachable!(),
+        };
+        let index = atomic_index(arguments.get(1))?;
+        let buffer = match arguments.first() {
+            Some(Value::Int32Array(view)) => Rc::clone(&view.buffer),
+            Some(Value::BigInt64Array(view)) => Rc::clone(&view.buffer),
+            _ => unreachable!(),
+        };
+        let deadline = timeout
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(|value| Instant::now() + std::time::Duration::from_secs_f64(value / 1_000.0));
+        AGENT_WAITERS.with(|waiters| {
+            waiters.borrow_mut().push(AgentWaiter {
+                id: usize::MAX,
+                buffer,
+                index,
+                report: None,
+                followups: Vec::new(),
+                deadline,
+                woken: false,
+                async_promise: Some(Rc::clone(&promise)),
+            });
+        });
+        Value::Promise(promise)
     } else {
         Value::String(result.into())
     };
@@ -545,6 +619,11 @@ pub(crate) fn execute(
             "Atomics operation requires an Int32Array",
         ));
     };
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if view.immutable() {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a writable buffer",
@@ -566,12 +645,20 @@ pub(crate) fn execute(
             });
         if escaped {
             let replacement = view.coerce(arguments.get(3))?;
-            view.set(index, replacement);
+            if !view.set(index, replacement) {
+                return Err(crate::value::error::throw_range_error(
+                    "Atomics index is out of range",
+                ));
+            }
             return Ok(Value::Number(0.0));
         }
         if old == expected {
             let replacement = view.coerce(arguments.get(3))?;
-            view.set(index, replacement);
+            if !view.set(index, replacement) {
+                return Err(crate::value::error::throw_range_error(
+                    "Atomics index is out of range",
+                ));
+            }
         }
         return Ok(Value::Number(old_number));
     }
@@ -584,12 +671,21 @@ pub(crate) fn execute(
         Builtin::AtomicsXor => old ^ value,
         _ => return Err(crate::vm::not_callable()),
     };
-    view.set(index, updated);
+    if !view.set(index, updated) {
+        return Err(crate::value::error::throw_range_error(
+            "Atomics index is out of range",
+        ));
+    }
     Ok(Value::Number(old_number))
 }
 
 fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let view = bigint_view(args.first())?;
+    if !bigint_view_shared(view) {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if bigint_view_immutable(view) {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a writable buffer",
@@ -639,6 +735,14 @@ fn bigint_view(value: Option<&Value>) -> Result<&Value, VmError> {
         _ => Err(crate::value::error::throw_type_error(
             "Atomics requires a BigInt typed array",
         )),
+    }
+}
+
+fn bigint_view_shared(view: &Value) -> bool {
+    match view {
+        Value::BigInt64Array(view) => view.buffer.shared,
+        Value::BigUint64Array(view) => view.buffer.shared,
+        _ => false,
     }
 }
 
@@ -723,6 +827,17 @@ enum AtomicView<'a> {
 }
 
 impl AtomicView<'_> {
+    fn shared(&self) -> bool {
+        match self {
+            Self::Int8(v) => v.buffer.shared,
+            Self::Int16(v) => v.buffer.shared,
+            Self::Int32(v) => v.buffer.shared,
+            Self::Uint8(v) => v.buffer.shared,
+            Self::Uint16(v) => v.buffer.shared,
+            Self::Uint32(v) => v.buffer.shared,
+        }
+    }
+
     fn immutable(&self) -> bool {
         match self {
             Self::Int8(v) => v.buffer.immutable,
@@ -806,4 +921,54 @@ fn atomic_value(value: Option<&Value>) -> Result<i32, VmError> {
     Ok(crate::construct::to_int32(crate::conversion::to_number(
         value,
     )?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{ArrayBufferData, Int32ArrayData, PromiseState};
+
+    fn view(shared: bool) -> Value {
+        let mut buffer = ArrayBufferData::new(4);
+        buffer.shared = shared;
+        let buffer = Rc::new(buffer);
+        Value::Int32Array(Rc::new(Int32ArrayData::new(buffer, 0, 1)))
+    }
+
+    #[test]
+    fn atomics_reject_non_shared_views() {
+        let view = view(false);
+        assert!(load_store(Builtin::AtomicsLoad, &[view.clone()]).is_err());
+        assert!(notify(&[view, Value::Number(0.0)]).is_err());
+    }
+
+    #[test]
+    fn wait_async_resolves_when_notified() {
+        reset_agent_state();
+        let view = view(true);
+        let result = wait_async(&[
+            view.clone(),
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(100.0),
+        ])
+        .expect("waitAsync result");
+        let Value::Object(result) = result else {
+            panic!("waitAsync must return a result object");
+        };
+        let Value::Promise(promise) = result
+            .iter()
+            .find(|(key, _)| key == "value")
+            .map(|(_, value)| value)
+            .expect("promise value")
+        else {
+            panic!("async wait must expose a promise");
+        };
+        assert!(matches!(*promise.state.borrow(), PromiseState::Pending));
+        assert_eq!(notify(&[view, Value::Number(0.0)]), Ok(Value::Number(1.0)));
+        assert!(matches!(
+            *promise.state.borrow(),
+            PromiseState::Fulfilled(Value::String(ref value)) if value == "ok"
+        ));
+    }
 }
