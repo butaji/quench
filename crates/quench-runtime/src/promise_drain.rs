@@ -26,6 +26,14 @@ pub fn clear_jobs() {
     JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
 }
 
+pub(crate) fn reset_fixture_state() {
+    MICROTASK_QUEUE.with(|queue| queue.borrow_mut().clear());
+    PROMISE_TRIGGER.with(|trigger| trigger.replace(None));
+    THEN_RESULTS.with(|results| results.borrow_mut().clear());
+    JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
+    UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().clear());
+}
+
 /// Whether a promise reaction or host job is waiting to run.
 pub fn has_pending_jobs() -> bool {
     MICROTASK_QUEUE.with(|queue| !queue.borrow().is_empty())
