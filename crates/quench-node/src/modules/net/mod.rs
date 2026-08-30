@@ -71,6 +71,7 @@ pub struct NetSocket {
     pub refed: bool,
     pub server_id: Option<u64>,
     pub write_buf: Vec<u8>,
+    pub write_offset: usize,
     pub read_buf: Vec<u8>,
     pub bytes_read: u64,
     pub bytes_written: u64,
@@ -443,19 +444,34 @@ pub(crate) fn resolve_connect(host: &str, port: u16) -> Option<SocketAddr> {
 /// Best-effort flush of buffered writes back to the peer. Returns
 /// whether the buffer drained fully.
 fn try_flush(guard: &mut std::cell::RefMut<'_, NetSocket>) -> bool {
-    if guard.write_buf.is_empty() {
+    if guard.write_offset >= guard.write_buf.len() {
         return true;
     }
     let mut stream = guard.stream.take();
     let written = stream
         .as_mut()
-        .map(|stream| stream.write(&guard.write_buf).unwrap_or(0))
+        .map(|stream| stream.write(&guard.write_buf[guard.write_offset..]).unwrap_or(0))
         .unwrap_or(0);
     guard.stream = stream;
     if written > 0 {
-        guard.write_buf.drain(..written);
+        guard.write_offset = guard.write_offset.saturating_add(written);
+        if guard.write_offset == guard.write_buf.len() {
+            guard.write_buf.clear();
+            guard.write_offset = 0;
+        } else if guard.write_offset >= 64 * 1024
+            && guard.write_offset * 2 >= guard.write_buf.len()
+        {
+            let offset = guard.write_offset;
+            guard.write_buf.drain(..offset);
+            guard.write_offset = 0;
+        }
     }
-    guard.write_buf.is_empty()
+    guard.write_offset >= guard.write_buf.len()
+}
+
+#[inline]
+pub(crate) fn pending_write_len(socket: &NetSocket) -> usize {
+    socket.write_buf.len().saturating_sub(socket.write_offset)
 }
 
 /// Dispatch one emitter event on a JS object from the host side,

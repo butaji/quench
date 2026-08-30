@@ -98,6 +98,7 @@ fn accept_one(
         refed: true,
         server_id: Some(server_id),
         write_buf: Vec::new(),
+        write_offset: 0,
         read_buf: Vec::new(),
         bytes_read: 0,
         bytes_written: 0,
@@ -421,7 +422,7 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 quench_runtime::value::Value::Boolean(true)
             );
             let done = guard.read_eof
-                && guard.write_buf.is_empty()
+                && pending_write_len(&guard) == 0
                 && (!allow_half_open || guard.finish_emitted);
             if done {
                 if !guard.finish_emitted
