@@ -383,6 +383,14 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         }
         "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![
             (
+                // Node's internal modules share the registry symbol used by
+                // util.inspect.custom.  Keep the symbol spelling canonical
+                // so symbol-keyed hooks resolve to the same identity as
+                // Symbol.for("nodejs.util.inspect.custom").
+                "customInspectSymbol".to_string(),
+                Value::String("Symbol.for.nodejs.util.inspect.custom\0".into()),
+            ),
+            (
                 "pendingDeprecate".to_string(),
                 crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
             ),
