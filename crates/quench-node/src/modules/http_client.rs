@@ -44,6 +44,7 @@ pub struct ClientReq {
     pub agent: Option<Value>,
     pub omit_host: bool,
     pub socket: Option<Value>,
+    pub dispatched: bool,
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
     pub head_parsed: bool,
@@ -234,6 +235,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             agent,
             omit_host,
             socket: None,
+            dispatched: false,
             buffer: Vec::new(),
             res: None,
             head_parsed: false,
@@ -332,55 +334,7 @@ pub fn req_abort(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let queued = {
-        let mut guard = state.borrow_mut();
-        let Some(current) = guard.http.clientreqs.get(&id) else {
-            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
-        };
-        match current.agent.as_ref() {
-            None => false,
-            Some(agent) => {
-                let max = match execute::get_property(agent, "maxSockets") {
-                    Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
-                    _ => usize::MAX,
-                };
-                if max == usize::MAX {
-                    false
-                } else {
-                    let active = guard
-                        .http
-                        .clientreqs
-                        .values()
-                        .filter(|request| {
-                            request.socket.is_some()
-                                && !request.response_closed
-                                && !request.aborted
-                                && request.agent.as_ref().is_some_and(|candidate| {
-                                    execute::same_identity(candidate, agent)
-                                        && agent_name(&request.target, agent)
-                                            == agent_name(&current.target, agent)
-                                })
-                        })
-                        .count();
-                    if active >= max {
-                        if !guard.http.agent_pending.contains(&id) {
-                            guard.http.agent_pending.push(id);
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-        }
-    };
-    if queued {
-        if let Some(request) = receiver {
-            set_request_property(Some(request), "finished", Value::Boolean(true));
-        }
-        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
-    }
-    let (request, socket, target) = {
+    let (request, socket, target, custom_connection_pending) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -389,12 +343,17 @@ pub fn req_abort(
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
         req.aborted = true;
-        (req.req.clone(), req.socket.clone(), req.target.clone())
+        (
+            req.req.clone(),
+            req.socket.clone(),
+            req.target.clone(),
+            req.agent.as_ref().and_then(custom_connection).is_some(),
+        )
     };
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
-    if let Some(socket) = socket {
+    if let Some(socket) = socket.filter(|_| !custom_connection_pending) {
         net::socket_destroy(state, Some(&socket), &[])?;
     }
     if let RequestTarget::Unix { path } = target {
@@ -605,6 +564,57 @@ pub fn req_end(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    let queued = {
+        let mut guard = state.borrow_mut();
+        let Some(current) = guard.http.clientreqs.get(&id) else {
+            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+        };
+        match current.agent.as_ref() {
+            None => false,
+            Some(agent) => {
+                let max = match execute::get_property(agent, "maxSockets") {
+                    Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                    _ => usize::MAX,
+                };
+                if max == usize::MAX {
+                    false
+                } else {
+                    let active = guard
+                        .http
+                        .clientreqs
+                        .values()
+                        .filter(|request| {
+                            request.dispatched
+                                && !request.response_closed
+                                && !request.aborted
+                                && request.agent.as_ref().is_some_and(|candidate| {
+                                    execute::same_identity(candidate, agent)
+                                        && agent_name(&request.target, agent)
+                                            == agent_name(&current.target, agent)
+                                })
+                        })
+                        .count();
+                    if active >= max {
+                        if !guard.http.agent_pending.contains(&id) {
+                            guard.http.agent_pending.push(id);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+    };
+    if queued {
+        if let Some(request) = receiver {
+            set_request_property(Some(request), "finished", Value::Boolean(true));
+        }
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    if let Some(request) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+        request.dispatched = true;
+    }
     if let Some(data) = args.first() {
         if !matches!(data, Value::Undefined) {
             req_write(state, receiver, std::slice::from_ref(data))?;
