@@ -21,11 +21,15 @@ pub(crate) fn includes(
 }
 
 /// The UTF-16 code units of the receiver, unwrapping boxed strings.
-fn receiver_units(receiver: Option<&Value>) -> Result<Vec<u16>, crate::execute::VmError> {
+fn receiver_units(
+    receiver: Option<&Value>,
+) -> Result<std::borrow::Cow<'_, [u16]>, crate::execute::VmError> {
     if let Some(Value::StringUnits(units)) = receiver {
-        return Ok((**units).to_vec());
+        return Ok(std::borrow::Cow::Borrowed(&**units));
     }
-    Ok(string_receiver(receiver)?.encode_utf16().collect())
+    Ok(std::borrow::Cow::Owned(
+        string_receiver(receiver)?.encode_utf16().collect(),
+    ))
 }
 
 /// ToIntegerOrInfinity of an optional position argument, clamped to `length`.
