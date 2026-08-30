@@ -248,7 +248,15 @@ fn response_data(response: &Value, bytes: &[u8]) -> Value {
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
-    let high_water_mark = args.first().and_then(|options| {
+    let option_source = match args.first() {
+        Some(Value::String(_) | Value::StringUnits(_)) => args.get(1),
+        _ => args.first(),
+    };
+    let callback = match args.first() {
+        Some(Value::String(_) | Value::StringUnits(_)) => args.get(2),
+        _ => args.get(1),
+    };
+    let high_water_mark = option_source.and_then(|options| {
         matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
             match execute::get_property(options, "highWaterMark") {
                 Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
@@ -256,12 +264,12 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             }
         })
     }).flatten();
-    let signal = args.first().and_then(|options| {
+    let signal = option_source.and_then(|options| {
         matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
             execute::get_property(options, "signal")
         })
     }).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
-    let agent = args.first().and_then(|options| {
+    let agent = option_source.and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
         }
@@ -281,14 +289,14 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     let agent = agent
         .or(default_agent)
         .or_else(|| state.borrow().http.global_agent.clone());
-    let lookup = args.first().and_then(|options| {
+    let lookup = option_source.and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
         }
         let lookup = execute::get_property(options, "lookup");
         quench_runtime::is_callable(&lookup).then_some(lookup)
     });
-    let omit_host = args.first().is_some_and(|options| {
+    let omit_host = option_source.is_some_and(|options| {
         matches!(
             execute::get_property(options, "headers"),
             Value::Array(_)
@@ -348,7 +356,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             }
         }
     }
-    if let Some(cb) = args.get(1) {
+    if let Some(cb) = callback {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
                 state,
@@ -357,7 +365,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             )?;
         }
     }
-    if let Some(options) = args.first().filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+    if let Some(options) = option_source.filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
         let timeout = execute::get_property(options, "timeout");
         if !matches!(timeout, Value::Undefined) {
             if !matches!(timeout, Value::Number(_)) {
@@ -1693,6 +1701,16 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
     let socket = execute::get_property(&list, "0");
     if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
         return None;
+    }
+    if matches!(execute::get_property(agent, "scheduling"), Value::String(value) if value == "lifo") {
+        let last = execute::get_property(&list, &(length - 1).to_string());
+        let pop = execute::get_property(&list, "pop");
+        if quench_runtime::is_callable(&pop) {
+            let _ = execute::call(&pop, &list, &[]);
+        } else {
+            execute::set_array_length_in_place(&list, length - 1);
+        }
+        return matches!(last, Value::Object(_) | Value::ObjectAlias(_)).then_some(last);
     }
     let shift = execute::get_property(&list, "shift");
     if quench_runtime::is_callable(&shift) {
