@@ -476,6 +476,8 @@ pub const SPEC_PROCESS_INITGROUPS: NodeSpec = NodeSpec::new("process:initgroups"
 pub const SPEC_PROCESS_SETGROUPS: NodeSpec = NodeSpec::new("process:setgroups", 0x0A25);
 pub const SPEC_PROCESS_BINDING_UV_ERRNAME: NodeSpec =
     NodeSpec::new("process.binding(uv).errname", 0x0A26);
+pub const SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED: NodeSpec =
+    NodeSpec::new("process:setSourceMapsEnabled", 0x0A27);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -1192,6 +1194,7 @@ pub const CAP_PROCESS_KILL: CapId = SPEC_PROCESS_KILL.cap;
 pub const CAP_PROCESS_INITGROUPS: CapId = SPEC_PROCESS_INITGROUPS.cap;
 pub const CAP_PROCESS_SETGROUPS: CapId = SPEC_PROCESS_SETGROUPS.cap;
 pub const CAP_PROCESS_BINDING_UV_ERRNAME: CapId = SPEC_PROCESS_BINDING_UV_ERRNAME.cap;
+pub const CAP_PROCESS_SET_SOURCE_MAPS_ENABLED: CapId = SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED.cap;
 pub const CAP_PROCESS_NEXT_TICK: CapId = SPEC_PROCESS_NEXT_TICK.cap;
 pub const CAP_PROCESS_ON: CapId = SPEC_PROCESS_ON.cap;
 pub const CAP_PROCESS_ONCE: CapId = SPEC_PROCESS_ONCE.cap;

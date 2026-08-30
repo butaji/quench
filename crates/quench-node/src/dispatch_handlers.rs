@@ -695,6 +695,19 @@ pub fn process_binding_uv_errname(
     util_system_error_name(state, None, args)
 }
 
+pub fn process_set_source_maps_enabled(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if !matches!(args.first(), Some(Value::Boolean(_))) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"enabled\" argument must be of type boolean".into(),
+        ));
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn util_convert_signal_to_exit_code(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

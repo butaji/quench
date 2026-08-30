@@ -288,6 +288,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "setgroups",
             crate::host::capability(crate::registry::SPEC_PROCESS_SETGROUPS),
         ),
+        (
+            "setSourceMapsEnabled",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED),
+        ),
         ("uptime", crate::host::process_uptime_capability()),
         (
             "availableMemory",
