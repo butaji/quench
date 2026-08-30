@@ -1,22 +1,6 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 
-fn run_ops(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-) -> Result<Value, VmError> {
-    completion_result(run_ops_completion(ops, registers, context)?)
-}
-
-fn run_ops_completion(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-) -> Result<crate::completion::Completion, VmError> {
-    Ok(run_ops_completion_step(ops, registers, context)?.completion)
-}
-
 pub(crate) fn execute_ops_from(
     ops: &[Op],
     start: usize,
@@ -43,14 +27,6 @@ pub(crate) fn execute_code_from(
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let step = run_code_completion_step_from(code, start, registers, context)?;
     Ok((step.completion, step.next))
-}
-
-fn run_ops_completion_step(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-) -> Result<CompletionStep, VmError> {
-    run_ops_completion_step_from(ops, 0, registers, context)
 }
 
 fn run_ops_completion_step_from(
@@ -302,13 +278,6 @@ fn run_instruction(
                             // object until this complete word copy returns.
                             unsafe { &*word }
                                 .copy_to_register(registers, usize::from(instruction.a));
-                        }
-                        NamedCachedPayload::Cell(cell) => {
-                            // SAFETY: the source register keeps the containing
-                            // object alive until the word copy completes.
-                            unsafe { &*cell }.with_word(|word| {
-                                registers.write_owned(usize::from(instruction.a), word)
-                            });
                         }
                         NamedCachedPayload::Value(value) => {
                             write_value(registers, instruction.a, value)

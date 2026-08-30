@@ -53,9 +53,11 @@ heap_lifecycles! {
 
 macro_rules! execution_events {
     ($($name:ident => $wire:literal),+ $(,)?) => {
+        #[cfg_attr(not(feature = "execution-trace"), allow(dead_code))]
         #[derive(Clone, Copy)]
         #[repr(usize)]
         pub(crate) enum Event { $($name),+ }
+        #[cfg(feature = "execution-trace")]
         const EVENT_NAMES: &[&str] = &[$($wire),+];
     };
 }
@@ -107,7 +109,6 @@ execution_events! {
     NamedSetCacheEmpty => "named_set_cache_empty",
     NamedSetLayoutMismatch => "named_set_layout_mismatch",
     NamedSetSlotNotCell => "named_set_slot_not_cell",
-    NamedSetPromoteCell => "named_set_promote_cell",
     CryptoKernelShape => "crypto_kernel_shape",
     CryptoKernelPrefix => "crypto_kernel_prefix",
     CryptoKernelProduct => "crypto_kernel_product",
@@ -208,6 +209,7 @@ pub(crate) enum DecodeSite {
 }
 
 impl DecodeSite {
+    #[cfg(feature = "execution-trace")]
     const fn name(self) -> &'static str {
         match self {
             Self::GetN => "getn",
@@ -474,9 +476,6 @@ pub(crate) fn regexp(source: &str, compile_ns: u128, match_ns: u128) {
     }
 }
 
-#[cfg(not(feature = "execution-trace"))]
-pub(crate) fn regexp(_: &str, _: u128, _: u128) {}
-
 #[cfg(feature = "execution-trace")]
 pub(crate) fn object_shape(properties: &crate::value::ObjectProperties) {
     if enabled() {
@@ -727,60 +726,6 @@ pub(crate) fn descriptor_object(origin: &'static str) {
 pub(crate) fn descriptor_object(_: &'static str) {}
 
 #[cfg(feature = "execution-trace")]
-pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Value) {
-    if enabled() {
-        let binding_kind = |cell: &std::rc::Rc<crate::value::BindingCell>| match &*cell.borrow() {
-            crate::value::Value::Number(_) => "number",
-            crate::value::Value::Object(_) => "object",
-            crate::value::Value::Function(_) => "function",
-            crate::value::Value::Array(_) => "array",
-            crate::value::Value::Boolean(_) => "boolean",
-            crate::value::Value::String(_) => "string",
-            _ => "other",
-        };
-        let kind = match (tier, value) {
-            ("word", crate::value::Value::BindingCell(_)) => "word:binding_cell",
-            ("prototype", crate::value::Value::Number(_)) => "prototype:number",
-            ("prototype", crate::value::Value::Object(_)) => "prototype:object",
-            ("prototype", crate::value::Value::Function(_)) => "prototype:function",
-            ("prototype", crate::value::Value::BindingCell(cell)) => match binding_kind(cell) {
-                "number" => "prototype:binding_cell:number",
-                "object" => "prototype:binding_cell:object",
-                "function" => "prototype:binding_cell:function",
-                "array" => "prototype:binding_cell:array",
-                "boolean" => "prototype:binding_cell:boolean",
-                "string" => "prototype:binding_cell:string",
-                _ => "prototype:binding_cell:other",
-            },
-            ("prototype", crate::value::Value::String(_)) => "prototype:string",
-            ("prototype", _) => "prototype:other",
-            ("own", crate::value::Value::Number(_)) => "own:number",
-            ("own", crate::value::Value::Object(_)) => "own:object",
-            ("own", crate::value::Value::Function(_)) => "own:function",
-            ("own", crate::value::Value::BindingCell(cell)) => match binding_kind(cell) {
-                "number" => "own:binding_cell:number",
-                "object" => "own:binding_cell:object",
-                "function" => "own:binding_cell:function",
-                "array" => "own:binding_cell:array",
-                "boolean" => "own:binding_cell:boolean",
-                "string" => "own:binding_cell:string",
-                _ => "own:binding_cell:other",
-            },
-            ("own", crate::value::Value::String(_)) => "own:string",
-            ("own", _) => "own:other",
-            _ => "unknown",
-        };
-        COUNTERS.with(|counters| {
-            *counters
-                .borrow_mut()
-                .named_property_results
-                .entry(kind)
-                .or_default() += 1;
-        });
-    }
-}
-
-#[cfg(feature = "execution-trace")]
 pub(crate) fn named_property_miss(key: &str) {
     if enabled() {
         let reason = NAMED_GET_MISS_REASON.with(std::cell::Cell::get);
@@ -835,9 +780,6 @@ pub(crate) fn named_property_word(tier: &'static str, payload: &'static str) {
 }
 
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn named_property_result(_: &'static str, _: &crate::value::Value) {}
-
-#[cfg(not(feature = "execution-trace"))]
 pub(crate) fn named_property_miss(_: &str) {}
 
 #[cfg(not(feature = "execution-trace"))]
@@ -846,18 +788,6 @@ pub(crate) fn named_get_miss_reason(_: &'static str) {}
 #[cfg(not(feature = "execution-trace"))]
 #[inline(always)]
 pub(crate) fn named_property_word(_: &'static str, _: &'static str) {}
-
-#[cfg(feature = "execution-trace")]
-pub(crate) fn crypto_direct_iterations(count: usize) {
-    if enabled() {
-        COUNTERS.with(|counters| {
-            counters.borrow_mut().crypto_direct_iterations += count as u64;
-        });
-    }
-}
-
-#[cfg(not(feature = "execution-trace"))]
-pub(crate) fn crypto_direct_iterations(_: usize) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn crypto_kernel_iterations(count: usize) {
@@ -1043,24 +973,10 @@ pub(crate) fn attribution_scope(origin: &'static str) -> DecodeGuard {
     enter_decode(DecodeSite::Other, origin)
 }
 
-/// Attribute execute-word traffic performed inside an admitted native lane to
-/// that lane instead of whichever VM opcode happened to invoke its guard.
-/// L0/L1 traffic overlaps VM handlers, but its origin must remain truthful.
-#[inline(always)]
-pub(crate) fn kernel_scope(id: &'static str) -> DecodeGuard {
-    attribution_scope(id)
-}
-
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
 pub(crate) fn enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("QUENCH_EXEC_TRACE").is_some())
-}
-
-#[inline(always)]
-#[cfg(not(feature = "execution-trace"))]
-pub(crate) const fn enabled() -> bool {
-    false
 }
 
 #[inline(always)]

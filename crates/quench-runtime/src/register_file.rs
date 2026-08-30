@@ -169,6 +169,7 @@ impl ImmediateNumberCallPlan {
     /// Run an admitted call chain for a known counted range. The slice shape
     /// is selected once so rustc/LLVM sees the inner body as direct scalar
     /// loads and arithmetic rather than an interpreter over call plans.
+    #[cfg(not(feature = "execution-trace"))]
     pub(crate) fn execute_chain_iterations(plans: &[Self], iterations: usize) -> bool {
         if !Self::is_chain(plans) {
             return false;
