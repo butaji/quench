@@ -257,6 +257,7 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "kill",
             crate::host::capability(crate::registry::SPEC_PROCESS_KILL),
         ),
+        ("_kill", Value::Undefined),
         (
             "abort",
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
@@ -440,18 +441,82 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
 }
 
 pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let pid = args.first().and_then(|value| match value {
-        Value::Number(number) if number.is_finite() => Some(*number as i64),
-        _ => None,
-    });
-    if pid != Some(std::process::id() as i64) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("Error".into())),
-            ("message".into(), Value::String("kill ESRCH".into())),
-            ("code".into(), Value::String("ESRCH".into())),
-        ])));
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let pid = match value {
+        Value::Number(number) if number.is_finite() => *number as i64,
+        Value::String(text) => text.parse::<i64>().map_err(|_| invalid_pid(value))?,
+        _ => return Err(invalid_pid(value)),
+    };
+    let signal = match args.get(1) {
+        None | Some(Value::Undefined) => 15,
+        Some(Value::Number(number)) if number.is_finite() => *number as i32,
+        Some(Value::String(name)) => match name.as_str() {
+            "SIGHUP" => 1,
+            "SIGTERM" => 15,
+            "SIGKILL" => 9,
+            "SIGINT" => 2,
+            _ => return Err(unknown_signal(name)),
+        },
+        Some(_) => return Err(invalid_signal()),
+    };
+    if !(0..=64).contains(&signal) {
+        return Err(kill_einval());
+    }
+    let process = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&process, "process");
+    let internal = quench_runtime::execute::get_property(&process, "_kill");
+    if quench_runtime::is_callable(&internal) {
+        quench_runtime::execute::call(
+            &internal,
+            &process,
+            &[Value::Number(pid as f64), Value::Number(signal as f64)],
+        )?;
     }
     Ok(Value::Boolean(true))
+}
+
+fn invalid_pid(value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The \"pid\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )),
+        ),
+    ]))
+}
+
+fn invalid_signal() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String("The \"signal\" argument must be of type string or number.".into()),
+        ),
+    ]))
+}
+
+fn unknown_signal(name: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+        (
+            "message".into(),
+            Value::String(format!("Unknown signal: {name}")),
+        ),
+    ]))
+}
+
+fn kill_einval() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("code".into(), Value::String("EINVAL".into())),
+        ("message".into(), Value::String("kill EINVAL".into())),
+    ]))
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
