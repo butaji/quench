@@ -75,7 +75,11 @@ fn reduce_units_with_global(
         } else {
             unit.source
         };
-        let source = crate::reduce_support::prepare_source(source);
+        let source = if unit.strict || unit.source_type.is_module() {
+            crate::reduce_support::prepare_source_strict(source)
+        } else {
+            crate::reduce_support::prepare_source(source)
+        };
         let parsed = Parser::new(&allocator, source.as_ref(), unit.source_type).parse();
         reject_parse_errors(&parsed)?;
         crate::reduce_support::validate_program(&parsed.program)?;

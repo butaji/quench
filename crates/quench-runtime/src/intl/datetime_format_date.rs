@@ -127,7 +127,8 @@ pub(crate) fn temporal_date_format_result(
     if date_str.is_empty() {
         Some(time_str)
     } else {
-        Some(format!("{date_str}, {time_str}"))
+        let out = format!("{date_str}, {time_str}");
+        Some(out)
     }
 }
 
@@ -192,7 +193,9 @@ fn compose_date_string_with_weekday(
     let month_style = lookup_slot_string(slots, "month");
     let day_style = lookup_slot_string(slots, "day");
     let weekday_style = lookup_slot_string(slots, "weekday");
-    let month_str = month_style.as_deref().map(|s| format_month_value(s, month));
+    let month_str = month_style
+        .as_deref()
+        .map(|s| format_month_value_for_slots(slots, s, month));
     let day_str = day_style.as_deref().map(|s| format_day_value(s, day));
     let year_str = year_style.as_deref().map(|s| format_year_value(s, year));
     let weekday_str = weekday_style
@@ -297,6 +300,63 @@ fn format_month_value(style: &str, month: u32) -> String {
     }
 }
 
+fn format_month_value_for_slots(
+    slots: &[(String, RuntimeValue)],
+    style: &str,
+    month: u32,
+) -> String {
+    if !matches!(style, "long" | "short" | "narrow") {
+        return format_month_value(style, month);
+    }
+    let calendar = lookup_slot_string(slots, "calendar").unwrap_or_else(|| "gregory".into());
+    let month = slots
+        .iter()
+        .find(|(name, _)| name == "\0isoMonth")
+        .and_then(|(_, value)| match value {
+            RuntimeValue::Number(value) => Some(*value as u32),
+            _ => None,
+        })
+        .and_then(|iso_month| {
+            let iso_year = slots
+                .iter()
+                .find(|(name, _)| name == "\0isoYear")
+                .and_then(|(_, value)| match value {
+                    RuntimeValue::Number(value) => Some(*value as i32),
+                    _ => None,
+                })?;
+            let iso_day = slots
+                .iter()
+                .find(|(name, _)| name == "\0isoDay")
+                .and_then(|(_, value)| match value {
+                    RuntimeValue::Number(value) => Some(*value as u32),
+                    _ => None,
+                })?;
+            crate::temporal::plain_date::calendar_fields_from_iso(
+                iso_year, iso_month, iso_day, &calendar,
+            )
+            .map(|fields| fields.month)
+        })
+        .unwrap_or(month);
+    let names: &[&str] = match calendar.as_str() {
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" => &[
+            "Muharram", "Safar", "Rabiʻ I", "Rabiʻ II", "Jumada I", "Jumada II",
+            "Rajab", "Shaʻban", "Ramadan", "Shawwal", "Dhuʻl-Qiʻdah", "Dhuʻl-Hijjah",
+        ],
+        "hebrew" => &[
+            "Tishri", "Heshvan", "Kislev", "Tevet", "Shevat", "Adar", "Nisan", "Iyar",
+            "Sivan", "Tamuz", "Av", "Elul",
+        ],
+        _ => return format_month_value(style, month),
+    };
+    let index = (month.saturating_sub(1) as usize).min(names.len() - 1);
+    match style {
+        "long" => names[index].to_string(),
+        "short" => names[index].chars().take(3).collect(),
+        "narrow" => names[index].chars().next().map_or_else(String::new, |c| c.to_string()),
+        _ => unreachable!(),
+    }
+}
+
 fn format_day_value(style: &str, day: u32) -> String {
     if style == "2-digit" {
         format!("{:02}", day)
@@ -352,19 +412,39 @@ fn compose_time_string(
             RuntimeValue::Boolean(value) => Some(*value),
             _ => None,
         })
+        .or_else(|| {
+            lookup_slot_string(slots, "hourCycle")
+                .map(|cycle| matches!(cycle.as_str(), "h11" | "h12"))
+        })
         .unwrap_or(false);
     let has_hour = hour_style.is_some();
     let has_minute = minute_style.is_some();
     let has_second = second_style.is_some();
+    let display_hour = if lookup_slot_string(slots, "hourCycle").as_deref() == Some("h24")
+        && hour == 0
+    {
+        24
+    } else {
+        hour
+    };
     let hour_str = hour_style
         .as_deref()
-        .map(|s| format_hour_value(s, hour, hour12));
-    let minute_str = minute_style
-        .as_deref()
-        .map(|s| format_minute_value(s, minute, has_hour || has_second));
-    let second_str = second_style
-        .as_deref()
-        .map(|s| format_second_value(s, second, has_hour || has_minute));
+        .map(|s| {
+            format_hour_value(
+                s,
+                display_hour,
+                hour12,
+                lookup_slot_string(slots, "hourCycle").as_deref() == Some("h11"),
+            )
+        });
+    let minute_str = minute_style.as_deref().map_or_else(
+        || has_minute.then(|| format_minute_value("numeric", minute, has_hour || has_second)),
+        |s| Some(format_minute_value(s, minute, has_hour || has_second)),
+    );
+    let second_str = second_style.as_deref().map_or_else(
+        || has_second.then(|| format_second_value("numeric", second, has_hour || has_minute)),
+        |s| Some(format_second_value(s, second, has_hour || has_minute)),
+    );
     let mut parts: Vec<String> = Vec::new();
     if has_hour {
         if let Some(h) = hour_str {
@@ -412,10 +492,10 @@ fn compose_time_string(
     out
 }
 
-fn format_hour_value(style: &str, hour: u32, hour12: bool) -> String {
+fn format_hour_value(style: &str, hour: u32, hour12: bool, h11: bool) -> String {
     if hour12 {
         let h12 = if hour == 0 {
-            12
+            if h11 { 0 } else { 12 }
         } else if hour > 12 {
             hour - 12
         } else {
@@ -427,11 +507,7 @@ fn format_hour_value(style: &str, hour: u32, hour12: bool) -> String {
             h12.to_string()
         }
     } else {
-        if style == "2-digit" {
-            format!("{:02}", hour)
-        } else {
-            hour.to_string()
-        }
+        format!("{:02}", hour)
     }
 }
 

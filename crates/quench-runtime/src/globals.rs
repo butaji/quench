@@ -219,7 +219,7 @@ fn builtin_core_tail(name: &str) -> Option<crate::ops::Builtin> {
         "Function" => Some(crate::ops::Builtin::Function),
         "TypeError" => Some(crate::ops::Builtin::TypeError),
         "Error" => Some(crate::ops::Builtin::Error),
-        "DOMException" => Some(crate::ops::Builtin::Error),
+        "DOMException" => Some(crate::ops::Builtin::DOMException),
         "RangeError" => Some(crate::ops::Builtin::RangeError),
         "ReferenceError" => Some(crate::ops::Builtin::ReferenceError),
         "SyntaxError" => Some(crate::ops::Builtin::SyntaxError),

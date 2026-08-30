@@ -148,14 +148,22 @@ fn validate_group_references(body: &str, seen: &[String]) -> Result<(), String> 
     if seen.is_empty() {
         return Ok(());
     }
+    let bytes = body.as_bytes();
     let mut cursor = 0;
-    while let Some(found) = body[cursor..].find("\\k<") {
-        let next = cursor + found + 3;
-        let name = group_name_at(body, next)?;
+    while let Some(found) = body[cursor..].find("\\k") {
+        let escape = cursor + found;
+        let Some(&next) = bytes.get(escape + 2) else {
+            return Err(syntax_error());
+        };
+        if next != b'<' {
+            return Err(syntax_error());
+        }
+        let name_start = escape + 3;
+        let name = group_name_at(body, name_start)?;
         if !seen.iter().any(|existing| existing == name) {
             return Err(syntax_error());
         }
-        cursor = find_close_bracket(body, next).ok_or_else(syntax_error)? + 1;
+        cursor = find_close_bracket(body, name_start).ok_or_else(syntax_error)? + 1;
     }
     Ok(())
 }

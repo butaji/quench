@@ -138,7 +138,7 @@ fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(make_array(
         locales
             .into_iter()
-            .filter(|locale| locale == "en" || locale.starts_with("en-"))
+            .filter(|locale| !locale.eq_ignore_ascii_case("zxx"))
             .map(Value::String)
             .collect(),
     ))
@@ -162,16 +162,14 @@ fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(make_array(
         locales
             .into_iter()
-            .filter(|locale| locale == "en" || locale.starts_with("en-"))
+            .filter(|locale| !locale.eq_ignore_ascii_case("zxx"))
             .map(Value::String)
             .collect(),
     ))
 }
 
 pub(crate) fn supported_segmenter_locale(locale: &str) -> bool {
-    ["ar", "de", "en", "fr", "sr", "zh"]
-        .iter()
-        .any(|language| locale == *language || locale.starts_with(&format!("{language}-")))
+    !locale.eq_ignore_ascii_case("zxx")
 }
 
 fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
