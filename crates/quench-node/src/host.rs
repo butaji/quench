@@ -72,6 +72,8 @@ pub struct HostState {
     pub stream_module: Option<Value>,
     /// `require('stream/consumers')` value, evaluated once per realm.
     pub stream_consumers_module: Option<Value>,
+    /// Canonical `require("util")` module for this realm.
+    pub util_module: Option<Value>,
     pub string_decoder_aliases: std::collections::HashMap<u64, u64>,
     pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
     pub string_decoder_encoding: std::collections::HashMap<u64, String>,
@@ -121,6 +123,7 @@ impl NodeHost {
             url_class: None,
             stream_module: None,
             stream_consumers_module: None,
+            util_module: None,
             string_decoder_aliases: std::collections::HashMap::new(),
             string_decoder_pending: std::collections::HashMap::new(),
             string_decoder_encoding: std::collections::HashMap::new(),

@@ -347,9 +347,14 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             "utf8Write".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_UTF8_WRITE),
         )])),
-        "util" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::util::build(),
-        )),
+        "util" => {
+            if let Some(module) = state.borrow().util_module.clone() {
+                return Some(module);
+            }
+            let module = crate::host::namespace_object_from_pairs(crate::modules::util::build());
+            state.borrow_mut().util_module = Some(module.clone());
+            Some(module)
+        }
         "util/types" => {
             let util = require(state, &[Value::String("util".into())]).ok()?;
             Some(quench_runtime::execute::get_property(&util, "types"))
