@@ -1083,6 +1083,26 @@ fn normalize_round_options(options: Option<&Value>) -> Result<Option<Value>, VmE
 }
 
 fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
+    if matches!(value, Value::Proxy(_)) {
+        let ((year, month, day), timezone) = proxy_relative_date_record(value)?;
+        if timezone.as_deref().is_some_and(|timezone| timezone.contains('/')) {
+            return crate::temporal::execute(
+                crate::ops::Builtin::TemporalZonedDateTimeFrom,
+                None,
+                std::slice::from_ref(value),
+            )
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
+        }
+        return Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![
+                ("year".to_string(), Value::Number(year as f64)),
+                ("month".to_string(), Value::Number(month as f64)),
+                ("monthCode".to_string(), Value::String(format!("M{month:02}"))),
+                ("day".to_string(), Value::Number(day as f64)),
+                ("calendar".to_string(), Value::String("iso8601".to_string())),
+            ]),
+        )));
+    }
     if !crate::value::is_object(value) {
         return Ok(value.clone());
     }
