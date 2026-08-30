@@ -2096,21 +2096,6 @@ fn parse_largest_unit(options: Option<&Value>) -> Result<Option<usize>, VmError>
     unit_index(&unit).map(Some)
 }
 
-fn balance_time_fields(fields: &mut [Value], first: usize) {
-    for index in ((first + 1)..10).rev() {
-        let base = match index {
-            4 => 24,
-            5 | 6 => 60,
-            _ => 1_000,
-        };
-        let value = number_field(&fields[index]);
-        let carry = value / base;
-        fields[index] = Value::Number((value - carry * base) as f64);
-        let next = number_field(&fields[index - 1]);
-        fields[index - 1] = Value::Number((next + carry) as f64);
-    }
-}
-
 fn balanced_sum(left: &crate::value::ObjectData, right: &crate::value::ObjectData) -> Vec<Value> {
     let days = sum_field(left, right, "days");
     let time_names = [
