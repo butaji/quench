@@ -3942,7 +3942,17 @@ mod stubs {
                     fields[3] = Value::Number(days as f64);
                     return crate::temporal::duration::construct(&fields);
                 }
+                let fixed_wall_timezone = receiver_timezone.starts_with(['+', '-'])
+                    || super::timezone_primary_name(&receiver_timezone) == "UTC";
+                if fixed_wall_timezone
+                    && ((actual > 0 && wall_delta < 0) || (actual < 0 && wall_delta > 0))
+                {
+                    days -= actual.signum() as i64;
+                }
                 for _ in 0..4 {
+                    if fixed_wall_timezone {
+                        break;
+                    }
                     if days == 0 || exact_wall_day {
                         break;
                     }
