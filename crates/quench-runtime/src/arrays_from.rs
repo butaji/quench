@@ -9,9 +9,44 @@ pub(crate) fn from_async(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    match from_async_inner(receiver, arguments) {
+        Ok(value) => Ok(value),
+        Err(crate::execute::VmError::Thrown(reason)) => Ok(rejected_promise(reason)),
+        Err(crate::execute::VmError::NotCallable) => {
+            if let crate::execute::VmError::Thrown(reason) = crate::value::error::throw_type_error(
+                "Array.fromAsync iterator method is not callable",
+            ) {
+                return Ok(rejected_promise(reason));
+            }
+            unreachable!()
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn rejected_promise(reason: Value) -> Value {
+    let promise = match crate::promise::new_promise() {
+        Value::Promise(promise) => promise,
+        _ => unreachable!(),
+    };
+    crate::promise::reject_promise(&promise, reason);
+    Value::Promise(promise)
+}
+
+fn from_async_inner(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     reject_source(&source)?;
     let async_method = crate::execute::get_property_result(&source, "Symbol.asyncIterator")?;
+    if !matches!(async_method, Value::Undefined | Value::Null)
+        && !crate::conversion::is_callable(&async_method)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Array.fromAsync async iterator method is not callable",
+        ));
+    }
     if crate::conversion::is_callable(&async_method) {
         let method = async_method;
         let iterator = crate::execute::call(&method, &source, &[])?;
@@ -467,9 +502,7 @@ fn continue_after_map(
                 target,
             ));
         }
-        crate::value::PromiseState::Rejected(reason) => {
-            crate::promise::reject_promise(&result, reason)
-        }
+        crate::value::PromiseState::Rejected(reason) => reject_async(&result, &iterator, reason),
         crate::value::PromiseState::Pending => {
             promise.continuations.borrow_mut().push(
                 crate::value::PromiseContinuation::ArrayFromAsync {
