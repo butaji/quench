@@ -15,6 +15,8 @@ const DELETED_PREFIX: &str = "\0quench:deleted:\0";
 pub(crate) const ERROR_SLOT: &str = "\0error_slot";
 
 thread_local! {
+    static ERROR_DESCRIPTOR: std::cell::RefCell<Option<Value>> =
+        std::cell::RefCell::new(None);
     static GENERATOR_PROTOTYPES:
         std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
         std::cell::RefCell::new(HashMap::new());
@@ -24,6 +26,21 @@ thread_local! {
     static ASYNC_GENERATOR_PROTOTYPES:
         std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
         std::cell::RefCell::new(HashMap::new());
+}
+
+fn shared_error_descriptor() -> Value {
+    ERROR_DESCRIPTOR.with(|cell| {
+        if let Some(value) = cell.borrow().as_ref() {
+            return value.clone();
+        }
+        let value = Value::Object(Rc::new(ObjectData::new(vec![
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        *cell.borrow_mut() = Some(value.clone());
+        value
+    })
 }
 
 pub(crate) fn async_iterator_prototype_in(realm: crate::ops::RealmId) -> Value {
@@ -448,14 +465,7 @@ pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         .unwrap_or(Value::Builtin(prototype_builtin));
     let message = arguments.first().map_or_else(String::new, value_to_string);
     let non_enum = |key: &str| {
-        (
-            descriptor_key(key),
-            Value::Object(Rc::new(ObjectData::new(vec![
-                ("writable".to_string(), Value::Boolean(true)),
-                ("enumerable".to_string(), Value::Boolean(false)),
-                ("configurable".to_string(), Value::Boolean(true)),
-            ]))),
-        )
+        (descriptor_key(key), shared_error_descriptor())
     };
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
