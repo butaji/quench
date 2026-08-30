@@ -25,7 +25,10 @@ use quench_test262::{
 };
 
 const WORK_BATCH: usize = 32;
-const STACK_SIZE: usize = 512 * 1024 * 1024;
+// The reducer and VM need more than the platform default for nested fixtures,
+// but stage workers demonstrate that 64 MiB is sufficient without reserving
+// hundreds of MiB per timeout worker.
+const STACK_SIZE: usize = 64 * 1024 * 1024;
 const PER_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Default)]
