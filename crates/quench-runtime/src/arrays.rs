@@ -1505,15 +1505,20 @@ pub(crate) fn reduce_values(
     // explicit bounds are just as clear and let LLVM inline the body.
     let mut position = index;
     loop {
-        if reverse {
+        let current = if reverse {
             if position == 0 {
                 break;
             }
             position -= 1;
+            position
         } else if position >= length {
             break;
-        }
-        let value = crate::builtins::map_value(&receiver, position)?;
+        } else {
+            let current = position;
+            position += 1;
+            current
+        };
+        let value = crate::builtins::map_value(&receiver, current)?;
         let value = if typed && value.is_none() {
             Some(Value::Undefined)
         } else {
@@ -1523,13 +1528,10 @@ pub(crate) fn reduce_values(
         let args = [
             accumulator,
             value,
-            Value::Number(position as f64),
+            Value::Number(current as f64),
             receiver.clone(),
         ];
         accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
-        if !reverse {
-            position += 1;
-        }
     }
     Ok(accumulator)
 }
