@@ -126,7 +126,7 @@ pub fn agent_keep_socket_alive(
     )?;
     let timeout = execute::get_property(&agent, "timeout");
     if matches!(timeout, Value::Number(value) if value.is_finite() && value >= 0.0) {
-        net::socket_set_timeout(state, Some(&socket), &[timeout])?;
+        execute::set_property_in_place(&socket, "timeout", timeout);
     }
     net::socket_unref(state, Some(&socket), &[])?;
     Ok(Value::Boolean(true))
