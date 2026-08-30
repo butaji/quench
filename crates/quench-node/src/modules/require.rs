@@ -355,7 +355,11 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
 fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     match name {
-        "console" => Some(crate::modules::console::build_value()),
+        "console" => state
+            .borrow()
+            .console_module
+            .clone()
+            .or_else(|| Some(crate::modules::console::build_value())),
         "process" => {
             let process = state.borrow();
             Some(crate::modules::process::build_with_title(

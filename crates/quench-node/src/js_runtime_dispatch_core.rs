@@ -18,6 +18,16 @@ impl QuenchNodeHost {
                     Some(Value::String(name)) if name.trim_start_matches("node:") == "stream" => {
                         crate::modules::stream::build(&self.state)
                     }
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "console" =>
+                    {
+                        Ok(self
+                            .state
+                            .borrow()
+                            .console_module
+                            .clone()
+                            .unwrap_or(Value::Undefined))
+                    }
                     _ => require_module(arguments),
                 },
                 HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {
