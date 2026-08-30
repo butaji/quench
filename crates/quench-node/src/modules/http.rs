@@ -74,6 +74,7 @@ pub struct Res {
     pub body: Vec<u8>,
     pub socket: Value,
     pub keep_alive: bool,
+    pub http10: bool,
     pub headers_sent: bool,
     pub sent_body: usize,
     pub chunked: bool,
@@ -698,7 +699,11 @@ fn build_req_res(
     // Node exposes the incoming message on the response as `res.req`; keep
     // the exact request identity that is emitted to user listeners.
     execute::set_property_in_place(&res, "req", req.clone());
-    insert_response(state, socket_id, id, keep_alive);
+    let http10 = matches!(
+        execute::get_property(&req, "httpVersion"),
+        Value::String(version) if version == "1.0"
+    );
+    insert_response(state, socket_id, id, keep_alive, http10);
     {
         let mut guard = state.borrow_mut();
         if let Some(conn) = guard.http.conns.get_mut(&socket_id) {
@@ -721,6 +726,15 @@ fn build_req(
     head: &[u8],
 ) -> Result<(Value, usize, bool, bool), VmError> {
     let (method, url, version, headers, content_length, keep_alive) = parse_request_head(head);
+    let (version_major, version_minor) = version
+        .split_once('.')
+        .map(|(major, minor)| {
+            (
+                major.parse::<u32>().unwrap_or(1),
+                minor.parse::<u32>().unwrap_or(1),
+            )
+        })
+        .unwrap_or((1, 1));
     let async_resource = crate::modules::async_hooks::new_resource(
         state,
         &[Value::String("HTTPINCOMINGMESSAGE".into())],
@@ -732,6 +746,14 @@ fn build_req(
             ("method".to_string(), Value::String(method)),
             ("url".to_string(), Value::String(url)),
             ("httpVersion".to_string(), Value::String(version)),
+            (
+                "httpVersionMajor".to_string(),
+                Value::Number(version_major as f64),
+            ),
+            (
+                "httpVersionMinor".to_string(),
+                Value::Number(version_minor as f64),
+            ),
             (
                 "headers".to_string(),
                 execute::set_prototype_of(&host_api::object(headers), &Value::Null)?,
@@ -844,7 +866,13 @@ pub fn request_destroy(
 }
 
 /// Register a fresh response for the socket.
-fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep_alive: bool) {
+fn insert_response(
+    state: &Rc<RefCell<HostState>>,
+    socket_id: u64,
+    id: u64,
+    keep_alive: bool,
+    http10: bool,
+) {
     let socket = state
         .borrow()
         .http
@@ -861,6 +889,7 @@ fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep
             body: Vec::new(),
             socket,
             keep_alive,
+            http10,
             headers_sent: false,
             sent_body: 0,
             chunked: false,
@@ -956,6 +985,13 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             "write".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_WRITE),
         ),
+        // Legacy Node fixtures use the internal `_send('')` hook to flush a
+        // fragment. The observable effect is the same as an empty write;
+        // expose it through the canonical response writer capability.
+        (
+            "_send".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE),
+        ),
         (
             "writeContinue".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_WRITE_CONTINUE),
@@ -972,6 +1008,7 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             "flushHeaders".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_FLUSH_HEADERS),
         ),
+        ("sendDate".to_string(), Value::Boolean(true)),
         ("statusCode".to_string(), Value::Number(200.0)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
     ]);
