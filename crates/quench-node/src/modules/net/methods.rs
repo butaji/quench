@@ -1321,6 +1321,11 @@ pub fn socket_timeout_fire(
         return Ok(Value::Undefined);
     };
     execute::set_property_in_place(socket, SOCKET_TIMEOUT_PROP, Value::Undefined);
+    if crate::modules::http::is_idle_socket(state, socket)
+        && !matches!(execute::get_property(socket, "destroyed"), Value::Boolean(true))
+    {
+        socket_destroy(state, Some(socket), &[])?;
+    }
     crate::modules::events::method_emit(state, Some(socket), &[Value::String("timeout".into())])
 }
 
