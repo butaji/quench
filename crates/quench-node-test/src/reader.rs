@@ -29,16 +29,16 @@ impl NodeFixture {
         let path = path.canonicalize().unwrap_or(path);
         Ok(Self {
             path,
+            argv: fixture_flags(&source),
             source,
-            argv: Vec::new(),
         })
     }
 
     pub fn from_source(path: PathBuf, source: String) -> Self {
         Self {
             path,
+            argv: fixture_flags(&source),
             source,
-            argv: Vec::new(),
         }
     }
 
@@ -49,6 +49,17 @@ impl NodeFixture {
     pub fn source(&self) -> &str {
         &self.source
     }
+}
+
+/// Node's test files carry executable options in `// Flags:` directives.
+/// Keep those declarations as runner data so every invocation path (single
+/// file, manifest, and isolated sweep) observes the same argv facts.
+fn fixture_flags(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("// Flags:"))
+        .map(|flags| flags.split_whitespace().map(str::to_owned).collect())
+        .unwrap_or_default()
 }
 
 /// Canonical Node host runner. Owns the host handle and the
