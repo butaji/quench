@@ -15,6 +15,7 @@ thread_local! {
 
 /// Drop compiled patterns at realm boundaries so a long fixture sweep cannot
 /// retain an unbounded amount of generated RegExp state.
+/// Drop compiled patterns at a fixture or realm boundary.
 pub fn reset_compiled_cache() {
     COMPILED_REGEXPS.with(|cache| cache.borrow_mut().clear());
 }

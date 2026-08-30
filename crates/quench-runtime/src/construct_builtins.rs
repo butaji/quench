@@ -4,6 +4,10 @@ thread_local! {
     static WEAK_REFS: RefCell<Vec<crate::value::Value>> = const { RefCell::new(Vec::new()) };
 }
 
+pub(crate) fn reset_weak_refs() {
+    WEAK_REFS.with(|refs| refs.borrow_mut().clear());
+}
+
 pub fn collect_weak_refs() {
     WEAK_REFS.with(|refs| {
         for weak in refs.borrow().iter() {
