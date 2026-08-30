@@ -53,6 +53,8 @@ pub struct ClientReq {
     pub dispatched: bool,
     pub timeout: Option<Value>,
     pub timeout_set: bool,
+    /// Explicit req.setTimeout value waiting for a connecting socket to open.
+    pub pending_timeout: Option<f64>,
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
     pub head_parsed: bool,
@@ -362,6 +364,59 @@ pub fn res_set_encoding(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+/// `IncomingMessage.setTimeout(msecs[, callback])` delegates the timer to the
+/// response's socket and relays its timeout transition back to the response.
+pub fn res_set_timeout(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(response) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let timeout = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value,
+        Some(Value::Number(_)) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(
+                "The \"msecs\" value is out of range".into(),
+            ))
+        }
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"msecs\" argument must be a number".into(),
+            ))
+        }
+    };
+    if let Some(callback) = args.get(1) {
+        if !quench_runtime::is_callable(callback) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"callback\" argument must be a function".into(),
+            ));
+        }
+        crate::modules::events::method_once(
+            state,
+            Some(response),
+            &[Value::String("timeout".into()), callback.clone()],
+        )?;
+    }
+    let socket = execute::get_property(response, "socket");
+    if matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        let emit = execute::get_property(response, "emit");
+        let bind = execute::get_property_result(&emit, "bind")?;
+        let relay = execute::call(
+            &bind,
+            &emit,
+            &[response.clone(), Value::String("timeout".into())],
+        )?;
+        net::socket_set_timeout(
+            state,
+            Some(&socket),
+            &[Value::Number(timeout), relay],
+        )?;
+    }
+    Ok(response.clone())
+}
+
 fn response_data(response: &Value, bytes: &[u8]) -> Value {
     match execute::get_property_result(response, RESPONSE_ENCODING_PROP).ok() {
         Some(Value::String(encoding))
@@ -381,7 +436,10 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         _ => args.first(),
     };
     let callback = match args.first() {
-        Some(Value::String(_) | Value::StringUnits(_)) => args.get(2),
+        Some(Value::String(_) | Value::StringUnits(_)) => args
+            .iter()
+            .skip(1)
+            .find(|value| quench_runtime::is_callable(value)),
         _ => args.get(1),
     };
     let high_water_mark = option_source.and_then(|options| {
@@ -455,6 +513,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             dispatched: false,
             timeout: None,
             timeout_set: false,
+            pending_timeout: None,
             buffer: Vec::new(),
             res: None,
             head_parsed: false,
@@ -932,11 +991,42 @@ pub fn req_set_timeout(
         .and_then(|req| req.socket.clone());
     if let Some(socket) = socket {
         if timeout > 0.0 {
-            net::socket_set_timeout(
-                state,
-                Some(&socket),
-                &[Value::Number(timeout), timeout_cb],
-            )?;
+            // Node keeps the Agent/request timeout installed while a socket
+            // is connecting. An explicit req.setTimeout() supersedes that
+            // timer at the connect transition, so the socket event still
+            // observes the Agent timeout and the connect event observes the
+            // request timeout. Bind the ordinary net capability rather than
+            // inventing another transport path.
+            let connecting = net::net_id(&socket).is_some_and(|socket_id| {
+                state
+                    .borrow()
+                    .net
+                    .sockets
+                    .get(&socket_id)
+                    .is_some_and(|entry| !entry.borrow().connect_announced)
+            });
+            if connecting {
+                if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+                    req.pending_timeout = Some(timeout);
+                }
+                // Replace the option-installed timeout listeners while the
+                // socket remains in its connecting state. The one request
+                // listener is retained; the connect transition below only
+                // changes the timer value, so listener identity/order stays
+                // observable and stable.
+                crate::modules::events::method_remove_all_listeners(
+                    state,
+                    Some(&socket),
+                    &[Value::String("timeout".into())],
+                )?;
+                subscribe_event(state, &socket, "timeout", timeout_cb)?;
+            } else {
+                net::socket_set_timeout(
+                    state,
+                    Some(&socket),
+                    &[Value::Number(timeout), timeout_cb],
+                )?;
+            }
         } else {
             subscribe_event(state, &socket, "timeout", timeout_cb)?;
             net::socket_set_timeout(state, Some(&socket), &[Value::Number(timeout)])?;
@@ -1315,6 +1405,16 @@ pub fn req_end(
         .clientreqs
         .get(&id)
         .is_some_and(|req| req.timeout_set);
+    if reused {
+        // A pooled socket carries the previous request's timeout listeners.
+        // They are request-scoped, so clear that listener set before the new
+        // request installs its ordinary timeout transition.
+        crate::modules::events::method_remove_all_listeners(
+            state,
+            Some(&socket),
+            &[Value::String("timeout".into())],
+        )?;
+    }
     let request_timeout_cb = if quench_runtime::is_callable(&timeout_cb) {
         timeout_cb
     } else {
@@ -1399,10 +1499,7 @@ pub fn req_end(
 }
 
 fn invoke_end_callback(receiver: Option<&Value>, args: &[Value]) -> Result<(), VmError> {
-    let callback = args
-        .get(1)
-        .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)));
+    let callback = args.iter().find(|value| quench_runtime::is_callable(value));
     if let Some(callback) = callback {
         execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
@@ -1587,6 +1684,29 @@ fn subscribe_event(
         }
         Ok(())
     }
+}
+
+/// Apply an explicit request timeout at the socket's connect transition.
+/// Keeping this in the net pump makes the ordering fact observable: the
+/// socket event still sees the Agent timeout, while connect observers see the
+/// request timeout already installed.
+pub(crate) fn apply_deferred_request_timeout(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let Some(id) = client_id_for_socket(state, socket) else {
+        return Ok(());
+    };
+    let timeout = state
+        .borrow_mut()
+        .http
+        .clientreqs
+        .get_mut(&id)
+        .and_then(|req| req.pending_timeout.take());
+    if let Some(timeout) = timeout {
+        net::socket_set_timeout(state, Some(socket), &[Value::Number(timeout)])?;
+    }
+    Ok(())
 }
 
 /// Socket close completes the corresponding ClientRequest lifecycle.
@@ -2849,6 +2969,10 @@ fn build_incoming(
             crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
         ),
         (
+            "setTimeout".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_TIMEOUT),
+        ),
+        (
             "destroy".to_string(),
             crate::host::capability(crate::registry::SPEC_HTTP_INCOMING_DESTROY),
         ),
@@ -2881,6 +3005,7 @@ fn build_incoming(
 fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
     match value {
         Some(Value::String(url)) => http_url(url),
+        Some(Value::StringUnits(url)) => http_url(&String::from_utf16_lossy(url)),
         Some(Value::Object(_) | Value::ObjectAlias(_)) => {
             let options = value.cloned().unwrap_or(Value::Undefined);
             let parser_option = execute::get_property(&options, "insecureHTTPParser");
