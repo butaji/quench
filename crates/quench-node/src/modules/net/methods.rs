@@ -2,6 +2,7 @@
 //! connect, write/end/destroy, and the socket configuration no-ops.
 
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -779,6 +780,28 @@ pub fn server_listen(
         matches!(value, Value::String(_) | Value::StringUnits(_))
     }).and_then(|value| execute::to_js_string(value).ok()) {
         if path.starts_with('/') || path.parse::<u16>().is_err() {
+            if path.starts_with('/')
+                && Path::new(&path)
+                    .parent()
+                    .is_some_and(|parent| !parent.exists())
+            {
+                let error = host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    (
+                        "message".into(),
+                        Value::String(format!("listen ENOENT: no such file or directory {path}")),
+                    ),
+                    ("code".into(), Value::String("ENOENT".into())),
+                    ("address".into(), Value::String(path)),
+                    ("syscall".into(), Value::String("listen".into())),
+                ]);
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((receiver.clone(), error));
+                return Ok(receiver);
+            }
             let listener = match bind_listener(0, None) {
                 Ok(listener) => listener,
                 Err(error) => {
