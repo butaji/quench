@@ -110,8 +110,8 @@ const CONSOLE_CLASS: &str = r#"(class Console {
   }
   info(...args) { this.log(...args); }
   dir(...args) { this.log(...args); }
-  time(label = "default") { this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
-  timeEnd(label = "default") { this._times?.delete(label); }
+  time(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
+  timeEnd(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times?.delete(label); }
   timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr || process?.stderr;
