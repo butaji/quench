@@ -51,5 +51,20 @@ const iterable = {
     return value;
   });
   assert.deepStrictEqual(changed, [1, 3]);
+
+  let thenReads = 0;
+  const thenable = {
+    get then() {
+      thenReads += 1;
+      return (resolve) => resolve(7);
+    }
+  };
+  const assimilated = await Array.fromAsync([thenable], (value) => ({
+    then(resolve) {
+      resolve(value + 1);
+    }
+  }));
+  assert.deepStrictEqual(assimilated, [8]);
+  assert.strictEqual(thenReads, 1);
   console.log("ok");
 })();

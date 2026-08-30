@@ -63,7 +63,7 @@ fn from_async_inner(
             Vec::new(),
             0,
             None,
-            false,
+            crate::value::ArrayFromAsyncPending::None,
             initial_async_target(receiver)?,
         );
         start_async_step(state);
@@ -85,7 +85,7 @@ fn from_async_inner(
             Vec::new(),
             0,
             None,
-            false,
+            crate::value::ArrayFromAsyncPending::None,
             initial_async_target(receiver)?,
         );
         start_async_step(state);
@@ -110,7 +110,7 @@ fn from_async_inner(
         Vec::new(),
         0,
         Some((source, array_like_length)),
-        false,
+        crate::value::ArrayFromAsyncPending::None,
         initial_async_target(receiver)?,
     );
     start_async_step(state);
@@ -126,24 +126,14 @@ type AsyncFromState = (
     Vec<Value>,
     usize,
     Option<(Value, usize)>,
-    bool,
+    crate::value::ArrayFromAsyncPending,
     Option<Value>,
 );
 
 fn start_async_step(state: AsyncFromState) {
-    let (
-        result,
-        iterator,
-        receiver,
-        mapper,
-        this_arg,
-        values,
-        index,
-        array_like,
-        pending_mapper,
-        target,
-    ) = state;
-    if pending_mapper {
+    let (result, iterator, receiver, mapper, this_arg, values, index, array_like, pending, target) =
+        state;
+    if !matches!(pending, crate::value::ArrayFromAsyncPending::None) {
         return;
     }
     if let Some((source, length)) = array_like {
@@ -159,18 +149,7 @@ fn start_async_step(state: AsyncFromState) {
                     return;
                 }
             };
-            let mapped = match map_item(mapper.as_ref(), &this_arg, item, index) {
-                Ok(value) => value,
-                Err(crate::execute::VmError::Thrown(reason)) => {
-                    reject_async(&result, &iterator, reason);
-                    return;
-                }
-                Err(_) => {
-                    reject_async(&result, &iterator, Value::Undefined);
-                    return;
-                }
-            };
-            continue_after_map(
+            process_async_item(
                 result,
                 iterator,
                 receiver,
@@ -179,7 +158,7 @@ fn start_async_step(state: AsyncFromState) {
                 values,
                 index,
                 Some((source, length)),
-                mapped,
+                item,
                 target,
             );
             return;
@@ -234,7 +213,7 @@ fn start_async_step(state: AsyncFromState) {
                 values: values.clone(),
                 index,
                 array_like: array_like.clone(),
-                pending_mapper: false,
+                pending: crate::value::ArrayFromAsyncPending::None,
                 target: target.clone(),
             },
         );
@@ -243,17 +222,8 @@ fn start_async_step(state: AsyncFromState) {
         Value::Promise(promise) => match promise.state.borrow().clone() {
             crate::value::PromiseState::Pending => continuation(&promise),
             state => process_async_continuation(
-                result,
-                iterator,
-                receiver,
-                mapper,
-                this_arg,
-                values,
-                index,
-                array_like,
-                pending_mapper,
-                target,
-                &state,
+                result, iterator, receiver, mapper, this_arg, values, index, array_like, pending,
+                target, &state,
             ),
         },
         value => process_async_value(
@@ -271,11 +241,11 @@ pub(crate) fn process_async_continuation(
     values: Vec<Value>,
     index: usize,
     array_like: Option<(Value, usize)>,
-    pending_mapper: bool,
+    pending: crate::value::ArrayFromAsyncPending,
     target: Option<Value>,
     state: &crate::value::PromiseState,
 ) {
-    if pending_mapper {
+    if matches!(pending, crate::value::ArrayFromAsyncPending::Mapper) {
         match state {
             crate::value::PromiseState::Fulfilled(value) => {
                 let mut values = values;
@@ -304,9 +274,35 @@ pub(crate) fn process_async_continuation(
                     values,
                     index + 1,
                     array_like,
-                    false,
+                    crate::value::ArrayFromAsyncPending::None,
                     target,
                 ));
+            }
+            crate::value::PromiseState::Rejected(reason) => {
+                reject_async(&result, &iterator, reason.clone())
+            }
+            crate::value::PromiseState::Pending => {}
+        }
+        return;
+    }
+    if matches!(pending, crate::value::ArrayFromAsyncPending::Input) {
+        match state {
+            crate::value::PromiseState::Fulfilled(value) => {
+                let mapped = match map_item(mapper.as_ref(), &this_arg, value.clone(), index) {
+                    Ok(value) => value,
+                    Err(crate::execute::VmError::Thrown(reason)) => {
+                        reject_async(&result, &iterator, reason);
+                        return;
+                    }
+                    Err(_) => {
+                        reject_async(&result, &iterator, Value::Undefined);
+                        return;
+                    }
+                };
+                continue_after_map(
+                    result, iterator, receiver, mapper, this_arg, values, index, array_like,
+                    mapped, target,
+                );
             }
             crate::value::PromiseState::Rejected(reason) => {
                 reject_async(&result, &iterator, reason.clone())
@@ -380,7 +376,24 @@ fn process_async_value(
             return;
         }
     };
-    let mapped = match map_item(mapper.as_ref(), &this_arg, item, index) {
+    process_async_item(
+        result, iterator, receiver, mapper, this_arg, values, index, array_like, item, target,
+    );
+}
+
+fn process_async_item(
+    result: Rc<crate::value::PromiseData>,
+    iterator: Value,
+    receiver: Option<Value>,
+    mapper: Option<Value>,
+    this_arg: Value,
+    values: Vec<Value>,
+    index: usize,
+    array_like: Option<(Value, usize)>,
+    item: Value,
+    target: Option<Value>,
+) {
+    let awaited = match await_mapped(item) {
         Ok(value) => value,
         Err(crate::execute::VmError::Thrown(reason)) => {
             reject_async(&result, &iterator, reason);
@@ -391,9 +404,54 @@ fn process_async_value(
             return;
         }
     };
-    continue_after_map(
-        result, iterator, receiver, mapper, this_arg, values, index, array_like, mapped, target,
-    );
+    let Value::Promise(promise) = awaited else {
+        let mapped = match map_item(mapper.as_ref(), &this_arg, awaited, index) {
+            Ok(value) => value,
+            Err(crate::execute::VmError::Thrown(reason)) => {
+                reject_async(&result, &iterator, reason);
+                return;
+            }
+            Err(_) => {
+                reject_async(&result, &iterator, Value::Undefined);
+                return;
+            }
+        };
+        continue_after_map(
+            result, iterator, receiver, mapper, this_arg, values, index, array_like, mapped, target,
+        );
+        return;
+    };
+    let state = promise.state.borrow().clone();
+    if matches!(state, crate::value::PromiseState::Pending) {
+        promise.continuations.borrow_mut().push(
+            crate::value::PromiseContinuation::ArrayFromAsync {
+                result,
+                iterator,
+                receiver,
+                mapper,
+                this_arg,
+                values,
+                index,
+                array_like,
+                pending: crate::value::ArrayFromAsyncPending::Input,
+                target,
+            },
+        );
+    } else {
+        process_async_continuation(
+            result,
+            iterator,
+            receiver,
+            mapper,
+            this_arg,
+            values,
+            index,
+            array_like,
+            crate::value::ArrayFromAsyncPending::Input,
+            target,
+            &state,
+        );
+    }
 }
 
 fn initial_async_target(
@@ -441,6 +499,17 @@ fn continue_after_map(
     mapped: Value,
     mut target: Option<Value>,
 ) {
+    let mapped = match await_mapped(mapped) {
+        Ok(value) => value,
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            reject_async(&result, &iterator, reason);
+            return;
+        }
+        Err(_) => {
+            reject_async(&result, &iterator, Value::Undefined);
+            return;
+        }
+    };
     let Value::Promise(promise) = mapped else {
         if let Some(current) = target.take() {
             target = match write_result_element(current, index, mapped, false) {
@@ -466,7 +535,7 @@ fn continue_after_map(
             values,
             index + 1,
             array_like,
-            false,
+            crate::value::ArrayFromAsyncPending::None,
             target,
         ));
         return;
@@ -498,7 +567,7 @@ fn continue_after_map(
                 values,
                 index + 1,
                 array_like,
-                false,
+                crate::value::ArrayFromAsyncPending::None,
                 target,
             ));
         }
@@ -514,11 +583,23 @@ fn continue_after_map(
                     values,
                     index,
                     array_like,
-                    pending_mapper: true,
+                    pending: crate::value::ArrayFromAsyncPending::Mapper,
                     target,
                 },
             );
         }
+    }
+}
+
+fn await_mapped(mapped: Value) -> Result<Value, crate::execute::VmError> {
+    if matches!(mapped, Value::Promise(_)) || !crate::value::is_object(&mapped) {
+        return Ok(mapped);
+    }
+    let then = crate::execute::get_property_result(&mapped, "then")?;
+    if crate::conversion::is_callable(&then) {
+        Ok(crate::promise::promise_resolve_with_then(mapped, then))
+    } else {
+        Ok(mapped)
     }
 }
 
