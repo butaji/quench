@@ -338,7 +338,7 @@ fn run_stage_files(
         .min(files.len());
     let files = Arc::new(files);
     let next = Arc::new(AtomicUsize::new(0));
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(worker_count * WORK_BATCH);
     let mut workers = Vec::with_capacity(worker_count);
     for worker in 0..worker_count {
         let files = Arc::clone(&files);
@@ -350,7 +350,6 @@ fn run_stage_files(
                 .name(format!("stage-files-{worker}"))
                 .stack_size(WORKER_STACK_SIZE)
                 .spawn(move || {
-                    let _ = worker;
                     let isolated = env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some();
                     let mut runner = Test262Runner::new(RuntimeHost);
                     let mut harness = HarnessCache::new(root.join("harness"));
@@ -394,6 +393,7 @@ fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> 
     let output = Command::new(executable)
         .env("TEST262_DIR", root)
         .arg(path)
+        .stdout(std::process::Stdio::null())
         .output()
         .map_err(|error| format!("stage test process failed: {error}"))?;
     if output.status.success() {
