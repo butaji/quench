@@ -25,54 +25,22 @@ pub fn execute_call(
             .map(peel_binding_cell)
             .unwrap_or(Value::Undefined),
     };
-    // Specialized function bodies are complete synchronous operations.  Finish
-    // them while the caller frame is still live instead of allocating a call
-    // continuation and moving its register file out and back for the same
-    // result.  A miss falls through to the ordinary continuation path, which
-    // preserves all dynamic call/throw/suspend semantics.
-    if let Value::Function(function) = &callee_value {
-        if let Some(value) = crate::functions::try_execute_specialized(
-            function,
-            &receiver_value,
-            &arguments,
-        )? {
-            super::write_value(registers, dst, value);
-            return Ok(crate::completion::Completion::Normal);
-        }
-    }
-    Ok(take_call_continuation(
-        registers,
-        dst,
-        callee_value,
-        receiver_value,
-        arguments,
+    Ok(crate::completion::Completion::Call(
+        crate::completion::CallContinuation {
+            callee: callee_value,
+            receiver: receiver_value,
+            arguments,
+            caller_code: crate::identity::CodeId(0),
+            caller_pc: 0,
+            caller_registers: std::mem::take(registers),
+            caller_environment: crate::identity::EnvironmentRef(0),
+            destination: dst,
+            guards: crate::completion::ContinuationGuards::default(),
+        },
     ))
 }
 
-pub(crate) fn take_call_continuation(
-    registers: &mut crate::register_file::RegisterFile,
-    destination: u16,
-    callee: Value,
-    receiver: Value,
-    arguments: crate::completion::CallArguments,
-) -> crate::completion::Completion {
-    crate::completion::Completion::Call(crate::completion::CallContinuation {
-        callee,
-        receiver,
-        arguments,
-        caller_code: crate::identity::CodeId(0),
-        caller_pc: 0,
-        caller_registers: std::mem::take(registers),
-        caller_environment: crate::identity::EnvironmentRef(0),
-        destination,
-        guards: crate::completion::ContinuationGuards::default(),
-    })
-}
-
 fn peel_binding_cell(mut value: Value) -> Value {
-    if !matches!(&value, Value::BindingCell(_)) {
-        return value;
-    }
     let mut seen = std::collections::HashSet::new();
     loop {
         let Value::BindingCell(cell) = value else {
@@ -89,15 +57,6 @@ pub fn execute_call_continuation(
     registers: &mut crate::register_file::RegisterFile,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
-    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
-        execute_call_continuation_inner(registers, continuation)
-    })
-}
-
-fn execute_call_continuation_inner(
-    registers: &mut crate::register_file::RegisterFile,
-    continuation: crate::completion::CallContinuation,
-) -> Result<(), VmError> {
     struct ActiveCall {
         continuation: crate::completion::CallContinuation,
         code: crate::machine::FunctionCode,
@@ -105,16 +64,11 @@ fn execute_call_continuation_inner(
         environment: std::rc::Rc<crate::environment::Environment>,
         pc: usize,
     }
-    enum StartedCall {
-        Active(ActiveCall),
-        Fallback(crate::completion::CallContinuation),
-        Error(VmError, crate::completion::CallContinuation),
-    }
     fn start(
         continuation: crate::completion::CallContinuation,
-    ) -> StartedCall {
+    ) -> Result<Option<ActiveCall>, VmError> {
         let Value::Function(function) = &continuation.callee else {
-            return StartedCall::Fallback(continuation);
+            return Ok(None);
         };
         if crate::functions::is_class_constructor(function) {
             let error =
@@ -128,57 +82,61 @@ fn execute_call_continuation_inner(
                         "Class constructor cannot be invoked without 'new'",
                     )
                 });
-            return StartedCall::Error(error, continuation);
+            return Err(error);
         }
         // Async and generator functions must go through the ordinary invocation
         // path: it creates the Promise/generator wrapper and performs the
         // corresponding completion setup. Inlining their raw ops would return
         // the body value directly and skip that observable protocol.
         if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
-            return StartedCall::Fallback(continuation);
+            return Ok(None);
         }
         // Functions created inside a `with` scope carry a dynamic object
         // environment. The optimized continuation path has no per-frame
         // scope guard, so use the ordinary invocation path for these
         // closures to restore the captured object lookup semantics.
         if !function.with_captures.is_empty() {
-            return StartedCall::Fallback(continuation);
-        }
-        // The packed continuation has no lexical private-environment guard.
-        // Class-scoped functions therefore use the ordinary invocation path,
-        // which installs the captured private-name map before executing code.
-        if function.private_environment.has_names() {
-            return StartedCall::Fallback(continuation);
+            return Ok(None);
         }
         if crate::with_scope::is_active() {
-            return StartedCall::Fallback(continuation);
+            return Ok(None);
         }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
-        StartedCall::Active(ActiveCall {
+        Ok(Some(ActiveCall {
             code: function.code.clone(),
             continuation,
             registers: callee_registers,
             environment,
             pc: 0,
-        })
+        }))
     }
     if let Value::Function(function) = &continuation.callee {
-        if let Some(value) = crate::functions::try_execute_specialized(
-            function,
-            &continuation.receiver,
-            &continuation.arguments,
-        )? {
+        if crate::functions::is_shape_kernel_candidate(function) {
+            let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
+            if let Some(value) =
+                crate::functions::execute_shape_kernel(function, &receiver, &continuation.arguments)
+            {
+                *registers = continuation.caller_registers;
+                super::write_value(registers, continuation.destination, value);
+                return Ok(());
+            }
+        }
+        let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
+        if let Some(result) =
+            crate::functions::execute_proven_leaf(function, &receiver, &continuation.arguments)
+        {
+            let value = result?;
             *registers = continuation.caller_registers;
             super::write_value(registers, continuation.destination, value);
             return Ok(());
         }
     }
     let mut stack: Vec<ActiveCall> = Vec::new();
-    let mut current = match start(continuation) {
-        StartedCall::Active(active) => active,
-        StartedCall::Fallback(continuation) => {
+    let mut current = match start(continuation.clone())? {
+        Some(active) => active,
+        None => {
             let value = invoke_with_receiver(
                 &continuation.callee,
                 &continuation.receiver,
@@ -187,10 +145,6 @@ fn execute_call_continuation_inner(
             *registers = continuation.caller_registers;
             super::write_value(registers, continuation.destination, value);
             return Ok(());
-        }
-        StartedCall::Error(error, continuation) => {
-            *registers = continuation.caller_registers;
-            return Err(error);
         }
     };
     let context = crate::vm::current_context_or_default();
@@ -205,25 +159,6 @@ fn execute_call_continuation_inner(
         ) {
             Ok(step) => step,
             Err(error) => {
-                if let crate::execute::VmError::Thrown(value) = error {
-                    let thrown = value;
-                    loop {
-                        let view = current.code.code().ok_or(VmError::MissingReturn)?;
-                        if let Some((handler, slot)) = view.catch_at(current.pc) {
-                            if let Some(slot) = slot {
-                                super::write_value(&mut current.registers, slot, thrown.clone());
-                                crate::locals::write(slot, thrown.clone());
-                            }
-                            current.pc = handler;
-                            break;
-                        }
-                        let Some(parent) = stack.pop() else {
-                            return Err(crate::execute::VmError::Thrown(thrown));
-                        };
-                        current = parent;
-                    }
-                    continue;
-                }
                 // Calls move the caller's register file into the continuation.
                 // On an abrupt completion, restore the nearest suspended caller
                 // before returning so an enclosing try/assert.throws can observe
@@ -237,25 +172,6 @@ fn execute_call_continuation_inner(
             }
         };
         current.pc = next;
-        if let crate::completion::Completion::Throw(value) = completion {
-            let thrown = value;
-            loop {
-                let view = current.code.code().ok_or(VmError::MissingReturn)?;
-                if let Some((handler, slot)) = view.catch_at(current.pc) {
-                    if let Some(slot) = slot {
-                        super::write_value(&mut current.registers, slot, thrown.clone());
-                        crate::locals::write(slot, thrown.clone());
-                    }
-                    current.pc = handler;
-                    break;
-                }
-                let Some(parent) = stack.pop() else {
-                    return Err(crate::execute::VmError::Thrown(thrown));
-                };
-                current = parent;
-            }
-            continue;
-        }
         let result = match completion {
             crate::completion::Completion::Normal => Some(Value::Undefined),
             crate::completion::Completion::Return(value) => Some(value),
@@ -266,9 +182,9 @@ fn execute_call_continuation_inner(
                 // parent frame rather than an empty register vector.
                 current.registers = std::mem::take(&mut nested.caller_registers);
                 stack.push(current);
-                current = match start(nested) {
-                    StartedCall::Active(active) => active,
-                    StartedCall::Fallback(nested) => {
+                current = match start(nested.clone())? {
+                    Some(active) => active,
+                    None => {
                         let value = match invoke_with_receiver(
                             &nested.callee,
                             &nested.receiver,
@@ -286,11 +202,6 @@ fn execute_call_continuation_inner(
                         super::write_value(&mut parent.registers, nested.destination, value);
                         parent
                     }
-                    StartedCall::Error(error, _) => {
-                        let parent = stack.pop().expect("caller frame just pushed");
-                        *registers = parent.registers;
-                        return Err(error);
-                    }
                 };
                 None
             }
@@ -299,21 +210,20 @@ fn execute_call_continuation_inner(
                 // tail call.  Treat it as a frame replacement, not as an
                 // unconsumed completion: otherwise nested assert.throws sees an
                 // internal EvalError instead of the callback's own error value.
-                let parent = current.continuation;
                 let tail = crate::completion::CallContinuation {
                     callee: request.callee,
                     receiver: request.receiver,
                     arguments: request.arguments,
-                    caller_code: parent.caller_code,
-                    caller_pc: parent.caller_pc,
-                    caller_registers: parent.caller_registers,
-                    caller_environment: parent.caller_environment,
-                    destination: parent.destination,
-                    guards: parent.guards,
+                    caller_code: current.continuation.caller_code,
+                    caller_pc: current.continuation.caller_pc,
+                    caller_registers: current.continuation.caller_registers.clone(),
+                    caller_environment: current.continuation.caller_environment.clone(),
+                    destination: current.continuation.destination,
+                    guards: current.continuation.guards,
                 };
-                current = match start(tail) {
-                    StartedCall::Active(active) => active,
-                    StartedCall::Fallback(tail) => {
+                current = match start(tail.clone()) {
+                    Ok(Some(active)) => active,
+                    Ok(None) => {
                         let value = match invoke_with_receiver(
                             &tail.callee,
                             &tail.receiver,
@@ -333,11 +243,11 @@ fn execute_call_continuation_inner(
                         super::write_value(registers, tail.destination, value);
                         return Ok(());
                     }
-                    StartedCall::Error(error, tail) => {
+                    Err(error) => {
                         if let Some(parent) = stack.last() {
                             *registers = parent.registers.clone();
                         } else {
-                            *registers = tail.caller_registers;
+                            *registers = tail.caller_registers.clone();
                         }
                         return Err(error);
                     }
@@ -460,8 +370,8 @@ pub(crate) fn collect_call_arguments(
     registers: &crate::register_file::RegisterFile,
     args: &[u16],
     spreads: &[bool],
-) -> Result<crate::completion::CallArguments, VmError> {
-    let mut arguments = crate::completion::CallArguments::with_capacity(args.len());
+) -> Result<Vec<Value>, VmError> {
+    let mut arguments = Vec::with_capacity(args.len());
     for (i, index) in args.iter().enumerate() {
         push_argument_value(
             &mut arguments,
@@ -474,7 +384,7 @@ pub(crate) fn collect_call_arguments(
 }
 
 fn push_argument_value(
-    arguments: &mut crate::completion::CallArguments,
+    arguments: &mut Vec<Value>,
     value: Value,
     is_spread: bool,
 ) -> Result<(), VmError> {

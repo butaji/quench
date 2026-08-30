@@ -44,6 +44,17 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
+    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
+        let copy = unsafe {
+            (&*source.0.get())
+                .iter()
+                .copied()
+                .filter(|slot| usize::from(*slot) < count)
+                .collect()
+        };
+        Rc::new(Self(UnsafeCell::new(copy)))
+    }
+
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -191,16 +202,6 @@ impl SlotStore {
         index: usize,
     ) {
         self.ensure(index);
-        self.load_existing_into(registers, dst, index);
-    }
-
-    #[inline(always)]
-    fn load_existing_into(
-        &self,
-        registers: &mut crate::register_file::RegisterFile,
-        dst: u16,
-        index: usize,
-    ) {
         let value = self
             .bridges()
             .and_then(|bridges| bridges.get(index))
@@ -395,12 +396,6 @@ impl SlotRefs {
         if index >= self.len() {
             return None;
         }
-        if self.suffix_overrides.is_empty() {
-            return Some(use_binding(
-                self.suffix_store.as_deref()?,
-                index - self.prefix_len,
-            ));
-        }
         if let Ok(found) = self
             .suffix_overrides
             .binary_search_by_key(&index, |entry| entry.slot)
@@ -521,13 +516,18 @@ pub struct Environment {
     uninitialized: RefCell<Option<Rc<TdzCells>>>,
     deleted_cells: RefCell<Option<Rc<DeletedCells>>>,
     caller: Option<Rc<Self>>,
-    tdz_parent: Option<Rc<Self>>,
 }
 
 impl Drop for Environment {
     fn drop(&mut self) {
         crate::execution_trace::environment_lifecycle(false);
     }
+}
+
+fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
+    source
+        .as_ref()
+        .map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
@@ -541,17 +541,6 @@ fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Opt
 }
 
 impl Environment {
-    /// Borrow the immutable slot map without paying `RefCell`'s dynamic
-    /// borrow check on every proven local read.  The VM is single-threaded;
-    /// mutations still go through `slots.borrow_mut()` at the few semantic
-    /// boundaries that can resize or replace a binding.
-    #[inline(always)]
-    fn slots_ref(&self) -> &SlotRefs {
-        // SAFETY: all VM execution is confined to one thread. Callers using
-        // this helper are read-only and do not overlap a `borrow_mut()` call.
-        unsafe { &*self.slots.as_ptr() }
-    }
-
     pub(crate) fn new() -> Rc<Self> {
         crate::execution_trace::environment_lifecycle(true);
         Rc::new(Self::default())
@@ -581,7 +570,6 @@ impl Environment {
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
-            tdz_parent: Some(Rc::clone(environment)),
         })
     }
 
@@ -636,7 +624,6 @@ impl Environment {
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: None,
-            tdz_parent: Some(Rc::clone(environment)),
         })
     }
 
@@ -653,7 +640,7 @@ impl Environment {
     ) -> Rc<Self> {
         crate::execution_trace::environment_child(captures.len(), values.len());
         let store = SlotStore::from_registers(values);
-        let prefix = captures.slots_ref().shared_prefix();
+        let prefix = captures.slots.borrow().shared_prefix();
         let prefix_len = captures.len();
         let suffix_len = store.len();
         crate::execution_trace::environment_lifecycle(true);
@@ -672,8 +659,11 @@ impl Environment {
             uninitialized: RefCell::new(None),
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
-            tdz_parent: Some(Rc::clone(captures)),
         });
+        environment.uninitialized.replace(clone_tdz_prefix(
+            &captures.uninitialized.borrow(),
+            prefix_len,
+        ));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
@@ -687,11 +677,11 @@ impl Environment {
         Self::child(captures, values)
     }
     pub(crate) fn len(&self) -> usize {
-        self.slots_ref().len()
+        self.slots.borrow().len()
     }
 
     pub(crate) fn captured_len(&self) -> usize {
-        self.slots_ref().prefix_len
+        self.slots.borrow().prefix_len
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
@@ -708,7 +698,7 @@ impl Environment {
         dst: u16,
         slot: u16,
     ) {
-        let slots = self.slots_ref();
+        let slots = self.slots.borrow();
         if slots
             .with_binding(usize::from(slot), |store, index| {
                 store.load_into(registers, dst, index)
@@ -729,32 +719,18 @@ impl Environment {
         dst: u16,
         slot: u16,
     ) -> bool {
-        let slots = self.slots_ref();
+        let slots = self.slots.borrow();
         slots
             .with_binding(usize::from(slot), |store, index| {
-                store.load_existing_into(registers, dst, index)
-            })
-            .is_some()
-    }
-
-    #[inline(always)]
-    pub(crate) fn load_existing_proven_into(
-        &self,
-        registers: &mut crate::register_file::RegisterFile,
-        dst: u16,
-        slot: u16,
-    ) -> bool {
-        let slots = self.slots_ref();
-        slots
-            .with_binding(usize::from(slot), |store, index| {
-                store.load_existing_into(registers, dst, index)
+                store.load_into(registers, dst, index)
             })
             .is_some()
     }
 
     #[inline(always)]
     pub(crate) fn has_proven_slot(&self, slot: u16) -> bool {
-        self.slots_ref()
+        self.slots
+            .borrow()
             .with_binding(usize::from(slot), |_, _| ())
             .is_some()
     }
@@ -766,7 +742,7 @@ impl Environment {
         registers: &crate::register_file::RegisterFile,
         source: u16,
     ) -> bool {
-        let slots = self.slots_ref();
+        let slots = self.slots.borrow();
         slots
             .with_binding(usize::from(slot), |store, index| {
                 store.copy_from_register(index, registers, source)
@@ -782,7 +758,7 @@ impl Environment {
         source: u16,
         target: u16,
     ) -> Option<crate::register_file::ImmediateCopyPlan> {
-        let slots = self.slots_ref();
+        let slots = self.slots.borrow();
         let source = slots
             .with_binding(usize::from(source), SlotStore::immediate_word_ptr)
             .flatten()?;
@@ -808,7 +784,7 @@ impl Environment {
             _ => return None,
         };
         let constant = crate::functions::word_add_constant(&function)?;
-        let slots = self.slots_ref();
+        let slots = self.slots.borrow();
         let argument = slots
             .with_binding(usize::from(argument), SlotStore::immediate_word_ptr)
             .flatten()?;
@@ -832,7 +808,7 @@ impl Environment {
         dst: usize,
         slot: u16,
     ) -> bool {
-        let slots = self.slots_ref();
+        let slots = self.slots.borrow();
         slots
             .with_binding(usize::from(slot), |store, index| {
                 store.load_into_fixed(registers, dst, index)
@@ -866,7 +842,7 @@ impl Environment {
     }
 
     fn slot(&self, slot: u16) -> Option<BindingRef> {
-        self.slots_ref().get(usize::from(slot))
+        self.slots.borrow().get(usize::from(slot))
     }
 
     pub(crate) fn map_argument(
@@ -1088,9 +1064,6 @@ impl Environment {
     }
 
     pub(crate) fn is_deleted_slot(&self, slot: u16) -> bool {
-        if usize::from(slot) >= self.captured_len() && self.deleted_cells.borrow().is_none() {
-            return false;
-        }
         let Some(cell) = self.slot(slot).and_then(|binding| binding.existing_cell()) else {
             return false;
         };
@@ -1133,20 +1106,10 @@ impl Environment {
     }
 
     pub(crate) fn is_uninitialized(&self, slot: u16) -> bool {
-        if usize::from(slot) >= self.captured_len() && self.uninitialized.borrow().is_none() {
-            return false;
-        }
-        let local = self
-            .uninitialized
+        self.uninitialized
             .borrow()
             .as_ref()
-            .is_some_and(|slots| slots.contains(slot));
-        local
-            || (usize::from(slot) < self.captured_len()
-                && self
-                    .tdz_parent
-                    .as_ref()
-                    .is_some_and(|parent| parent.is_uninitialized(slot)))
+            .is_some_and(|slots| slots.contains(slot))
     }
 
     fn named_binding(&self, name: &str) -> Option<BindingRef> {
@@ -1196,11 +1159,6 @@ impl Environment {
         if let Some(slots) = self.uninitialized.borrow().as_ref() {
             slots.remove(slot);
         }
-        if usize::from(slot) < self.captured_len() {
-            if let Some(parent) = self.tdz_parent.as_ref() {
-                parent.initialize(slot);
-            }
-        }
     }
     fn shared_tdz(&self) -> Rc<TdzCells> {
         let mut state = self.uninitialized.borrow_mut();
@@ -1209,7 +1167,7 @@ impl Environment {
     }
 
     fn initialize_binding(&self, binding: &BindingRef) {
-        let slot = (0..self.slots_ref().len()).find(|slot| {
+        let slot = (0..self.slots.borrow().len()).find(|slot| {
             self.slot(*slot as u16)
                 .is_some_and(|candidate| candidate.same(binding))
         });
@@ -1237,7 +1195,7 @@ impl Environment {
         if let Some(caller) = &self.caller {
             caller.replace_value(old, new);
         }
-        for index in 0..self.slots_ref().len() {
+        for index in 0..self.slots.borrow().len() {
             let Some(slot) = self.slot(index as u16) else {
                 continue;
             };

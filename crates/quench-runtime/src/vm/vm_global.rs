@@ -17,13 +17,6 @@ pub fn current_global_object() -> Value {
         .unwrap_or_else(|| crate::locals::current().get(0))
 }
 
-#[inline(always)]
-pub(crate) fn current_global_identity() -> Option<u64> {
-    realm::global_identity(current_realm()).or_else(|| {
-        GLOBAL_OBJECT.with(|global| global.borrow().as_ref().map(|object| object.identity()))
-    })
-}
-
 pub(crate) const SCRIPT_GLOBAL_VIEW: &str = "\0quench:script-global-view";
 
 thread_local! {

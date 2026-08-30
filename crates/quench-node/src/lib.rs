@@ -1,7 +1,9 @@
 //! `quench-node` is a Node.js-API compatibility host built on top of
-//! `quench-runtime`. The runtime owns language semantics; this crate is the
-//! only piece of the workspace allowed to know what
-//! "Node" is. Keep the host boundary and runtime semantics separate.
+//! `quench-runtime`. The runtime is a pure JavaScript engine; this
+//! crate is the only piece of the workspace allowed to know what
+//! "Node" is. See `docs/adr/0002-quench-node-scope.md` for the
+//! scope, the data + patterns + machines + effects shape, and the
+//! v1 module set. The ordered plan is in `docs/NODE-STAGES.md`.
 //!
 //! Architecture: every Node API is a pure Rust object. There is no
 //! self-hosted JavaScript builtin layer and no JS bridge. The host

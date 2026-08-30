@@ -22,8 +22,8 @@ pub fn create_interface(
     let input = execute::get_property_result(&options, "input")?;
     let lines = input_lines(&input)?;
     let iface = crate::modules::events::new_emitter_object(state)?;
-    let driver = crate::host::capability(crate::registry::SPEC_READLINE_DRIVER);
-    let done = crate::host::capability(crate::registry::SPEC_READLINE_DONE);
+    let driver = crate::host::capability(crate::registry::NodeSpec::new("readline:driver", 0x1301));
+    let done = crate::host::capability(crate::registry::NodeSpec::new("readline:done", 0x1302));
     for line in lines {
         state
             .borrow_mut()

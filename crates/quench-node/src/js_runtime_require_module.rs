@@ -32,10 +32,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         )]));
     }
     if name == "internal/buffer" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "utf8Write".into(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_UTF8_WRITE),
-        )]));
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "utf8Write".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_UTF8_WRITE),
+            ),
+        ]));
     }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(
@@ -254,12 +256,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "skip".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CommonSkip)),
                 ),
-                (
-                    "printSkipMessage".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::CommonPrintSkipMessage,
-                    )),
-                ),
                 ("isInsideDirWithUnusualChars".into(), Value::Boolean(false)),
                 (
                     "mustNotMutateObjectDeep".into(),
@@ -370,9 +366,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return require_url_modules(name);
         }
         if name == "util" || name == "node:util" {
-            return Ok(crate::host::namespace_object_from_pairs(
-                crate::modules::util::build(),
-            ));
+            return Ok(crate::host::namespace_object_from_pairs(crate::modules::util::build()));
         }
         if name == "util/types" || name == "node:util/types" {
             return Ok(crate::js_runtime_internal_binding::util_types_module());
@@ -447,9 +441,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "os" || name == "node:os" {
-            return Ok(crate::host::namespace_object_from_pairs(
-                crate::modules::os::build(),
-            ));
+            return Ok(crate::host::namespace_object_from_pairs(crate::modules::os::build()));
         }
         if name == "repl" || name == "node:repl" {
             return Ok(crate::modules::repl::build());

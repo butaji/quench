@@ -17,18 +17,7 @@ thread_local! {
     static INTRINSIC_PROTOTYPE_OVERRIDES: RefCell<HashMap<Builtin, Value>> =
         RefCell::new(HashMap::new());
     static INTRINSIC_NON_EXTENSIBLE: RefCell<HashSet<Builtin>> = RefCell::new(HashSet::new());
-    static ARRAY_PROTOTYPE_DIRTY: Cell<bool> = const { Cell::new(false) };
     static GENERATION: Cell<u64> = const { Cell::new(1) };
-}
-
-fn mark_array_prototype_dirty(builtin: Builtin) {
-    if builtin == Builtin::ArrayPrototype {
-        ARRAY_PROTOTYPE_DIRTY.with(|dirty| dirty.set(true));
-    }
-}
-
-pub(crate) fn array_prototype_is_clean() -> bool {
-    ARRAY_PROTOTYPE_DIRTY.with(|dirty| !dirty.get())
 }
 
 fn changed() {
@@ -43,7 +32,6 @@ pub(crate) fn generation() -> u64 {
 /// `get_prototype_of` lookups return the override instead of the default.
 pub(crate) fn write_prototype(builtin: Builtin, value: Value) {
     changed();
-    mark_array_prototype_dirty(builtin);
     INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().insert(builtin, value);
     });
@@ -58,7 +46,6 @@ pub(crate) fn read_prototype(builtin: Builtin) -> Option<Value> {
 #[allow(dead_code)]
 pub(crate) fn clear_prototype(builtin: Builtin) {
     changed();
-    mark_array_prototype_dirty(builtin);
     INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().remove(&builtin);
     });
@@ -94,7 +81,6 @@ pub(crate) fn has_state(builtin: Builtin) -> bool {
 
 pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
     changed();
-    mark_array_prototype_dirty(builtin);
     INTRINSIC_OVERRIDES.with(|overrides| {
         overrides
             .borrow_mut()
@@ -107,7 +93,6 @@ pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
 
 pub(crate) fn remove(builtin: Builtin, key: &str) {
     changed();
-    mark_array_prototype_dirty(builtin);
     INTRINSIC_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().remove(&(builtin, key.to_string()));
     });
@@ -118,7 +103,6 @@ pub(crate) fn remove(builtin: Builtin, key: &str) {
 /// future hardcoded prototype-chain lookup can observe the deletion.
 pub(crate) fn mark_removed(builtin: Builtin, key: &str) {
     changed();
-    mark_array_prototype_dirty(builtin);
     INTRINSIC_REMOVED.with(|removed| {
         removed.borrow_mut().insert((builtin, key.to_string()));
     });
@@ -132,7 +116,6 @@ pub(crate) fn is_removed(builtin: Builtin, key: &str) -> bool {
 
 pub(crate) fn mark_non_extensible(builtin: Builtin) {
     changed();
-    mark_array_prototype_dirty(builtin);
     INTRINSIC_NON_EXTENSIBLE.with(|values| {
         values.borrow_mut().insert(builtin);
     });
@@ -146,9 +129,8 @@ pub(crate) fn is_non_extensible(builtin: Builtin) -> bool {
 /// start with a clean prototype view.
 pub(crate) fn reset() {
     changed();
-    ARRAY_PROTOTYPE_DIRTY.with(|dirty| dirty.set(false));
-    INTRINSIC_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
-    INTRINSIC_REMOVED.with(|removed| removed.borrow_mut().clear());
-    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
-    INTRINSIC_NON_EXTENSIBLE.with(|values| values.borrow_mut().clear());
+    INTRINSIC_OVERRIDES.with(|overrides| overrides.replace(HashMap::new()));
+    INTRINSIC_REMOVED.with(|removed| removed.replace(HashSet::new()));
+    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.replace(HashMap::new()));
+    INTRINSIC_NON_EXTENSIBLE.with(|values| values.replace(HashSet::new()));
 }

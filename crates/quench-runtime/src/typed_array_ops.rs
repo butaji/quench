@@ -41,12 +41,7 @@ pub(crate) fn canonical_numeric_index(key: &str) -> bool {
     if matches!(key, "NaN" | "Infinity" | "-Infinity") {
         return true;
     }
-    if key.starts_with('+')
-        || key
-            .as_bytes()
-            .iter()
-            .any(|byte| matches!(byte, b'e' | b'E'))
-    {
+    if key.starts_with('+') || key.as_bytes().iter().any(|byte| matches!(byte, b'e' | b'E')) {
         return false;
     }
     let Ok(number) = key.parse::<f64>() else {
@@ -56,11 +51,14 @@ pub(crate) fn canonical_numeric_index(key: &str) -> bool {
         return false;
     }
     if key.contains('.') {
-        number.abs() >= 1e-6 && !key.ends_with('0') && !key.ends_with('.')
+        number.abs() >= 1e-6
+            && !key.ends_with('0')
+            && !key.ends_with('.')
     } else {
         key == "0" || !key.trim_start_matches('-').starts_with('0')
     }
 }
+
 
 pub(crate) fn is_index_key(key: &str) -> bool {
     typed_array_index(key).is_some()
@@ -450,9 +448,7 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         )?;
         let start = fill_index(arguments.get(1), length, 0)?;
         let end = fill_index(
-            arguments
-                .get(2)
-                .filter(|value| !matches!(value, Value::Undefined)),
+            arguments.get(2).filter(|value| !matches!(value, Value::Undefined)),
             length,
             length,
         )?;
@@ -465,14 +461,10 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         }
         match &receiver {
             Value::BigInt64Array(view) => {
-                for index in start..end {
-                    view.set(index, bits as i64);
-                }
+                for index in start..end { view.set(index, bits as i64); }
             }
             Value::BigUint64Array(view) => {
-                for index in start..end {
-                    view.set(index, bits);
-                }
+                for index in start..end { view.set(index, bits); }
             }
             _ => unreachable!(),
         }
@@ -481,9 +473,7 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
     let number = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     let start = fill_index(arguments.get(1), length, 0)?;
     let end = fill_index(
-        arguments
-            .get(2)
-            .filter(|value| !matches!(value, Value::Undefined)),
+        arguments.get(2).filter(|value| !matches!(value, Value::Undefined)),
         length,
         length,
     )?;
@@ -495,51 +485,15 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         ));
     }
     match &receiver {
-        Value::Float64Array(view) => {
-            for index in start..end {
-                view.set(index, number);
-            }
-        }
-        Value::Float32Array(view) => {
-            for index in start..end {
-                view.set(index, number as f32);
-            }
-        }
-        Value::Int8Array(view) => {
-            for index in start..end {
-                view.set(index, crate::construct::to_int8(number));
-            }
-        }
-        Value::Int16Array(view) => {
-            for index in start..end {
-                view.set(index, crate::construct::to_int16(number));
-            }
-        }
-        Value::Int32Array(view) => {
-            for index in start..end {
-                view.set(index, crate::construct::to_int32(number));
-            }
-        }
-        Value::Uint8Array(view) => {
-            for index in start..end {
-                view.set(index, crate::construct::to_uint8(number));
-            }
-        }
-        Value::Uint16Array(view) => {
-            for index in start..end {
-                view.set(index, crate::construct::to_uint16(number));
-            }
-        }
-        Value::Uint32Array(view) => {
-            for index in start..end {
-                view.set(index, crate::construct::to_uint32(number));
-            }
-        }
-        Value::Uint8ClampedArray(view) => {
-            for index in start..end {
-                view.set(index, number);
-            }
-        }
+        Value::Float64Array(view) => for index in start..end { view.set(index, number); },
+        Value::Float32Array(view) => for index in start..end { view.set(index, number as f32); },
+        Value::Int8Array(view) => for index in start..end { view.set(index, crate::construct::to_int8(number)); },
+        Value::Int16Array(view) => for index in start..end { view.set(index, crate::construct::to_int16(number)); },
+        Value::Int32Array(view) => for index in start..end { view.set(index, crate::construct::to_int32(number)); },
+        Value::Uint8Array(view) => for index in start..end { view.set(index, crate::construct::to_uint8(number)); },
+        Value::Uint16Array(view) => for index in start..end { view.set(index, crate::construct::to_uint16(number)); },
+        Value::Uint32Array(view) => for index in start..end { view.set(index, crate::construct::to_uint32(number)); },
+        Value::Uint8ClampedArray(view) => for index in start..end { view.set(index, number); },
         _ => {
             return Err(crate::value::error::throw_type_error(
                 "TypedArray.prototype.fill called on incompatible receiver",
@@ -550,19 +504,11 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
 }
 
 fn fill_index(value: Option<&Value>, length: usize, default: usize) -> Result<usize, VmError> {
-    let Some(value) = value else {
-        return Ok(default);
-    };
+    let Some(value) = value else { return Ok(default); };
     let number = crate::conversion::to_number(value)?;
-    if number.is_nan() || number == 0.0 || number == f64::NEG_INFINITY {
-        return Ok(0);
-    }
-    if number == f64::INFINITY {
-        return Ok(length);
-    }
-    if number.is_sign_negative() {
-        return Ok(length.saturating_sub(number.abs().trunc() as usize));
-    }
+    if number.is_nan() || number == 0.0 || number == f64::NEG_INFINITY { return Ok(0); }
+    if number == f64::INFINITY { return Ok(length); }
+    if number.is_sign_negative() { return Ok(length.saturating_sub(number.abs().trunc() as usize)); }
     Ok((number.trunc() as usize).min(length))
 }
 

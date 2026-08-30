@@ -257,9 +257,7 @@ fn connect_with_receiver(
         let (object, _) = new_net_object(state, socket_props())?;
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
-            &[Value::String(format!(
-                "getaddrinfo ENOTFOUND {target_host}"
-            ))],
+            &[Value::String(format!("getaddrinfo ENOTFOUND {target_host}"))],
         );
         let error = execute::set_property(error, "code", Value::String("ENOTFOUND".into()));
         state.borrow_mut().net.pending_events.push((
@@ -267,11 +265,7 @@ fn connect_with_receiver(
             "lookup".into(),
             vec![error.clone(), Value::Undefined, Value::Undefined],
         ));
-        state
-            .borrow_mut()
-            .net
-            .pending_errors
-            .push((object.clone(), error));
+        state.borrow_mut().net.pending_errors.push((object.clone(), error));
         return Ok(object);
     };
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
@@ -474,9 +468,6 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
-    if args.len() == 1 && args.first().is_some_and(quench_runtime::is_callable) {
-        return Ok(receiver);
-    }
     if let Some(Value::String(path)) = args.first() {
         if path.starts_with('/') {
             state
@@ -702,7 +693,6 @@ pub fn socket_end(
     let Some(id) = receiver.and_then(net_id) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let mut queue_end = false;
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
         guard.state = SocketState::Closing;
@@ -712,18 +702,6 @@ pub fn socket_end(
                 let _ = stream.shutdown(Shutdown::Write);
             }
         }
-        // Outbound sockets with the default half-open policy report their
-        // readable side ending once the local write side is closed. Keep the
-        // notification on the normal net event queue so callbacks run on the
-        // next pump turn.
-        queue_end = guard.server_id.is_none();
-    }
-    if queue_end {
-        state.borrow_mut().net.pending_events.push((
-            receiver.cloned().unwrap_or(Value::Undefined),
-            "end".into(),
-            Vec::new(),
-        ));
     }
     let _ = state;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))

@@ -297,10 +297,6 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
         ),
         (
-            "send",
-            crate::host::capability(crate::registry::SPEC_CLUSTER_WORKER_PROCESS_SEND),
-        ),
-        (
             "removeListener",
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
         ),
@@ -513,11 +509,17 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
     }
-    let domain_stack = crate::modules::domain::stack_values(state);
+    let domain = match quench_runtime::execute::get_property(&global, "__quench_active_domain") {
+        Value::Object(_) => Some(quench_runtime::execute::get_property(
+            &global,
+            "__quench_active_domain",
+        )),
+        _ => None,
+    };
     state
         .borrow_mut()
         .event_loop
-        .queue_microtask_with_domain_stack(cb, rest, resource, domain_stack);
+        .queue_microtask_with_resource_domain(cb, rest, resource, domain);
     Ok(Value::Undefined)
 }
 
@@ -654,30 +656,16 @@ fn value_to_i32(value: &Value) -> i32 {
 /// `process.stdout.write(chunk)` / `process.stderr.write(chunk)` —
 /// writes the chunk to the host output sink and returns true.
 pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let chunk = stream_chunk(args.first());
+    let chunk = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(value) => crate::modules::util::inspect(value),
+        None => String::new(),
+    };
     let guard = state.borrow();
     if let Some(sink) = &guard.output {
         sink(&chunk);
     }
     Ok(Value::Boolean(true))
-}
-
-fn stream_chunk(value: Option<&Value>) -> String {
-    let Some(value) = value else {
-        return String::new();
-    };
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Uint8Array(view) => {
-            let bytes = view.buffer.bytes.borrow();
-            let end = view
-                .byte_offset
-                .saturating_add(view.length)
-                .min(bytes.len());
-            String::from_utf8_lossy(&bytes[view.byte_offset..end]).into_owned()
-        }
-        _ => crate::modules::util::inspect(value),
-    }
 }
 
 /// `process.umask([mask])` — accepts an optional new mask, returns the
@@ -758,22 +746,12 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
                     .filter(|(name, _, _)| name == event)
                     .map(|(_, handler, once)| (handler.clone(), *once))
                     .collect::<Vec<_>>();
-                let worker = guard.cluster.active_worker();
                 drop(guard);
                 for (handler, once) in callbacks {
                     if once {
                         remove_other_handler(state, event, &handler);
                     }
                     quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
-                }
-                if let Some(worker) = worker {
-                    let _ = crate::modules::cluster::emit(
-                        state,
-                        Some(&worker),
-                        &std::iter::once(Value::String(event.clone()))
-                            .chain(values.iter().cloned())
-                            .collect::<Vec<_>>(),
-                    )?;
                 }
                 return Ok(Value::Boolean(true));
             }

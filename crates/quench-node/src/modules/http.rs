@@ -90,7 +90,7 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         }
     }
     // Internal wiring: each accepted connection feeds request parsing.
-    let conn_cap = crate::host::capability(crate::registry::SPEC_HTTP_CONN);
+    let conn_cap = crate::host::capability(crate::registry::NodeSpec::new("http:conn", 0x0F07));
     crate::modules::events::method_on(
         state,
         Some(&object),
@@ -123,7 +123,7 @@ pub fn connection_handler(
             keep_alive: true,
         },
     );
-    let data_cap = crate::host::capability(crate::registry::SPEC_HTTP_DATA);
+    let data_cap = crate::host::capability(crate::registry::NodeSpec::new("http:data", 0x0F08));
     crate::modules::events::method_on(
         state,
         Some(&socket),
