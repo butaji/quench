@@ -128,8 +128,8 @@ impl ModuleGraph {
     /// edge metadata, while compiled module units retain their residual code.
     pub(crate) fn release_payloads(&mut self) {
         for unit in &mut self.units {
-            unit.source.clear();
-            unit.bytes.clear();
+            unit.source = String::new();
+            unit.bytes = Vec::new();
         }
     }
 
