@@ -762,7 +762,8 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         .collect::<Vec<_>>();
         let duration = construct(&fields)?;
         if !has_calendar
-            && requested_largest.is_some_and(|largest| largest <= 2)
+            && (requested_largest.is_none()
+                || requested_largest.is_some_and(|largest| largest <= 2))
             && index == 4
         {
             let increment = rounding_increment(options, 4)?;
