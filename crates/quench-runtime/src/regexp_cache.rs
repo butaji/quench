@@ -13,6 +13,12 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+/// Drop compiled patterns at realm boundaries so a long fixture sweep cannot
+/// retain an unbounded amount of generated RegExp state.
+pub fn reset_compiled_cache() {
+    COMPILED_REGEXPS.with(|cache| cache.borrow_mut().clear());
+}
+
 #[inline]
 fn regexp_cache_key(source: &str, flags: &str) -> u64 {
     crate::strings::hash_str(source) ^ crate::strings::hash_str(flags).rotate_left(23)
