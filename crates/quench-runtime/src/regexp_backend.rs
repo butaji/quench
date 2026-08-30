@@ -1534,6 +1534,7 @@ pub(crate) struct PropertyMatcher {
 
 #[derive(Clone, Copy)]
 enum PropertyMatcherKind {
+    Any,
     Assigned,
     Script(icu_properties::props::Script),
     ScriptExtensions(icu_properties::props::Script),
@@ -1546,6 +1547,7 @@ impl PropertyMatcher {
     pub(crate) fn matches(self, character: char) -> bool {
         use icu_properties::{props, CodePointMapData};
         match self.kind {
+            PropertyMatcherKind::Any => true,
             PropertyMatcherKind::Assigned => {
                 CodePointMapData::<props::GeneralCategory>::new().get(character)
                     != props::GeneralCategory::Unassigned
@@ -1576,7 +1578,9 @@ pub(crate) fn compile_property_matcher(
     value: Option<&str>,
 ) -> Option<PropertyMatcher> {
     use icu_properties::{props, PropertyParser};
-    let kind = if name == "Assigned" {
+    let kind = if name == "Any" {
+        PropertyMatcherKind::Any
+    } else if name == "Assigned" {
         PropertyMatcherKind::Assigned
     } else if matches!(name, "Script" | "sc") {
         PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
