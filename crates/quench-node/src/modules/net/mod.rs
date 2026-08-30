@@ -146,7 +146,7 @@ impl NetState {
             pending_errors: Vec::new(),
             lookup_result: None,
             lookup_in_call: false,
-            auto_select_family: true,
+            auto_select_family: false,
             auto_select_family_attempt_timeout: 2500,
             pending_lookups: Vec::new(),
             pending_events: Vec::new(),
