@@ -440,6 +440,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_WRITE => crate::modules::net::socket_write,
         CAP_NET_SOCKET_END => crate::modules::net::socket_end,
         CAP_NET_SOCKET_DESTROY => crate::modules::net::socket_destroy,
+        CAP_NET_SOCKET_ABORT => crate::modules::net::socket_abort,
         CAP_NET_SOCKET_UNREF => crate::modules::net::socket_unref,
         CAP_NET_SOCKET_REF => crate::modules::net::socket_ref,
         CAP_NET_BLOCK_LIST_ADD_SUBNET => crate::modules::net::block_list_add_subnet,

@@ -4,7 +4,7 @@
 //! response (Content-Length + Connection: close) and closes the socket.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -38,6 +38,10 @@ pub struct HttpState {
     pub agent_prototype: Option<Value>,
     pub client_request_prototype: Option<Value>,
     pub outgoing_prototype: Option<Value>,
+    /// HTTP agent sockets which are idle and must reject unsolicited bytes.
+    /// Keep this host-side so the parser-detached guard does not add public
+    /// stream listeners or alter observable listener counts.
+    pub idle_sockets: HashSet<u64>,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -101,8 +105,25 @@ impl HttpState {
             agent_prototype: None,
             client_request_prototype: None,
             outgoing_prototype: None,
+            idle_sockets: HashSet::new(),
         }
     }
+}
+
+pub(crate) fn mark_idle_socket(state: &Rc<RefCell<HostState>>, socket: &Value) {
+    if let Some(id) = net::net_id(socket) {
+        state.borrow_mut().http.idle_sockets.insert(id);
+    }
+}
+
+pub(crate) fn clear_idle_socket(state: &Rc<RefCell<HostState>>, socket: &Value) {
+    if let Some(id) = net::net_id(socket) {
+        state.borrow_mut().http.idle_sockets.remove(&id);
+    }
+}
+
+pub(crate) fn is_idle_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> bool {
+    net::net_id(socket).is_some_and(|id| state.borrow().http.idle_sockets.contains(&id))
 }
 
 /// `http.createServer([requestListener])` — a net server object that
@@ -1154,7 +1175,10 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     ]);
     state.borrow_mut().http.agent_prototype = Some(agent_prototype.clone());
     let agent = quench_runtime::execute::set_property(agent, "prototype", agent_prototype);
-    let global_agent = crate::modules::http_client::agent_construct(state, &[])
+    let global_agent = crate::modules::http_client::agent_construct(
+        state,
+        &[host_api::object(vec![("keepAlive".into(), Value::Boolean(true))])],
+    )
         .unwrap_or(Value::Undefined);
     state.borrow_mut().http.global_agent = Some(global_agent.clone());
     let client_request_prototype = host_api::object(vec![
