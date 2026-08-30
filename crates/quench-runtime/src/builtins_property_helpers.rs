@@ -118,17 +118,19 @@ pub(crate) fn define_own_property(
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
     let target = crate::locals::resolved_replacement(target.clone());
-    if crate::execute::get_property(&target, "\0quench:process_env")
-        == Value::Boolean(true)
-    {
-        let accessor = descriptor.iter().any(|(name, _)| name == "get" || name == "set");
-        let valid_data = descriptor.iter().any(|(name, value)| {
-            name == "configurable" && matches!(value, Value::Boolean(true))
-        }) && descriptor.iter().any(|(name, value)| {
-            name == "enumerable" && matches!(value, Value::Boolean(true))
-        }) && descriptor.iter().any(|(name, value)| {
-            name == "writable" && matches!(value, Value::Boolean(true))
-        });
+    if is_process_env_object(&target) {
+        let accessor = descriptor
+            .iter()
+            .any(|(name, _)| name == "get" || name == "set");
+        let valid_data = descriptor
+            .iter()
+            .any(|(name, value)| name == "configurable" && matches!(value, Value::Boolean(true)))
+            && descriptor
+                .iter()
+                .any(|(name, value)| name == "enumerable" && matches!(value, Value::Boolean(true)))
+            && descriptor
+                .iter()
+                .any(|(name, value)| name == "writable" && matches!(value, Value::Boolean(true)));
         if accessor {
             return Err(process_env_descriptor_error(
                 "'process.env' does not accept an accessor(getter/setter) descriptor",
@@ -215,9 +217,23 @@ pub(crate) fn define_own_property(
     Ok(result)
 }
 
+fn is_process_env_object(target: &Value) -> bool {
+    let Value::Object(properties) = target else {
+        return false;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0quench:process_env").then_some(value))
+        == Some(Value::Boolean(true))
+}
+
 fn process_env_descriptor_error(message: &str) -> crate::execute::VmError {
     crate::execute::VmError::Thrown(crate::host_api::object(vec![
-        ("code".into(), Value::String("ERR_INVALID_OBJECT_DEFINE_PROPERTY".into())),
+        (
+            "code".into(),
+            Value::String("ERR_INVALID_OBJECT_DEFINE_PROPERTY".into()),
+        ),
         ("name".into(), Value::String("TypeError".into())),
         ("message".into(), Value::String(message.into())),
     ]))

@@ -398,16 +398,6 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
         }
     }
     let (slot, value) = own?;
-    if key == "format"
-        && matches!(
-            value,
-            Value::Builtin(
-                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
-            )
-        )
-    {
-        return None;
-    }
     if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }

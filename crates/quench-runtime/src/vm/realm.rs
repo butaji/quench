@@ -92,6 +92,10 @@ pub(super) fn global(id: RealmId) -> Option<Value> {
     state(id).map(|state| Value::Object(state.global.borrow().clone()))
 }
 
+pub(super) fn global_identity(id: RealmId) -> Option<u64> {
+    state(id).map(|state| state.global.borrow().identity())
+}
+
 pub(super) fn initialize_current_global(global: ObjectProperties) {
     let initialized = super::GLOBAL_OBJECT.with(|slot| {
         if slot.borrow().is_some() {
@@ -318,7 +322,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
         host_values: parent.host_values.clone(),
         persistent_host_values: Vec::new(),
         can_block: parent.can_block(),
-        source_text: None,
+        source_text: parent.source_text.clone(),
     }
 }
 

@@ -52,12 +52,6 @@ pub(crate) fn try_execute_specialized(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    // Private-name lookup is a dynamic lexical fact. Specialized kernels do
-    // not install the function's private environment, so keep class-scoped
-    // functions on the guard-aware interpreter path.
-    if function.private_environment.has_names() {
-        return Ok(None);
-    }
     crate::execution_trace::function_call_shape(
         function.params,
         function.code.capture_slots().len(),
@@ -159,9 +153,10 @@ fn execute_interpreter(
     // `with` capture.
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
-    let mut arguments = arguments.to_vec();
+    let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
-        let (mut registers, environment) = build_registers(&function, &receiver, &arguments);
+        let (mut registers, environment) =
+            build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
             function.private_environment.clone(),
         );
@@ -188,7 +183,7 @@ fn execute_interpreter(
         };
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
-        arguments = request.arguments;
+        arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
     }
 }
 
@@ -199,10 +194,10 @@ fn execute_with_dynamic_scope(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
-    let mut arguments = arguments.to_vec();
+    let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
         let (registers, environment) =
-            crate::functions::build_registers(&function, &receiver, &arguments);
+            crate::functions::build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
             function.private_environment.clone(),
         );
@@ -230,7 +225,7 @@ fn execute_with_dynamic_scope(
         };
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
-        arguments = request.arguments;
+        arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
     }
 }
 
