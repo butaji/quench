@@ -112,6 +112,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
             return result;
         }
         crate::modules::net::poll(state)?;
+        quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         drain_unhandled_rejections(state)?;
@@ -151,6 +152,7 @@ pub fn await_promise_with_timeout(
             return Ok(false);
         }
         crate::modules::net::poll(state)?;
+        quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         drain_unhandled_rejections(state)?;
@@ -187,6 +189,7 @@ pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
         crate::modules::net::poll(state)?;
+        quench_runtime::expire_async_waiters();
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         drain_unhandled_rejections(state)?;
