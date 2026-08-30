@@ -315,7 +315,27 @@ fn feed_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<Value, Vm
         }
     }
     drain_body(state, socket_id)?;
+    reset_keep_alive_conn(state, socket_id);
     Ok(Value::Undefined)
+}
+
+fn reset_keep_alive_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) {
+    let reset = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .is_some_and(|conn| conn.response_done && conn.keep_alive && conn.body_done);
+    if !reset {
+        return;
+    }
+    if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
+        conn.req = None;
+        conn.body_remaining = 0;
+        conn.body_done = true;
+        conn.head_parsed = false;
+        conn.response_done = false;
+    }
 }
 
 fn conn_has_head(state: &Rc<RefCell<HostState>>, socket_id: u64) -> bool {

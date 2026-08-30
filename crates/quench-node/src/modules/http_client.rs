@@ -15,7 +15,8 @@ use crate::modules::net;
 
 /// Hidden property mapping a ClientRequest object to its state.
 const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
-const CLIENT_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
+pub(crate) const CLIENT_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
+pub(crate) const RES_ASYNC_RESOURCE_PROP: &str = "\0quench:http:res:async-resource";
 const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
 const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
@@ -561,15 +562,25 @@ pub fn req_write(
     if bytes.is_empty() {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    let open = {
+    let (open, custom, dispatched) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
         req.body.extend_from_slice(&bytes);
-        req.socket.is_none() && req.agent.as_ref().and_then(custom_connection).is_none()
+        (
+            req.socket.is_none(),
+            req.agent.as_ref().and_then(custom_connection).is_some(),
+            req.dispatched,
+        )
     };
-    if open {
+    if open && custom && !dispatched {
+        // A write starts an HTTP request even when the caller delays `end`.
+        // Reuse the ordinary dispatch path so Agent connection hooks, socket
+        // bookkeeping, and async resource identity stay identical to `end`.
+        let request = receiver.cloned().unwrap_or(Value::Undefined);
+        req_end(state, Some(&request), &[])?;
+    } else if open {
         let target = state.borrow().http.clientreqs.get(&id).map(|req| req.target.clone());
         if let Some(target) = target {
             let socket = open_socket(state, &target)?;
@@ -885,7 +896,14 @@ pub fn req_end(
         .clientreqs
         .get(&id)
         .and_then(|req| req.socket.clone());
-    let socket = match (existing, custom) {
+    let pooled = if existing.is_none() {
+        agent
+            .as_ref()
+            .and_then(|agent| take_agent_socket(agent, &agent_name(&target, agent)))
+    } else {
+        None
+    };
+    let socket = match (existing.or(pooled), custom) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
             let mut bytes = head.into_bytes();
@@ -1395,6 +1413,34 @@ fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
     execute::set_property_in_place(&list, "length", Value::Number((length + 1) as f64));
 }
 
+fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
+    let pools = execute::get_property(agent, "freeSockets");
+    let list = execute::get_property(&pools, name);
+    let length = match execute::get_property(&list, "length") {
+        Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+        _ => return None,
+    };
+    let socket = execute::get_property(&list, "0");
+    if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        return None;
+    }
+    let shift = execute::get_property(&list, "shift");
+    if quench_runtime::is_callable(&shift) {
+        let _ = execute::call(&shift, &list, &[]);
+    } else {
+        for index in 1..length {
+            let value = execute::get_property(&list, &index.to_string());
+            execute::set_property_in_place(&list, &(index - 1).to_string(), value);
+        }
+        execute::set_property_in_place(
+            &list,
+            "length",
+            Value::Number((length - 1) as f64),
+        );
+    }
+    Some(socket)
+}
+
 fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
     let sockets_pools = execute::get_property(agent, "sockets");
     let sockets = execute::get_property(&sockets_pools, name);
@@ -1466,7 +1512,7 @@ pub fn data_handler(
                 net::socket_destroy(state, Some(socket), &[])?;
                 return Ok(Value::Undefined);
             }
-            let res = build_incoming(state, &head)?;
+            let res = build_incoming(state, client_id, &head)?;
             if let Some(socket) = state
                 .borrow()
                 .http
@@ -2017,7 +2063,11 @@ fn head_end(buffer: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// Parse the response head into an IncomingMessage emitter.
-fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, VmError> {
+fn build_incoming(
+    state: &Rc<RefCell<HostState>>,
+    client_id: u64,
+    head: &[u8],
+) -> Result<Value, VmError> {
     let text = String::from_utf8_lossy(head);
     let mut lines = text.split("\r\n");
     let status_line = lines.next().unwrap_or("");
@@ -2040,6 +2090,12 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         }
     }
     let res = crate::modules::events::new_emitter_object(state)?;
+    let request_resource = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|request| execute::get_property(&request.req, CLIENT_ASYNC_RESOURCE_PROP));
     let props = vec![
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
@@ -2067,6 +2123,10 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         ("destroyed".to_string(), Value::Boolean(false)),
         ("errored".to_string(), Value::Null),
         ("closed".to_string(), Value::Boolean(false)),
+        (
+            RES_ASYNC_RESOURCE_PROP.to_string(),
+            request_resource.unwrap_or(Value::Undefined),
+        ),
         (
             crate::modules::http::INCOMING_CLOSE_PENDING_PROP.to_string(),
             Value::Boolean(false),
