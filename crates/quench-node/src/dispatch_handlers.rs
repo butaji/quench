@@ -724,6 +724,38 @@ pub fn process_unref(
     process_ref_like(args.first(), "Symbol.for.nodejs.unref\0", "unref")
 }
 
+pub fn process_set_uncaught_exception_capture_callback(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(callback, Value::Null | Value::Undefined)
+        && !quench_runtime::is_callable(&callback)
+    {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"callback\" argument must be of type function or null".into(),
+        ));
+    }
+    state.borrow_mut().process.uncaught_exception_capture_callback =
+        (!matches!(callback, Value::Null | Value::Undefined)).then_some(callback);
+    Ok(Value::Undefined)
+}
+
+pub fn process_has_uncaught_exception_capture_callback(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(
+        state
+            .borrow()
+            .process
+            .uncaught_exception_capture_callback
+            .is_some(),
+    ))
+}
+
 fn process_ref_like(
     target: Option<&Value>,
     symbol_key: &str,

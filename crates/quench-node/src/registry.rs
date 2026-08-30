@@ -480,6 +480,10 @@ pub const SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED: NodeSpec =
     NodeSpec::new("process:setSourceMapsEnabled", 0x0A27);
 pub const SPEC_PROCESS_REF: NodeSpec = NodeSpec::new("process:ref", 0x0A28);
 pub const SPEC_PROCESS_UNREF: NodeSpec = NodeSpec::new("process:unref", 0x0A29);
+pub const SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: NodeSpec =
+    NodeSpec::new("process:setUncaughtExceptionCaptureCallback", 0x0A2A);
+pub const SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: NodeSpec =
+    NodeSpec::new("process:hasUncaughtExceptionCaptureCallback", 0x0A2B);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -1199,6 +1203,10 @@ pub const CAP_PROCESS_BINDING_UV_ERRNAME: CapId = SPEC_PROCESS_BINDING_UV_ERRNAM
 pub const CAP_PROCESS_SET_SOURCE_MAPS_ENABLED: CapId = SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED.cap;
 pub const CAP_PROCESS_REF: CapId = SPEC_PROCESS_REF.cap;
 pub const CAP_PROCESS_UNREF: CapId = SPEC_PROCESS_UNREF.cap;
+pub const CAP_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: CapId =
+    SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK.cap;
+pub const CAP_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: CapId =
+    SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK.cap;
 pub const CAP_PROCESS_NEXT_TICK: CapId = SPEC_PROCESS_NEXT_TICK.cap;
 pub const CAP_PROCESS_ON: CapId = SPEC_PROCESS_ON.cap;
 pub const CAP_PROCESS_ONCE: CapId = SPEC_PROCESS_ONCE.cap;

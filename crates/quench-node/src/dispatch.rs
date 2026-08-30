@@ -319,6 +319,12 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_SET_SOURCE_MAPS_ENABLED => process_set_source_maps_enabled,
         CAP_PROCESS_REF => process_ref,
         CAP_PROCESS_UNREF => process_unref,
+        CAP_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK => {
+            process_set_uncaught_exception_capture_callback
+        }
+        CAP_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK => {
+            process_has_uncaught_exception_capture_callback
+        }
         CAP_PROCESS_UPTIME => process_uptime,
         CAP_PROCESS_AVAILABLE_MEMORY => process_available_memory,
         CAP_PROCESS_CONSTRAINED_MEMORY => process_constrained_memory,

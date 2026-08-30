@@ -61,11 +61,17 @@ fn call_guarded_report(
     let VmError::Thrown(thrown) = error else {
         return Err(error);
     };
+    let has_capture = state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .is_some();
     if state
         .borrow()
         .process
         .uncaught_exception_handlers
         .is_empty()
+        && !has_capture
     {
         return Err(VmError::Thrown(thrown));
     }
@@ -76,6 +82,14 @@ fn call_guarded_report(
 /// Run the registered `uncaughtException` handlers for one thrown
 /// value; `once` handlers fire a single time.
 fn run_uncaught_handlers(state: &Rc<RefCell<HostState>>, thrown: &Value) -> Result<(), VmError> {
+    if let Some(callback) = state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .clone()
+    {
+        return call_callback(&callback, &Value::Undefined, std::slice::from_ref(thrown));
+    }
     let handlers = crate::modules::timers::take_once_handlers(
         state,
         crate::modules::timers::HandlerKind::UncaughtException,
@@ -102,11 +116,17 @@ pub fn handle_uncaught(state: &Rc<RefCell<HostState>>, error: VmError) -> Result
     let VmError::Thrown(thrown) = error else {
         return Err(error);
     };
+    let has_capture = state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .is_some();
     if state
         .borrow()
         .process
         .uncaught_exception_handlers
         .is_empty()
+        && !has_capture
     {
         return Err(VmError::Thrown(thrown));
     }
