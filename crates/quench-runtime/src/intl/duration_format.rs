@@ -491,7 +491,7 @@ fn fractional_number(
     let requested = slots
         .iter()
         .find_map(|(key, value)| {
-            (key == "fractionalDigits").then(|| match value {
+            (key == "fractionalDigits").then_some(match value {
                 Value::Number(n) => *n as usize,
                 _ => 9,
             })

@@ -334,7 +334,7 @@ fn unit_less_than_iterations(index: f64, bound: f64) -> Option<usize> {
         return Some(0);
     }
     let iterations = (bound - index).ceil();
-    (iterations <= usize::MAX as f64).then(|| iterations as usize)
+    (iterations <= usize::MAX as f64).then_some(iterations as usize)
 }
 
 #[inline(always)]
@@ -944,7 +944,7 @@ fn proven_word_call_body(
     dst: u16,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Option<Vec<crate::register_file::ImmediateNumberCallPlan>> {
-    (body.len() >= 5 && body.len().is_multiple_of(5)).then_some(())?;
+    (body.len() >= 5 && body.len() % 5 == 0).then_some(())?;
     (0..body.len())
         .step_by(5)
         .map(|pc| {
