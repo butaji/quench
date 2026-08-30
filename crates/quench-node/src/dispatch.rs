@@ -317,6 +317,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_SETGROUPS => process_setgroups,
         CAP_PROCESS_BINDING_UV_ERRNAME => process_binding_uv_errname,
         CAP_PROCESS_SET_SOURCE_MAPS_ENABLED => process_set_source_maps_enabled,
+        CAP_PROCESS_REF => process_ref,
+        CAP_PROCESS_UNREF => process_unref,
         CAP_PROCESS_UPTIME => process_uptime,
         CAP_PROCESS_AVAILABLE_MEMORY => process_available_memory,
         CAP_PROCESS_CONSTRAINED_MEMORY => process_constrained_memory,
