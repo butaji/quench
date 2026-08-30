@@ -363,13 +363,13 @@ fn run_stage_files(
                         }
                         let stop = (start + WORK_BATCH).min(files.len());
                         for index in start..stop {
-                            let path = files[index].clone();
+                            let path = &files[index];
                             let outcome = if isolated {
-                                run_file_in_process(&root, &path)
+                                run_file_in_process(&root, path)
                             } else {
-                                runner.run_file_with_cache(&path, &mut harness)
+                                runner.run_file_with_cache(path, &mut harness)
                             };
-                            if sender.send((index, path, outcome)).is_err() {
+                            if sender.send((index, outcome)).is_err() {
                                 return;
                             }
                         }
@@ -385,8 +385,13 @@ fn run_stage_files(
             .join()
             .map_err(|_| "stage worker panicked".to_string())?;
     }
-    results.sort_by_key(|(index, _, _)| *index);
-    Ok(results)
+    results.sort_by_key(|(index, _)| *index);
+    let mut files = Arc::try_unwrap(files)
+        .map_err(|_| "stage files still referenced after workers joined".to_string())?;
+    Ok(results
+        .into_iter()
+        .map(|(index, outcome)| (index, std::mem::take(&mut files[index]), outcome))
+        .collect())
 }
 
 fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
