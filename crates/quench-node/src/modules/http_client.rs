@@ -22,6 +22,7 @@ const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
 const CLIENT_EXPECT_CONTINUE_PROP: &str = "\0quench:http:req:expect-continue";
 const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
+const CLIENT_SOCKET_SUBSCRIBED_PROP: &str = "\0quench:http:req:socket-subscribed";
 
 /// `(host, port, method, path, headers)` for one outbound request.
 #[derive(Clone)]
@@ -661,6 +662,17 @@ pub fn req_abort(
         .net
         .pending_request_writes
         .retain(|(_, _, pending)| !execute::same_identity(pending, &request));
+    // A request can be aborted before the event-loop announces its socket.
+    // The socket event belongs to the request's connection transition, so a
+    // terminal abort removes that deferred transition rather than exposing a
+    // socket after the request has become destroyed.
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .retain(|(pending, event, _)| {
+            !(execute::same_identity(pending, &request) && event == "socket")
+        });
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
@@ -1643,6 +1655,10 @@ fn default_empty_body(method: &str) -> bool {
 }
 
 fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<(), VmError> {
+    if matches!(execute::get_property(socket, CLIENT_SOCKET_SUBSCRIBED_PROP), Value::Boolean(true)) {
+        return Ok(());
+    }
+    execute::set_property_in_place(socket, CLIENT_SOCKET_SUBSCRIBED_PROP, Value::Boolean(true));
     let data_cap = crate::host::capability(crate::registry::SPEC_HTTP_RESDATA);
     subscribe_event(state, socket, "data", data_cap)?;
     let end_cap = crate::host::capability(crate::registry::SPEC_HTTP_RESEND);
@@ -2374,6 +2390,9 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
             req.response_chunked_done = true;
         }
         let buffer = std::mem::take(&mut req.buffer);
+        if consumed < buffer.len() {
+            req.buffer.extend_from_slice(&buffer[consumed..]);
+        }
         (req.res.clone(), buffer, consumed)
     };
     if let Some(res) = res {
@@ -2619,6 +2638,8 @@ pub fn res_end_handler(
             return Ok(Value::Undefined);
         };
         if req.response_ended {
+            drop(guard);
+            reject_trailing_response(state, client_id, socket)?;
             return Ok(Value::Undefined);
         }
         req.response_ended = true;
@@ -2626,6 +2647,7 @@ pub fn res_end_handler(
     };
     if let Some(res) = res {
         if matches!(execute::get_property(&res, "complete"), Value::Boolean(true)) {
+            reject_trailing_response(state, client_id, socket)?;
             return Ok(Value::Undefined);
         }
         let expected = match execute::get_property(&res, "headers") {
@@ -2738,6 +2760,30 @@ pub fn res_end_handler(
         net::socket_destroy(state, Some(socket), &[])?;
     }
     Ok(Value::Undefined)
+}
+
+fn reject_trailing_response(
+    state: &Rc<RefCell<HostState>>,
+    client_id: u64,
+    socket: &Value,
+) -> Result<(), VmError> {
+    let trailing = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| !req.buffer.is_empty() && !req.parse_error)
+        .unwrap_or(false);
+    if !trailing {
+        return Ok(());
+    }
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+        req.parse_error = true;
+        req.buffer.clear();
+    }
+    let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+    net::emit(state, &request, "error", vec![invalid_response_constant()])?;
+    net::socket_destroy(state, Some(socket), &[]).map(|_| ())
 }
 
 fn invalid_response_start(state: &Rc<RefCell<HostState>>, client_id: u64) -> Option<Value> {
