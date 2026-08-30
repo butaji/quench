@@ -218,8 +218,25 @@ pub(crate) fn set_socket_state(socket: &Value, pending: bool, connecting: bool, 
         // Agent pools. Mutate their existing object identity; replacing the
         // value through ordinary copy-on-write semantics would make
         // `res.socket === req.socket` and pooled-socket reuse diverge.
+        set_socket_property(socket, key, value);
+    }
+}
+
+/// Mutate a host socket through either a direct object or a VM alias. Aliases
+/// need the runtime replacement path; direct objects can use the allocation-
+/// free host mutation path.
+pub(crate) fn set_socket_property(socket: &Value, key: &str, value: Value) {
+    if key == "pending" && matches!(value, Value::Boolean(false)) {
+        let updated = execute::set_property(socket.clone(), key, value);
+        execute::replace_value(socket, &updated);
+    } else {
         execute::set_property_in_place(socket, key, value);
     }
+}
+
+pub(crate) fn replace_socket_property(socket: &Value, key: &str, value: Value) {
+    let updated = execute::set_property(socket.clone(), key, value);
+    execute::replace_value(socket, &updated);
 }
 
 pub(crate) fn update_socket_counters(socket: &NetSocket) {
