@@ -730,15 +730,38 @@ pub fn process_set_uncaught_exception_capture_callback(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(callback, Value::Null | Value::Undefined)
+    if !matches!(callback, Value::Null)
         && !quench_runtime::is_callable(&callback)
     {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(
-            "The \"callback\" argument must be of type function or null".into(),
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"fn\" argument must be of type function or null.{}",
+            crate::modules::buffer_enc::invalid_arg_received(&callback)
+        )));
+    }
+    if state
+        .borrow()
+        .process
+        .uncaught_exception_capture_callback
+        .is_some()
+        && !matches!(callback, Value::Null)
+    {
+        return Err(VmError::Thrown(crate::host::namespace_object_from_pairs(vec![
+            ("name".into(), Value::String("Error".into())),
+            (
+                "code".into(),
+                Value::String("ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET".into()),
+            ),
+            (
+                "message".into(),
+                Value::String(
+                    "setupUncaughtExceptionCaptureCallback called while a capture callback was already set"
+                        .into(),
+                ),
+            ),
+        ])));
     }
     state.borrow_mut().process.uncaught_exception_capture_callback =
-        (!matches!(callback, Value::Null | Value::Undefined)).then_some(callback);
+        (!matches!(callback, Value::Null)).then_some(callback);
     Ok(Value::Undefined)
 }
 
