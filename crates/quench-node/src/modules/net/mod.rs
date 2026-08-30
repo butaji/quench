@@ -183,6 +183,7 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
             ("bytesRead".to_string(), Value::Number(0.0)),
             ("bytesWritten".to_string(), Value::Number(0.0)),
             ("bufferSize".to_string(), Value::Number(0.0)),
+            ("writableLength".to_string(), Value::Number(0.0)),
             (
                 "writableHighWaterMark".to_string(),
                 Value::Number(16_384.0),
@@ -445,13 +446,12 @@ fn try_flush(guard: &mut std::cell::RefMut<'_, NetSocket>) -> bool {
     if guard.write_buf.is_empty() {
         return true;
     }
-    let pending = guard.write_buf.clone();
-    let written = {
-        let Some(stream) = guard.stream.as_mut() else {
-            return false;
-        };
-        stream.write(&pending).unwrap_or(0)
-    };
+    let mut stream = guard.stream.take();
+    let written = stream
+        .as_mut()
+        .map(|stream| stream.write(&guard.write_buf).unwrap_or(0))
+        .unwrap_or(0);
+    guard.stream = stream;
     if written > 0 {
         guard.write_buf.drain(..written);
     }
