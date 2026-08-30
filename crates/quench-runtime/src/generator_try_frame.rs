@@ -163,14 +163,6 @@ fn resume_finalizer_frame(
     resume_after_try(generator, state, frame.resume, completion).map(Some)
 }
 
-fn execute_frame_range(
-    generator: &GeneratorData,
-    _state: &mut GeneratorState,
-    range: crate::machine::CodeRange,
-) -> Result<crate::completion::Completion, VmError> {
-    Ok(execute_frame_step(generator, range)?.completion)
-}
-
 fn execute_frame_step(
     generator: &GeneratorData,
     range: crate::machine::CodeRange,
