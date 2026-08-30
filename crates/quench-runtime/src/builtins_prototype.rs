@@ -339,6 +339,7 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
             | Builtin::URIErrorPrototype
             | Builtin::AggregateErrorPrototype
             | Builtin::SuppressedErrorPrototype
+            | Builtin::DOMExceptionPrototype
             | Builtin::IntlCollatorPrototype
             | Builtin::IntlDateTimeFormatPrototype
             | Builtin::IntlLocalePrototype
