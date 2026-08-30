@@ -73,6 +73,7 @@ pub struct NetServer {
     pub closed: bool,
     pub close_emitted: bool,
     pub allow_half_open: bool,
+    pub pause_on_connect: bool,
 }
 
 pub struct NetSocket {
@@ -189,10 +190,15 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         || !host.net.pending_lookups.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
+            let paused = matches!(
+                execute::get_property(&socket.js, ONREAD_PAUSED_PROP),
+                Value::Boolean(true)
+            );
             socket.refed
                 && socket.state != SocketState::Closed
                 && !socket.read_eof
                 && (socket.stream.is_some() || socket.server_id.is_some())
+                && (!paused || pending_write_len(&socket) > 0)
         })
 }
 
@@ -468,6 +474,10 @@ fn register_server_path(
             close_emitted: false,
             allow_half_open: matches!(
                 execute::get_property(js, "allowHalfOpen"),
+                Value::Boolean(true)
+            ),
+            pause_on_connect: matches!(
+                execute::get_property(js, "pauseOnConnect"),
                 Value::Boolean(true)
             ),
         })),
