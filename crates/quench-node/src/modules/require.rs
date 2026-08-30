@@ -514,7 +514,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "net" => Some(crate::modules::net::build()),
         "tty" => Some(crate::modules::tty::build()),
         "fs" => Some(crate::modules::fs::build()),
-        "http" => Some(crate::modules::http::build()),
+        "http" => Some(crate::modules::http::build(state)),
         "readline" => Some(crate::modules::readline::build()),
         "vm" => Some(crate::modules::vm::build()),
         "dgram" | "node:dgram" => {
