@@ -19,6 +19,7 @@ impl CapabilityName {
     const FsCpSync: u16 = 1329;
     const FsCp: u16 = 1330;
     const TmpdirResolve: u16 = 1331;
+    const TmpdirHasEnoughSpace: u16 = 1337;
     const CommonFsNextdir: u16 = 1332;
     const CommonFsAssertDirEquivalent: u16 = 1333;
     const CommonFsCollectEntries: u16 = 1335;
@@ -397,6 +398,8 @@ impl CapabilityName {
     const CommonMustCall: u16 = 1700;
     const CommonMustCallAtLeast: u16 = 1705;
     const CommonSkip: u16 = 1706;
+    const CommonPrintSkipMessage: u16 = 1707;
+    const CommonTick: u16 = 1708;
     const FsWriteAsync: u16 = 1520;
     const FsReadAsync: u16 = 1521;
     const FsWritePromise: u16 = 1522;

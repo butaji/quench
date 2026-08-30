@@ -133,35 +133,46 @@ fn record_prototype_is_data_only(
     prototype: &crate::value::Value,
     fact: &RecordConstructorFact<'_>,
 ) -> Option<()> {
-    let crate::value::Value::Object(prototype) = prototype else {
-        return None;
-    };
-    if prototype.has_replacement() {
-        return None;
+    let mut prototype = prototype.clone();
+    for _ in 0..32 {
+        if matches!(
+            prototype,
+            crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+        ) {
+            return (!record_intrinsic_conflicts(fact)).then_some(());
+        }
+        let next = {
+            let crate::value::Value::Object(object) = &prototype else {
+                return None;
+            };
+            if object.has_replacement() || record_prototype_conflicts(object, fact) {
+                return None;
+            }
+            object
+                .hot_properties()
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "\0prototype").then_some(value.clone()))?
+        };
+        prototype = next;
     }
-    for (key, _) in fact.fields {
-        let conflicts = prototype.hot_properties().iter().any(|(name, _)| {
+    None
+}
+
+fn record_prototype_conflicts(
+    object: &crate::value::ObjectData,
+    fact: &RecordConstructorFact<'_>,
+) -> bool {
+    fact.fields.iter().any(|(key, _)| {
+        object.hot_properties().iter().any(|(name, _)| {
             name == key
                 || crate::builtins::is_descriptor_key_for(name, key)
                 || crate::builtins::is_deleted_key_for(name, key)
-        });
-        if conflicts {
-            return None;
-        }
-    }
-    let parent = prototype
-        .hot_properties()
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
-    if parent.is_some_and(|value| {
-        !matches!(
-            value,
-            crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
-        )
-    }) {
-        return None;
-    }
+        })
+    })
+}
+
+fn record_intrinsic_conflicts(fact: &RecordConstructorFact<'_>) -> bool {
     for (key, _) in fact.fields {
         if crate::builtins::read_intrinsic_override(crate::ops::Builtin::ObjectPrototype, key)
             .is_some()
@@ -170,8 +181,8 @@ fn record_prototype_is_data_only(
                 key,
             )
         {
-            return None;
+            return true;
         }
     }
-    Some(())
+    false
 }

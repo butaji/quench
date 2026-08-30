@@ -42,8 +42,21 @@ fn call_guarded(
     receiver: &Value,
     args: &[Value],
 ) -> Result<(), VmError> {
+    call_guarded_report(state, cb, receiver, args).map(|_| ())
+}
+
+/// Invoke one callback and report whether an exception was handled by the
+/// uncaught-exception boundary.  Immediate queues use this bit to preserve
+/// Node's phase rule: after a handled throw, the rest of the current
+/// immediate snapshot runs before its newly queued nextTick callbacks.
+fn call_guarded_report(
+    state: &Rc<RefCell<HostState>>,
+    cb: &Value,
+    receiver: &Value,
+    args: &[Value],
+) -> Result<bool, VmError> {
     let Err(error) = call_callback(cb, receiver, args) else {
-        return Ok(());
+        return Ok(false);
     };
     let VmError::Thrown(thrown) = error else {
         return Err(error);
@@ -56,7 +69,8 @@ fn call_guarded(
     {
         return Err(VmError::Thrown(thrown));
     }
-    run_uncaught_handlers(state, &thrown)
+    run_uncaught_handlers(state, &thrown)?;
+    Ok(true)
 }
 
 /// Run the registered `uncaughtException` handlers for one thrown
@@ -195,6 +209,12 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
+        // Work created by a timer/immediate belongs to this turn.  Drain its
+        // promise and rejection edges before deciding that lifecycle work is
+        // quiescent, otherwise `exit` observers race the final rejection.
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        drain_unhandled_rejections(state)?;
         if !has_pending(state) {
             let handlers = state.borrow().process.before_exit_handlers.clone();
             run_lifecycle_handlers(state, &handlers, 0)?;
@@ -387,18 +407,43 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
+    let previous_stack = task.domain_stack.as_ref().map(|stack| {
+        let previous = crate::modules::domain::stack_values(state);
+        let base = stack.get(..stack.len().saturating_sub(1)).unwrap_or(&[]);
+        crate::modules::domain::replace_stack(state, base);
+        previous
+    });
     let result = if let Some(domain) = task.domain.as_ref() {
         let mut call_args = Vec::with_capacity(task.args.len() + 1);
         call_args.push(task.callback.clone());
         call_args.extend(task.args.iter().cloned());
         crate::modules::domain::run(state, Some(domain), &call_args).map(|_| ())
     } else {
-        call_guarded(state, &task.callback, &Value::Undefined, &task.args)
+        call_guarded(
+            state,
+            &task.callback,
+            task.receiver.as_ref().unwrap_or(&Value::Undefined),
+            &task.args,
+        )
     };
+    if let Some(previous) = previous_stack.as_ref() {
+        crate::modules::domain::replace_stack(state, previous);
+    }
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
     }
     result.map(|()| true)
+}
+
+/// Advance timers under the deterministic mock clock. Mock `tick()` is an
+/// explicit host event-loop turn, so it also runs unref'd timers that would
+/// not keep a real process alive on their own.
+pub(crate) fn drain_mock_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    fire_due_timers(state)?;
+    drain_immediates(state)?;
+    drain_ticks(state)?;
+    quench_runtime::drain_promise_jobs();
+    Ok(())
 }
 
 fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -484,12 +529,13 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         }
     }
     if destroy && !converted {
-        super::timers::async_destroy(&resource);
+        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     result
 }
 
 fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let mut defer_ticks = false;
     let queued: Vec<(Value, Vec<Value>)> = state
         .borrow()
         .event_loop
@@ -498,7 +544,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         .drain(..)
         .collect();
     for (cb, args) in queued {
-        call_guarded(state, &cb, &Value::Undefined, &args)?;
+        defer_ticks |= call_guarded_report(state, &cb, &Value::Undefined, &args)?;
     }
     let mut ids: Vec<u64> = state
         .borrow()
@@ -521,10 +567,25 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         }
         crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
-        let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
+        let result = match timer.domain.as_ref() {
+            Some(domain) => call_timer(
+                state,
+                Some(domain),
+                &timer.callback,
+                &timer.object,
+                &timer.args,
+            )
+            .map(|_| false),
+            None => call_guarded_report(state, &timer.callback, &timer.object, &timer.args),
+        };
         crate::modules::async_hooks::resource_after(state, None, &[])?;
-        super::timers::async_destroy(&timer.async_resource);
-        result?;
+        crate::modules::async_hooks::resource_destroy(state, Some(&timer.async_resource), &[])?;
+        defer_ticks |= result?;
+        if !defer_ticks {
+            drain_ticks(state)?;
+        }
+    }
+    if defer_ticks {
         drain_ticks(state)?;
     }
     Ok(())
@@ -542,7 +603,9 @@ fn has_referenced_work(state: &Rc<RefCell<HostState>>) -> bool {
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
     let guard = state.borrow();
-    !guard.event_loop.immediates.borrow().is_empty()
+    quench_runtime::has_pending_promise_jobs()
+        || quench_runtime::has_pending_unhandled_rejections()
+        || !guard.event_loop.immediates.borrow().is_empty()
         || guard
             .timers
             .timers

@@ -1,10 +1,43 @@
 "use strict";
 
 const ITERATION_ERROR = "iterations must be a positive safe integer";
+const COUNTER_VERSION = 1;
+// This is a fixed semantic vocabulary, deliberately not an event map. A
+// missing counters object means diagnostics were compiled out; a null member
+// means that particular counter was unavailable in this diagnostic build.
+const COUNTER_FIELDS = Object.freeze([
+  "value_decodes",
+  "value_clones",
+  "value_drops",
+  "environment_allocations",
+  "generic_calls",
+  "fallbacks",
+  "property_lookups",
+  "array_materializations",
+  "allocated_bytes",
+]);
 
 function assertIterations(iterations) {
   if (!Number.isSafeInteger(iterations) || iterations < 1) {
     throw new Error(ITERATION_ERROR);
+  }
+}
+
+function validateCounters(counters) {
+  if (counters === undefined) return;
+  if (!counters || typeof counters !== "object" || counters.version !== COUNTER_VERSION) {
+    throw new TypeError(`benchmark counters require version ${COUNTER_VERSION}`);
+  }
+  for (const field of COUNTER_FIELDS) {
+    const value = counters[field];
+    if (value !== null && (!Number.isSafeInteger(value) || value < 0)) {
+      throw new TypeError(`benchmark counter ${field} must be a non-negative safe integer or null`);
+    }
+  }
+  for (const field of Object.keys(counters)) {
+    if (field !== "version" && !COUNTER_FIELDS.includes(field)) {
+      throw new TypeError(`unknown benchmark counter ${field}`);
+    }
   }
 }
 
@@ -36,8 +69,9 @@ function validateBenchmarkReport(report, expectedIterations) {
     if (typeof result.wall_ms !== "number" || !Number.isFinite(result.wall_ms) || result.wall_ms < 0) {
       throw new TypeError("benchmark result wall_ms must be non-negative and finite");
     }
+    validateCounters(result.counters);
   }
   return report;
 }
 
-module.exports = { assertIterations, validateBenchmarkReport };
+module.exports = { COUNTER_FIELDS, COUNTER_VERSION, assertIterations, validateBenchmarkReport, validateCounters };
