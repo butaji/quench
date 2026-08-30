@@ -669,6 +669,15 @@ fn family(addr: SocketAddr) -> String {
     }
 }
 
+pub(crate) fn peer_write_error() -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("write EPIPE".into())],
+    );
+    let error = execute::set_property(error, "code", Value::String("EPIPE".into()));
+    execute::set_property(error, "syscall", Value::String("write".into()))
+}
+
 fn resolve(host: &str, port: u16) -> SocketAddr {
     let host = if host == "localhost" {
         LOCAL_HOST
