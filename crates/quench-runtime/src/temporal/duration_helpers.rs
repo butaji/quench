@@ -420,19 +420,34 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
         field(&target, "month")? as f64,
         field(&target, "day")? as f64,
     );
-    let whole = if unit == 0 {
+    let mut whole = if unit == 0 {
         field(duration, "years")?
     } else {
         field(duration, "years")? * 12.0 + field(duration, "months")?
     };
-    let anchor = construct(&[
+    if whole == 0.0 && (unit == 0 || unit == 1) {
+        let mut date_units = if unit == 0 {
+            end.0 - start.0
+        } else {
+            (end.0 - start.0) * 12.0 + end.1 - start.1
+        };
+        if (end.2, end.1) < (start.2, start.1) {
+            date_units -= 1.0;
+        }
+        whole = date_units;
+    }
+    let anchor_duration = construct(&[
         Value::Number(if unit == 0 {
             whole
+        } else if field(duration, "years")? == 0.0 && field(duration, "months")? == 0.0 {
+            (whole / 12.0).trunc()
         } else {
             field(duration, "years")?
         }),
         Value::Number(if unit == 0 {
             0.0
+        } else if field(duration, "years")? == 0.0 && field(duration, "months")? == 0.0 {
+            whole % 12.0
         } else {
             field(duration, "months")?
         }),
@@ -445,15 +460,60 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
         Value::Number(0.0),
         Value::Number(0.0),
     ])?;
-    let anchor = zoned_target(&anchor, relative)?;
+    let anchor = zoned_target(&anchor_duration, relative)?;
     let anchor_date = (
         field(&anchor, "year")? as f64,
         field(&anchor, "month")? as f64,
         field(&anchor, "day")? as f64,
     );
-    let residual_days = (crate::temporal::plain_date::date_serial(end.0, end.1, end.2)
+    let date_residual_days = (crate::temporal::plain_date::date_serial(end.0, end.1, end.2)
         - crate::temporal::plain_date::date_serial(anchor_date.0, anchor_date.1, anchor_date.2))
         as f64;
+    let epoch_residual_days = (duration_epoch_delta(duration, relative)?
+        - duration_epoch_delta(&anchor_duration, relative)?) as f64
+        / 86_400_000_000_000.0;
+    let iana_timezone = crate::execute::get_property_result(relative, "timeZoneId")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.contains('/')),
+            _ => None,
+        })
+        .unwrap_or(false);
+    let mut residual_days = if iana_timezone
+        || zoned_day_length_hours(relative)
+            .is_some_and(|length| (length - 24.0).abs() > 1e-9)
+    {
+        date_residual_days
+    } else {
+        epoch_residual_days
+    };
+    if unit == 1 {
+        let month_delta = (end.0 - anchor_date.0) * 12.0 + end.1 - anchor_date.1;
+        let extra_months = if date_residual_days >= 0.0 {
+            if end.2 >= anchor_date.2 { month_delta } else { month_delta - 1.0 }
+        } else if end.2 <= anchor_date.2 {
+            month_delta
+        } else {
+            month_delta + 1.0
+        };
+        if extra_months != 0.0 {
+            let month = (anchor_date.1 as i32 - 1 + extra_months as i32).rem_euclid(12) + 1;
+            let year = anchor_date.0 + (anchor_date.1 as i32 - 1 + extra_months as i32).div_euclid(12) as f64;
+            let day = anchor_date.2.min(
+                crate::temporal::plain_date::days_in_month_for_record(year as i32, month as u32)
+                    as f64,
+            );
+            let shifted = crate::temporal::plain_date::date_serial(year, month as f64, day as f64);
+            let extra_days = (shifted
+                - crate::temporal::plain_date::date_serial(
+                    anchor_date.0,
+                    anchor_date.1,
+                    anchor_date.2,
+                )) as f64;
+            whole += extra_months;
+            residual_days -= date_residual_days - (date_residual_days - extra_days);
+        }
+    }
     let span =
         crate::temporal::plain_date::days_in_month_for_record(end.0 as i32, end.1 as u32) as f64;
     if unit == 0 {
@@ -572,6 +632,29 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
             let resolved = crate::locals::resolved_replacement(value.clone());
             if let Value::Object(object) = &resolved {
                 let has_prototype = object.iter().any(|(key, _)| key == "\0prototype");
+                let direct_temporal = object.iter().any(|(key, value)| {
+                    key == "\0prototype"
+                        && matches!(
+                            value,
+                            Value::Builtin(
+                                crate::ops::Builtin::TemporalPlainDatePrototype
+                                    | crate::ops::Builtin::TemporalZonedDateTimePrototype
+                            )
+                        )
+                });
+                if direct_temporal {
+                    let field = |name: &str| {
+                        object
+                            .iter()
+                            .find(|(key, _)| key == name)
+                            .and_then(|(_, value)| match value {
+                                Value::Number(value) => Some(value),
+                                _ => None,
+                            })
+                            .unwrap_or(0.0)
+                    };
+                    return Ok((field("year") as i32, field("month") as u32, field("day") as u32));
+                }
                 if !has_prototype {
                     validate_property_bag_fields(value)?;
                 }
