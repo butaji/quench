@@ -1179,6 +1179,10 @@ pub fn socket_destroy(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
+    let tracked_timer = state.borrow_mut().net.timeout_timers.remove(&id);
+    if let Some(timer) = tracked_timer {
+        crate::modules::timers::clear_timeout(state, &[timer])?;
+    }
     if let Some(timer) = timeout_timer(&receiver) {
         crate::modules::timers::clear_timeout(state, &[timer])?;
         execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, Value::Undefined);
@@ -1301,11 +1305,22 @@ pub fn socket_set_timeout(
         }
     };
     if let Value::Object(_) | Value::ObjectAlias(_) = receiver {
-        if let Some(timer) = timeout_timer(&receiver) {
+        // Runtime aliases can expose the same socket with distinct property
+        // maps. Resolve the host-owned net record first so timeout state and
+        // timer identity are cleared on the canonical socket object.
+        let target = net_id(&receiver)
+            .and_then(|id| state.borrow().net.sockets.get(&id).map(|socket| socket.borrow().js.clone()))
+            .unwrap_or_else(|| receiver.clone());
+        let socket_id = net_id(&target);
+        let tracked_timer = socket_id.and_then(|id| state.borrow_mut().net.timeout_timers.remove(&id));
+        if let Some(timer) = tracked_timer {
             crate::modules::timers::clear_timeout(state, &[timer])?;
         }
-        execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, Value::Undefined);
-        execute::set_property_in_place(&receiver, "timeout", Value::Number(timeout));
+        if let Some(timer) = timeout_timer(&target) {
+            crate::modules::timers::clear_timeout(state, &[timer])?;
+        }
+        execute::set_property_in_place(&target, SOCKET_TIMEOUT_PROP, Value::Undefined);
+        execute::set_property_in_place(&target, "timeout", Value::Number(timeout));
         if timeout > 0.0 {
             if let Some(callback) = args.get(1) {
                 if !quench_runtime::is_callable(callback) {
@@ -1316,7 +1331,7 @@ pub fn socket_set_timeout(
                 let once = crate::host::capability(crate::registry::SPEC_EVENTS_ONCE);
                 execute::call(
                     &once,
-                    &receiver,
+                    &target,
                     &[Value::String("timeout".into()), callback.clone()],
                 )?;
             }
@@ -1327,12 +1342,18 @@ pub fn socket_set_timeout(
                         crate::registry::SPEC_NET_SOCKET_TIMEOUT_FIRE.cap,
                     ),
                 },
-                vec![receiver.clone()],
+                vec![target.clone()],
             );
             let timer =
                 crate::modules::timers::set_timeout(state, &[callback, Value::Number(timeout)])?;
-            execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, timer);
+            if let Some(id) = socket_id {
+                state.borrow_mut().net.timeout_timers.insert(id, timer.clone());
+            }
+            execute::set_property_in_place(&target, SOCKET_TIMEOUT_PROP, timer);
         }
+        // Keep any VM alias that invoked setTimeout observable in sync with
+        // the canonical socket record.
+        execute::set_property_in_place(&receiver, "timeout", Value::Number(timeout));
     }
     Ok(receiver)
 }
