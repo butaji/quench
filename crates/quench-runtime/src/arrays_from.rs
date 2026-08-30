@@ -57,15 +57,11 @@ pub(crate) fn from_async(
         return Ok(Value::Promise(result));
     }
     let array_like_length = array_like_length(&source)?;
-    if array_like_length > u32::MAX as usize {
+    if !uses_custom_result(receiver) && array_like_length > u32::MAX as usize {
         return Err(crate::value::error::throw_range_error(
             "Array.fromAsync array-like length is out of range",
         ));
     }
-    let source_values = from(None, &[source])?;
-    let Value::Array(source_values) = source_values else {
-        return Ok(crate::promise::promise_resolve(&[source_values]));
-    };
     let result = match crate::promise::new_promise() {
         Value::Promise(promise) => promise,
         _ => unreachable!(),
@@ -78,7 +74,7 @@ pub(crate) fn from_async(
         arguments.get(2).cloned().unwrap_or(Value::Undefined),
         Vec::new(),
         0,
-        Some(source_values.snapshot()),
+        Some((source, array_like_length)),
         false,
         initial_async_target(receiver)?,
     );
@@ -94,7 +90,7 @@ type AsyncFromState = (
     Value,
     Vec<Value>,
     usize,
-    Option<Vec<Value>>,
+    Option<(Value, usize)>,
     bool,
     Option<Value>,
 );
@@ -108,17 +104,27 @@ fn start_async_step(state: AsyncFromState) {
         this_arg,
         values,
         index,
-        sync_values,
+        array_like,
         pending_mapper,
         target,
     ) = state;
     if pending_mapper {
         return;
     }
-    if let Some(sync_values) = sync_values {
-        if let Some(item) = sync_values.get(index).cloned() {
-            let item_index = index;
-            let mapped = match map_item(mapper.as_ref(), &this_arg, item, item_index) {
+    if let Some((source, length)) = array_like {
+        if index < length {
+            let item = match crate::execute::get_property_result(&source, &index.to_string()) {
+                Ok(value) => value,
+                Err(crate::execute::VmError::Thrown(reason)) => {
+                    reject_async(&result, &iterator, reason);
+                    return;
+                }
+                Err(_) => {
+                    reject_async(&result, &iterator, Value::Undefined);
+                    return;
+                }
+            };
+            let mapped = match map_item(mapper.as_ref(), &this_arg, item, index) {
                 Ok(value) => value,
                 Err(crate::execute::VmError::Thrown(reason)) => {
                     reject_async(&result, &iterator, reason);
@@ -137,7 +143,7 @@ fn start_async_step(state: AsyncFromState) {
                 this_arg,
                 values,
                 index,
-                Some(sync_values),
+                Some((source, length)),
                 mapped,
                 target,
             );
@@ -192,7 +198,7 @@ fn start_async_step(state: AsyncFromState) {
                 this_arg: this_arg.clone(),
                 values: values.clone(),
                 index,
-                sync_values: sync_values.clone(),
+                array_like: array_like.clone(),
                 pending_mapper: false,
                 target: target.clone(),
             },
@@ -209,23 +215,14 @@ fn start_async_step(state: AsyncFromState) {
                 this_arg,
                 values,
                 index,
-                sync_values,
+                array_like,
                 pending_mapper,
                 target,
                 &state,
             ),
         },
         value => process_async_value(
-            result,
-            iterator,
-            receiver,
-            mapper,
-            this_arg,
-            values,
-            index,
-            sync_values,
-            value,
-            target,
+            result, iterator, receiver, mapper, this_arg, values, index, array_like, value, target,
         ),
     }
 }
@@ -238,7 +235,7 @@ pub(crate) fn process_async_continuation(
     this_arg: Value,
     values: Vec<Value>,
     index: usize,
-    sync_values: Option<Vec<Value>>,
+    array_like: Option<(Value, usize)>,
     pending_mapper: bool,
     target: Option<Value>,
     state: &crate::value::PromiseState,
@@ -271,7 +268,7 @@ pub(crate) fn process_async_continuation(
                     this_arg,
                     values,
                     index + 1,
-                    sync_values,
+                    array_like,
                     false,
                     target,
                 ));
@@ -292,7 +289,7 @@ pub(crate) fn process_async_continuation(
             this_arg,
             values,
             index,
-            sync_values,
+            array_like,
             value.clone(),
             target,
         ),
@@ -311,7 +308,7 @@ fn process_async_value(
     this_arg: Value,
     values: Vec<Value>,
     index: usize,
-    sync_values: Option<Vec<Value>>,
+    array_like: Option<(Value, usize)>,
     next: Value,
     target: Option<Value>,
 ) {
@@ -360,16 +357,7 @@ fn process_async_value(
         }
     };
     continue_after_map(
-        result,
-        iterator,
-        receiver,
-        mapper,
-        this_arg,
-        values,
-        index,
-        sync_values,
-        mapped,
-        target,
+        result, iterator, receiver, mapper, this_arg, values, index, array_like, mapped, target,
     );
 }
 
@@ -414,7 +402,7 @@ fn continue_after_map(
     this_arg: Value,
     mut values: Vec<Value>,
     index: usize,
-    sync_values: Option<Vec<Value>>,
+    array_like: Option<(Value, usize)>,
     mapped: Value,
     mut target: Option<Value>,
 ) {
@@ -442,7 +430,7 @@ fn continue_after_map(
             this_arg,
             values,
             index + 1,
-            sync_values,
+            array_like,
             false,
             target,
         ));
@@ -474,7 +462,7 @@ fn continue_after_map(
                 this_arg,
                 values,
                 index + 1,
-                sync_values,
+                array_like,
                 false,
                 target,
             ));
@@ -492,7 +480,7 @@ fn continue_after_map(
                     this_arg,
                     values,
                     index,
-                    sync_values,
+                    array_like,
                     pending_mapper: true,
                     target,
                 },
