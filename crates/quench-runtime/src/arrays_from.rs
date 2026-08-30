@@ -131,19 +131,9 @@ type AsyncFromState = (
 );
 
 fn start_async_step(state: AsyncFromState) {
-    let (
-        result,
-        iterator,
-        receiver,
-        mapper,
-        this_arg,
-        values,
-        index,
-        array_like,
-        pending_mapper,
-        target,
-    ) = state;
-    if !matches!(pending_mapper, crate::value::ArrayFromAsyncPending::None) {
+    let (result, iterator, receiver, mapper, this_arg, values, index, array_like, pending, target) =
+        state;
+    if !matches!(pending, crate::value::ArrayFromAsyncPending::None) {
         return;
     }
     if let Some((source, length)) = array_like {
@@ -223,7 +213,7 @@ fn start_async_step(state: AsyncFromState) {
                 values: values.clone(),
                 index,
                 array_like: array_like.clone(),
-                pending_mapper: crate::value::ArrayFromAsyncPending::None,
+                pending: crate::value::ArrayFromAsyncPending::None,
                 target: target.clone(),
             },
         );
@@ -232,17 +222,8 @@ fn start_async_step(state: AsyncFromState) {
         Value::Promise(promise) => match promise.state.borrow().clone() {
             crate::value::PromiseState::Pending => continuation(&promise),
             state => process_async_continuation(
-                result,
-                iterator,
-                receiver,
-                mapper,
-                this_arg,
-                values,
-                index,
-                array_like,
-                pending_mapper,
-                target,
-                &state,
+                result, iterator, receiver, mapper, this_arg, values, index, array_like, pending,
+                target, &state,
             ),
         },
         value => process_async_value(
@@ -260,11 +241,11 @@ pub(crate) fn process_async_continuation(
     values: Vec<Value>,
     index: usize,
     array_like: Option<(Value, usize)>,
-    pending_mapper: crate::value::ArrayFromAsyncPending,
+    pending: crate::value::ArrayFromAsyncPending,
     target: Option<Value>,
     state: &crate::value::PromiseState,
 ) {
-    if matches!(pending_mapper, crate::value::ArrayFromAsyncPending::Mapper) {
+    if matches!(pending, crate::value::ArrayFromAsyncPending::Mapper) {
         match state {
             crate::value::PromiseState::Fulfilled(value) => {
                 let mut values = values;
@@ -304,7 +285,7 @@ pub(crate) fn process_async_continuation(
         }
         return;
     }
-    if matches!(pending_mapper, crate::value::ArrayFromAsyncPending::Input) {
+    if matches!(pending, crate::value::ArrayFromAsyncPending::Input) {
         match state {
             crate::value::PromiseState::Fulfilled(value) => {
                 let mapped = match map_item(mapper.as_ref(), &this_arg, value.clone(), index) {
@@ -452,7 +433,7 @@ fn process_async_item(
                 values,
                 index,
                 array_like,
-                pending_mapper: crate::value::ArrayFromAsyncPending::Input,
+                pending: crate::value::ArrayFromAsyncPending::Input,
                 target,
             },
         );
@@ -602,7 +583,7 @@ fn continue_after_map(
                     values,
                     index,
                     array_like,
-                    pending_mapper: crate::value::ArrayFromAsyncPending::Mapper,
+                    pending: crate::value::ArrayFromAsyncPending::Mapper,
                     target,
                 },
             );
