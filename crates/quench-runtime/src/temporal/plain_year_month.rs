@@ -512,6 +512,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
         }
         let base = text.split('[').next().unwrap_or(&text);
+        if calendar_id.as_deref().is_some_and(|id| id != "iso8601")
+            && !base.contains(['T', 't', ' '])
+            && base.len() <= 7
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
         if base.len() == 9 && base.starts_with('+') {
             let year = base[0..7].parse().unwrap_or(0.0);
             let month = base[7..9].parse().unwrap_or(0.0);
