@@ -314,6 +314,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_HRTIME_BIGINT => process_hrtime_bigint,
         CAP_PROCESS_CPU_USAGE => process_cpu_usage,
         CAP_PROCESS_INITGROUPS => process_initgroups,
+        CAP_PROCESS_SETGROUPS => process_setgroups,
         CAP_PROCESS_UPTIME => process_uptime,
         CAP_PROCESS_AVAILABLE_MEMORY => process_available_memory,
         CAP_PROCESS_CONSTRAINED_MEMORY => process_constrained_memory,

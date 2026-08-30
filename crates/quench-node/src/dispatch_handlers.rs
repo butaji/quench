@@ -2141,6 +2141,56 @@ pub fn process_initgroups(
     Ok(Value::Undefined)
 }
 
+pub fn process_setgroups(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Array(groups)) = args.first() else {
+        let value = args.first().unwrap_or(&Value::Undefined);
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"groups\" argument must be an instance of Array.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
+    };
+    for index in 0..groups.logical_len() {
+        let value = execute::get_property(&Value::Array(groups.clone()), &index.to_string());
+        match value {
+            Value::Number(number) if number.is_finite() && number >= 0.0 => {}
+            Value::Number(number) => {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("RangeError".into())),
+                    ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                    (
+                        "message".into(),
+                        Value::String(format!("The value of \"groups[{index}]\" is out of range. Received {number}")),
+                    ),
+                ])));
+            }
+            Value::String(group) => {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    (
+                        "code".into(),
+                        Value::String("ERR_UNKNOWN_CREDENTIAL".into()),
+                    ),
+                    (
+                        "message".into(),
+                        Value::String(format!("Group identifier does not exist: {group}")),
+                    ),
+                ])));
+            }
+            value => {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                    "The \"groups[{index}]\" argument must be one of type number or string.{}",
+                    crate::modules::util::invalid_arg_received(&value)
+                )));
+            }
+        }
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn process_uptime(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
