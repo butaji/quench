@@ -253,6 +253,36 @@ pub(crate) fn agent_keylog_attach(
     Ok(())
 }
 
+/// Mark every observable Agent-pool view of a socket as destroyed. Runtime
+/// values can cross the VM boundary as aliases, so updating only the net
+/// record is insufficient for a freeSockets entry held by user code.
+pub(crate) fn mark_socket_destroyed_in_agents(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+) {
+    let agents = state
+        .borrow()
+        .http
+        .clientreqs
+        .values()
+        .filter_map(|request| request.agent.clone())
+        .collect::<Vec<_>>();
+    for agent in agents {
+        for pool_name in ["sockets", "freeSockets"] {
+            let pools = execute::get_property(&agent, pool_name);
+            for name in execute::own_enumerable_keys(&pools) {
+                let list = execute::get_property(&pools, &name);
+                for index in execute::own_enumerable_keys(&list) {
+                    let entry = execute::get_property(&list, &index);
+                    if same_socket(&entry, socket) {
+                        execute::set_property_in_place(&entry, "destroyed", Value::Boolean(true));
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn res_set_encoding(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -416,6 +446,12 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 }
 
 fn preabort_request(state: &Rc<RefCell<HostState>>, request: &Value) {
+    if let Some(id) = client_id(Some(request)) {
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.aborted = true;
+            req.response_closed = true;
+        }
+    }
     set_request_property(Some(request), "destroyed", Value::Boolean(true));
     let error = abort_error();
     state.borrow_mut().net.pending_events.extend([
@@ -1057,6 +1093,9 @@ pub fn req_end(
     } else {
         None
     };
+    if let Some(socket) = pooled.as_ref() {
+        crate::modules::http::clear_idle_socket(state, socket);
+    }
     let reused = pooled.is_some();
     let socket = match (existing.or(pooled), custom) {
         (Some(socket), _) => {
@@ -1374,6 +1413,7 @@ pub fn req_error(
     let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
+    crate::modules::http::clear_idle_socket(state, socket);
     let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
@@ -1445,6 +1485,7 @@ pub fn req_close(
     let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
+    crate::modules::http::clear_idle_socket(state, socket);
     crate::modules::http::abort_server_signal(state, socket)?;
     let Some(client_id) = client_id_for_socket(state, socket) else {
         let requests = state.borrow().http.conns.values()
@@ -1492,15 +1533,15 @@ pub fn req_close(
         .client_signals
         .retain(|_, request_id| *request_id != client_id);
     if let Some(request) = request {
-        if matches!(
+        let close_already_emitted = matches!(
             execute::get_property(&request, CLIENT_CLOSE_PENDING_PROP),
             Value::Boolean(true)
-        ) {
-            return Ok(Value::Undefined);
+        );
+        if !close_already_emitted {
+            net::emit(state, &request, "close", Vec::new())?;
+            let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
+            crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
         }
-        net::emit(state, &request, "close", Vec::new())?;
-        let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
-        crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     if response.as_ref().is_some_and(|value| {
         matches!(execute::get_property(value, "complete"), Value::Boolean(true))
@@ -1798,26 +1839,28 @@ fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
 }
 
 fn remove_agent_socket(agent: &Value, name: &str, socket: &Value) {
-    let pools = execute::get_property(agent, "sockets");
-    let list = execute::get_property(&pools, name);
-    let keys = execute::own_enumerable_keys(&list);
-    let remaining: Vec<Value> = keys
-        .iter()
-        .filter_map(|key| {
-            let value = execute::get_property(&list, key);
-            (!same_socket(&value, socket))
-                .then_some(value)
-                .filter(|value| !matches!(value, Value::Undefined))
-        })
-        .collect();
-    if remaining.len() == keys.len() {
-        return;
-    }
-    if remaining.is_empty() {
-        let (updated, _) = execute::delete_property(pools, name);
-        execute::set_property_in_place(agent, "sockets", updated);
-    } else {
-        execute::set_property_in_place(&pools, name, host_api::array(remaining));
+    for pool_name in ["sockets", "freeSockets"] {
+        let pools = execute::get_property(agent, pool_name);
+        let list = execute::get_property(&pools, name);
+        let keys = execute::own_enumerable_keys(&list);
+        let remaining: Vec<Value> = keys
+            .iter()
+            .filter_map(|key| {
+                let value = execute::get_property(&list, key);
+                (!same_socket(&value, socket))
+                    .then_some(value)
+                    .filter(|value| !matches!(value, Value::Undefined))
+            })
+            .collect();
+        if remaining.len() == keys.len() {
+            continue;
+        }
+        if remaining.is_empty() {
+            let (updated, _) = execute::delete_property(pools, name);
+            execute::set_property_in_place(agent, pool_name, updated);
+        } else {
+            execute::set_property_in_place(&pools, name, host_api::array(remaining));
+        }
     }
 }
 
@@ -2170,7 +2213,10 @@ fn pool_response_socket(
                 .filter(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
                 .and_then(|_| request.res.as_ref())
         })
-        .is_some_and(response_allows_reuse);
+        .is_some_and(|response| {
+            matches!(execute::get_property(&agent, "keepAlive"), Value::Boolean(true))
+                && response_allows_reuse(response)
+        });
     let alive = net::net_id(socket).is_some_and(|id| {
         state
             .borrow()
@@ -2182,6 +2228,7 @@ fn pool_response_socket(
     if keep_alive && alive {
         let name = agent_name(&target, &agent);
         move_agent_socket_to_free(&agent, &name, socket);
+        crate::modules::http::mark_idle_socket(state, socket);
         if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0) {
             let destroy = crate::host::capability(crate::registry::SPEC_NET_SOCKET_DESTROY);
             subscribe_event(state, socket, "timeout", destroy)?;
@@ -2267,6 +2314,12 @@ pub fn res_end_handler(
         if should_close {
             let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
+            // A ClientRequest closes when its response completes, even when
+            // the underlying keep-alive socket remains in Agent.freeSockets.
+            // Mark the terminal request transition so the later socket close
+            // cannot emit a duplicate request `'close'` event.
+            set_request_property(Some(&request), CLIENT_CLOSE_PENDING_PROP, Value::Boolean(true));
+            net::emit(state, &request, "close", Vec::new())?;
             set_response_property(&res, "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
             let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
@@ -2284,6 +2337,10 @@ pub fn res_end_handler(
                     .agent
                     .as_ref()
                     .is_some_and(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
+                    && request
+                        .agent
+                        .as_ref()
+                        .is_some_and(|agent| matches!(execute::get_property(agent, "keepAlive"), Value::Boolean(true)))
                     && request.res.as_ref().is_some_and(response_allows_reuse)
             });
         if pooled {

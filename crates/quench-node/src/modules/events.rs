@@ -960,6 +960,9 @@ pub fn method_listener_count(
             .and_then(crate::modules::net::net_id)
             .and_then(|socket_id| {
                 let guard = state.borrow();
+                if guard.http.idle_sockets.contains(&socket_id) {
+                    return Some(true);
+                }
                 let client_id = guard.http.clients.get(&socket_id)?;
                 Some(guard.http.clientreqs.get(client_id)?.parse_error)
             })
