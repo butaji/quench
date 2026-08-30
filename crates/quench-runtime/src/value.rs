@@ -1352,6 +1352,10 @@ thread_local! {
     static OBJECT_LAYOUTS: RefCell<Vec<InternedObjectLayout>> = const { RefCell::new(Vec::new()) };
 }
 
+pub(crate) fn reset_object_layout_cache() {
+    OBJECT_LAYOUTS.with(|layouts| layouts.borrow_mut().clear());
+}
+
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
     OBJECT_LAYOUTS.with(|layouts| {
         let mut layouts = layouts.borrow_mut();
