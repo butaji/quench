@@ -3681,6 +3681,13 @@ mod stubs {
                 .as_ref()
                 .map(crate::conversion::to_number)
                 .transpose()?;
+            if increment_number.is_some_and(|value| {
+                !value.is_finite() || value <= 0.0 || value > 100_000_000.0
+            }) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingIncrement",
+                ));
+            }
             let rounding_mode = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "roundingMode"))
