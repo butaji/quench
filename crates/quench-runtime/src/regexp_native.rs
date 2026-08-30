@@ -223,6 +223,12 @@ fn find_property_repeat_str(
     if start != 0 {
         return None;
     }
+    if name == "Any" {
+        return (!negative && !input.is_empty()).then_some(NativeMatch {
+            start: 0,
+            end: input.len(),
+        });
+    }
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
     let mut count = 0;
     for character in input.chars() {
@@ -244,6 +250,12 @@ fn find_property_repeat_units(
 ) -> Option<NativeMatch> {
     if start != 0 {
         return None;
+    }
+    if name == "Any" {
+        return (!negative && !input.is_empty()).then_some(NativeMatch {
+            start: 0,
+            end: input.len(),
+        });
     }
     let unicode = flags.contains('u') || flags.contains('v');
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
