@@ -322,6 +322,13 @@ impl ArrayData {
         self.kind.get().is_packed()
     }
 
+    /// Snapshot packed dense storage for capability adapters that can prove
+    /// ordinary indexed access without invoking user-visible lookup.
+    #[inline]
+    pub fn packed_values(&self) -> Option<Vec<Value>> {
+        self.is_packed().then(|| self.snapshot())
+    }
+
     pub fn logical_len(&self) -> usize {
         self.argument_live.as_ref().map_or_else(
             || {

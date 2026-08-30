@@ -237,6 +237,7 @@ fn execute_state_bitwise(
     let payload = crate::vm::get_named_cached_payload(object, &metadata.named_cache)?;
     let state = exact_i32(match &payload {
         crate::vm::NamedCachedPayload::Word(word) => unsafe { &**word }.number()?,
+        crate::vm::NamedCachedPayload::Cell(cell) => unsafe { &**cell }.load().as_number()?,
         crate::vm::NamedCachedPayload::Value(value) => value.as_number()?,
     })?;
     let mask = exact_i32(function.captures.get_number(plan.mask_slot)?)?;
@@ -248,6 +249,9 @@ fn execute_state_bitwise(
     match payload {
         crate::vm::NamedCachedPayload::Word(word) => {
             unsafe { &*word }.store(crate::value::Value::Number(f64::from(state)))
+        }
+        crate::vm::NamedCachedPayload::Cell(cell) => {
+            unsafe { &*cell }.store(crate::value::Value::Number(f64::from(state)))
         }
         crate::vm::NamedCachedPayload::Value(_) => return None,
     }
@@ -263,6 +267,7 @@ fn cached_shape_number(
 ) -> Option<f64> {
     match crate::vm::get_named_cached_payload(object, cache)? {
         crate::vm::NamedCachedPayload::Word(word) => unsafe { &*word }.number(),
+        crate::vm::NamedCachedPayload::Cell(cell) => unsafe { &*cell }.load().as_number(),
         crate::vm::NamedCachedPayload::Value(value) => value.as_number(),
     }
 }

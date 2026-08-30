@@ -118,12 +118,14 @@ pub(crate) fn get_named_cached_object(
 ) -> Option<Value> {
     match get_named_cached_payload(object, cache)? {
         NamedCachedPayload::Word(word) => Some(unsafe { &*word }.load().strong_function()),
+        NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load().strong_function()),
         NamedCachedPayload::Value(value) => Some(value.strong_function()),
     }
 }
 
 pub(crate) enum NamedCachedPayload {
     Word(*const crate::register_file::SlotWord),
+    Cell(*const crate::value::BindingCell),
     Value(Value),
 }
 
@@ -185,6 +187,7 @@ pub(crate) fn get_named_cached_cell(
 ) -> Option<*const crate::value::BindingCell> {
     match get_named_cached_payload(object, cache)? {
         NamedCachedPayload::Word(_) => None,
+        NamedCachedPayload::Cell(cell) => Some(cell),
         NamedCachedPayload::Value(_) => None,
     }
 }
