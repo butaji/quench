@@ -717,18 +717,12 @@ fn calendar_difference(
     if matches!(smallest, "year" | "month" | "week") && (days != 0 || time_fraction_days != 0.0) {
         let unit_value = match smallest {
             "year" => {
-                let (year_anchor, residual_days) = if receiver_is_end {
+                let residual_days = if receiver_is_end {
                     let receiver_anchor = add_months_serial(end, -(years * 12));
-                    (
-                        receiver_anchor,
-                        (receiver_anchor - start_serial) as f64 + time_fraction_days,
-                    )
+                    (receiver_anchor - start_serial) as f64 + time_fraction_days
                 } else {
                     let year_anchor = add_months_serial(start, years * 12);
-                    (
-                        year_anchor,
-                        (end_serial - year_anchor) as f64 + time_fraction_days,
-                    )
+                    (end_serial - year_anchor) as f64 + time_fraction_days
                 };
                 let anchor_year = start[0] as i32 + years as i32;
                 let year_days = if days_in_month(anchor_year, 2) == 29 {

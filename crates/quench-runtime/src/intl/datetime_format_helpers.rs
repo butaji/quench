@@ -310,8 +310,7 @@ fn effective_format_slots(slots: &[(String, Value)]) -> Vec<(String, Value)> {
             "weekday" | "year" | "month" | "day" | "hour" | "minute" | "second"
         )
     }) {
-        let mut result = slots.to_vec();
-        return result;
+        return slots.to_vec();
     }
     let mut result = slots.to_vec();
     if slots.iter().any(|(name, _)| name == "era") {
