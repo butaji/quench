@@ -739,7 +739,13 @@ fn set_builtin_property(
 
 pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
     match target {
-        crate::value::Value::Object(properties) => marked_without_key(properties.as_ref(), key),
+        crate::value::Value::Object(properties) => {
+            if properties.extensibility_cached() == Some(true) {
+                false
+            } else {
+                marked_without_key(properties.as_ref(), key)
+            }
+        }
         crate::value::Value::Function(function) => {
             let properties = function.properties.borrow();
             marked_without_key(&properties[..], key)
@@ -780,9 +786,13 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
         crate::value::Value::Builtin(builtin) => {
             !crate::builtins::builtin_is_non_extensible(*builtin)
         }
-        crate::value::Value::Object(properties) => {
-            !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
-        }
+        crate::value::Value::Object(properties) => properties
+            .extensibility_cached()
+            .unwrap_or_else(|| {
+                let extensible = !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE);
+                properties.set_extensibility_cached(extensible);
+                extensible
+            }),
         crate::value::Value::Array(values) => values.property(NON_EXTENSIBLE).is_none(),
         crate::value::Value::Function(function) => !function
             .properties
