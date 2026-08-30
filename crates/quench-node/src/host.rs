@@ -61,6 +61,8 @@ pub struct HostState {
     /// Module record handed to `__quench_cjs_wrap__` for the file
     /// currently being loaded by `require`.
     pub pending_module: Option<PendingModule>,
+    /// CJS filename stack used by module lifecycle instrumentation.
+    pub module_stack: Vec<String>,
     /// Thrown value stashed by `pump::handle_uncaught`, dispatched by
     /// the `__quench_uncaught__` capability inside an active frame.
     pub pending_uncaught: Option<Value>,
@@ -119,6 +121,7 @@ impl NodeHost {
             dir_stack: Vec::new(),
             module_cache: std::collections::HashMap::new(),
             pending_module: None,
+            module_stack: Vec::new(),
             pending_uncaught: None,
             url_class: None,
             stream_module: None,
