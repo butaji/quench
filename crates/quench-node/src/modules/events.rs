@@ -329,7 +329,21 @@ pub fn method_on(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    add_listener(state, receiver, args, false, false)
+    let result = add_listener(state, receiver, args, false, false)?;
+    if matches!(args.first(), Some(Value::String(event)) if event == "keylog")
+        && receiver.is_some_and(|value| {
+            matches!(execute::get_property(value, "\0quench:http:agent"), Value::Boolean(true))
+        })
+    {
+        if let Some(listener) = args.get(1) {
+            crate::modules::http_client::agent_keylog_attach(
+                state,
+                receiver.expect("validated agent"),
+                listener,
+            )?;
+        }
+    }
+    Ok(result)
 }
 
 pub fn method_once(
