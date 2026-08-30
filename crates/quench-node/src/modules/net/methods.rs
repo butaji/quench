@@ -367,6 +367,9 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         if let Value::Boolean(value) = execute::get_property(options, "allowHalfOpen") {
             execute::set_property_in_place(&object, "allowHalfOpen", Value::Boolean(value));
         }
+        if let Value::Boolean(value) = execute::get_property(options, "writable") {
+            super::set_socket_property(&object, "writable", Value::Boolean(value));
+        }
     }
     let object = install_methods(
         object,
@@ -412,6 +415,24 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         }
     }
     let object = execute::canonical_value(&object);
+    let supplied_handle = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .map(|options| execute::get_property(options, "handle"))
+        .filter(|handle| {
+            matches!(handle, Value::Object(_) | Value::ObjectAlias(_))
+                && quench_runtime::is_callable(&execute::get_property(handle, "readStart"))
+        });
+    if let Some(handle) = supplied_handle {
+        execute::set_property_in_place(&object, "_handle", handle.clone());
+        let onread = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(crate::registry::SPEC_NET_SOCKET_ONREAD),
+            vec![object.clone()],
+        );
+        execute::set_property_in_place(&handle, "onread", onread);
+        let read_start = execute::get_property(&handle, "readStart");
+        execute::call(&read_start, &handle, &[])?;
+    }
     state.borrow_mut().net.sockets.insert(
         _id,
         Rc::new(RefCell::new(NetSocket {
@@ -1267,6 +1288,37 @@ pub fn socket_reset_and_destroy(
         ));
     }
     Ok(receiver.clone())
+}
+
+/// Callback installed on a user-supplied native handle. The handle signals
+/// EOF through `onread`; the ordinary pump then delivers end and close.
+pub fn socket_onread(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(socket) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(id) = net_id(socket) else {
+        return Ok(Value::Undefined);
+    };
+    let Some(entry) = state.borrow().net.sockets.get(&id).cloned() else {
+        return Ok(Value::Undefined);
+    };
+    let mut guard = entry.borrow_mut();
+    if guard.read_eof {
+        return Ok(Value::Undefined);
+    }
+    guard.read_eof = true;
+    guard.state = SocketState::Closing;
+    drop(guard);
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .push((socket.clone(), "end".into(), Vec::new()));
+    Ok(Value::Undefined)
 }
 
 fn abort_error() -> Value {

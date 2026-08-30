@@ -1410,9 +1410,22 @@ pub fn internal_binding(
         return Ok(crate::host::namespace_object_from_pairs(vec![
             ("UV_EAI_MEMORY".to_string(), Value::Number(-3001.0)),
             ("UV_ENOENT".to_string(), Value::Number(-2.0)),
+            ("UV_EOF".to_string(), Value::Number(-4095.0)),
             (
                 "errname".to_string(),
                 crate::host::capability(crate::registry::SPEC_PROCESS_BINDING_UV_ERRNAME),
+            ),
+        ]));
+    }
+    if name == "stream_wrap" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "streamBaseState".to_string(),
+                host_api::object(Vec::new()),
+            ),
+            (
+                "kReadBytesOrError".to_string(),
+                Value::String("kReadBytesOrError".into()),
             ),
         ]));
     }

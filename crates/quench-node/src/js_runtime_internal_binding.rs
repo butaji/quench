@@ -78,6 +78,23 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         }
         return Ok(quench_runtime::host_api::object(vec![("TTY".into(), tty)]));
     }
+    if name == "stream_wrap" {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "streamBaseState".into(),
+                quench_runtime::host_api::object(Vec::new()),
+            ),
+            (
+                "kReadBytesOrError".into(),
+                Value::String("kReadBytesOrError".into()),
+            ),
+        ]));
+    }
+    if name == "uv" {
+        return Ok(quench_runtime::host_api::object(vec![
+            ("UV_EOF".into(), Value::Number(-4095.0)),
+        ]));
+    }
     if [
         "buffer",
         "cares_wrap",
@@ -92,7 +109,6 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         "os",
         "pipe_wrap",
         "spawn_sync",
-        "stream_wrap",
         "tcp_wrap",
         "tls_wrap",
         "tty_wrap",
