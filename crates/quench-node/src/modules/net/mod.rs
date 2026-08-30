@@ -46,6 +46,7 @@ pub enum SocketState {
 
 pub struct NetServer {
     pub id: u64,
+    pub owner_worker: Option<u64>,
     pub listener: Option<TcpListener>,
     pub bind_addr: Option<SocketAddr>,
     pub js: Value,
@@ -263,14 +264,8 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
-        (
-            "unref",
-            cap(crate::registry::NodeSpec::new("net:socketUnref", 2290)),
-        ),
-        (
-            "ref",
-            cap(crate::registry::NodeSpec::new("net:socketRef", 2291)),
-        ),
+        ("unref", cap(crate::registry::SPEC_NET_SOCKET_UNREF)),
+        ("ref", cap(crate::registry::SPEC_NET_SOCKET_REF)),
         ("address", cap(crate::registry::SPEC_NET_SOCKET_ADDRESS)),
         (
             "setNoDelay",
@@ -303,10 +298,12 @@ fn register_server(
     // registers without one; listen() registers with one).
     let is_listening = listener.is_some();
     let bind_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
+    let owner_worker = state.borrow().cluster.worker_context;
     state.borrow_mut().net.servers.insert(
         id,
         Rc::new(RefCell::new(NetServer {
             id,
+            owner_worker,
             listener,
             bind_addr,
             js: js.clone(),
@@ -537,7 +534,7 @@ pub fn build() -> Value {
         ("Server", server_ctor),
         (
             "BlockList",
-            crate::host::capability(crate::registry::NodeSpec::new("net:BlockList", 2292)),
+            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST),
         ),
         (
             "isIP",
@@ -574,21 +571,15 @@ pub fn block_list_construct(
         ),
         (
             "addSubnet".into(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "net:BlockList:addSubnet",
-                2293,
-            )),
+            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_SUBNET),
         ),
         (
             "addAddress".into(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "net:BlockList:addAddress",
-                2294,
-            )),
+            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_ADDRESS),
         ),
         (
             "check".into(),
-            crate::host::capability(crate::registry::NodeSpec::new("net:BlockList:check", 2295)),
+            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_CHECK),
         ),
     ]))
 }

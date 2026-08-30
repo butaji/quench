@@ -1,0 +1,1083 @@
+{
+  "schema": 2,
+  "count": 100,
+  "numbering": "001.js..100.js",
+  "source_of_truth": "The numbered files are the corpus. There is no generator; manifest entries document those files.",
+  "matrix": "Ten families, each with ten distinct stress kernels.",
+  "families": [
+    {
+      "first": 1,
+      "last": 10,
+      "name": "numeric",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic"
+    },
+    {
+      "first": 11,
+      "last": 20,
+      "name": "control",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines"
+    },
+    {
+      "first": 21,
+      "last": 30,
+      "name": "arrays",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads"
+    },
+    {
+      "first": 31,
+      "last": 40,
+      "name": "objects",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols"
+    },
+    {
+      "first": 41,
+      "last": 50,
+      "name": "functions",
+      "description": "closures, recursion, receiver calls, constructors, and classes"
+    },
+    {
+      "first": 51,
+      "last": 60,
+      "name": "strings",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization"
+    },
+    {
+      "first": 61,
+      "last": 70,
+      "name": "iterables",
+      "description": "custom iterators, generators, destructuring, spread, and for-of"
+    },
+    {
+      "first": 71,
+      "last": 80,
+      "name": "collections",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches"
+    },
+    {
+      "first": 81,
+      "last": 90,
+      "name": "typed-memory",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers"
+    },
+    {
+      "first": 91,
+      "last": 100,
+      "name": "meta",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction"
+    }
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "file": "001.js",
+      "family": "numeric",
+      "operation": "integer-recurrence",
+      "variant": 1,
+      "work_units": 96,
+      "memory_profile": "ephemeral",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; integer-recurrence"
+    },
+    {
+      "id": 2,
+      "file": "002.js",
+      "family": "numeric",
+      "operation": "float-stencil",
+      "variant": 2,
+      "work_units": 119,
+      "memory_profile": "ephemeral",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; float-stencil"
+    },
+    {
+      "id": 3,
+      "file": "003.js",
+      "family": "numeric",
+      "operation": "bitwise-mixer",
+      "variant": 3,
+      "work_units": 142,
+      "memory_profile": "none",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; bitwise-mixer"
+    },
+    {
+      "id": 4,
+      "file": "004.js",
+      "family": "numeric",
+      "operation": "transcendental-scan",
+      "variant": 4,
+      "work_units": 165,
+      "memory_profile": "none",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; transcendental-scan"
+    },
+    {
+      "id": 5,
+      "file": "005.js",
+      "family": "numeric",
+      "operation": "bigint-accumulator",
+      "variant": 5,
+      "work_units": 188,
+      "memory_profile": "ephemeral",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; bigint-accumulator"
+    },
+    {
+      "id": 6,
+      "file": "006.js",
+      "family": "numeric",
+      "operation": "integer-divide-modulo",
+      "variant": 6,
+      "work_units": 211,
+      "memory_profile": "none",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; integer-divide-modulo"
+    },
+    {
+      "id": 7,
+      "file": "007.js",
+      "family": "numeric",
+      "operation": "float-rounding",
+      "variant": 7,
+      "work_units": 234,
+      "memory_profile": "none",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; float-rounding"
+    },
+    {
+      "id": 8,
+      "file": "008.js",
+      "family": "numeric",
+      "operation": "polynomial-evaluation",
+      "variant": 8,
+      "work_units": 257,
+      "memory_profile": "none",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; polynomial-evaluation"
+    },
+    {
+      "id": 9,
+      "file": "009.js",
+      "family": "numeric",
+      "operation": "numeric-conversion",
+      "variant": 9,
+      "work_units": 280,
+      "memory_profile": "allocation-heavy",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; numeric-conversion"
+    },
+    {
+      "id": 10,
+      "file": "010.js",
+      "family": "numeric",
+      "operation": "typed-lane-arithmetic",
+      "variant": 10,
+      "work_units": 303,
+      "memory_profile": "external",
+      "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; typed-lane-arithmetic"
+    },
+    {
+      "id": 11,
+      "file": "011.js",
+      "family": "control",
+      "operation": "branch-predict",
+      "variant": 1,
+      "work_units": 80,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; branch-predict"
+    },
+    {
+      "id": 12,
+      "file": "012.js",
+      "family": "control",
+      "operation": "nested-count",
+      "variant": 2,
+      "work_units": 388,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; nested-count"
+    },
+    {
+      "id": 13,
+      "file": "013.js",
+      "family": "control",
+      "operation": "switch-dispatch",
+      "variant": 3,
+      "work_units": 114,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; switch-dispatch"
+    },
+    {
+      "id": 14,
+      "file": "014.js",
+      "family": "control",
+      "operation": "exception-recovery",
+      "variant": 4,
+      "work_units": 131,
+      "memory_profile": "allocation-heavy",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; exception-recovery"
+    },
+    {
+      "id": 15,
+      "file": "015.js",
+      "family": "control",
+      "operation": "state-machine",
+      "variant": 5,
+      "work_units": 148,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; state-machine"
+    },
+    {
+      "id": 16,
+      "file": "016.js",
+      "family": "control",
+      "operation": "early-exit-search",
+      "variant": 6,
+      "work_units": 165,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; early-exit-search"
+    },
+    {
+      "id": 17,
+      "file": "017.js",
+      "family": "control",
+      "operation": "labeled-nesting",
+      "variant": 7,
+      "work_units": 182,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; labeled-nesting"
+    },
+    {
+      "id": 18,
+      "file": "018.js",
+      "family": "control",
+      "operation": "try-finally-control",
+      "variant": 8,
+      "work_units": 199,
+      "memory_profile": "allocation-heavy",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; try-finally-control"
+    },
+    {
+      "id": 19,
+      "file": "019.js",
+      "family": "control",
+      "operation": "boolean-short-circuit",
+      "variant": 9,
+      "work_units": 216,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; boolean-short-circuit"
+    },
+    {
+      "id": 20,
+      "file": "020.js",
+      "family": "control",
+      "operation": "recurrence-branch",
+      "variant": 10,
+      "work_units": 233,
+      "memory_profile": "none",
+      "description": "branches, nesting, switch dispatch, exceptions, and state machines; recurrence-branch"
+    },
+    {
+      "id": 21,
+      "file": "021.js",
+      "family": "arrays",
+      "operation": "packed-map-reduce",
+      "variant": 1,
+      "work_units": 72,
+      "memory_profile": "ephemeral",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; packed-map-reduce"
+    },
+    {
+      "id": 22,
+      "file": "022.js",
+      "family": "arrays",
+      "operation": "sparse-probe",
+      "variant": 2,
+      "work_units": 28,
+      "memory_profile": "ephemeral",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; sparse-probe"
+    },
+    {
+      "id": 23,
+      "file": "023.js",
+      "family": "arrays",
+      "operation": "sort-and-search",
+      "variant": 3,
+      "work_units": 1024,
+      "memory_profile": "ephemeral",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; sort-and-search"
+    },
+    {
+      "id": 24,
+      "file": "024.js",
+      "family": "arrays",
+      "operation": "splice-rotate",
+      "variant": 4,
+      "work_units": 36,
+      "memory_profile": "allocation-heavy",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; splice-rotate"
+    },
+    {
+      "id": 25,
+      "file": "025.js",
+      "family": "arrays",
+      "operation": "nested-flatten",
+      "variant": 5,
+      "work_units": 160,
+      "memory_profile": "retained-ring",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; nested-flatten"
+    },
+    {
+      "id": 26,
+      "file": "026.js",
+      "family": "arrays",
+      "operation": "prefix-sum",
+      "variant": 6,
+      "work_units": 44,
+      "memory_profile": "ephemeral",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; prefix-sum"
+    },
+    {
+      "id": 27,
+      "file": "027.js",
+      "family": "arrays",
+      "operation": "binary-search",
+      "variant": 7,
+      "work_units": 384,
+      "memory_profile": "ephemeral",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; binary-search"
+    },
+    {
+      "id": 28,
+      "file": "028.js",
+      "family": "arrays",
+      "operation": "ring-buffer",
+      "variant": 8,
+      "work_units": 52,
+      "memory_profile": "retained-ring",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; ring-buffer"
+    },
+    {
+      "id": 29,
+      "file": "029.js",
+      "family": "arrays",
+      "operation": "array-copy",
+      "variant": 9,
+      "work_units": 56,
+      "memory_profile": "allocation-heavy",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; array-copy"
+    },
+    {
+      "id": 30,
+      "file": "030.js",
+      "family": "arrays",
+      "operation": "matrix-multiply",
+      "variant": 10,
+      "work_units": 3600,
+      "memory_profile": "ephemeral",
+      "description": "packed, sparse, algorithmic, mutating, and nested array workloads; matrix-multiply"
+    },
+    {
+      "id": 31,
+      "file": "031.js",
+      "family": "objects",
+      "operation": "monomorphic-load-store",
+      "variant": 1,
+      "work_units": 32,
+      "memory_profile": "ephemeral",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; monomorphic-load-store"
+    },
+    {
+      "id": 32,
+      "file": "032.js",
+      "family": "objects",
+      "operation": "polymorphic-shapes",
+      "variant": 2,
+      "work_units": 37,
+      "memory_profile": "ephemeral",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; polymorphic-shapes"
+    },
+    {
+      "id": 33,
+      "file": "033.js",
+      "family": "objects",
+      "operation": "descriptor-churn",
+      "variant": 3,
+      "work_units": 42,
+      "memory_profile": "allocation-heavy",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; descriptor-churn"
+    },
+    {
+      "id": 34,
+      "file": "034.js",
+      "family": "objects",
+      "operation": "prototype-accessor",
+      "variant": 4,
+      "work_units": 47,
+      "memory_profile": "ephemeral",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; prototype-accessor"
+    },
+    {
+      "id": 35,
+      "file": "035.js",
+      "family": "objects",
+      "operation": "symbol-key-retention",
+      "variant": 5,
+      "work_units": 52,
+      "memory_profile": "retained-ring",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; symbol-key-retention"
+    },
+    {
+      "id": 36,
+      "file": "036.js",
+      "family": "objects",
+      "operation": "property-order-churn",
+      "variant": 6,
+      "work_units": 57,
+      "memory_profile": "allocation-heavy",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; property-order-churn"
+    },
+    {
+      "id": 37,
+      "file": "037.js",
+      "family": "objects",
+      "operation": "prototype-chain-depth",
+      "variant": 7,
+      "work_units": 62,
+      "memory_profile": "ephemeral",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; prototype-chain-depth"
+    },
+    {
+      "id": 38,
+      "file": "038.js",
+      "family": "objects",
+      "operation": "accessor-cache",
+      "variant": 8,
+      "work_units": 67,
+      "memory_profile": "allocation-heavy",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; accessor-cache"
+    },
+    {
+      "id": 39,
+      "file": "039.js",
+      "family": "objects",
+      "operation": "sealed-frozen-properties",
+      "variant": 9,
+      "work_units": 72,
+      "memory_profile": "ephemeral",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; sealed-frozen-properties"
+    },
+    {
+      "id": 40,
+      "file": "040.js",
+      "family": "objects",
+      "operation": "object-graph-walk",
+      "variant": 10,
+      "work_units": 77,
+      "memory_profile": "retained-ring",
+      "description": "shapes, descriptors, prototypes, accessors, and symbols; object-graph-walk"
+    },
+    {
+      "id": 41,
+      "file": "041.js",
+      "family": "functions",
+      "operation": "closure-capture",
+      "variant": 1,
+      "work_units": 20,
+      "memory_profile": "ephemeral",
+      "description": "closures, recursion, receiver calls, constructors, and classes; closure-capture"
+    },
+    {
+      "id": 42,
+      "file": "042.js",
+      "family": "functions",
+      "operation": "recursive-fold",
+      "variant": 2,
+      "work_units": 23,
+      "memory_profile": "none",
+      "description": "closures, recursion, receiver calls, constructors, and classes; recursive-fold"
+    },
+    {
+      "id": 43,
+      "file": "043.js",
+      "family": "functions",
+      "operation": "receiver-call-mix",
+      "variant": 3,
+      "work_units": 26,
+      "memory_profile": "allocation-heavy",
+      "description": "closures, recursion, receiver calls, constructors, and classes; receiver-call-mix"
+    },
+    {
+      "id": 44,
+      "file": "044.js",
+      "family": "functions",
+      "operation": "constructor-prototype",
+      "variant": 4,
+      "work_units": 29,
+      "memory_profile": "ephemeral",
+      "description": "closures, recursion, receiver calls, constructors, and classes; constructor-prototype"
+    },
+    {
+      "id": 45,
+      "file": "045.js",
+      "family": "functions",
+      "operation": "class-method-dispatch",
+      "variant": 5,
+      "work_units": 32,
+      "memory_profile": "ephemeral",
+      "description": "closures, recursion, receiver calls, constructors, and classes; class-method-dispatch"
+    },
+    {
+      "id": 46,
+      "file": "046.js",
+      "family": "functions",
+      "operation": "higher-order-map",
+      "variant": 6,
+      "work_units": 35,
+      "memory_profile": "allocation-heavy",
+      "description": "closures, recursion, receiver calls, constructors, and classes; higher-order-map"
+    },
+    {
+      "id": 47,
+      "file": "047.js",
+      "family": "functions",
+      "operation": "tail-like-iteration",
+      "variant": 7,
+      "work_units": 38,
+      "memory_profile": "none",
+      "description": "closures, recursion, receiver calls, constructors, and classes; tail-like-iteration"
+    },
+    {
+      "id": 48,
+      "file": "048.js",
+      "family": "functions",
+      "operation": "bound-method-cache",
+      "variant": 8,
+      "work_units": 41,
+      "memory_profile": "allocation-heavy",
+      "description": "closures, recursion, receiver calls, constructors, and classes; bound-method-cache"
+    },
+    {
+      "id": 49,
+      "file": "049.js",
+      "family": "functions",
+      "operation": "function-property-shapes",
+      "variant": 9,
+      "work_units": 44,
+      "memory_profile": "ephemeral",
+      "description": "closures, recursion, receiver calls, constructors, and classes; function-property-shapes"
+    },
+    {
+      "id": 50,
+      "file": "050.js",
+      "family": "functions",
+      "operation": "mutual-recursion",
+      "variant": 10,
+      "work_units": 47,
+      "memory_profile": "none",
+      "description": "closures, recursion, receiver calls, constructors, and classes; mutual-recursion"
+    },
+    {
+      "id": 51,
+      "file": "051.js",
+      "family": "strings",
+      "operation": "concat-rope",
+      "variant": 1,
+      "work_units": 28,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; concat-rope"
+    },
+    {
+      "id": 52,
+      "file": "052.js",
+      "family": "strings",
+      "operation": "unicode-codepoints",
+      "variant": 2,
+      "work_units": 32,
+      "memory_profile": "ephemeral",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; unicode-codepoints"
+    },
+    {
+      "id": 53,
+      "file": "053.js",
+      "family": "strings",
+      "operation": "regexp-scan",
+      "variant": 3,
+      "work_units": 36,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; regexp-scan"
+    },
+    {
+      "id": 54,
+      "file": "054.js",
+      "family": "strings",
+      "operation": "replace-split",
+      "variant": 4,
+      "work_units": 40,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; replace-split"
+    },
+    {
+      "id": 55,
+      "file": "055.js",
+      "family": "strings",
+      "operation": "normalization",
+      "variant": 5,
+      "work_units": 44,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; normalization"
+    },
+    {
+      "id": 56,
+      "file": "056.js",
+      "family": "strings",
+      "operation": "substring-scan",
+      "variant": 6,
+      "work_units": 48,
+      "memory_profile": "ephemeral",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; substring-scan"
+    },
+    {
+      "id": 57,
+      "file": "057.js",
+      "family": "strings",
+      "operation": "template-render",
+      "variant": 7,
+      "work_units": 52,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; template-render"
+    },
+    {
+      "id": 58,
+      "file": "058.js",
+      "family": "strings",
+      "operation": "case-folding",
+      "variant": 8,
+      "work_units": 56,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; case-folding"
+    },
+    {
+      "id": 59,
+      "file": "059.js",
+      "family": "strings",
+      "operation": "regex-replace",
+      "variant": 9,
+      "work_units": 60,
+      "memory_profile": "allocation-heavy",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; regex-replace"
+    },
+    {
+      "id": 60,
+      "file": "060.js",
+      "family": "strings",
+      "operation": "string-search",
+      "variant": 10,
+      "work_units": 64,
+      "memory_profile": "none",
+      "description": "concatenation, Unicode, regular expressions, replacement, and normalization; string-search"
+    },
+    {
+      "id": 61,
+      "file": "061.js",
+      "family": "iterables",
+      "operation": "custom-iterator",
+      "variant": 1,
+      "work_units": 12,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; custom-iterator"
+    },
+    {
+      "id": 62,
+      "file": "062.js",
+      "family": "iterables",
+      "operation": "generator-yield",
+      "variant": 2,
+      "work_units": 13,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; generator-yield"
+    },
+    {
+      "id": 63,
+      "file": "063.js",
+      "family": "iterables",
+      "operation": "destructure-rest",
+      "variant": 3,
+      "work_units": 14,
+      "memory_profile": "ephemeral",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; destructure-rest"
+    },
+    {
+      "id": 64,
+      "file": "064.js",
+      "family": "iterables",
+      "operation": "spread-merge",
+      "variant": 4,
+      "work_units": 15,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; spread-merge"
+    },
+    {
+      "id": 65,
+      "file": "065.js",
+      "family": "iterables",
+      "operation": "forof-set",
+      "variant": 5,
+      "work_units": 16,
+      "memory_profile": "ephemeral",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; forof-set"
+    },
+    {
+      "id": 66,
+      "file": "066.js",
+      "family": "iterables",
+      "operation": "iterator-close",
+      "variant": 6,
+      "work_units": 17,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; iterator-close"
+    },
+    {
+      "id": 67,
+      "file": "067.js",
+      "family": "iterables",
+      "operation": "generator-throw",
+      "variant": 7,
+      "work_units": 18,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; generator-throw"
+    },
+    {
+      "id": 68,
+      "file": "068.js",
+      "family": "iterables",
+      "operation": "iterator-composition",
+      "variant": 8,
+      "work_units": 19,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; iterator-composition"
+    },
+    {
+      "id": 69,
+      "file": "069.js",
+      "family": "iterables",
+      "operation": "destructure-defaults",
+      "variant": 9,
+      "work_units": 20,
+      "memory_profile": "ephemeral",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; destructure-defaults"
+    },
+    {
+      "id": 70,
+      "file": "070.js",
+      "family": "iterables",
+      "operation": "iterator-reuse",
+      "variant": 10,
+      "work_units": 21,
+      "memory_profile": "allocation-heavy",
+      "description": "custom iterators, generators, destructuring, spread, and for-of; iterator-reuse"
+    },
+    {
+      "id": 71,
+      "file": "071.js",
+      "family": "collections",
+      "operation": "map-set-get",
+      "variant": 1,
+      "work_units": 48,
+      "memory_profile": "allocation-heavy",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; map-set-get"
+    },
+    {
+      "id": 72,
+      "file": "072.js",
+      "family": "collections",
+      "operation": "set-membership",
+      "variant": 2,
+      "work_units": 28,
+      "memory_profile": "allocation-heavy",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; set-membership"
+    },
+    {
+      "id": 73,
+      "file": "073.js",
+      "family": "collections",
+      "operation": "weakmap-identity",
+      "variant": 3,
+      "work_units": 32,
+      "memory_profile": "ephemeral",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; weakmap-identity"
+    },
+    {
+      "id": 74,
+      "file": "074.js",
+      "family": "collections",
+      "operation": "object-key-identity",
+      "variant": 4,
+      "work_units": 36,
+      "memory_profile": "ephemeral",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; object-key-identity"
+    },
+    {
+      "id": 75,
+      "file": "075.js",
+      "family": "collections",
+      "operation": "bounded-map-cache",
+      "variant": 5,
+      "work_units": 40,
+      "memory_profile": "retained-ring",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; bounded-map-cache"
+    },
+    {
+      "id": 76,
+      "file": "076.js",
+      "family": "collections",
+      "operation": "map-delete-reinsert",
+      "variant": 6,
+      "work_units": 44,
+      "memory_profile": "allocation-heavy",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; map-delete-reinsert"
+    },
+    {
+      "id": 77,
+      "file": "077.js",
+      "family": "collections",
+      "operation": "set-churn",
+      "variant": 7,
+      "work_units": 48,
+      "memory_profile": "allocation-heavy",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; set-churn"
+    },
+    {
+      "id": 78,
+      "file": "078.js",
+      "family": "collections",
+      "operation": "weakmap-lifetime",
+      "variant": 8,
+      "work_units": 52,
+      "memory_profile": "ephemeral",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; weakmap-lifetime"
+    },
+    {
+      "id": 79,
+      "file": "079.js",
+      "family": "collections",
+      "operation": "map-object-values",
+      "variant": 9,
+      "work_units": 56,
+      "memory_profile": "allocation-heavy",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; map-object-values"
+    },
+    {
+      "id": 80,
+      "file": "080.js",
+      "family": "collections",
+      "operation": "multi-key-index",
+      "variant": 10,
+      "work_units": 60,
+      "memory_profile": "retained-ring",
+      "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; multi-key-index"
+    },
+    {
+      "id": 81,
+      "file": "081.js",
+      "family": "typed-memory",
+      "operation": "uint8-indexing",
+      "variant": 1,
+      "work_units": 32,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; uint8-indexing"
+    },
+    {
+      "id": 82,
+      "file": "082.js",
+      "family": "typed-memory",
+      "operation": "dataview-endian",
+      "variant": 2,
+      "work_units": 38,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; dataview-endian"
+    },
+    {
+      "id": 83,
+      "file": "083.js",
+      "family": "typed-memory",
+      "operation": "float64-transform",
+      "variant": 3,
+      "work_units": 44,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; float64-transform"
+    },
+    {
+      "id": 84,
+      "file": "084.js",
+      "family": "typed-memory",
+      "operation": "bigint64-typed",
+      "variant": 4,
+      "work_units": 50,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; bigint64-typed"
+    },
+    {
+      "id": 85,
+      "file": "085.js",
+      "family": "typed-memory",
+      "operation": "buffer-copy-slice",
+      "variant": 5,
+      "work_units": 56,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; buffer-copy-slice"
+    },
+    {
+      "id": 86,
+      "file": "086.js",
+      "family": "typed-memory",
+      "operation": "int16-saturation",
+      "variant": 6,
+      "work_units": 62,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; int16-saturation"
+    },
+    {
+      "id": 87,
+      "file": "087.js",
+      "family": "typed-memory",
+      "operation": "uint32-bitfields",
+      "variant": 7,
+      "work_units": 68,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; uint32-bitfields"
+    },
+    {
+      "id": 88,
+      "file": "088.js",
+      "family": "typed-memory",
+      "operation": "float32-reduction",
+      "variant": 8,
+      "work_units": 74,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; float32-reduction"
+    },
+    {
+      "id": 89,
+      "file": "089.js",
+      "family": "typed-memory",
+      "operation": "shared-view-alias",
+      "variant": 9,
+      "work_units": 80,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; shared-view-alias"
+    },
+    {
+      "id": 90,
+      "file": "090.js",
+      "family": "typed-memory",
+      "operation": "typed-sort-copy",
+      "variant": 10,
+      "work_units": 86,
+      "memory_profile": "external",
+      "description": "typed arrays, DataView, floating point, BigInt, and buffers; typed-sort-copy"
+    },
+    {
+      "id": 91,
+      "file": "091.js",
+      "family": "meta",
+      "operation": "proxy-get-set",
+      "variant": 1,
+      "work_units": 18,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; proxy-get-set"
+    },
+    {
+      "id": 92,
+      "file": "092.js",
+      "family": "meta",
+      "operation": "reflect-property",
+      "variant": 2,
+      "work_units": 21,
+      "memory_profile": "ephemeral",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; reflect-property"
+    },
+    {
+      "id": 93,
+      "file": "093.js",
+      "family": "meta",
+      "operation": "json-roundtrip",
+      "variant": 3,
+      "work_units": 24,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; json-roundtrip"
+    },
+    {
+      "id": 94,
+      "file": "094.js",
+      "family": "meta",
+      "operation": "date-calendar",
+      "variant": 4,
+      "work_units": 27,
+      "memory_profile": "ephemeral",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; date-calendar"
+    },
+    {
+      "id": 95,
+      "file": "095.js",
+      "family": "meta",
+      "operation": "error-and-function",
+      "variant": 5,
+      "work_units": 30,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; error-and-function"
+    },
+    {
+      "id": 96,
+      "file": "096.js",
+      "family": "meta",
+      "operation": "proxy-ownkeys",
+      "variant": 6,
+      "work_units": 33,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; proxy-ownkeys"
+    },
+    {
+      "id": 97,
+      "file": "097.js",
+      "family": "meta",
+      "operation": "json-replacer-reviver",
+      "variant": 7,
+      "work_units": 36,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; json-replacer-reviver"
+    },
+    {
+      "id": 98,
+      "file": "098.js",
+      "family": "meta",
+      "operation": "date-format-fields",
+      "variant": 8,
+      "work_units": 39,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; date-format-fields"
+    },
+    {
+      "id": 99,
+      "file": "099.js",
+      "family": "meta",
+      "operation": "dynamic-function",
+      "variant": 9,
+      "work_units": 42,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; dynamic-function"
+    },
+    {
+      "id": 100,
+      "file": "100.js",
+      "family": "meta",
+      "operation": "proxy-invariant",
+      "variant": 10,
+      "work_units": 45,
+      "memory_profile": "allocation-heavy",
+      "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; proxy-invariant"
+    }
+  ],
+  "measurement": {
+    "work_units": "Declared operation units are used to normalize steady-state timing; they are not runtime hints.",
+    "memory_profiles": [
+      "none",
+      "ephemeral",
+      "allocation-heavy",
+      "retained-ring",
+      "external"
+    ],
+    "correctness": "Each case emits deterministic ok: JSON output and is checked against the Node oracle.",
+    "rss": "Peak RSS is process-level evidence only; use runtime heap/GC instrumentation for allocation and collection attribution."
+  }
+}

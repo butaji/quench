@@ -1,6 +1,7 @@
 //! Polyfill: `target`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= class EventTarget {
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"globalThis.EventTarget ||= class EventTarget {
   constructor() {
     this._listeners = {};
   }
@@ -355,14 +356,8 @@ const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;
 const __quenchPassiveListeners = new WeakMap();
 EventTarget.prototype.addEventListener = function (name, listener, options) {
   const passive = Boolean(options?.passive);
-  if (!passive || typeof listener !== "function") {
-    return __quenchEventTargetAdd.call(this, name, listener, options);
-  }
-  const wrapper = (event) => {
-    event._quenchPassive = true;
-    listener.call(this, event);
-    event._quenchPassive = false;
-  };
+  if (!passive || typeof listener !== "function") return __quenchEventTargetAdd.call(this, name, listener, options);
+  const wrapper = (event) => { event._quenchPassive = true; listener.call(this, event); event._quenchPassive = false; };
   let listeners = __quenchPassiveListeners.get(this);
   if (!listeners) __quenchPassiveListeners.set(this, listeners = new Map());
   listeners.set(listener, wrapper);
@@ -374,53 +369,29 @@ EventTarget.prototype.removeEventListener = function (name, listener, options) {
   return __quenchEventTargetRemove.call(this, name, wrapper, options);
 };
 EventTarget.prototype.dispatchEvent = function (event) {
-  event.target = this;
-  event.currentTarget = this;
-  try {
-    Object.defineProperty(event, "eventPhase", {
-      value: 2,
-      configurable: true,
-    });
-  } catch (_) {}
+  event.target = this; event.currentTarget = this;
+  try { Object.defineProperty(event, "eventPhase", { value: 2, configurable: true }); } catch (_) {}
   event._quenchPath = [this];
   const result = __quenchEventTargetDispatch.call(this, event);
   return result && !event.defaultPrevented;
 };
 if (globalThis.Event && !Event.prototype.stopImmediatePropagation) {
-  Event.prototype.stopImmediatePropagation = function () {
-    this._quenchImmediatePropagationStopped = true;
-  };
+  Event.prototype.stopImmediatePropagation = function () { this._quenchImmediatePropagationStopped = true; };
 }
 if (globalThis.Event && !Event.prototype.__quenchPassivePreventDefault) {
   const originalPreventDefault = Event.prototype.preventDefault;
-  Event.prototype.preventDefault = function () {
-    if (!this._quenchPassive) originalPreventDefault.call(this);
-  };
+  Event.prototype.preventDefault = function () { if (!this._quenchPassive) originalPreventDefault.call(this); };
   Event.prototype.__quenchPassivePreventDefault = true;
 }
 if (globalThis.Event) {
   Event.prototype.timeStamp ||= Date.now();
-  Event.prototype.composedPath ||= function () {
-    return this._quenchPath || [];
-  };
+  Event.prototype.composedPath ||= function () { return this._quenchPath || []; };
   Event.prototype.returnValue ??= true;
   Event.prototype.isTrusted ??= false;
   Event.prototype.eventPhase ??= 0;
   Event.prototype.cancelBubble ??= false;
-  try {
-    Object.defineProperty(Event.prototype, "cancelBubble", {
-      get() {
-        return Boolean(this._quenchCancelBubble);
-      },
-      set(value) {
-        this._quenchCancelBubble = Boolean(value);
-      },
-      configurable: true,
-    });
-  } catch (_) {}
-  Event.prototype.stopPropagation ||= function () {
-    this.cancelBubble = true;
-  };
+  try { Object.defineProperty(Event.prototype, "cancelBubble", { get() { return Boolean(this._quenchCancelBubble); }, set(value) { this._quenchCancelBubble = Boolean(value); }, configurable: true }); } catch (_) {}
+  Event.prototype.stopPropagation ||= function () { this.cancelBubble = true; };
 }
 if (globalThis.CustomEvent) {
   CustomEvent.NONE ||= 0;
@@ -508,4 +479,5 @@ globalThis.require = (name) => {
   if (String(name).replace(/^node:/, "") !== "events") return value;
   return __quenchEventsRequire(value);
 };
-"#);
+"#
+);

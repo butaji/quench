@@ -57,17 +57,37 @@ impl Op {
             | Self::IteratorBinding { body, .. }
             | Self::ForIn { body, .. }
             | Self::ForOf { body, .. } => body.rehome(arena, store),
-            Self::Branch { then_ops, else_ops, .. }
-            | Self::Conditional { consequent: then_ops, alternate: else_ops, .. } => {
+            Self::Branch { then_ops, else_ops, .. } => {
                 then_ops.rehome(arena, store);
                 else_ops.rehome(arena, store);
+            }
+            // Ternary arms stay as source ops so append_slice can flatten
+            // them into JumpIfFalse/Jump, but nested MakeFunction/Loop
+            // bodies still need a store range.
+            Self::Conditional {
+                consequent,
+                alternate,
+                ..
+            } => {
+                consequent.rehome_contents(arena, store);
+                alternate.rehome_contents(arena, store);
             }
             Self::Try { body, handler, finalizer, .. } => {
                 body.rehome(arena, store);
                 rehome_optional(handler, arena, store);
                 rehome_optional(finalizer, arena, store);
             }
-            Self::Loop { init, test, body, update, .. } => rehome_loop(init, test, body, update, arena, store),
+            Self::Loop {
+                init,
+                test,
+                body,
+                update,
+                label,
+                per_iteration,
+                ..
+            } => {
+                rehome_loop(init, test, body, update, arena, store);
+            }
             Self::Switch { cases, .. } => rehome_cases(cases, arena, store),
             _ => {}
         }
