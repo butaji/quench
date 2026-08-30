@@ -1311,8 +1311,29 @@ pub fn req_error(
         .clientreqs
         .get(&client_id)
         .map(|req| req.req.clone());
-    if let (Some(request), Some(error)) = (request, args.first().cloned()) {
-        net::emit(state, &request, "error", vec![error])?;
+    let request_closed = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .is_some_and(|req| req.response_closed);
+    let agent_target = state.borrow().http.clientreqs.get(&client_id).and_then(|req| {
+        req.agent
+            .clone()
+            .map(|agent| (agent, req.target.clone()))
+    });
+    if let (Some((agent, target)), Some(request)) = (agent_target, request.as_ref()) {
+        let name = agent_name(&target, &agent);
+        remove_idle_agent_socket(&agent, &name, socket, request);
+    }
+    let destroy = execute::get_property(socket, "destroy");
+    if quench_runtime::is_callable(&destroy) {
+        let _ = execute::call(&destroy, socket, &[])?;
+    }
+    if !request_closed {
+        if let (Some(request), Some(error)) = (request, args.first().cloned()) {
+            net::emit(state, &request, "error", vec![error])?;
+        }
     }
     Ok(Value::Undefined)
 }
@@ -1704,6 +1725,42 @@ fn remove_agent_socket(agent: &Value, name: &str, socket: &Value) {
             let _ = execute::set_property_in_place(&list, &key, Value::Undefined);
         }
     }
+}
+
+fn remove_idle_agent_socket(agent: &Value, name: &str, socket: &Value, request: &Value) {
+    for pool_name in ["sockets", "freeSockets"] {
+        let pools = execute::get_property(agent, pool_name);
+        let list = execute::get_property(&pools, name);
+        let keys = execute::own_enumerable_keys(&list);
+        let remaining: Vec<Value> = keys
+            .iter()
+            .filter_map(|key| {
+                let value = execute::get_property(&list, key);
+                let belongs_to_error = same_socket(&value, socket)
+                    || execute::same_identity(
+                        &execute::get_property(&value, "_httpMessage"),
+                        request,
+                    );
+                (!belongs_to_error)
+                    .then_some(value)
+                    .filter(|value| !matches!(value, Value::Undefined))
+            })
+            .collect();
+        if remaining.len() == keys.len() {
+            continue;
+        }
+        if remaining.is_empty() {
+            let (updated, _) = execute::delete_property(pools, name);
+            execute::set_property_in_place(agent, pool_name, updated);
+        } else {
+            execute::set_property_in_place(&pools, name, host_api::array(remaining));
+        }
+    }
+}
+
+fn same_socket(left: &Value, right: &Value) -> bool {
+    execute::same_identity(left, right)
+        || matches!((net::net_id(left), net::net_id(right)), (Some(a), Some(b)) if a == b)
 }
 
 /// Response parser: buffer bytes, then stream `'data'` chunks.
@@ -2332,7 +2389,7 @@ fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Optio
         .http
         .clientreqs
         .iter()
-        .find(|(_, req)| req.socket.as_ref().is_some_and(|value| execute::same_identity(value, socket)))
+        .find(|(_, req)| req.socket.as_ref().is_some_and(|value| same_socket(value, socket)))
         .map(|(id, _)| *id)
 }
 
