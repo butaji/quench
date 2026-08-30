@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::value::{
-    ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, PropertyEntries, Value, WeakObject,
+    ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject,
 };
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
@@ -64,21 +64,21 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
 
 pub(crate) fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool {
     crate::arrays::array_index(key).is_some()
+        && properties.plain_index_cached().unwrap_or_else(|| {
+            let plain = !properties
+                .iter()
+                .any(|(name, _)| {
+                    name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator")
+                });
+            properties.set_plain_index_cached(plain);
+            plain
+        })
         && properties.original_prototype().is_none_or(|prototype| {
             matches!(
                 prototype,
                 Value::Builtin(crate::ops::Builtin::ObjectPrototype)
             )
         })
-        && properties
-            .as_ref()
-            .value_for_key("\0prototype")
-            .is_none_or(|prototype| {
-                matches!(
-                    prototype,
-                    Value::Builtin(crate::ops::Builtin::ObjectPrototype)
-                )
-            })
         && !properties.has_replacement()
         && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
 }
