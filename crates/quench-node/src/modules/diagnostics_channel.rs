@@ -371,6 +371,56 @@ fn tracing_member(
     Ok(value)
 }
 
+/// Instrument the synchronous CJS loader using the same tracing-channel data
+/// model as user-facing `tracingChannel("module.require")` subscribers.
+pub(crate) fn module_require_start(
+    state: &Rc<RefCell<HostState>>,
+    parent: String,
+    id: String,
+) -> Result<Option<Value>, VmError> {
+    let start = channel(
+        state,
+        None,
+        &[Value::String("tracing:module.require:start".into())],
+    )?;
+    if !channel_has_subscribers(state, &start) {
+        return Ok(None);
+    }
+    let event = host_api::object(vec![
+        ("parentFilename".into(), Value::String(parent)),
+        ("id".into(), Value::String(id)),
+    ]);
+    publish(state, Some(&start), std::slice::from_ref(&event))?;
+    Ok(Some(event))
+}
+
+pub(crate) fn module_require_end(
+    state: &Rc<RefCell<HostState>>,
+    event: Value,
+    result: &Result<Value, VmError>,
+) -> Result<(), VmError> {
+    let channel_name = match result {
+        Ok(value) => {
+            let _ = execute::set_property_in_place(&event, "result", value.clone());
+            "tracing:module.require:end"
+        }
+        Err(VmError::Thrown(error)) => {
+            let _ = execute::set_property_in_place(&event, "error", error.clone());
+            "tracing:module.require:error"
+        }
+        Err(_) => "tracing:module.require:error",
+    };
+    let channel = channel(
+        state,
+        None,
+        &[Value::String(channel_name.into())],
+    )?;
+    if channel_has_subscribers(state, &channel) {
+        publish(state, Some(&channel), std::slice::from_ref(&event))?;
+    }
+    Ok(())
+}
+
 fn tracing_object(channels: Vec<Value>) -> Value {
     let mut properties = vec![(TRACE.into(), Value::Boolean(true))];
     for (name, channel) in TRACE_CHANNELS.iter().zip(channels) {
