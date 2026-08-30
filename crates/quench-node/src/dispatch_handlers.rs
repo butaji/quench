@@ -2106,6 +2106,41 @@ pub fn process_cpu_usage(
     ]))
 }
 
+pub fn process_initgroups(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let user = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(user, Value::Number(_) | Value::String(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"user\" argument must be one of type number or string.{}",
+            crate::modules::util::invalid_arg_received(user)
+        )));
+    }
+    let extra = args.get(1).unwrap_or(&Value::Undefined);
+    if !matches!(extra, Value::Number(_) | Value::String(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"extraGroup\" argument must be one of type number or string.{}",
+            crate::modules::util::invalid_arg_received(extra)
+        )));
+    }
+    if let Value::String(group) = extra {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            (
+                "code".into(),
+                Value::String("ERR_UNKNOWN_CREDENTIAL".into()),
+            ),
+            (
+                "message".into(),
+                Value::String(format!("Group identifier does not exist: {group}")),
+            ),
+        ])));
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn process_uptime(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
