@@ -213,6 +213,20 @@ fn property_matches(
     }
 }
 
+fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
+    matches!(
+        (name, value),
+        ("Any", _)
+            | ("Other", None)
+            | ("C", None)
+            | ("General_Category" | "gc", Some("Other" | "C" | "Surrogate" | "Cs"))
+            | (
+                "Script" | "sc" | "Script_Extensions" | "scx",
+                Some("Unknown" | "Zzzz")
+            )
+    )
+}
+
 fn find_property_repeat_str(
     name: &str,
     value: Option<&str>,
@@ -222,6 +236,12 @@ fn find_property_repeat_str(
 ) -> Option<NativeMatch> {
     if start != 0 {
         return None;
+    }
+    if name == "Any" {
+        return (!negative && !input.is_empty()).then_some(NativeMatch {
+            start: 0,
+            end: input.len(),
+        });
     }
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
     let mut count = 0;
@@ -248,12 +268,30 @@ fn find_property_repeat_units(
     if start != 0 {
         return None;
     }
+    if name == "Any" {
+        return (!negative && !input.is_empty()).then_some(NativeMatch {
+            start: 0,
+            end: input.len(),
+        });
+    }
     let unicode = flags.contains('u') || flags.contains('v');
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
     let mut index = 0;
     let mut count = 0;
     while index < input.len() {
-        let (character, width) = next_code_point(input, index, unicode)?;
+        let Some((character, width)) = next_code_point(input, index, unicode) else {
+            let unit = *input.get(index)?;
+            if !(0xD800..=0xDFFF).contains(&unit) {
+                return None;
+            }
+            let matched = surrogate_property_matches(name, value);
+            if if negative { matched } else { !matched } {
+                return None;
+            }
+            index += 1;
+            count += 1;
+            continue;
+        };
         if !property_matches(matcher, negative, character) {
             return None;
         }
@@ -320,12 +358,18 @@ fn find_repeat(
     max: Option<usize>,
     sticky: bool,
 ) -> Option<std::ops::Range<usize>> {
-    let starts = if sticky {
-        0..input.len().min(1)
-    } else {
-        0..input.len()
-    };
-    for start in starts {
+    if min == 0 && input.first().copied() != Some(unit) {
+        return Some(0..0);
+    }
+    let mut start = 0;
+    while start < input.len() {
+        if input[start] != unit {
+            if sticky {
+                break;
+            }
+            start += 1;
+            continue;
+        }
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == unit)
@@ -334,6 +378,10 @@ fn find_repeat(
             let end = start + max.map_or(available, |upper| available.min(upper));
             return Some(start..end);
         }
+        if sticky {
+            break;
+        }
+        start += available;
     }
     (min == 0).then_some(0..0)
 }
@@ -345,12 +393,18 @@ fn find_repeat_units(
     max: Option<usize>,
     sticky: bool,
 ) -> Option<std::ops::Range<usize>> {
-    let starts = if sticky {
-        0..input.len().min(1)
-    } else {
-        0..input.len()
-    };
-    for start in starts {
+    if min == 0 && input.first().copied() != Some(u16::from(unit)) {
+        return Some(0..0);
+    }
+    let mut start = 0;
+    while start < input.len() {
+        if input[start] != u16::from(unit) {
+            if sticky {
+                break;
+            }
+            start += 1;
+            continue;
+        }
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == u16::from(unit))
@@ -359,6 +413,10 @@ fn find_repeat_units(
             let end = start + max.map_or(available, |upper| available.min(upper));
             return Some(start..end);
         }
+        if sticky {
+            break;
+        }
+        start += available;
     }
     (min == 0).then_some(0..0)
 }

@@ -9,6 +9,18 @@ pub(crate) enum PromiseContinuation {
         generator: Rc<GeneratorData>,
         result: Rc<PromiseData>,
     },
+    ArrayFromAsync {
+        result: Rc<PromiseData>,
+        iterator: Value,
+        receiver: Option<Value>,
+        mapper: Option<Value>,
+        this_arg: Value,
+        values: Vec<Value>,
+        index: usize,
+        array_like: Option<(Value, usize)>,
+        pending: ArrayFromAsyncPending,
+        target: Option<Value>,
+    },
     Aggregate {
         aggregate: Rc<PromiseAggregate>,
         index: usize,
@@ -18,6 +30,13 @@ pub(crate) enum PromiseContinuation {
         thenable: Value,
         then: Value,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArrayFromAsyncPending {
+    None,
+    Input,
+    Mapper,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

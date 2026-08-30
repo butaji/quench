@@ -494,6 +494,7 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
         | Builtin::URIErrorPrototype => &["constructor", "name", "message"],
         Builtin::AggregateErrorPrototype => &["constructor", "name", "message"],
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
+        Builtin::DOMExceptionPrototype => &["constructor", "name", "message", "code", "toString"],
         Builtin::SymbolPrototype => &[
             "constructor",
             "toString",

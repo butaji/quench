@@ -425,7 +425,10 @@ fn unit_scale(unit: &str) -> Option<i128> {
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let epoch_milliseconds = get_epoch_milliseconds(receiver)?;
-    let formatter = crate::intl::datetime::construct(arguments)?;
+    let formatter = crate::intl::datetime::construct_with_defaults(
+        arguments,
+        Some(&["year", "month", "day", "hour", "minute", "second"]),
+    )?;
     crate::intl::datetime::prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat,
         std::slice::from_ref(&epoch_milliseconds),
@@ -624,6 +627,11 @@ fn time_zone_offset(zone: &str) -> Option<i64> {
         }
         if let Some(offset) = fixed_offset(annotation) {
             return Some(offset);
+        }
+        if let Ok(canonical) = crate::temporal::parse_timezone_identifier(
+            &Value::String(annotation.to_string()),
+        ) {
+            return time_zone_offset(&canonical);
         }
         return time_zone_offset(base);
     }

@@ -371,6 +371,7 @@ pub fn is_callable(value: &Value) -> bool {
             | crate::ops::Builtin::Json
             | crate::ops::Builtin::Reflect
             | crate::ops::Builtin::Atomics
+            | crate::ops::Builtin::Intl
             | crate::ops::Builtin::Temporal
             | crate::ops::Builtin::TemporalNow,
         ) => false,

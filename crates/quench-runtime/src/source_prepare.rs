@@ -6,6 +6,16 @@ use std::borrow::Cow;
 /// comment NULs to a space. String and template contents keep the code point
 /// as an escape that the parser accepts.
 pub(crate) fn prepare_source(source: &str) -> Cow<'_, str> {
+    prepare_source_mode(source, true)
+}
+
+/// Normalize source while preserving grammar errors that Annex B permits only
+/// as runtime errors in non-strict scripts.
+pub(crate) fn prepare_source_strict(source: &str) -> Cow<'_, str> {
+    prepare_source_mode(source, false)
+}
+
+fn prepare_source_mode(source: &str, rewrite_call_targets: bool) -> Cow<'_, str> {
     if !source.contains('\0')
         && !source.contains('\r')
         && !source.contains("await")
@@ -19,7 +29,11 @@ pub(crate) fn prepare_source(source: &str) -> Cow<'_, str> {
     let normalized = rewrite_await_using_line_break(&normalized);
     let normalized = rewrite_classic_for_using(&normalized);
     let normalized = rewrite_html_close_comments(&normalized);
-    let normalized = rewrite_annex_b_call_assignment_targets(&normalized);
+    let normalized = if rewrite_call_targets {
+        rewrite_annex_b_call_assignment_targets(&normalized)
+    } else {
+        normalized
+    };
     if normalized.contains('\0') {
         Cow::Owned(rewrite_nuls(&normalized))
     } else if normalized == source {

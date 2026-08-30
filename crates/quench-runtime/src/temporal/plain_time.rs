@@ -60,7 +60,9 @@ pub(crate) fn execute(
             Some(to_string(_receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalPlainTimeToJSON => Some(to_string(_receiver, None)),
-        crate::ops::Builtin::TemporalPlainTimeToLocaleString => Some(to_string(_receiver, None)),
+        crate::ops::Builtin::TemporalPlainTimeToLocaleString => {
+            Some(to_locale_string(_receiver, arguments))
+        }
         crate::ops::Builtin::TemporalPlainTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),
@@ -87,6 +89,31 @@ pub(crate) fn execute(
         )),
         _ => None,
     }
+}
+
+fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let value = receiver
+        .filter(|value| {
+            matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+                (key == "\0temporal-plain-time" && value == Value::Boolean(true))
+                    || (key == "\0prototype" && value == Value::Builtin(crate::ops::Builtin::TemporalPlainTimePrototype))
+            }))
+        })
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainTime"))?
+        .clone();
+    if let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) {
+        let date_style = crate::execute::get_property_result(options, "dateStyle")?;
+        if !matches!(date_style, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "dateStyle is incompatible with PlainTime",
+            ));
+        }
+    }
+    crate::intl::datetime::format_temporal_value(
+        &value,
+        arguments,
+        &["hour", "minute", "second"],
+    )
 }
 
 fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {

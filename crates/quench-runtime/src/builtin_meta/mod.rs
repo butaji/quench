@@ -61,8 +61,28 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::RegExp => Some("RegExp"),
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
+        Builtin::DOMException => Some("DOMException"),
         _ => constructor_name_tail(builtin),
     }
+}
+
+/// Returns whether a builtin uses the shared error-constructor path.
+/// Keeping this fact here prevents constructor dispatch and metadata from
+/// carrying separate, drifting lists of error types.
+pub const fn is_error_constructor(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Error
+            | Builtin::TypeError
+            | Builtin::RangeError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::EvalError
+            | Builtin::URIError
+            | Builtin::AggregateError
+            | Builtin::SuppressedError
+            | Builtin::DOMException
+    )
 }
 
 fn constructor_name_tail(builtin: Builtin) -> Option<&'static str> {
@@ -99,7 +119,6 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         return None;
     }
     Some(match builtin {
-        Builtin::Intl => "Intl",
         Builtin::IntlCollator => "Intl.Collator",
         Builtin::IntlDateTimeFormat => "DateTimeFormat",
         Builtin::IntlDisplayNames => "Intl.DisplayNames",
@@ -219,6 +238,7 @@ fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
         Builtin::Error => Some(Builtin::ErrorPrototype),
+        Builtin::DOMException => Some(Builtin::DOMExceptionPrototype),
         Builtin::RangeError => Some(Builtin::RangeErrorPrototype),
         Builtin::TypeError => Some(Builtin::TypeErrorPrototype),
         Builtin::ReferenceError => Some(Builtin::ReferenceErrorPrototype),
@@ -250,7 +270,8 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::SyntaxErrorPrototype
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
-                | Builtin::SuppressedErrorPrototype
+            | Builtin::SuppressedErrorPrototype
+            | Builtin::DOMExceptionPrototype
                 | Builtin::PromisePrototype
         )
 }
@@ -308,9 +329,9 @@ fn is_runtime_prototype_tail(builtin: Builtin) -> bool {
             | Builtin::TemporalPlainTimePrototype
             | Builtin::TemporalPlainMonthDayPrototype
             | Builtin::TemporalPlainYearMonthPrototype
-            | Builtin::TemporalZonedDateTimePrototype
             | Builtin::AbstractModuleSourcePrototype
             | Builtin::ShadowRealmPrototype
+            | Builtin::DOMExceptionPrototype
     )
 }
 
@@ -384,6 +405,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::RegExp => Some(2.0),
         Builtin::String => Some(1.0),
         Builtin::Symbol => Some(0.0),
+        Builtin::DOMException => Some(2.0),
         _ => constructor_length_tail(builtin),
     }
 }
@@ -399,6 +421,7 @@ fn constructor_length_tail(builtin: Builtin) -> Option<f64> {
         | Builtin::URIError => Some(1.0),
         Builtin::AggregateError => Some(2.0),
         Builtin::SuppressedError => Some(3.0),
+        Builtin::DOMException => Some(2.0),
         _ => None,
     }
 }
