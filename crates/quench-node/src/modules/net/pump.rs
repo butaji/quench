@@ -355,7 +355,15 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         if read_available(sock, &mut guard, &mut events.datas) {
             events.eofs.push(sock.clone());
         }
-        try_flush(&mut guard);
+        let flushed = try_flush(&mut guard);
+        if flushed
+            && guard.state == SocketState::Closing
+            && pending_write_len(&guard) == 0
+        {
+            if let Some(stream) = guard.stream.as_mut() {
+                let _ = stream.shutdown(Shutdown::Write);
+            }
+        }
     }
     events
 }
