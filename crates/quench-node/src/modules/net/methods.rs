@@ -2326,12 +2326,17 @@ pub fn socket_set_no_delay(
     args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
+        let enabled = args.first().map(execute::is_truthy).unwrap_or(true);
+        let previous = matches!(execute::get_property(receiver, super::NO_DELAY_PROP), Value::Boolean(true));
+        if enabled == previous {
+            return Ok(receiver.clone());
+        }
         let handle = execute::get_property(receiver, "_handle");
         let set_no_delay = execute::get_property(&handle, "setNoDelay");
         if quench_runtime::is_callable(&set_no_delay) {
-            let enabled = args.first().map(execute::is_truthy).unwrap_or(true);
             execute::call(&set_no_delay, &handle, &[Value::Boolean(enabled)])?;
         }
+        execute::set_property_in_place(receiver, super::NO_DELAY_PROP, Value::Boolean(enabled));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
