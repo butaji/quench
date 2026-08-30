@@ -23,6 +23,7 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::SymbolValueOf
             | Builtin::SymbolPrototypeToPrimitive
             | Builtin::SymbolDescriptionGetter
+            | Builtin::AbstractModuleSourceToStringTagGetter
             | Builtin::StringToString
             | Builtin::StringValueOf
             | Builtin::BoxedValueOf
@@ -152,6 +153,7 @@ fn execute_simple_conversion(
         Builtin::SymbolToString => symbol_to_string(receiver),
         Builtin::SymbolValueOf | Builtin::SymbolPrototypeToPrimitive => symbol_value_of(receiver),
         Builtin::SymbolDescriptionGetter => symbol_description(receiver),
+        Builtin::AbstractModuleSourceToStringTagGetter => Ok(Value::Undefined),
         Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => crate::builtins::prototype_to_string_result(receiver),
