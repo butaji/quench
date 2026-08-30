@@ -680,6 +680,21 @@ pub fn util_system_error_name(
     Ok(Value::String(name.into()))
 }
 
+pub fn process_binding_uv_errname(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::emit_warning(
+        state,
+        "DeprecationWarning",
+        "Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead.",
+        Some("DEP0119"),
+        true,
+    );
+    util_system_error_name(state, None, args)
+}
+
 pub fn util_convert_signal_to_exit_code(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -1293,6 +1308,10 @@ pub fn internal_binding(
         return Ok(crate::host::namespace_object_from_pairs(vec![
             ("UV_EAI_MEMORY".to_string(), Value::Number(-3001.0)),
             ("UV_ENOENT".to_string(), Value::Number(-2.0)),
+            (
+                "errname".to_string(),
+                crate::host::capability(crate::registry::SPEC_PROCESS_BINDING_UV_ERRNAME),
+            ),
         ]));
     }
     if name == "tty_wrap" {
