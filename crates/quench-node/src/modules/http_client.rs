@@ -105,6 +105,33 @@ pub fn agent_add_request(
     Ok(args.first().cloned().unwrap_or(Value::Undefined))
 }
 
+/// `agent.keepSocketAlive(socket)` applies the default idle-socket policy.
+/// Subclasses may override it; the pool invokes the receiver's method so
+/// custom timeout policies remain observable.
+pub fn agent_keep_socket_alive(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let agent = receiver.cloned().unwrap_or(Value::Undefined);
+    let socket = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Ok(Value::Boolean(false));
+    }
+    let keep_alive_msecs = execute::get_property(&agent, "keepAliveMsecs");
+    net::socket_set_keep_alive(
+        state,
+        Some(&socket),
+        &[Value::Boolean(true), keep_alive_msecs],
+    )?;
+    let timeout = execute::get_property(&agent, "timeout");
+    if matches!(timeout, Value::Number(value) if value.is_finite() && value >= 0.0) {
+        net::socket_set_timeout(state, Some(&socket), &[timeout])?;
+    }
+    net::socket_unref(state, Some(&socket), &[])?;
+    Ok(Value::Boolean(true))
+}
+
 pub fn agent_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
@@ -1308,11 +1335,16 @@ pub fn req_end(
                 vec![request.clone(), Value::Boolean(false)],
             );
             subscribe_event(state, &socket, "timeout", internal_cb)?;
-            net::socket_set_timeout(
-                state,
-                Some(&socket),
-                &[Value::Number(value), request_timeout_cb.clone()],
-            )?;
+            if request_timeout_set {
+                net::socket_set_timeout(
+                    state,
+                    Some(&socket),
+                    &[Value::Number(value), request_timeout_cb.clone()],
+                )?;
+            } else {
+                execute::set_property_in_place(&socket, "timeout", Value::Number(value));
+                subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
+            }
             if request_timeout_set && lookup.is_none() {
                 let response_cb = quench_runtime::host_api::bound_capability_with_arguments(
                     quench_runtime::ops::HostCapabilityRef {
@@ -2320,10 +2352,24 @@ fn pool_response_socket(
             .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
     });
     if keep_alive && alive {
+        let keep_socket_alive = execute::get_property(&agent, "keepSocketAlive");
+        if quench_runtime::is_callable(&keep_socket_alive)
+            && matches!(
+                execute::call(&keep_socket_alive, &agent, &[socket.clone()])?,
+                Value::Boolean(false)
+            )
+        {
+            return Ok(());
+        }
         let name = agent_name(&target, &agent);
         move_agent_socket_to_free(&agent, &name, socket);
         crate::modules::http::mark_idle_socket(state, socket);
         if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0) {
+            // `keepSocketAlive` may replace the Agent timeout (for example a
+            // subclass can install a custom idle timeout). Schedule using
+            // the socket's resulting value instead of overwriting it.
+            let timeout = execute::get_property(socket, "timeout");
+            net::socket_set_timeout(state, Some(socket), &[timeout])?;
             let destroy = crate::host::capability(crate::registry::SPEC_NET_SOCKET_DESTROY);
             subscribe_event(state, socket, "timeout", destroy)?;
         }
