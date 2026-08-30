@@ -17,7 +17,7 @@ pub(crate) enum PromiseContinuation {
         this_arg: Value,
         values: Vec<Value>,
         index: usize,
-        sync_values: Option<Vec<Value>>,
+        array_like: Option<(Value, usize)>,
         pending_mapper: bool,
         target: Option<Value>,
     },
