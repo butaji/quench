@@ -57,7 +57,7 @@ impl NodeTestRunner {
             Ok(fixture) => fixture,
             Err(error) => return NodeOutcome::Fail { reason: error },
         };
-        fixture.argv = argv;
+        fixture.argv.extend(argv);
         self.run_fixture(fixture)
     }
 
