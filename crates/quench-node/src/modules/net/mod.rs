@@ -493,7 +493,16 @@ fn register_server_path(
     // registers without one; listen() registers with one).
     let is_listening = listener.is_some();
     let bind_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
-    let owner_worker = state.borrow().cluster.worker_context;
+    let (owner_worker, refed) = {
+        let host = state.borrow();
+        let refed = host
+            .net
+            .servers
+            .get(&id)
+            .map(|server| server.borrow().refed)
+            .unwrap_or(true);
+        (host.cluster.worker_context, refed)
+    };
     state.borrow_mut().net.servers.insert(
         id,
         Rc::new(RefCell::new(NetServer {
@@ -504,7 +513,7 @@ fn register_server_path(
             bind_addr,
             js: js.clone(),
             listening: is_listening,
-            refed: true,
+            refed,
             announced: false,
             closed: false,
             close_emitted: false,
