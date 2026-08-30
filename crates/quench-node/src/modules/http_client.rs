@@ -1719,11 +1719,23 @@ fn remove_agent_socket(agent: &Value, name: &str, socket: &Value) {
     let pools = execute::get_property(agent, "sockets");
     let list = execute::get_property(&pools, name);
     let keys = execute::own_enumerable_keys(&list);
-    for key in keys {
-        let value = execute::get_property(&list, &key);
-        if execute::same_identity(&value, socket) {
-            let _ = execute::set_property_in_place(&list, &key, Value::Undefined);
-        }
+    let remaining: Vec<Value> = keys
+        .iter()
+        .filter_map(|key| {
+            let value = execute::get_property(&list, key);
+            (!same_socket(&value, socket))
+                .then_some(value)
+                .filter(|value| !matches!(value, Value::Undefined))
+        })
+        .collect();
+    if remaining.len() == keys.len() {
+        return;
+    }
+    if remaining.is_empty() {
+        let (updated, _) = execute::delete_property(pools, name);
+        execute::set_property_in_place(agent, "sockets", updated);
+    } else {
+        execute::set_property_in_place(&pools, name, host_api::array(remaining));
     }
 }
 

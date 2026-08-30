@@ -216,7 +216,7 @@ impl NodeRunner {
         let result = self.route_uncaught(result);
         let result = result.and_then(|_| {
             self.drive(
-                "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
+                "if (typeof globalThis.__quench_verify_calls === 'function') globalThis.__quench_verify_calls();",
             )
         });
         // `process.exit` unwinds with an error; `exit` handlers still run.
