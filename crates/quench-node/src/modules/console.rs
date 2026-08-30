@@ -79,12 +79,26 @@ const CONSOLE_CLASS: &str = r#"(class Console {
       (stdout.stdout || stdout.stderr) ? stdout : null;
     this._stdout = options ? options.stdout : stdout;
     this._stderr = options ? options.stderr : stderr;
+    this._inspectOptions = options ? options.inspectOptions : undefined;
     if (!this._stdout) this._stdout = globalThis?.process?.stdout;
     if (!this._stderr) this._stderr = globalThis?.process?.stderr;
   }
+  _format(output, args) {
+    const util = globalThis.__nodeUtil || globalThis.require?.("util");
+    const format = util?.format;
+    const formatWithOptions = util?.formatWithOptions;
+    const configured = this._inspectOptions &&
+      typeof this._inspectOptions.get === "function"
+      ? this._inspectOptions.get(output)
+      : this._inspectOptions;
+    if (configured && typeof formatWithOptions === "function") {
+      return formatWithOptions(configured, ...args);
+    }
+    return typeof format === "function" ? format(...args) : args.join(" ");
+  }
   log(...args) {
     const output = this._stdout || process?.stdout;
-    if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
+    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
     if (!this._tickPending) {
       this._tickPending = true;
       const tick = globalThis?.process?.nextTick;
@@ -98,7 +112,7 @@ const CONSOLE_CLASS: &str = r#"(class Console {
   timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr || process?.stderr;
-    if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
+    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
   }
   error(...args) { this.warn(...args); }
   trace(...args) { this.error(...args); }

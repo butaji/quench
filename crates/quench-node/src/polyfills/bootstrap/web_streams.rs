@@ -340,6 +340,19 @@ class __quenchCompressionStream extends __quenchTransformStream {
     });
   }
 }
+const __quenchCompressionInspect = (name) => function () {
+  return `${name} { readable: ReadableStream, writable: WritableStream }`;
+};
+Object.defineProperty(
+  __quenchCompressionStream.prototype,
+  Symbol.for("nodejs.util.inspect.custom"),
+  { configurable: true, value: __quenchCompressionInspect("CompressionStream") }
+);
+Object.defineProperty(
+  __quenchDecompressionStream.prototype,
+  Symbol.for("nodejs.util.inspect.custom"),
+  { configurable: true, value: __quenchCompressionInspect("DecompressionStream") }
+);
 class __quenchTextEncoderStream extends __quenchTransformStream {
   constructor() {
     super({
