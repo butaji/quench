@@ -640,6 +640,28 @@ pub fn complete_lookup(state: &Rc<RefCell<HostState>>, result: Value) -> Result<
             .push((pending.socket.clone(), error));
         return Ok(pending.socket);
     };
+    let addresses = lookup_addresses_for(&result);
+    if matches!(execute::get_property(&pending.options, "all"), Value::Boolean(true))
+        && !addresses.is_empty()
+    {
+        let attempted = host_api::array(
+            addresses
+                .iter()
+                .map(|address| {
+                    Value::String(format!(
+                        "{address}:{}",
+                        execute::to_js_string(&execute::get_property(&pending.options, "port"))
+                            .unwrap_or_default()
+                    ))
+                })
+                .collect(),
+        );
+        execute::set_property_in_place(
+            &pending.socket,
+            "autoSelectFamilyAttemptedAddresses",
+            attempted,
+        );
+    }
     let family = lookup_family(&result).map(|value| Value::Number(value as f64));
     state.borrow_mut().net.pending_events.push((
         pending.socket.clone(),
@@ -650,11 +672,18 @@ pub fn complete_lookup(state: &Rc<RefCell<HostState>>, result: Value) -> Result<
             family.unwrap_or(Value::Undefined),
         ],
     ));
-    let options = execute::set_property(
+    let mut options = execute::set_property(
         execute::set_property(pending.options, "lookup", Value::Undefined),
         "host",
         Value::String(address),
     );
+    if addresses.len() > 1 {
+        options = execute::set_property(
+            options,
+            LOOKUP_ADDRESSES_PROP,
+            host_api::array(addresses.into_iter().map(Value::String).collect()),
+        );
+    }
     let mut args = pending.args;
     if let Some(first) = args.first_mut() {
         *first = options;
@@ -667,6 +696,8 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let mut lookup_socket_for_result: Option<Value> = None;
+    let mut lookup_addresses: Option<Vec<String>> = None;
     if let Some(receiver) = receiver {
         let local_address = execute::get_property(receiver, BOUND_LOCAL_ADDRESS_PROP);
         if !matches!(local_address, Value::Undefined) {
@@ -691,6 +722,22 @@ fn connect_with_receiver(
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
+        let saved_addresses = execute::get_property(options, LOOKUP_ADDRESSES_PROP);
+        if let Value::Array(_) = saved_addresses {
+            let length = match execute::get_property(&saved_addresses, "length") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                _ => 0,
+            };
+            let addresses = (0..length)
+                .filter_map(|index| match execute::get_property(&saved_addresses, &index.to_string()) {
+                    Value::String(address) => Some(address),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if !addresses.is_empty() {
+                lookup_addresses = Some(addresses);
+            }
+        }
         validate_connect_options(options)?;
         if receiver.is_some()
             && matches!(execute::get_property(receiver.unwrap(), BOUND_HANDLE_PROP), Value::Boolean(true))
@@ -724,6 +771,19 @@ fn connect_with_receiver(
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
         }
+        if let Value::Number(value) = execute::get_property(options, "autoSelectFamilyAttemptTimeout") {
+            if !value.is_finite() || value.fract() != 0.0 || value <= 0.0 {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("RangeError".into())),
+                    ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                ])));
+            }
+        }
+        let auto_select_family = match auto_select_family {
+            Value::Boolean(value) => value,
+            Value::Undefined => state.borrow().net.auto_select_family,
+            _ => false,
+        };
         let lookup = execute::get_property(options, "lookup");
         if !matches!(lookup, Value::Undefined) && !quench_runtime::is_callable(&lookup) {
             return Err(VmError::Thrown(host_api::object(vec![
@@ -739,11 +799,9 @@ fn connect_with_receiver(
                 let (object, _) = new_net_object(state, socket_props())?;
                 install_socket_counters(object)?
             };
+            lookup_socket_for_result = Some(lookup_socket.clone());
             let callback = crate::host::capability(crate::registry::SPEC_NET_LOOKUP_CALLBACK);
-            let lookup_options = if matches!(
-                execute::get_property(options, "autoSelectFamily"),
-                Value::Boolean(true)
-            ) {
+            let lookup_options = if auto_select_family {
                 execute::set_property(options.clone(), "all", Value::Boolean(true))
             } else {
                 options.clone()
@@ -822,6 +880,29 @@ fn connect_with_receiver(
                     .pending_errors
                     .push((object.clone(), error));
                 return Ok(object);
+            }
+            let addresses = lookup_addresses_for(&result);
+            if matches!(execute::get_property(&lookup_options, "all"), Value::Boolean(true)) {
+                if !addresses.is_empty() {
+                    let attempted = host_api::array(
+                        addresses
+                            .iter()
+                            .map(|address| {
+                                Value::String(format!(
+                                    "{address}:{}",
+                                    execute::to_js_string(&execute::get_property(options, "port"))
+                                        .unwrap_or_default()
+                                ))
+                            })
+                            .collect(),
+                    );
+                    execute::set_property_in_place(
+                        &lookup_socket,
+                        "autoSelectFamilyAttemptedAddresses",
+                        attempted,
+                    );
+                    lookup_addresses = Some(addresses);
+                }
             }
             lookup_address = lookup_address_for(&result);
             if let Some(family) = lookup_family(&result) {
@@ -926,9 +1007,14 @@ fn connect_with_receiver(
         .unwrap_or(LOCAL_HOST);
     if port == 0 {
         let loopback = SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), 0);
-        return connect_refused(state, receiver, &loopback);
+        return connect_refused(state, receiver.or(lookup_socket_for_result.as_ref()), &loopback);
     }
-    let Some(addr) = super::resolve_connect(target_host, port) else {
+    let candidate_addrs = lookup_addresses
+        .unwrap_or_else(|| vec![target_host.to_string()])
+        .into_iter()
+        .filter_map(|host| super::resolve_connect(&host, port))
+        .collect::<Vec<_>>();
+    let Some(first_addr) = candidate_addrs.first().copied() else {
         let (object, _) = new_net_object(state, socket_props())?;
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
@@ -949,12 +1035,23 @@ fn connect_with_receiver(
             .push((object.clone(), error));
         return Ok(object);
     };
-    let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
-        Ok(stream) => stream,
-        Err(_) => return connect_refused(state, receiver, &addr),
+    let mut selected = None;
+    for addr in candidate_addrs {
+        if let Ok(stream) = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
+            selected = Some((stream, addr));
+            break;
+        }
+    }
+    let Some((stream, addr)) = selected else {
+        return connect_refused(
+            state,
+            receiver.or(lookup_socket_for_result.as_ref()),
+            &first_addr,
+        );
     };
     let _ = stream.set_nonblocking(true);
-    let (object, id) = match receiver {
+    let object_receiver = receiver.or(lookup_socket_for_result.as_ref());
+    let (object, id) = match object_receiver {
         Some(object) => (
             object.clone(),
             net_id(object).unwrap_or_else(|| allocate_id(state)),
@@ -1017,6 +1114,17 @@ fn connect_with_receiver(
         local,
         encoding: None,
     }));
+    let queued_write = state
+        .borrow_mut()
+        .net
+        .pending_connect_writes
+        .remove(&id)
+        .unwrap_or_default();
+    if !queued_write.is_empty() {
+        let mut socket = socket.borrow_mut();
+        socket.bytes_written = queued_write.len() as u64;
+        socket.write_buf = queued_write;
+    }
     state.borrow_mut().net.sockets.insert(id, socket);
     add_listener_cb(state, &object, args.last(), "connect", true)?;
     if let Some(options) = args
@@ -1111,14 +1219,61 @@ fn connect_refused(
         let (object, _) = new_net_object(state, socket_props())?;
         object
     };
-    let message = format!("connect ECONNREFUSED {addr}");
-    let error = quench_runtime::builtins::error(
-        quench_runtime::ops::Builtin::Error,
-        &[Value::String(message)],
-    );
-    let error = execute::set_property(error, "code", Value::String("ECONNREFUSED".into()));
-    let error = execute::set_property(error, "errno", Value::Number(-61.0));
-    let error = execute::set_property(error, "syscall", Value::String("connect".into()));
+    let attempted = receiver.and_then(|socket| {
+        let value = execute::get_property(socket, "autoSelectFamilyAttemptedAddresses");
+        let length = match execute::get_property(&value, "length") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        };
+        (length > 1).then(|| {
+            (0..length)
+                .filter_map(|index| match execute::get_property(&value, &index.to_string()) {
+                    Value::String(address) => Some(address),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+    });
+    let error = if let Some(addresses) = attempted {
+        let errors = host_api::array(
+            addresses
+                .into_iter()
+                .map(|address| {
+                    let error = quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::Error,
+                        &[Value::String(format!("connect ECONNREFUSED {address}"))],
+                    );
+                    let error = execute::set_property(
+                        error,
+                        "code",
+                        Value::String("ECONNREFUSED".into()),
+                    );
+                    execute::set_property(error, "syscall", Value::String("connect".into()))
+                })
+                .collect(),
+        );
+        let global = quench_runtime::vm::current_global_object();
+        let constructor = execute::get_property(&global, "AggregateError");
+        execute::construct_value(
+            &constructor,
+            &[errors, Value::String("All connection attempts failed".into())],
+        )
+        .unwrap_or_else(|_| {
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("connect ECONNREFUSED {}:{}", addr.ip(), addr.port()))],
+            )
+        })
+    } else {
+        let message = format!("connect ECONNREFUSED {}:{}", addr.ip(), addr.port());
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(message)],
+        );
+        let error = execute::set_property(error, "code", Value::String("ECONNREFUSED".into()));
+        let error = execute::set_property(error, "errno", Value::Number(-61.0));
+        execute::set_property(error, "syscall", Value::String("connect".into()))
+    };
     state
         .borrow_mut()
         .net
@@ -1223,6 +1378,23 @@ fn lookup_address_for(result: &Value) -> Option<String> {
         Value::String(address) => Some(address),
         _ => None,
     }
+}
+
+fn lookup_addresses_for(result: &Value) -> Vec<String> {
+    let direct = execute::get_property(result, "1");
+    if let Value::String(address) = direct {
+        return vec![address];
+    }
+    let length = match execute::get_property(&direct, "length") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    (0..length)
+        .filter_map(|index| match execute::get_property(&execute::get_property(&direct, &index.to_string()), "address") {
+            Value::String(address) => Some(address),
+            _ => None,
+        })
+        .collect()
 }
 
 fn missing_connect_args() -> VmError {
@@ -1695,9 +1867,6 @@ pub fn socket_write(
     let Some(id) = net_id(&receiver) else {
         return Ok(Value::Boolean(false));
     };
-    let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
-        return Ok(Value::Boolean(false));
-    };
     let bytes = match args.first() {
         Some(Value::String(s)) if args.get(1).is_some_and(|encoding| {
             matches!(encoding, Value::String(value) if matches!(value.to_ascii_lowercase().as_str(), "latin1" | "binary" | "ascii"))
@@ -1708,6 +1877,25 @@ pub fn socket_write(
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
         _ => return Ok(Value::Boolean(false)),
+    };
+    let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
+        let pending = state
+            .borrow()
+            .net
+            .pending_lookups
+            .iter()
+            .any(|lookup| net_id(&lookup.socket) == Some(id));
+        if pending {
+            state
+                .borrow_mut()
+                .net
+                .pending_connect_writes
+                .entry(id)
+                .or_default()
+                .extend_from_slice(&bytes);
+            return Ok(Value::Boolean(true));
+        }
+        return Ok(Value::Boolean(false));
     };
     let mut guard = sock.borrow_mut();
     if guard.state == SocketState::Closed {

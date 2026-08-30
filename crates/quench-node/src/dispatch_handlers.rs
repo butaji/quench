@@ -5035,18 +5035,72 @@ pub fn process_umask(
 }
 
 pub fn net_get_asf_timeout(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Number(250.0))
+    let argv = quench_runtime::execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "__quench_argv",
+    );
+    let length = match execute::get_property(&argv, "length") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    for index in 0..length {
+        let value = execute::get_property(&argv, &index.to_string());
+        if let Value::String(value) = value {
+            if let Some(raw) = value.strip_prefix("--network-family-autoselection-attempt-timeout=") {
+                if let Ok(milliseconds) = raw.parse::<u64>() {
+                    return Ok(Value::Number((milliseconds.max(10) * 5) as f64));
+                }
+            }
+        }
+    }
+    Ok(Value::Number(state.borrow().net.auto_select_family_attempt_timeout as f64))
 }
 
 pub fn net_set_asf_timeout(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Number(value)) = args.first() else {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("RangeError".into())),
+            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+        ])));
+    };
+    if !value.is_finite() || value.fract() != 0.0 || *value <= 0.0 {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("RangeError".into())),
+            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+        ])));
+    }
+    state.borrow_mut().net.auto_select_family_attempt_timeout = (*value as u64).max(10);
+    Ok(Value::Undefined)
+}
+
+pub fn net_get_asf(
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    Ok(Value::Boolean(state.borrow().net.auto_select_family))
+}
+
+pub fn net_set_asf(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Boolean(value)) = args.first() else {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ])));
+    };
+    state.borrow_mut().net.auto_select_family = *value;
     Ok(Value::Undefined)
 }
 

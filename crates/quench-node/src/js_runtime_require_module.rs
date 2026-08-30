@@ -111,28 +111,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ]));
     }
     if name == "net" || name == "node:net" {
-        return Ok(quench_runtime::host_api::object(vec![
-            (
-                "getDefaultAutoSelectFamily".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::NetGetDefaultAutoSelectFamily,
-                )),
-            ),
-            (
-                "getDefaultAutoSelectFamilyAttemptTimeout".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout,
-                )),
-            ),
-            (
-                "isIP".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::NetIsIP)),
-            ),
-            (
-                "createServer".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::NetCreateServer)),
-            ),
-        ]));
+        // The Rust net module owns the complete Node host boundary. Keep one
+        // namespace so constructors, stateful methods, and global defaults
+        // all dispatch through the same capability registry.
+        return Ok(crate::modules::net::build());
     }
     if name == "path" || name == "node:path" {
         if let Some(path) = NODE_PATH_MODULE.with(|module| module.borrow().clone()) {
