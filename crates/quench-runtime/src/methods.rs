@@ -73,10 +73,7 @@ pub(crate) fn execute_named(
         true,
         call_target_name(&callee),
     );
-    let argument_values = argument
-        .as_ref()
-        .map(std::slice::from_ref)
-        .unwrap_or_default();
+    let argument_values = argument.as_slice();
     let argument_registers = (instruction.flags == 1).then_some(instruction.c);
     finish_named_call(
         registers,

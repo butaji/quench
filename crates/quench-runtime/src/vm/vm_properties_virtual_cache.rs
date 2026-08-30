@@ -80,7 +80,7 @@ fn install_virtual_builtin_cache(
         }
         caches[index] = Some(entry);
     });
-    cache.set(VIRTUAL_BUILTIN_CACHE_TAG | index as u64 + 1);
+    cache.set(VIRTUAL_BUILTIN_CACHE_TAG | (index as u64 + 1));
 }
 
 fn virtual_builtin_cache_index(cache: u64) -> Option<usize> {

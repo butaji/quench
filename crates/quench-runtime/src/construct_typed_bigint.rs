@@ -14,8 +14,9 @@ pub(crate) fn construct_bigint64_array(
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_bigint64_array(&values)
         }
-        Some(Value::Object(properties)) => bigint_object_values(properties, "BigInt64Array")
-            .and_then(|values| values_bigint64_array(&values)),
+        Some(Value::Object(properties)) => {
+            bigint_object_values(properties).and_then(|values| values_bigint64_array(&values))
+        }
         Some(value) if crate::value::is_object(value) => {
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_bigint64_array(&values)
@@ -38,8 +39,9 @@ pub(crate) fn construct_biguint64_array(
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_biguint64_array(&values)
         }
-        Some(Value::Object(properties)) => bigint_object_values(properties, "BigUint64Array")
-            .and_then(|values| values_biguint64_array(&values)),
+        Some(Value::Object(properties)) => {
+            bigint_object_values(properties).and_then(|values| values_biguint64_array(&values))
+        }
         Some(value) if crate::value::is_object(value) => {
             let values = crate::collections::iterator::collect_iterable(value.clone())?;
             values_biguint64_array(&values)
@@ -84,14 +86,8 @@ fn new_biguint64_data(
 
 fn bigint_object_values(
     properties: &Rc<crate::value::ObjectData>,
-    _name: &str,
 ) -> Result<Vec<Value>, crate::execute::VmError> {
-    let object = Value::Object(properties.clone());
-    let values = match crate::collections::iterator::collect_iterable(object.clone()) {
-        Ok(values) => values,
-        Err(_) => object_array_like(properties)?.unwrap_or_default(),
-    };
-    Ok(values)
+    object_values(properties)
 }
 
 fn values_bigint64_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
