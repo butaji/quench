@@ -6,16 +6,13 @@ fn module_graph(path: &Path, source: &str) -> Result<ModuleGraph, String> {
 }
 
 fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(), String> {
-    let (base, source) = graph
+    let base = graph
         .unit(from)
         .map(|unit| {
-            (
-                unit.path
-                    .parent()
-                    .unwrap_or_else(|| Path::new(""))
-                    .to_path_buf(),
-                unit.source.clone(),
-            )
+            unit.path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf()
         })
         .ok_or_else(|| "module unit is unknown".to_string())?;
     if graph.unit(from).is_some_and(|unit| {
@@ -26,20 +23,26 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
     }) {
         return Ok(());
     }
-    let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
-    for specifier in metadata.import_specifiers.clone() {
+    let metadata = {
+        let source = &graph
+            .unit(from)
+            .ok_or_else(|| "module unit is unknown".to_string())?
+            .source;
+        inspect_module_source(source).map_err(|errors| errors.join("; "))?
+    };
+    for specifier in &metadata.import_specifiers {
         let dynamic = metadata
             .dynamic_import_specifiers
             .iter()
-            .any(|candidate| candidate == &specifier);
+            .any(|candidate| candidate == specifier);
         let text_import = metadata
             .import_types
             .iter()
-            .any(|(source, attribute)| source == &specifier && attribute == "type=text");
+            .any(|(source, attribute)| source == specifier && attribute == "type=text");
         let bytes_import = metadata
             .import_types
             .iter()
-            .any(|(source, attribute)| source == &specifier && attribute == "type=bytes");
+            .any(|(source, attribute)| source == specifier && attribute == "type=bytes");
         if graph.resolve(from, &specifier).is_some() && !text_import && !bytes_import {
             continue;
         }
