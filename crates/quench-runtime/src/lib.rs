@@ -1,22 +1,26 @@
-//! Quench's runtime starts here and stays deliberately small.
+//! VM DSL: Native | Fast | Dynamic, Arena + GC.
 //!
-//! OXC owns syntax, scopes, and symbols. The runtime will consume queried
-//! facts and execute only residual operations produced by the reducer.
-//!
-//! The frozen direction is:
-//!
-//! `source -> OXC -> ProgramDb facts -> partial evaluator -> residual Ops -> VM`
-//!
-//! This crate is a pure JavaScript runtime. External runners provide source
-//! text and consume execution results through the public contract; runner
-//! policy and source fixtures do not belong here.
-//!
-//! The first implementation should establish the semantic kernel and the
-//! compact representations (`Value`, `HeapRef`, `Shape`, `Frame`, `Code`,
-//! `Fact`, and `Continuation`) before adding breadth.
+//! Layer and storage are independent. NIR | FIR | DIR filter one HIR enum.
+//! Wasm enters as Native. Arena holds linear memory and unboxed locals; GC
+//! holds structs/arrays/exns. QuickJS is the JS layer on top, not store GC.
 
 pub mod build_profile;
+mod bulk;
+mod wasm_atomic;
+pub mod dynamic;
+pub mod fast;
+pub mod hir;
+pub mod hir_gc;
+pub mod gc;
 mod host_jobs;
+pub mod instance;
+pub mod interp;
+pub mod wasm;
+pub mod layer;
+pub mod mir;
+pub mod native;
+pub mod slot;
+pub mod unwind;
 pub use host_jobs::install_host_job_pump;
 
 mod arrays;
@@ -86,7 +90,8 @@ mod private_slots;
 mod promise;
 pub use promise::{
     drain_microtasks_all as drain_promise_jobs, has_pending_jobs as has_pending_promise_jobs,
-    promise_then, reject_promise, resolve_promise, take_unhandled_rejections,
+    has_pending_unhandled_rejections, promise_then, reject_promise, resolve_promise,
+    take_unhandled_rejections,
 };
 mod properties;
 mod property_define;

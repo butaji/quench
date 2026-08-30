@@ -2,6 +2,12 @@
 # Enforce clippy rules from .clippy.toml — never allow warnings.
 rustflags = ["-D", "warnings"]
 
+# Cargo merges the user configuration after the manifest. Pin the one setting
+# that this repository must keep independent of a developer's local Thin-LTO
+# preference; the complete release policy remains declared in Cargo.toml.
+[profile.release]
+lto = "fat"
+
 [profile.dev]
 opt-level = 0
 debug = 0
@@ -15,9 +21,3 @@ debug = 0
 split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 256
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"

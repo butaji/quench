@@ -1,44 +1,11 @@
 # Test262 stages
 
-This file defines the conformance stages for `quench`. Each stage is one
-numbered test262 directory that must reach 100% passing before the next stage
-begins. There are no skip policies and no checkpoints: each stage runs through
-the canonical `quench-test262` runner against the pinned `tests/test262` tree,
-and observable behavior is verified at execution time, never worked around.
-
-This is a definition document only — it is not a progress ledger. Verify stages
-with the relevant commands and test262 runs at execution time.
-
-## Execution order
-
-Stages are numbered in dependency order by domain. Dependencies are
-prerequisites, not milestone markers: a stage may be revisited whenever a later
-stage exposes a semantic gap, and the fix re-runs the earlier stage before
-moving on.
-
-0. `harness` (stage 0) — the test262 harness self-tests that validate the
-   assertion and helper libraries the runner composes.
-1. `language` (stages 1–28) — core ECMAScript syntax and semantics.
-2. `built-ins` (stages 29–92) — intrinsic objects and their methods.
-3. `annexB` (stages 93–94) — Annex B web-compat extensions (built on core language).
-4. `intl402` (stages 95–113) — ECMA-402 `Intl` (built on Number, String, Date, BigInt, Array).
-
-`staging` holds proposal work and is excluded from stable conformance coverage;
-it must not be silently counted as stable progress.
-
-## `harness` domain
-
-The test262 harness self-tests in `test/harness`. They exercise `assert`,
-`sta`, `asyncHelpers`, and the support helpers that the runner composes into
-every case; they must pass through the exact harness composition, never by
-overriding harness behavior.
+The runner parses these ordered entries as data. Keep stage IDs and paths
+stable, resolve them against the pinned checkout, and compare observable
+execution. Stages are ordering only; they are not progress claims or a skip
+list.
 
 - Stage 0: `test/harness`
-
-## `language` domain
-
-Core language behavior. Parse, scoping, and evaluation semantics.
-
 - Stage 1: `language/arguments-object`
 - Stage 2: `language/asi`
 - Stage 3: `language/block-scope`
@@ -67,11 +34,6 @@ Core language behavior. Parse, scoping, and evaluation semantics.
 - Stage 26: `language/statements`
 - Stage 27: `language/types`
 - Stage 28: `language/white-space`
-
-## `built-ins` domain
-
-Intrinsic objects, constructors, prototypes, and global functions.
-
 - Stage 29: `built-ins/AbstractModuleSource`
 - Stage 30: `built-ins/AggregateError`
 - Stage 31: `built-ins/Array`
@@ -136,20 +98,8 @@ Intrinsic objects, constructors, prototypes, and global functions.
 - Stage 90: `built-ins/parseFloat`
 - Stage 91: `built-ins/parseInt`
 - Stage 92: `built-ins/undefined`
-
-## `annexB` domain
-
-Annex B web-compat extensions. These depend on the core `language` and
-`built-ins` domains.
-
 - Stage 93: `annexB/built-ins`
 - Stage 94: `annexB/language`
-
-## `intl402` domain
-
-ECMA-402 `Intl` behavior. Depends on the relevant `built-ins` primitives
-(Number, String, Date, BigInt, Array).
-
 - Stage 95: `intl402/Array`
 - Stage 96: `intl402/BigInt`
 - Stage 97: `intl402/Collator`
@@ -169,7 +119,3 @@ ECMA-402 `Intl` behavior. Depends on the relevant `built-ins` primitives
 - Stage 111: `intl402/String`
 - Stage 112: `intl402/Temporal`
 - Stage 113: `intl402/TypedArray`
-
-## Excluded from stable coverage
-
-- `staging` — proposal work, not stable conformance.
