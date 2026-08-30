@@ -1444,13 +1444,19 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
 fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
     let sockets_pools = execute::get_property(agent, "sockets");
     let sockets = execute::get_property(&sockets_pools, name);
-    let found = execute::own_enumerable_keys(&sockets)
+    let remaining: Vec<Value> = execute::own_enumerable_keys(&sockets)
         .into_iter()
-        .any(|key| execute::same_identity(&execute::get_property(&sockets, &key), socket));
+        .filter_map(|key| {
+            let value = execute::get_property(&sockets, &key);
+            (!execute::same_identity(&value, socket)).then_some(value)
+        })
+        .filter(|value| !matches!(value, Value::Undefined))
+        .collect();
+    let found = remaining.len() < execute::own_enumerable_keys(&sockets).len();
     if !found {
         return;
     }
-    execute::set_property_in_place(&sockets_pools, name, host_api::array(Vec::new()));
+    execute::set_property_in_place(&sockets_pools, name, host_api::array(remaining));
     let free_pools = execute::get_property(agent, "freeSockets");
     let free = match execute::get_property(&free_pools, name) {
         Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) => {
