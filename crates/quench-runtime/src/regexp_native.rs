@@ -193,7 +193,7 @@ fn parse_property_repeat<'a>(source: &'a str, flags: &str) -> Option<NativePatte
     let (name, value) = body
         .split_once('=')
         .map_or((body, None), |(name, value)| (name, Some(value)));
-    (!name.is_empty() && value.is_none_or(|value| !value.is_empty())).then_some(
+    (!name.is_empty() && value.map_or(true, |value| !value.is_empty())).then_some(
         NativePattern::PropertyRepeat {
             name,
             value,

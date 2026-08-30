@@ -5,22 +5,33 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
+    sync::OnceLock,
 };
 
 #[derive(Debug)]
 pub struct StringUnitsData {
     units: Vec<u16>,
+    hash: OnceLock<u64>,
 }
 
 impl StringUnitsData {
     pub fn new(units: Vec<u16>) -> Self {
-        Self { units }
+        Self {
+            units,
+            hash: OnceLock::new(),
+        }
+    }
+
+    pub fn cached_hash(&self, hash: impl FnOnce(&[u16]) -> u64) -> u64 {
+        *self.hash.get_or_init(|| hash(&self.units))
     }
 
     /// Append UTF-16 units while preserving the flat canonical representation.
-    /// Callers must have exclusive ownership of this value.
+    /// Callers must have exclusive ownership of this value; replacing the
+    /// hash cache keeps derived state coherent after mutation.
     pub fn append_units(&mut self, units: &[u16]) {
         self.units.extend_from_slice(units);
+        self.hash = OnceLock::new();
     }
 }
 
@@ -544,10 +555,6 @@ pub(crate) struct AsyncForOfState {
     pub iterator: Value,
     pub dst: u16,
     pub await_dst: u16,
-    /// Body code offset when the loop body, rather than iterator.next(), is
-    /// suspended on an await. Zero means the next resume consumes an
-    /// iterator result.
-    pub body_pc: usize,
 }
 
 /// Canonical out-of-line attributes for an ordinary property.
@@ -558,7 +565,6 @@ pub(crate) struct AsyncForOfState {
 /// property semantics. Accessor properties are represented by `get`/`set`
 /// values in the descriptor object and therefore cannot also carry a data
 /// value.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PropertyDescriptor {
     pub writable: Option<bool>,
@@ -566,7 +572,6 @@ pub(crate) struct PropertyDescriptor {
     pub configurable: Option<bool>,
 }
 
-#[cfg(test)]
 impl PropertyDescriptor {
     #[inline]
     pub(crate) const fn empty() -> Self {
@@ -724,6 +729,15 @@ impl ObjectProperties {
         }
     }
 
+    #[cold]
+    pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
+        self.names
+            .iter()
+            .cloned()
+            .zip(self.values.iter().map(crate::register_file::SlotWord::load))
+            .collect()
+    }
+
     #[inline]
     pub(crate) fn slot_value(&self, slot: usize) -> Option<Value> {
         self.values
@@ -731,7 +745,6 @@ impl ObjectProperties {
             .map(crate::register_file::SlotWord::load)
     }
 
-    #[cfg(test)]
     #[inline]
     pub(crate) fn slot_value_mut(&mut self, slot: usize) -> Option<PropertyValueMut<'_>> {
         self.values.get(slot).map(|word| PropertyValueMut {
@@ -740,7 +753,6 @@ impl ObjectProperties {
         })
     }
 
-    #[cfg(test)]
     #[inline]
     pub(crate) fn name_at(&self, slot: usize) -> Option<&PropertyName> {
         self.names.get(slot)
@@ -944,12 +956,6 @@ impl PropertyEntries for ObjectProperties {
 
     #[inline]
     fn value_for_key(&self, key: &str) -> Option<Value> {
-        if key == "length" && self.names.first().is_some_and(|name| name == key) {
-            return self
-                .values
-                .first()
-                .map(crate::register_file::SlotWord::load);
-        }
         self.position_rev(key)
             .and_then(|slot| self.slot_value(slot))
     }
@@ -1032,10 +1038,7 @@ pub struct ObjectData {
     // Derived tri-state cache for deletion tombstones. The canonical property
     // vector remains authoritative; this only avoids repeated absence scans.
     deleted_marker_state: std::cell::Cell<u8>,
-    // Derived extensibility state: 0 unknown, 1 extensible, 2 non-extensible.
-    // The property marker remains the sole semantic source of truth.
     extensible_state: std::cell::Cell<u8>,
-    // Derived shape fact for the common plain-object indexed-write path.
     plain_index_state: std::cell::Cell<u8>,
 }
 
@@ -1066,8 +1069,8 @@ impl Clone for ObjectData {
             created: self.created.clone(),
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
-            extensible_state: std::cell::Cell::new(self.extensible_state.get()),
-            plain_index_state: std::cell::Cell::new(self.plain_index_state.get()),
+            extensible_state: std::cell::Cell::new(0),
+            plain_index_state: std::cell::Cell::new(0),
         }
     }
 }
@@ -1077,24 +1080,6 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
-        let plain_prototype = key == "\0prototype"
-            && matches!(&value, Value::Builtin(crate::ops::Builtin::ObjectPrototype));
-        // Sequential indexed writes dominate array-like fixture setup. A
-        // plain object has no deletion marker or accessor metadata, so append
-        // directly without rescanning the full property vector.
-        if let Some(index) = crate::arrays::array_index(key) {
-            let append = self.plain_index_state.get() == 1
-                && self.properties.iter().next_back().is_some_and(|(name, _)| {
-                    crate::arrays::array_index(name.as_str())
-                        .is_some_and(|last| last < index)
-                        || (index == 0 && name == "length")
-                });
-            if append {
-                self.properties.push((key.into(), value));
-                self.created.push(key.into());
-                return;
-            }
-        }
         let deleted = crate::builtins::deleted_key(key);
         let cell = self
             .properties
@@ -1138,35 +1123,6 @@ impl ObjectData {
             self.descriptor_metadata_state.set(0);
         }
         self.deleted_marker_state.set(0);
-        if key == "\0quench:non_extensible" {
-            self.extensible_state.set(2);
-        }
-        if key == "\0prototype" && !plain_prototype {
-            self.plain_index_state.set(2);
-        }
-        if key != "\0prototype" && (key.starts_with('\0') || key == "Symbol.iterator") {
-            self.plain_index_state.set(2);
-        }
-    }
-
-    /// Publish a host-owned value without making the virtual binding visible
-    /// to ordinary `for...in` enumeration. Persistent host bindings are
-    /// observable properties, but their publication policy is non-enumerable.
-    pub(crate) fn set_non_enumerable_property_in_place(&mut self, key: &str, value: Value) {
-        self.set_property_in_place(key, value);
-        let descriptor = crate::builtins::descriptor_key(key);
-        if !self.properties.iter().any(|(name, _)| name == &descriptor) {
-            self.properties.push((
-                descriptor.into(),
-                Value::Object(Rc::new(ObjectData::new(vec![
-                    ("writable".into(), Value::Boolean(true)),
-                    ("enumerable".into(), Value::Boolean(false)),
-                    ("configurable".into(), Value::Boolean(true)),
-                ]))),
-            ));
-        }
-        self.layout_id.set(0);
-        self.descriptor_metadata_state.set(0);
     }
 
     /// Borrow the canonical hot property storage once for dependent-load-heavy
@@ -1181,7 +1137,6 @@ impl ObjectData {
     /// that retain a reference-derived cache must prove it points at this
     /// allocation and invalidate it when the owning `ObjectData` is replaced.
     #[inline]
-    #[cfg(test)]
     pub(crate) fn properties_source(&self) -> *const ObjectProperties {
         &self.properties as *const ObjectProperties
     }
@@ -1398,7 +1353,6 @@ impl std::ops::DerefMut for ObjectData {
         self.layout_id.set(0);
         self.descriptor_metadata_state.set(0);
         self.deleted_marker_state.set(0);
-        self.plain_index_state.set(0);
         &mut self.properties
     }
 }
@@ -1450,7 +1404,7 @@ thread_local! {
 }
 
 pub(crate) fn reset_object_layout_cache() {
-    OBJECT_LAYOUTS.with(|layouts| layouts.replace(Vec::new()));
+    OBJECT_LAYOUTS.with(|layouts| layouts.borrow_mut().clear());
 }
 
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
@@ -1558,7 +1512,6 @@ mod object_identity_tests {
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
 /// `ObjectData.properties` remains the semantic storage.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectShape {
     pub(crate) id: crate::identity::ShapeId,
@@ -1569,7 +1522,6 @@ pub(crate) struct ObjectShape {
 ///
 /// The source object remains authoritative; this record only describes the
 /// derived `(shape_id, property_id)` cache key and its resulting layout.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectTransition {
     pub(crate) from: crate::identity::ShapeId,
@@ -1581,11 +1533,9 @@ pub(crate) struct ObjectTransition {
 pub(crate) const DICTIONARY_SLOT_THRESHOLD: u32 = 32;
 /// Tiny objects stay on the ordinary property vector; this limit is deliberately
 /// derived from the measured fast path rather than introducing a second store.
-#[cfg(test)]
 pub(crate) const TINY_SLOT_LIMIT: u32 = 2;
 
 impl ObjectData {
-    #[cfg(test)]
     pub(crate) fn shape(&self) -> ObjectShape {
         // Hash the visible layout with a fixed algorithm.  Shape ids are used
         // as transition-cache keys and must be reproducible across processes.
@@ -1610,13 +1560,11 @@ impl ObjectData {
             dictionary: slots > DICTIONARY_SLOT_THRESHOLD,
         }
     }
-    #[cfg(test)]
     #[inline]
     pub(crate) fn shape_id(&self) -> crate::identity::ShapeId {
         self.shape().id
     }
 
-    #[cfg(test)]
     #[inline]
     pub(crate) fn is_tiny(&self) -> bool {
         let shape = self.shape();
@@ -1625,18 +1573,15 @@ impl ObjectData {
 }
 
 impl ObjectData {
-    #[cfg(test)]
     #[inline]
     pub(crate) fn is_dictionary(&self) -> bool {
         self.shape().dictionary
     }
-    #[cfg(test)]
     #[inline]
     pub(crate) fn has_shape(&self, shape: crate::identity::ShapeId) -> bool {
         self.shape_id() == shape
     }
 
-    #[cfg(test)]
     pub(crate) fn slot_for(&self, key: &str) -> Option<usize> {
         if self.shape().dictionary || key.starts_with('\0') {
             return None;
@@ -1651,7 +1596,7 @@ impl ObjectData {
     ///
     /// Kept as a cheap debug-only assertion at call sites so optimized code
     /// cannot accidentally grow a second semantic representation.
-    #[cfg(all(test, debug_assertions))]
+    #[cfg(debug_assertions)]
     pub(crate) fn assert_canonical_slots(&self) {
         // Dictionary layouts intentionally do not expose positional slots.
         if self.shape().dictionary {
@@ -1669,7 +1614,6 @@ impl ObjectData {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn value_at_slot(&self, slot: usize) -> Option<Value> {
         let physical_slot = self
             .properties
@@ -1686,7 +1630,6 @@ impl ObjectData {
     /// This accessor is the dictionary representation contract: lookups use
     /// reverse encounter order (including duplicate writes), while metadata
     /// remains visible only to the slow-path caller that interprets it.
-    #[cfg(test)]
     #[inline]
     pub(crate) fn dictionary_value(&self, key: &str) -> Option<Value> {
         if !self.is_dictionary() || key.starts_with('\0') {
@@ -1699,7 +1642,6 @@ impl ObjectData {
 }
 
 impl ObjectData {
-    #[cfg(test)]
     #[inline]
     pub(crate) fn value_for_shape_slot(
         &self,
@@ -1717,7 +1659,6 @@ impl ObjectData {
 }
 
 impl ObjectData {
-    #[cfg(test)]
     #[inline]
     pub(crate) fn transition_key(
         &self,
@@ -1729,7 +1670,6 @@ impl ObjectData {
     /// Derive the canonical transition for `property`, without mutating the
     /// object. Existing properties retain their slot; a new property appends
     /// one slot. Dictionary layouts intentionally have no positional contract.
-    #[cfg(test)]
     pub(crate) fn transition_for(&self, property: &str) -> Option<ObjectTransition> {
         if property.starts_with('\0') || self.is_dictionary() {
             return None;
@@ -1994,6 +1934,10 @@ impl BindingCell {
         use_word(&self.0.borrow())
     }
 
+    #[inline(always)]
+    pub(crate) fn load_number(&self) -> Option<f64> {
+        self.0.borrow().number()
+    }
 }
 
 /// Canonical JavaScript value representation.
@@ -2258,6 +2202,7 @@ mod pointer_source_invariants {
 }
 
 #[cfg(test)]
+
 mod layout_tests {
     use super::{
         ObjectData, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX, SMALL_INTEGER_MIN,
@@ -2974,20 +2919,7 @@ include!("value_helpers.rs");
 #[cfg(test)]
 mod error_tests {
     use super::error;
-    use crate::{
-        execute::get_property,
-        execute::VmError,
-        value::{ObjectData, Value},
-    };
-
-    #[test]
-    fn plain_index_appends_keep_named_layout_stable() {
-        let mut object = ObjectData::new(vec![("length".into(), Value::Number(3.0))]);
-        let layout = object.semantic_layout_id();
-        object.set_property_in_place("0", Value::Number(7.0));
-        object.set_property_in_place("1", Value::Number(8.0));
-        assert_eq!(object.semantic_layout_id(), layout);
-    }
+    use crate::{execute::get_property, execute::VmError, value::Value};
 
     #[test]
     fn cold_error_helpers_preserve_error_kind_and_message() {

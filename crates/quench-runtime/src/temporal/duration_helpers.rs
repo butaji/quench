@@ -214,7 +214,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     if (date_units(&left) || date_units(&right))
         && relative_to
             .as_ref()
-            .is_none_or(|value| matches!(value, Value::Undefined))
+            .map_or(true, |value| matches!(value, Value::Undefined))
     {
         return Err(crate::value::error::throw_range_error(
             "relativeTo is required for date units",
@@ -223,7 +223,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     let date = relative_to
         .as_ref()
         .filter(|value| !matches!(value, Value::Undefined))
-        .map(|value| relative_date(value))
+        .map(relative_date)
         .transpose()?;
     let zoned_relative = relative_to.as_ref().and_then(zoned_relative_value);
     let day_units = number_property(&left, "days") != 0.0 || number_property(&right, "days") != 0.0;
@@ -411,14 +411,14 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
         crate::conversion::to_number(&crate::execute::get_property_result(value, name)?)
     };
     let start = (
-        field(relative, "year")? as f64,
-        field(relative, "month")? as f64,
-        field(relative, "day")? as f64,
+        field(relative, "year")?,
+        field(relative, "month")?,
+        field(relative, "day")?,
     );
     let end = (
-        field(&target, "year")? as f64,
-        field(&target, "month")? as f64,
-        field(&target, "day")? as f64,
+        field(&target, "year")?,
+        field(&target, "month")?,
+        field(&target, "day")?,
     );
     let mut whole = if unit == 0 {
         field(duration, "years")?
@@ -462,9 +462,9 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
     ])?;
     let anchor = zoned_target(&anchor_duration, relative)?;
     let anchor_date = (
-        field(&anchor, "year")? as f64,
-        field(&anchor, "month")? as f64,
-        field(&anchor, "day")? as f64,
+        field(&anchor, "year")?,
+        field(&anchor, "month")?,
+        field(&anchor, "day")?,
     );
     let date_residual_days = (crate::temporal::plain_date::date_serial(end.0, end.1, end.2)
         - crate::temporal::plain_date::date_serial(anchor_date.0, anchor_date.1, anchor_date.2))
@@ -503,7 +503,7 @@ fn zoned_total_calendar(duration: &Value, relative: &Value, unit: usize) -> Resu
                 crate::temporal::plain_date::days_in_month_for_record(year as i32, month as u32)
                     as f64,
             );
-            let shifted = crate::temporal::plain_date::date_serial(year, month as f64, day as f64);
+            let shifted = crate::temporal::plain_date::date_serial(year, month as f64, day);
             let extra_days = (shifted
                 - crate::temporal::plain_date::date_serial(
                     anchor_date.0,
@@ -1125,7 +1125,7 @@ fn valid_string_offset(value: &str) -> bool {
         && hour.parse::<u8>().is_ok_and(|value| value <= 23)
         && minute.parse::<u8>().is_ok_and(|value| value <= 59)
         && second.parse::<u8>().is_ok_and(|value| value <= 59)
-        && fraction.is_none_or(|value| {
+        && fraction.map_or(true, |value| {
             !value.is_empty() && value.len() <= 9 && value.bytes().all(|byte| byte.is_ascii_digit())
         })
 }

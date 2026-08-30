@@ -2857,7 +2857,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             && (core.matches(':').count() == 0
                 || (core.matches(':').count() == 1 && core.len() == 5)
                 || (core.matches(':').count() == 2 && core.len() == 8));
-        let valid_fraction = fraction.is_none_or(|fraction| {
+        let valid_fraction = fraction.map_or(true, |fraction| {
             !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit())
         });
         let clock_has_minutes = time

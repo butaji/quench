@@ -266,7 +266,7 @@ fn direct_constructor_plain_parent(prototype: &crate::value::ObjectData) -> bool
         .hot_properties()
         .position_rev("\0prototype")
         .and_then(|slot| prototype.hot_properties().slot_value(slot));
-    parent.is_none_or(|value| {
+    parent.map_or(true, |value| {
         matches!(
             value,
             crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)

@@ -6,14 +6,14 @@ pub(crate) fn to_uint8(value: f64) -> u8 {
 }
 
 fn empty_int8_array() -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    let buffer = new_buffer(0)?;
     Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
         buffer, 0, 0,
     ))))
 }
 
 fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
+    let buffer = new_buffer(values.len())?;
     let view = crate::value::Int8ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
         view.set(index, to_int8(number_for_typed_array(value)?));
@@ -23,7 +23,7 @@ fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError>
 
 fn copy_int8_array(source: &crate::value::Int8ArrayData) -> Result<Value, crate::execute::VmError> {
     let length = source.logical_len();
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let buffer = new_buffer(source.byte_length())?;
     let view = crate::value::Int8ArrayData::new(buffer, 0, length);
     for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
@@ -49,14 +49,14 @@ fn view_int8_array(
 }
 
 fn empty_int32_array() -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    let buffer = new_buffer(0)?;
     Ok(Value::Int32Array(Rc::new(
         crate::value::Int32ArrayData::new(buffer, 0, 0),
     )))
 }
 
 fn empty_int16_array() -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    let buffer = new_buffer(0)?;
     Ok(Value::Int16Array(Rc::new(
         crate::value::Int16ArrayData::new(buffer, 0, 0),
     )))
@@ -64,9 +64,12 @@ fn empty_int16_array() -> Result<Value, crate::execute::VmError> {
 
 fn values_int16_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
     let element_size = crate::value::Int16ArrayData::BYTES_PER_ELEMENT;
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(
-        values.len() * element_size,
-    ));
+    let buffer = new_buffer(
+        values
+            .len()
+            .checked_mul(element_size)
+            .ok_or_else(|| range_error("Invalid typed array length"))?,
+    )?;
     let view = crate::value::Int16ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
         view.set(index, to_int16(number_for_typed_array(value)?));
@@ -78,7 +81,7 @@ fn copy_int16_array(
     source: &crate::value::Int16ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
     let length = source.logical_len();
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let buffer = new_buffer(source.byte_length())?;
     let view = crate::value::Int16ArrayData::new(buffer, 0, length);
     for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
@@ -99,9 +102,12 @@ fn view_int16_array(
 
 fn values_int32_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
     let element_size = crate::value::Int32ArrayData::BYTES_PER_ELEMENT;
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(
-        values.len() * element_size,
-    ));
+    let buffer = new_buffer(
+        values
+            .len()
+            .checked_mul(element_size)
+            .ok_or_else(|| range_error("Invalid typed array length"))?,
+    )?;
     let view = crate::value::Int32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
         view.set(index, to_int32(number_for_typed_array(value)?));
@@ -113,7 +119,7 @@ fn copy_int32_array(
     source: &crate::value::Int32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
     let length = source.logical_len();
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let buffer = new_buffer(source.byte_length())?;
     let view = crate::value::Int32ArrayData::new(buffer, 0, length);
     for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
@@ -183,16 +189,19 @@ pub(crate) fn to_uint16(value: f64) -> u16 {
 }
 
 fn empty_float32_array() -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    let buffer = new_buffer(0)?;
     Ok(Value::Float32Array(Rc::new(
         crate::value::Float32ArrayData::new(buffer, 0, 0),
     )))
 }
 
 fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(
-        values.len() * crate::value::Float32ArrayData::BYTES_PER_ELEMENT,
-    ));
+    let buffer = new_buffer(
+        values
+            .len()
+            .checked_mul(crate::value::Float32ArrayData::BYTES_PER_ELEMENT)
+            .ok_or_else(|| range_error("Invalid typed array length"))?,
+    )?;
     let view = crate::value::Float32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
         view.set(index, number_for_typed_array(value)? as f32);
@@ -204,7 +213,7 @@ fn copy_float32_array(
     source: &crate::value::Float32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
     let length = source.logical_len();
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let buffer = new_buffer(source.byte_length())?;
     let view = crate::value::Float32ArrayData::new(buffer, 0, length);
     for index in 0..length {
         view.set(index, source.get(index).unwrap_or(f32::NAN));
@@ -224,16 +233,19 @@ fn view_float32_array(
 }
 
 fn empty_float64_array() -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    let buffer = new_buffer(0)?;
     Ok(Value::Float64Array(Rc::new(
         crate::value::Float64ArrayData::new(buffer, 0, 0),
     )))
 }
 
 fn values_float64_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(
-        values.len() * crate::value::Float64ArrayData::BYTES_PER_ELEMENT,
-    ));
+    let buffer = new_buffer(
+        values
+            .len()
+            .checked_mul(crate::value::Float64ArrayData::BYTES_PER_ELEMENT)
+            .ok_or_else(|| range_error("Invalid typed array length"))?,
+    )?;
     let view = crate::value::Float64ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
         view.set(index, number_for_typed_array(value)?);
@@ -245,7 +257,7 @@ fn copy_float64_array(
     source: &crate::value::Float64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
     let length = source.logical_len();
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let buffer = new_buffer(source.byte_length())?;
     let view = crate::value::Float64ArrayData::new(buffer, 0, length);
     for index in 0..length {
         view.set(index, source.get(index).unwrap_or(f64::NAN));

@@ -3,7 +3,9 @@ use std::{env, path::PathBuf, process::ExitCode};
 use quench_test262::{discover_js_files, HarnessCache, RuntimeHost, Test262Runner};
 
 fn main() -> ExitCode {
-    const STACK_SIZE: usize = 512 * 1024 * 1024;
+    // The reducer and VM need more than the platform default for nested
+    // fixtures; 64 MiB matches the verified stage worker stack.
+    const STACK_SIZE: usize = 64 * 1024 * 1024;
     let handle = match std::thread::Builder::new()
         .name("run-all-main".to_string())
         .stack_size(STACK_SIZE)

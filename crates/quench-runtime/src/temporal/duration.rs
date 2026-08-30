@@ -257,7 +257,7 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         ("nanoseconds", 1),
     ]
     .iter()
-    .map(|(name, factor)| duration_field(object, name) as i128 * factor)
+    .map(|(name, factor)| duration_field(object, name) * factor)
     .sum::<i128>();
     let divisor = match unit {
         "day" => 86_400_000_000_000_i128,
@@ -307,7 +307,7 @@ fn relative_epoch_total_out_of_range(relative: &Value, object: &crate::value::Ob
     .sum::<i128>();
     epoch
         .checked_add(delta)
-        .is_none_or(|value| value.abs() >= 8_640_000_000_000_000_000_000_i128)
+        .map_or(true, |value| value.abs() >= 8_640_000_000_000_000_000_000_i128)
 }
 
 fn total_unit_text(value: &Value) -> Result<String, VmError> {
@@ -1960,7 +1960,7 @@ fn calendar_round(
             }
             if unit == 3 && largest <= 1 {
                 fields[2] = Value::Number(0.0);
-                fields[3] = Value::Number((target - larger_cursor).num_days() as f64 * sign as f64);
+                fields[3] = Value::Number((target - larger_cursor).num_days() as f64 * sign);
             }
             if unit == 3 && largest == 2 {
                 fields[2] = Value::Number((count / 7) as f64);

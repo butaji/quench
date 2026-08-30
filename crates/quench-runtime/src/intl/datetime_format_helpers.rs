@@ -692,7 +692,7 @@ fn parts_for_fields(
             date.push(typed_part("year", year_value.unwrap_or_default()));
         }
         if let Some(style) = slot_string(slots, "era").filter(|_| {
-            slot_string(slots, "calendar").is_none_or(|c| c != "chinese" && c != "dangi")
+            slot_string(slots, "calendar").map_or(true, |c| c != "chinese" && c != "dangi")
         }) {
             date.push(literal_part(" "));
             date.push(typed_part("era", era_value(&style, year, slots)));
@@ -718,7 +718,7 @@ fn parts_for_fields(
             date.push(typed_part("year", year_value.unwrap_or_default()));
         }
         if let Some(style) = slot_string(slots, "era").filter(|_| {
-            slot_string(slots, "calendar").is_none_or(|c| c != "chinese" && c != "dangi")
+            slot_string(slots, "calendar").map_or(true, |c| c != "chinese" && c != "dangi")
         }) {
             date.push(literal_part(" "));
             date.push(typed_part("era", era_value(&style, year, slots)));
@@ -784,7 +784,7 @@ fn calendarize_parts(
                 fields.related_year.unwrap_or(fields.year).to_string(),
             ));
             let numeric_month = slot_string(slots, "month")
-                .is_none_or(|style| !matches!(style.as_str(), "long" | "short" | "narrow"));
+                .map_or(true, |style| !matches!(style.as_str(), "long" | "short" | "narrow"));
             if numeric_month {
                 let year_name = if slot_string(slots, "locale")
                     .is_some_and(|locale| locale.starts_with("zh"))
