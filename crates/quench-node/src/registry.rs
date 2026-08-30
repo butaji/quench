@@ -563,6 +563,9 @@ pub const SPEC_HTTP_RES_SET_TIMEOUT: NodeSpec = NodeSpec::new("http:res:setTimeo
 node_api! {
     (SPEC_HTTP_REQ_PATH_GET, CAP_HTTP_REQ_PATH_GET, "http:req:path:get", 0x0F2E),
     (SPEC_HTTP_REQ_PATH_SET, CAP_HTTP_REQ_PATH_SET, "http:req:path:set", 0x0F2F),
+    (SPEC_HTTP_RES_PIPE, CAP_HTTP_RES_PIPE, "http:res:pipe", 0x0F30),
+    (SPEC_HTTP_RES_PIPE_DATA, CAP_HTTP_RES_PIPE_DATA, "http:res:pipe:data", 0x0F31),
+    (SPEC_HTTP_RES_PIPE_END, CAP_HTTP_RES_PIPE_END, "http:res:pipe:end", 0x0F32),
 }
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);

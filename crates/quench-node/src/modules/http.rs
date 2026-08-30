@@ -721,6 +721,16 @@ fn build_req_res(
         execute::set_property_in_place(&req, "connection", socket);
     }
     let (res, id) = build_res_object(state)?;
+    if let Some(socket) = state
+        .borrow()
+        .net
+        .sockets
+        .get(&socket_id)
+        .map(|socket| socket.borrow().js.clone())
+    {
+        execute::set_property_in_place(&res, "socket", socket.clone());
+        execute::set_property_in_place(&res, "connection", socket);
+    }
     // Node exposes the incoming message on the response as `res.req`; keep
     // the exact request identity that is emitted to user listeners.
     execute::set_property_in_place(&res, "req", req.clone());
