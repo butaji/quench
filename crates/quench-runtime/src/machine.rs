@@ -1155,6 +1155,10 @@ pub struct CodeStore {
 }
 
 impl CodeStore {
+    pub(crate) fn instruction_count(&self) -> usize {
+        self.instructions.len()
+    }
+
     pub fn code(&self, range: CodeRange) -> Option<CodeView<'_>> {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
         (range.start >= start && range.end <= end).then_some(CodeView { store: self, range })
@@ -1433,6 +1437,12 @@ impl FunctionCode {
 
     pub fn len(&self) -> usize {
         self.range.end.saturating_sub(self.range.start) as usize
+    }
+
+    pub(crate) fn register_capacity(&self) -> usize {
+        self.store()
+            .map_or_else(|| self.len(), |store| store.instruction_count())
+            .max(32)
     }
 
     pub fn is_empty(&self) -> bool {

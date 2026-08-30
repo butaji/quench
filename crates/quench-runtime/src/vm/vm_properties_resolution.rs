@@ -1,7 +1,6 @@
 const GLOBAL_STATIC_SLOT: u32 = u32::MAX - 1;
 
 include!("vm_properties_virtual_cache.rs");
-const GLOBAL_STATIC_SLOT: u32 = u32::MAX;
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
     // A materialized global binding can transiently leave the receiver nullish

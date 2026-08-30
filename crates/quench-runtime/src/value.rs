@@ -550,6 +550,7 @@ pub(crate) struct AsyncForOfState {
     pub label: Option<String>,
     pub slot: u16,
     pub body: crate::machine::FunctionCode,
+    pub body_pc: usize,
     pub per_iteration: bool,
     pub iteration_slots: Vec<u16>,
     pub iterator: Value,
