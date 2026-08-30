@@ -1079,7 +1079,10 @@ pub fn socket_write(
         Value::Number(guard.bytes_written as f64),
     );
     let connecting = !guard.connect_announced;
-    let flushed = try_flush(&mut guard);
+    // Before the first connect turn, libuv reports the write as queued even
+    // when the OS could accept it synchronously. Keep bufferSize observable
+    // until the pump's connect transition flushes the queue.
+    let flushed = !connecting && try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
     execute::set_property_in_place(
         &receiver,
@@ -1095,7 +1098,9 @@ pub fn socket_write(
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 16_384,
     };
-    let result = Value::Boolean(flushed && super::pending_write_len(&guard) < high_water_mark);
+    let result = Value::Boolean(
+        (connecting || flushed) && super::pending_write_len(&guard) < high_water_mark,
+    );
     drop(guard);
     let callback = args
         .get(1)
@@ -1186,7 +1191,18 @@ pub fn socket_end(
     }
     guard.state = SocketState::Closing;
     try_flush(&mut guard);
-    if super::pending_write_len(&guard) == 0 {
+    let pending = super::pending_write_len(&guard);
+    execute::set_property_in_place(
+        receiver,
+        "bufferSize",
+        Value::Number(pending as f64),
+    );
+    execute::set_property_in_place(
+        receiver,
+        "writableLength",
+        Value::Number(pending as f64),
+    );
+    if pending == 0 {
         if let Some(stream) = guard.stream.as_mut() {
             let _ = stream.shutdown(Shutdown::Write);
         }
