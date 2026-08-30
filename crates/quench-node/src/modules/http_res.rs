@@ -268,6 +268,7 @@ pub fn res_end(
         if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
             conn.response_done = true;
         }
+        crate::modules::http::resume_connection(state, socket_id)?;
     }
     if !keep_alive {
         crate::modules::net::socket_end(state, Some(&socket), &[])?;
