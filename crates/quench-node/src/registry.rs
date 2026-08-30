@@ -618,6 +618,8 @@ pub const SPEC_NET_ASYNC_ITERATOR_NEXT: NodeSpec =
     NodeSpec::new("net:asyncIterator:next", 0x1029);
 pub const SPEC_NET_ASYNC_ITERATOR_RETURN: NodeSpec =
     NodeSpec::new("net:asyncIterator:return", 0x102A);
+pub const SPEC_NET_SOCKET_RESET_AND_DESTROY: NodeSpec =
+    NodeSpec::new("net:socket:resetAndDestroy", 0x102B);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);
