@@ -1172,6 +1172,10 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             "getName".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_AGENT_GET_NAME),
         ),
+        (
+            "addRequest".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_AGENT_ADD_REQUEST),
+        ),
     ]);
     state.borrow_mut().http.agent_prototype = Some(agent_prototype.clone());
     let agent = quench_runtime::execute::set_property(agent, "prototype", agent_prototype);
