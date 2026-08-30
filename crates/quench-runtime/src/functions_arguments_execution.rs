@@ -180,9 +180,9 @@ fn execute_inner(
     // `with` capture.
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
-    let mut arguments = arguments.to_vec();
+    let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
-        let (mut registers, environment) = build_registers(&function, &receiver, &arguments);
+        let (mut registers, environment) = build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
             function.private_environment.clone(),
         );
@@ -209,7 +209,7 @@ fn execute_inner(
         };
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
-        arguments = request.arguments;
+        arguments = std::borrow::Cow::Owned(request.arguments);
     }
 }
 
@@ -220,10 +220,10 @@ fn execute_with_dynamic_scope(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
-    let mut arguments = arguments.to_vec();
+    let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
         let (registers, environment) =
-            crate::functions::build_registers(&function, &receiver, &arguments);
+            crate::functions::build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
             function.private_environment.clone(),
         );
@@ -251,7 +251,7 @@ fn execute_with_dynamic_scope(
         };
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
-        arguments = request.arguments;
+        arguments = std::borrow::Cow::Owned(request.arguments);
     }
 }
 
