@@ -104,18 +104,34 @@ pub(crate) fn of(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     if let Some(receiver) = receiver.filter(|value| is_constructor(value)) {
-        let mut result = construct_typed_result(Some(receiver), arguments.len())?;
-        validate_initial_result_bounds(
-            &result,
-            arguments.len(),
-            strict_result_bounds(Some(receiver)),
-        )?;
+        let mut result = construct_result(Some(receiver), arguments.len(), false)?;
         for (index, value) in arguments.iter().cloned().enumerate() {
             result = write_result_element(result, index, value, false)?;
         }
-        return Ok(result);
+        return set_result_length(result, arguments.len());
     }
-    create_result(receiver, arguments.to_vec(), false)
+    Ok(Value::array(arguments.to_vec()))
+}
+
+pub(crate) fn typed_of(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver.filter(|value| is_constructor(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.of called on a non-constructor",
+        ));
+    };
+    let mut result = construct_typed_result(Some(receiver), arguments.len())?;
+    validate_initial_result_bounds(
+        &result,
+        arguments.len(),
+        strict_result_bounds(Some(receiver)),
+    )?;
+    for (index, value) in arguments.iter().cloned().enumerate() {
+        result = write_result_element(result, index, value, false)?;
+    }
+    Ok(result)
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
