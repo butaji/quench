@@ -31,6 +31,19 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             &[quench_runtime::host_api::bytes(&bytes)],
         )?;
     }
+    let request_writes = std::mem::take(&mut state.borrow_mut().net.pending_request_writes);
+    for (socket, bytes, request) in request_writes {
+        if matches!(execute::get_property(&request, "aborted"), quench_runtime::value::Value::Boolean(true))
+            || matches!(execute::get_property(&request, "destroyed"), quench_runtime::value::Value::Boolean(true))
+        {
+            continue;
+        }
+        socket_write(
+            state,
+            Some(&socket),
+            &[quench_runtime::host_api::bytes(&bytes)],
+        )?;
+    }
     poll_accept(state)?;
     poll_sockets(state)?;
     finalize(state)?;

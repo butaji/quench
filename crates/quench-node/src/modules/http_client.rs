@@ -574,7 +574,7 @@ pub fn req_abort(
     let Some(id) = client_id(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let (request, socket, target, custom_connection_pending) = {
+    let (request, socket, target) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -587,15 +587,24 @@ pub fn req_abort(
             req.req.clone(),
             req.socket.clone(),
             req.target.clone(),
-            req.agent.as_ref().and_then(custom_connection).is_some(),
         )
     };
     clear_request_timeout(state, id)?;
     set_request_property(receiver, "aborted", Value::Boolean(true));
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     net::emit(state, &request, "abort", Vec::new())?;
-    if let Some(socket) = socket.filter(|_| !custom_connection_pending) {
-        net::socket_destroy(state, Some(&socket), &[])?;
+    if let Some(socket) = socket {
+        let connected = net::net_id(&socket).is_some_and(|socket_id| {
+            state
+                .borrow()
+                .net
+                .sockets
+                .get(&socket_id)
+                .is_some_and(|entry| entry.borrow().stream.is_some())
+        });
+        if connected {
+            net::socket_destroy(state, Some(&socket), &[])?;
+        }
     }
     if let RequestTarget::Unix { path } = target {
         let active = state
@@ -732,18 +741,18 @@ pub fn req_write(
         invoke_write_callback(receiver, args)?;
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    let (open, custom, dispatched) = {
+    let (open, agent, dispatched) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
         req.body.extend_from_slice(&bytes);
-        (
-            req.socket.is_none(),
-            req.agent.as_ref().and_then(custom_connection).is_some(),
-            req.dispatched,
-        )
+        (req.socket.is_none(), req.agent.clone(), req.dispatched)
     };
+    let custom = agent
+        .as_ref()
+        .and_then(|agent| custom_connection(state, agent))
+        .is_some();
     if open && custom && !dispatched {
         // A write starts an HTTP request even when the caller delays `end`.
         // Reuse the ordinary dispatch path so Agent connection hooks, socket
@@ -1159,7 +1168,9 @@ pub fn req_end(
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         set_request_property(Some(&req.req), "_header", Value::String(head.clone()));
     }
-    let custom = agent.as_ref().and_then(custom_connection);
+    let custom = agent
+        .as_ref()
+        .and_then(|agent| custom_connection(state, agent));
     let existing = state
         .borrow()
         .http
@@ -1175,6 +1186,10 @@ pub fn req_end(
     };
     if let Some(socket) = pooled.as_ref() {
         crate::modules::http::clear_idle_socket(state, socket);
+        // A pooled socket carries the previous idle timer. Reusing it makes
+        // that timer stale; clear it before attaching the new request's
+        // listeners so an idle expiry cannot destroy an active request.
+        net::socket_set_timeout(state, Some(socket), &[Value::Number(0.0)])?;
     }
     let reused = pooled.is_some();
     let socket = match (existing.or(pooled), custom) {
@@ -1212,11 +1227,11 @@ pub fn req_end(
             if matches!(target, RequestTarget::Unix { .. }) {
                 state.borrow_mut().net.pending_writes.push((socket.clone(), bytes));
             } else {
-                let payload = host_api::bytes(&bytes);
-                let write = execute::get_property(&socket, "write");
-                if quench_runtime::is_callable(&write) {
-                    execute::call(&write, &socket, &[payload])?;
-                }
+                state.borrow_mut().net.pending_request_writes.push((
+                    socket.clone(),
+                    bytes,
+                    receiver.cloned().unwrap_or(Value::Undefined),
+                ));
             }
             let resume = execute::get_property(&socket, "resume");
             if quench_runtime::is_callable(&resume) {
@@ -1344,6 +1359,23 @@ pub fn req_end(
             } else {
                 execute::set_property_in_place(&socket, "timeout", Value::Number(value));
                 subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
+                // A custom lookup may return before invoking its callback,
+                // leaving an unconnected socket as the only pending handle.
+                // Give that socket the Agent timeout so the ordinary timeout
+                // transition can retire the pending lookup; connected
+                // sockets receive their idle timer when released to the pool.
+                let connected = net::net_id(&socket).is_some_and(|socket_id| {
+                    state
+                        .borrow()
+                        .net
+                        .sockets
+                        .get(&socket_id)
+                        .is_some_and(|entry| entry.borrow().stream.is_some())
+                });
+                let unconnected = !connected;
+                if unconnected {
+                    net::socket_set_timeout(state, Some(&socket), &[Value::Number(value)])?;
+                }
             }
             if request_timeout_set && lookup.is_none() {
                 let response_cb = quench_runtime::host_api::bound_capability_with_arguments(
@@ -1890,39 +1922,39 @@ fn remove_agent_request(agent: &Value, name: &str, request: &Value) {
 fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
     let pools = execute::get_property(agent, "freeSockets");
     let list = execute::get_property(&pools, name);
-    let length = match execute::get_property(&list, "length") {
-        Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
-        _ => return None,
-    };
-    let socket = execute::get_property(&list, "0");
-    if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
-        return None;
-    }
-    if matches!(execute::get_property(agent, "scheduling"), Value::String(value) if value == "lifo") {
-        let last = execute::get_property(&list, &(length - 1).to_string());
-        let pop = execute::get_property(&list, "pop");
-        if quench_runtime::is_callable(&pop) {
-            let _ = execute::call(&pop, &list, &[]);
+    let lifo = matches!(execute::get_property(agent, "scheduling"), Value::String(value) if value == "lifo");
+    loop {
+        let length = match execute::get_property(&list, "length") {
+            Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+            _ => return None,
+        };
+        let key = if lifo { (length - 1).to_string() } else { "0".into() };
+        let socket = execute::get_property(&list, &key);
+        if lifo {
+            let pop = execute::get_property(&list, "pop");
+            if quench_runtime::is_callable(&pop) {
+                let _ = execute::call(&pop, &list, &[]);
+            } else {
+                execute::set_array_length_in_place(&list, length - 1);
+            }
         } else {
-            execute::set_array_length_in_place(&list, length - 1);
+            let shift = execute::get_property(&list, "shift");
+            if quench_runtime::is_callable(&shift) {
+                let _ = execute::call(&shift, &list, &[]);
+            } else {
+                for index in 1..length {
+                    let value = execute::get_property(&list, &index.to_string());
+                    execute::set_property_in_place(&list, &(index - 1).to_string(), value);
+                }
+                execute::set_property_in_place(&list, "length", Value::Number((length - 1) as f64));
+            }
         }
-        return matches!(last, Value::Object(_) | Value::ObjectAlias(_)).then_some(last);
-    }
-    let shift = execute::get_property(&list, "shift");
-    if quench_runtime::is_callable(&shift) {
-        let _ = execute::call(&shift, &list, &[]);
-    } else {
-        for index in 1..length {
-            let value = execute::get_property(&list, &index.to_string());
-            execute::set_property_in_place(&list, &(index - 1).to_string(), value);
+        if matches!(socket, Value::Object(_) | Value::ObjectAlias(_))
+            && !matches!(execute::get_property(&socket, "destroyed"), Value::Boolean(true))
+        {
+            return Some(socket);
         }
-        execute::set_property_in_place(
-            &list,
-            "length",
-            Value::Number((length - 1) as f64),
-        );
     }
-    Some(socket)
 }
 
 fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
@@ -2353,12 +2385,12 @@ fn pool_response_socket(
     });
     if keep_alive && alive {
         let keep_socket_alive = execute::get_property(&agent, "keepSocketAlive");
-        if quench_runtime::is_callable(&keep_socket_alive)
-            && matches!(
-                execute::call(&keep_socket_alive, &agent, &[socket.clone()])?,
-                Value::Boolean(false)
-            )
-        {
+        let keep_result = if quench_runtime::is_callable(&keep_socket_alive) {
+            Some(execute::call(&keep_socket_alive, &agent, &[socket.clone()])?)
+        } else {
+            None
+        };
+        if matches!(keep_result, Some(Value::Boolean(false))) {
             return Ok(());
         }
         let name = agent_name(&target, &agent);
@@ -2675,13 +2707,17 @@ fn client_id(receiver: Option<&Value>) -> Option<u64> {
     }
 }
 
-fn custom_connection(agent: &Value) -> Option<Value> {
-    // The built-in Agent exposes `createConnection` on its prototype. That
-    // method is the ordinary transport path, not a user-owned custom hook;
-    // only an own property opts a request into the callback contract.
-    let descriptor = execute::get_own_property_descriptor(agent, "createConnection").ok()?;
-    let method = execute::get_property(&descriptor, "value");
-    quench_runtime::is_callable(&method).then_some(method)
+fn custom_connection(state: &Rc<RefCell<HostState>>, agent: &Value) -> Option<Value> {
+    let default_prototype = state.borrow().http.agent_prototype.clone();
+    let visible = execute::get_property(agent, "createConnection");
+    if !quench_runtime::is_callable(&visible) {
+        return None;
+    }
+    let default_method = default_prototype
+        .as_ref()
+        .map(|prototype| execute::get_property(prototype, "createConnection"));
+    (!default_method.is_some_and(|value| execute::same_identity(&value, &visible)))
+        .then_some(visible)
 }
 
 fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Option<u64> {
