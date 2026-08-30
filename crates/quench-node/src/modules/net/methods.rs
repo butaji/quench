@@ -1021,14 +1021,14 @@ pub fn socket_write(
         "bytesWritten",
         Value::Number(guard.bytes_written as f64),
     );
-    let buffer_size = match execute::get_property(&receiver, "bufferSize") {
-        Value::Number(value) => value + bytes.len() as f64,
-        _ => bytes.len() as f64,
-    };
-    execute::set_property_in_place(&receiver, "bufferSize", Value::Number(buffer_size));
     let connecting = !guard.connect_announced;
     let flushed = try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
+    execute::set_property_in_place(
+        &receiver,
+        "bufferSize",
+        Value::Number(pending as f64),
+    );
     execute::set_property_in_place(
         &receiver,
         "writableLength",
