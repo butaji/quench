@@ -105,10 +105,16 @@ impl HttpState {
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let object = net::create_server(state, &[])?;
     let (options, callback) = match args.first() {
+        None => (None, None),
         Some(value) if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) => {
             (Some(value), args.get(1))
         }
-        _ => (None, args.first()),
+        Some(value) if quench_runtime::is_callable(value) => (None, Some(value)),
+        Some(_) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options\" argument must be an object or a function".into(),
+            ))
+        }
     };
     let require_host_header = options
         .map(|value| {
@@ -630,6 +636,9 @@ fn build_req_res(
         execute::set_property_in_place(&req, "connection", socket);
     }
     let (res, id) = build_res_object(state)?;
+    // Node exposes the incoming message on the response as `res.req`; keep
+    // the exact request identity that is emitted to user listeners.
+    execute::set_property_in_place(&res, "req", req.clone());
     insert_response(state, socket_id, id, keep_alive);
     {
         let mut guard = state.borrow_mut();
