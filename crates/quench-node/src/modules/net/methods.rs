@@ -983,39 +983,60 @@ pub fn socket_end(
             socket_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let Some(id) = receiver.and_then(net_id) else {
-        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
     };
+    let Some(id) = net_id(receiver) else {
+        return Ok(receiver.clone());
+    };
+    // The JavaScript half-close state is synchronous. Apply it to the
+    // receiver before consulting the native registry so aliases and sockets
+    // whose host entry is being retired observe the same transition.
+    execute::set_property_in_place(receiver, "writable", Value::Boolean(false));
+    execute::set_property_in_place(
+        receiver,
+        "readyState",
+        Value::String("readOnly".into()),
+    );
     let mut queue_finish = false;
-    if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
-        let mut guard = sock.borrow_mut();
-        if !guard.finish_emitted {
-            guard.finish_emitted = true;
-            execute::set_property_in_place(&guard.js, "writable", Value::Boolean(false));
-            execute::set_property_in_place(
-                &guard.js,
-                "readyState",
-                Value::String("readOnly".into()),
-            );
-            queue_finish = true;
-        }
-        guard.state = SocketState::Closing;
-        try_flush(&mut guard);
-        if guard.write_buf.is_empty() {
-            if let Some(stream) = guard.stream.as_mut() {
-                let _ = stream.shutdown(Shutdown::Write);
-            }
+    let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
+        // A socket can be observed through an event-delivery alias after its
+        // host entry has already been retired. Preserve the public half-close
+        // transition on that receiver instead of silently leaving it open.
+        state.borrow_mut().net.pending_events.push((
+            receiver.clone(),
+            "finish".into(),
+            Vec::new(),
+        ));
+        return Ok(receiver.clone());
+    };
+    let mut guard = sock.borrow_mut();
+    if !guard.finish_emitted {
+        guard.finish_emitted = true;
+        execute::set_property_in_place(&guard.js, "writable", Value::Boolean(false));
+        execute::set_property_in_place(
+            &guard.js,
+            "readyState",
+            Value::String("readOnly".into()),
+        );
+        queue_finish = true;
+    }
+    guard.state = SocketState::Closing;
+    try_flush(&mut guard);
+    if guard.write_buf.is_empty() {
+        if let Some(stream) = guard.stream.as_mut() {
+            let _ = stream.shutdown(Shutdown::Write);
         }
     }
     if queue_finish {
         state.borrow_mut().net.pending_events.push((
-            receiver.cloned().unwrap_or(Value::Undefined),
+            receiver.clone(),
             "finish".into(),
             Vec::new(),
         ));
     }
     let _ = state;
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+    Ok(receiver.clone())
 }
 
 /// `socket.destroy()` — drop the socket and emit `'close'`.

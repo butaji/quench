@@ -372,7 +372,10 @@ fn register_server_path(
 }
 
 pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
-    match quench_runtime::vm::get_property(receiver, NET_ID_PROP) {
+    // Event delivery may expose a canonical object through an alias value;
+    // resolve the hidden identity slot through ordinary property semantics so
+    // socket methods preserve the same host resource in either representation.
+    match execute::get_property(receiver, NET_ID_PROP) {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
     }
