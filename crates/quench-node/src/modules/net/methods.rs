@@ -1668,6 +1668,26 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    if let Some(id) = super::net_id(&receiver) {
+        let already_listening = state
+            .borrow()
+            .net
+            .servers
+            .get(&id)
+            .is_some_and(|server| {
+                let server = server.borrow();
+                server.listening && !server.closed
+            });
+        if already_listening {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                (
+                    "code".into(),
+                    Value::String("ERR_SERVER_ALREADY_LISTEN".into()),
+                ),
+            ])));
+        }
+    }
     if let Some(bound_id) = args.first().and_then(bound_id) {
         let bound = state
             .borrow()
