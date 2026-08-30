@@ -204,6 +204,7 @@ struct SocketEvents {
     connects: Vec<Rc<RefCell<NetSocket>>>,
     datas: Vec<(Rc<RefCell<NetSocket>>, Vec<u8>)>,
     eofs: Vec<Rc<RefCell<NetSocket>>>,
+    write_failures: Vec<Rc<RefCell<NetSocket>>>,
 }
 
 fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -293,6 +294,11 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         super::end_async_stream(state, sock.borrow().id);
         emit(state, &js, "end", Vec::new())?;
     }
+    for sock in events.write_failures {
+        let js = sock.borrow().js.clone();
+        emit(state, &js, "error", vec![super::peer_write_error()])?;
+        super::socket_destroy(state, Some(&js), &[])?;
+    }
     Ok(())
 }
 
@@ -345,6 +351,7 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         connects: Vec::new(),
         datas: Vec::new(),
         eofs: Vec::new(),
+        write_failures: Vec::new(),
     };
     let host = state.borrow();
     let net = &host.net;
@@ -386,6 +393,15 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
             events.eofs.push(sock.clone());
         }
         let flushed = try_flush(&mut guard);
+        let allow_half_open = matches!(
+            execute::get_property(&guard.js, "allowHalfOpen"),
+            Value::Boolean(true)
+        );
+        if guard.read_eof && pending_write_len(&guard) > 0 && !allow_half_open {
+            guard.write_buf.clear();
+            guard.write_offset = 0;
+            events.write_failures.push(sock.clone());
+        }
         if flushed
             && guard.state == SocketState::Closing
             && pending_write_len(&guard) == 0
