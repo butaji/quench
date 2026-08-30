@@ -124,16 +124,6 @@ pub(crate) struct IterationBinding {
 }
 
 impl IterationBinding {
-    pub(crate) fn install(slot: u16, value: Value) -> Self {
-        let environment = current();
-        environment.clear_immutable_slot(slot);
-        let previous = vec![(slot, environment.replace_slot(slot, value))];
-        Self {
-            environment,
-            previous,
-        }
-    }
-
     pub(crate) fn install_many<I>(bindings: I) -> Self
     where
         I: IntoIterator<Item = (u16, Value)>,

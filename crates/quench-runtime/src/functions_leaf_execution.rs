@@ -84,7 +84,6 @@ trait LeafRegisterFile {
     fn number(&self, index: usize) -> Option<f64>;
     fn object(&self, index: usize) -> Option<&crate::value::ObjectData>;
     fn write_slot(&mut self, index: usize, slot: &crate::register_file::SlotWord) -> Option<()>;
-    fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()>;
     fn store_slot(&self, source: usize, slot: &crate::register_file::SlotWord) -> Option<()>;
     fn load_environment(
         &mut self,
@@ -130,9 +129,6 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
     }
     fn write_slot(&mut self, index: usize, slot: &crate::register_file::SlotWord) -> Option<()> {
         slot.copy_to_fixed(self, index)
-    }
-    fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()> {
-        cell.with_word(|word| self.write_owned(index, word))
     }
     fn store_slot(&self, source: usize, slot: &crate::register_file::SlotWord) -> Option<()> {
         slot.store_from_fixed(self, source)
@@ -1081,9 +1077,6 @@ fn leaf_get_named_word(
     match payload {
         crate::vm::NamedCachedPayload::Word(slot) => registers
             .write_slot(usize::from(op.a), unsafe { &*slot })
-            .ok_or(crate::execute::VmError::MissingReturn)?,
-        crate::vm::NamedCachedPayload::Cell(cell) => registers
-            .write_cell(usize::from(op.a), unsafe { &*cell })
             .ok_or(crate::execute::VmError::MissingReturn)?,
         crate::vm::NamedCachedPayload::Value(value) => registers
             .write(usize::from(op.a), value)
