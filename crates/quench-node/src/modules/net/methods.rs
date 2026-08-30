@@ -1165,6 +1165,7 @@ pub fn socket_destroy(
     }
     if emit_close {
         set_socket_state(&receiver, true, false, "closed");
+        crate::modules::http_client::mark_socket_destroyed_in_agents(state, &receiver);
         // Node delivers socket close on the next loop turn, allowing a
         // listener attached immediately after `destroy()` to observe it.
         state
