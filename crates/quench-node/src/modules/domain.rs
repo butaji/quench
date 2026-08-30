@@ -267,7 +267,9 @@ pub fn exit(
     let id = id(receiver)?;
     let mut host = state.borrow_mut();
     if let Some(pos) = host.domain.stack.iter().rposition(|entry| *entry == id) {
-        host.domain.stack.remove(pos);
+        // Exiting a domain unwinds it and every nested domain entered after
+        // it; the stack is a dynamic context, not a set of independent IDs.
+        host.domain.stack.truncate(pos);
     }
     drop(host);
     refresh(state);
