@@ -173,7 +173,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     }
     return this;
   }
-  destroy() {
+  destroy(error) {
     if (this.destroyed) return this;
     const peer = this._peer;
     this.destroyed = true;
@@ -195,6 +195,9 @@ pub const JS: &str = quench_js_check::checked_js!(
       }
     }
     if (peer && !peer.destroyed) peer.destroy();
+    if (error !== undefined && error !== null) {
+      queueMicrotask(() => this.emit("error", error));
+    }
     queueMicrotask(() => this.emit("close"));
     return this;
   }
