@@ -944,6 +944,12 @@ impl PropertyEntries for ObjectProperties {
 
     #[inline]
     fn value_for_key(&self, key: &str) -> Option<Value> {
+        if key == "length" && self.names.first().is_some_and(|name| name == key) {
+            return self
+                .values
+                .first()
+                .map(crate::register_file::SlotWord::load);
+        }
         self.position_rev(key)
             .and_then(|slot| self.slot_value(slot))
     }
@@ -1026,6 +1032,11 @@ pub struct ObjectData {
     // Derived tri-state cache for deletion tombstones. The canonical property
     // vector remains authoritative; this only avoids repeated absence scans.
     deleted_marker_state: std::cell::Cell<u8>,
+    // Derived extensibility state: 0 unknown, 1 extensible, 2 non-extensible.
+    // The property marker remains the sole semantic source of truth.
+    extensible_state: std::cell::Cell<u8>,
+    // Derived shape fact for the common plain-object indexed-write path.
+    plain_index_state: std::cell::Cell<u8>,
 }
 
 impl Drop for ObjectData {
@@ -1055,6 +1066,8 @@ impl Clone for ObjectData {
             created: self.created.clone(),
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
+            extensible_state: std::cell::Cell::new(self.extensible_state.get()),
+            plain_index_state: std::cell::Cell::new(self.plain_index_state.get()),
         }
     }
 }
@@ -1064,6 +1077,24 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        let plain_prototype = key == "\0prototype"
+            && matches!(&value, Value::Builtin(crate::ops::Builtin::ObjectPrototype));
+        // Sequential indexed writes dominate array-like fixture setup. A
+        // plain object has no deletion marker or accessor metadata, so append
+        // directly without rescanning the full property vector.
+        if let Some(index) = crate::arrays::array_index(key) {
+            let append = self.plain_index_state.get() == 1
+                && self.properties.iter().next_back().is_some_and(|(name, _)| {
+                    crate::arrays::array_index(name.as_str())
+                        .is_some_and(|last| last < index)
+                        || (index == 0 && name == "length")
+                });
+            if append {
+                self.properties.push((key.into(), value));
+                self.created.push(key.into());
+                return;
+            }
+        }
         let deleted = crate::builtins::deleted_key(key);
         let cell = self
             .properties
@@ -1107,6 +1138,15 @@ impl ObjectData {
             self.descriptor_metadata_state.set(0);
         }
         self.deleted_marker_state.set(0);
+        if key == "\0quench:non_extensible" {
+            self.extensible_state.set(2);
+        }
+        if key == "\0prototype" && !plain_prototype {
+            self.plain_index_state.set(2);
+        }
+        if key != "\0prototype" && (key.starts_with('\0') || key == "Symbol.iterator") {
+            self.plain_index_state.set(2);
+        }
     }
 
     /// Publish a host-owned value without making the virtual binding visible
@@ -1230,6 +1270,24 @@ impl ObjectData {
     ) -> Self {
         crate::execution_trace::object_lifecycle(true);
         crate::execution_trace::object_shape(&properties);
+        let extensible_state = if properties
+            .iter()
+            .any(|(name, _)| name == "\0quench:non_extensible")
+        {
+            2
+        } else {
+            1
+        };
+        let plain_index_state = if properties.iter().any(|(name, _)| {
+            name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator")
+        }) || properties.iter().any(|(name, value)| {
+            name == "\0prototype"
+                && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype))
+        }) {
+            2
+        } else {
+            1
+        };
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
@@ -1240,7 +1298,33 @@ impl ObjectData {
             created,
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
+            extensible_state: std::cell::Cell::new(extensible_state),
+            plain_index_state: std::cell::Cell::new(plain_index_state),
         }
+    }
+
+    pub(crate) fn extensibility_cached(&self) -> Option<bool> {
+        match self.extensible_state.get() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_extensibility_cached(&self, extensible: bool) {
+        self.extensible_state.set(if extensible { 1 } else { 2 });
+    }
+
+    pub(crate) fn plain_index_cached(&self) -> Option<bool> {
+        match self.plain_index_state.get() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_plain_index_cached(&self, plain: bool) {
+        self.plain_index_state.set(if plain { 1 } else { 2 });
     }
 
     #[inline]
@@ -1307,6 +1391,7 @@ impl std::ops::DerefMut for ObjectData {
         self.layout_id.set(0);
         self.descriptor_metadata_state.set(0);
         self.deleted_marker_state.set(0);
+        self.plain_index_state.set(0);
         &mut self.properties
     }
 }
@@ -2882,7 +2967,20 @@ include!("value_helpers.rs");
 #[cfg(test)]
 mod error_tests {
     use super::error;
-    use crate::{execute::get_property, execute::VmError, value::Value};
+    use crate::{
+        execute::get_property,
+        execute::VmError,
+        value::{ObjectData, Value},
+    };
+
+    #[test]
+    fn plain_index_appends_keep_named_layout_stable() {
+        let mut object = ObjectData::new(vec![("length".into(), Value::Number(3.0))]);
+        let layout = object.semantic_layout_id();
+        object.set_property_in_place("0", Value::Number(7.0));
+        object.set_property_in_place("1", Value::Number(8.0));
+        assert_eq!(object.semantic_layout_id(), layout);
+    }
 
     #[test]
     fn cold_error_helpers_preserve_error_kind_and_message() {

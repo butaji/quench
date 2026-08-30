@@ -118,6 +118,12 @@ fn object_builtin_property(properties: &crate::value::ObjectData, key: &str) -> 
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+    if key == "length"
+        && properties.plain_index_cached() == Some(true)
+        && properties.names().next().is_some_and(|name| name == key)
+    {
+        return properties.slot_value(0);
+    }
     let deleted_key = crate::builtins::deleted_key(key);
     if properties.physical_slot_for_name(&deleted_key).is_some() {
         return Some(Value::Undefined);
