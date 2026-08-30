@@ -2636,6 +2636,79 @@ pub fn http_create_server_construct(
     crate::modules::http::create_server(state, args)
 }
 
+pub fn http_outgoing_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let mut object = Value::object(vec![
+        ("writable".into(), Value::Boolean(true)),
+        ("writableObjectMode".into(), Value::Boolean(false)),
+        ("writableHighWaterMark".into(), Value::Number(16_384.0)),
+        ("writableLength".into(), Value::Number(0.0)),
+        ("outputSize".into(), Value::Number(0.0)),
+        ("writableEnded".into(), Value::Boolean(false)),
+        ("writableFinished".into(), Value::Boolean(false)),
+        ("finished".into(), Value::Boolean(false)),
+        ("destroyed".into(), Value::Boolean(false)),
+        ("closed".into(), Value::Boolean(false)),
+        ("errored".into(), Value::Undefined),
+        ("socket".into(), Value::Null),
+    ]);
+    if let Some(prototype) = state.borrow().http.outgoing_prototype.clone() {
+        object = execute::set_prototype_of(&object, &prototype)?;
+    }
+    Ok(object)
+}
+
+pub fn http_outgoing_write(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+    let Value::Number(length) = crate::modules::buffer::byte_length(state, args)? else {
+        return Err(VmError::NotCallable);
+    };
+    let number_property = |name: &str, default| match execute::get_property(&receiver, name) {
+        Value::Number(value) => value,
+        _ => default,
+    };
+    let output_size = number_property("outputSize", 0.0) + length;
+    let writable_length = number_property("writableLength", 0.0) + length;
+    execute::set_property_in_place(&receiver, "outputSize", Value::Number(output_size));
+    execute::set_property_in_place(
+        &receiver,
+        "writableLength",
+        Value::Number(writable_length),
+    );
+    Ok(Value::Boolean(
+        output_size < number_property("writableHighWaterMark", 16_384.0),
+    ))
+}
+
+pub fn http_outgoing_end(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+    execute::set_property_in_place(&receiver, "finished", Value::Boolean(true));
+    execute::set_property_in_place(&receiver, "writableEnded", Value::Boolean(true));
+    execute::set_property_in_place(&receiver, "writableLength", Value::Number(0.0));
+    Ok(receiver)
+}
+
+pub fn http_outgoing_destroy(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+    execute::set_property_in_place(&receiver, "destroyed", Value::Boolean(true));
+    execute::set_property_in_place(&receiver, "closed", Value::Boolean(true));
+    Ok(receiver)
+}
+
 // ---- stream ----
 pub fn stream_pipeline(
     state: &Rc<RefCell<HostState>>,
