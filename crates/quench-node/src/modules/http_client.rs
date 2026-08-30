@@ -1757,6 +1757,11 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
             let Some(request) = guard.http.clientreqs.get(id) else {
                 return false;
             };
+            if request.aborted
+                || matches!(execute::get_property(&request.req, "destroyed"), Value::Boolean(true))
+            {
+                return false;
+            }
             let same_agent = request
                 .agent
                 .as_ref()
