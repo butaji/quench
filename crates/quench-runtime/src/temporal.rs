@@ -5669,53 +5669,6 @@ mod stubs {
         Ok(Value::String(text))
     }
 
-    fn plain_month_day_from(value: Option<&Value>) -> Result<Value, VmError> {
-        let value =
-            value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
-        let (month, day) = if let Value::String(text) = value {
-            let parts = text.split('-').collect::<Vec<_>>();
-            if parts.len() < 2 {
-                return Err(crate::value::error::throw_range_error(
-                    "Invalid PlainMonthDay",
-                ));
-            }
-            (
-                parts[parts.len() - 2]
-                    .parse::<f64>()
-                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainMonthDay"))?,
-                parts[parts.len() - 1]
-                    .parse::<f64>()
-                    .map_err(|_| crate::value::error::throw_range_error("Invalid PlainMonthDay"))?,
-            )
-        } else {
-            (
-                crate::execute::get_property_result(value, "month")
-                    .and_then(|v| crate::conversion::to_number(&v))?,
-                crate::execute::get_property_result(value, "day")
-                    .and_then(|v| crate::conversion::to_number(&v))?,
-            )
-        };
-        if !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid PlainMonthDay",
-            ));
-        }
-        Ok(Value::Object(std::rc::Rc::new(
-            crate::value::ObjectData::new(vec![
-                (
-                    "monthCode".into(),
-                    Value::String(format!("M{:02}", month as u32)),
-                ),
-                ("day".into(), Value::Number(day)),
-                ("calendarId".into(), Value::String("iso8601".into())),
-                (
-                    "\0prototype".into(),
-                    Value::Builtin(crate::ops::Builtin::TemporalPlainMonthDayPrototype),
-                ),
-            ]),
-        )))
-    }
-
     fn plain_year_month_from(value: Option<&Value>) -> Result<Value, VmError> {
         let value =
             value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?;
