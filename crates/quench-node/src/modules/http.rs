@@ -271,6 +271,10 @@ pub(crate) fn connection_close(
     let Some(socket_id) = net::net_id(socket) else {
         return Ok(());
     };
+    // Finalization removes the connection record before the socket's public
+    // `close` listeners run. Transition an incomplete request first so its
+    // `aborted` event remains observable exactly once.
+    abort_server_signal(state, socket)?;
     let requests = state
         .borrow()
         .http
