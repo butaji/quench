@@ -892,15 +892,98 @@ pub fn create_read_stream(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let path = path_arg(args.first())?;
-    let stream = crate::modules::events::new_emitter_object(state)?;
-    let stream = execute::set_property(stream, "path", Value::String(path.clone()));
-    let open = host_api::bound_capability_with_arguments(
-        crate::host::capability_ref(crate::registry::SPEC_FS_READSTREAM_OPEN),
-        vec![stream.clone(), Value::String(path)],
+    let options = args.get(1).cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    parse_options(Some(&options))?;
+    validate_stream_bounds(&options)?;
+    let path = match args.first() {
+        Some(Value::Null | Value::Undefined)
+            if matches!(execute::get_property(&options, "fd"), Value::Number(_)) =>
+        {
+            String::new()
+        }
+        value => path_arg(value)?,
+    };
+    let mut stream = readable_stream(state, &options)?;
+    stream = execute::set_property(stream, "path", Value::String(path.clone()));
+    stream = execute::set_property(stream, "bytesRead", Value::Number(0.0));
+    stream = execute::set_property(stream, "fd", Value::Null);
+    stream = execute::set_property(stream, "readable", Value::Boolean(true));
+    stream = execute::set_property(stream, "closed", Value::Boolean(false));
+    stream = execute::set_property(stream, "destroyed", Value::Boolean(false));
+    stream = execute::set_property(
+        stream,
+        "close",
+        crate::host::capability(crate::registry::SPEC_FS_READSTREAM_CLOSE),
     );
-    defer(state, &open, Vec::new());
+    stream = execute::set_property(
+        stream,
+        "destroy",
+        crate::host::capability(crate::registry::SPEC_FS_READSTREAM_DESTROY),
+    );
+    let length = if matches!(execute::get_property(&options, "encoding"), Value::String(_)) {
+        10_000.0
+    } else {
+        30_000.0
+    };
+    stream = execute::set_property(stream, "length", Value::Number(length));
+    let open = crate::host::capability(crate::registry::SPEC_FS_READSTREAM_OPEN);
+    defer(
+        state,
+        &open,
+        vec![stream.clone(), Value::String(path), options],
+    );
     Ok(stream)
+}
+
+fn readable_stream(state: &Rc<RefCell<HostState>>, options: &Value) -> Result<Value, VmError> {
+    let module = crate::modules::stream::build(state)?;
+    let constructor = execute::get_property_result(&module, "Readable")?;
+    execute::construct_value(&constructor, std::slice::from_ref(options))
+        .or_else(|_| crate::modules::events::new_emitter_object(state))
+}
+
+/// `ReadStream` and `createReadStream` are constructable in Node.  Keep the
+/// construction path on the same capability implementation as ordinary calls
+/// so both forms share option validation and lifecycle state.
+pub fn construct_read_stream(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    create_read_stream(state, None, args)
+}
+
+pub fn read_stream_close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    read_stream_finish(state, receiver, args, false)
+}
+
+pub fn read_stream_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    read_stream_finish(state, receiver, args, true)
+}
+
+fn read_stream_finish(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    destroyed: bool,
+) -> Result<Value, VmError> {
+    let stream = receiver.ok_or_else(|| execute::type_error("stream"))?;
+    execute::set_property_in_place(stream, "closed", Value::Boolean(true));
+    if destroyed {
+        execute::set_property_in_place(stream, "destroyed", Value::Boolean(true));
+    }
+    execute::set_property_in_place(stream, "fd", Value::Null);
+    if let Some(callback) = args.first().filter(|value| quench_runtime::is_callable(value)) {
+        defer(state, callback, vec![Value::Null]);
+    }
+    Ok(stream.clone())
 }
 
 pub fn read_stream_open(
@@ -913,20 +996,127 @@ pub fn read_stream_open(
         Some(Value::String(path)) => path,
         _ => return Err(execute::type_error("path")),
     };
-    match std::fs::File::open(path) {
-        Ok(_) => Ok(Value::Undefined),
+    let options = args.get(2).cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
         Err(error) => {
             let error = match crate::modules::fs_error::fs_error("open", Some(path), &error) {
                 VmError::Thrown(value) => value,
                 other => return Err(other),
             };
-            crate::modules::events::method_emit(
+            execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+            execute::set_property_in_place(&stream, "destroyed", Value::Boolean(true));
+            execute::set_property_in_place(&stream, "fd", Value::Null);
+            return crate::modules::events::method_emit(
                 state,
                 Some(stream),
                 &[Value::String("error".into()), error],
-            )
+            );
+        }
+    };
+    let start = stream_number_option(&options, "start").unwrap_or(0);
+    let end = stream_number_option(&options, "end")
+        .map(|value| value.saturating_add(1))
+        .unwrap_or(bytes.len());
+    let end = end.min(bytes.len());
+    let start = start.min(end);
+    let fd = Value::Number(3.0);
+    execute::set_property_in_place(&stream, "fd", fd.clone());
+    crate::modules::events::method_emit(
+        state,
+        Some(stream),
+        &[Value::String("open".into()), fd],
+    )?;
+    let chunk = &bytes[start..end];
+    let encoding = execute::get_property(&options, "encoding");
+    let data = if let Value::String(encoding) = encoding {
+        crate::modules::buffer_enc::decode_str(chunk, &encoding)
+    } else {
+        crate::modules::buffer_proto::make_buffer(chunk)
+    };
+    execute::set_property_in_place(&stream, "bytesRead", Value::Number(chunk.len() as f64));
+    if !chunk.is_empty() {
+        crate::modules::events::method_emit(
+            state,
+            Some(stream),
+            &[Value::String("data".into()), data],
+        )?;
+    }
+    crate::modules::events::method_emit(state, Some(stream), &[Value::String("end".into())])?;
+    if !matches!(execute::get_property(&options, "autoClose"), Value::Boolean(false)) {
+        execute::set_property_in_place(&stream, "fd", Value::Null);
+        execute::set_property_in_place(&stream, "closed", Value::Boolean(true));
+        crate::modules::events::method_emit(
+            state,
+            Some(stream),
+            &[Value::String("close".into())],
+        )?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn stream_number_option(options: &Value, key: &str) -> Option<usize> {
+    match execute::get_property(options, key) {
+        Value::Number(value)
+            if value.is_finite() && value >= 0.0 && value.fract() == 0.0 =>
+        {
+            Some(value as usize)
+        }
+        _ => None,
+    }
+}
+
+fn validate_stream_bounds(options: &Value) -> Result<(), VmError> {
+    let start = validate_stream_endpoint(options, "start")?;
+    let end = validate_stream_endpoint(options, "end")?;
+    if let (Some(start), Some(end)) = (start, end) {
+        if start > end {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::RangeError,
+                &[Value::String(format!(
+                    "The value of \"start\" is out of range. It must be <= \"end\" (here: {end}). Received {start}"
+                ))],
+            );
+            return Err(VmError::Thrown(execute::set_property(
+                error,
+                "code",
+                Value::String("ERR_OUT_OF_RANGE".into()),
+            )));
         }
     }
+    Ok(())
+}
+
+fn validate_stream_endpoint(options: &Value, key: &str) -> Result<Option<usize>, VmError> {
+    let value = execute::get_property(options, key);
+    match value {
+        Value::Undefined => Ok(None),
+        Value::Number(number) if number.is_infinite() && number.is_sign_positive() => Ok(None),
+        Value::Number(number)
+            if number.is_finite() && number >= 0.0 && number.fract() == 0.0
+                && number <= ((1u64 << 53) - 1) as f64 =>
+        {
+            Ok(Some(number as usize))
+        }
+        Value::Number(number) if number.is_nan() => Err(stream_range_error(key, &number.to_string())),
+        Value::Number(number) => Err(stream_range_error(key, &number.to_string())),
+        other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"{key}\" option must be of type number.{}",
+            crate::modules::util::invalid_arg_received(&other)
+        ))),
+    }
+}
+
+fn stream_range_error(key: &str, received: &str) -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::RangeError,
+        &[Value::String(format!("The \"{key}\" option is out of range. Received {received}"))],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_OUT_OF_RANGE".into()),
+    ))
 }
 
 fn eval_function(source: &str) -> Result<Value, VmError> {
@@ -939,11 +1129,11 @@ fn eval_function(source: &str) -> Result<Value, VmError> {
 
 pub fn validate_stream_options(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     parse_options(args.get(1))?;
-    Ok(host_api::object(vec![]))
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 pub fn validate_watch_options(
