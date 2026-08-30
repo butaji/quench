@@ -35,6 +35,24 @@ fn round_quotient(delta: i128, quantum: i128, mode: &str) -> i128 {
     quotient + if adjust { sign } else { 0 }
 }
 
+fn temporal_property_number(
+    value: &crate::value::Value,
+    name: &str,
+) -> Result<f64, crate::execute::VmError> {
+    crate::conversion::to_number(&crate::execute::get_property_result(value, name)?)
+}
+
+fn temporal_epoch_nanoseconds(
+    value: &crate::value::Value,
+) -> Result<i128, crate::execute::VmError> {
+    match crate::execute::get_property_result(value, "epochNanoseconds")? {
+        crate::value::Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+            crate::value::error::throw_range_error("Invalid epochNanoseconds")
+        }),
+        _ => Err(crate::value::error::throw_type_error("Invalid epochNanoseconds")),
+    }
+}
+
 pub(crate) fn zoned_construct(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
@@ -1068,6 +1086,7 @@ pub(crate) fn execute(
 mod stubs {
     use crate::{execute::VmError, value::Value};
     use chrono::Datelike;
+    use super::{temporal_epoch_nanoseconds, temporal_property_number};
 
     fn validate_now_timezone(arguments: &[Value]) -> Result<(), VmError> {
         if let Some(value) = arguments
@@ -3861,21 +3880,14 @@ mod stubs {
                 } else {
                     (&other, receiver)
                 };
-                let number = |value: &Value, name: &str| -> Result<i64, VmError> {
-                    Ok(
-                        crate::conversion::to_number(&crate::execute::get_property_result(
-                            value, name,
-                        )?)? as i64,
-                    )
-                };
                 let mut days = super::plain_date::date_serial(
-                    number(end, "year")? as f64,
-                    number(end, "month")? as f64,
-                    number(end, "day")? as f64,
+                    temporal_property_number(end, "year")?,
+                    temporal_property_number(end, "month")?,
+                    temporal_property_number(end, "day")?,
                 ) - super::plain_date::date_serial(
-                    number(start, "year")? as f64,
-                    number(start, "month")? as f64,
-                    number(start, "day")? as f64,
+                    temporal_property_number(start, "year")?,
+                    temporal_property_number(start, "month")?,
+                    temporal_property_number(start, "day")?,
                 );
                 let same_clock = [
                     "hour",
@@ -3895,17 +3907,7 @@ mod stubs {
                     fields[3] = Value::Number(days as f64);
                     return crate::temporal::duration::construct(&fields);
                 }
-                let epoch = |value: &Value| -> Result<i128, VmError> {
-                    match crate::execute::get_property_result(value, "epochNanoseconds")? {
-                        Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
-                            crate::value::error::throw_range_error("Invalid epochNanoseconds")
-                        }),
-                        _ => Err(crate::value::error::throw_type_error(
-                            "Invalid epochNanoseconds",
-                        )),
-                    }
-                };
-                let actual = epoch(end)? - epoch(start)?;
+                let actual = temporal_epoch_nanoseconds(end)? - temporal_epoch_nanoseconds(start)?;
                 let day_duration = |value: i64| {
                     super::duration::construct(&[
                         Value::Number(0.0),
@@ -3921,9 +3923,9 @@ mod stubs {
                     ])
                 };
                 let wall_clock = |value: &Value| -> Result<i64, VmError> {
-                    Ok(number(value, "hour")? * 3_600
-                        + number(value, "minute")? * 60
-                        + number(value, "second")?)
+                    Ok(temporal_property_number(value, "hour")? as i64 * 3_600
+                        + temporal_property_number(value, "minute")? as i64 * 60
+                        + temporal_property_number(value, "second")? as i64)
                 };
                 let offset_delta = (super::timezone_offset_nanos(&receiver_timezone, right_epoch)
                     - super::timezone_offset_nanos(&receiver_timezone, left_epoch))
@@ -3963,7 +3965,8 @@ mod stubs {
                         std::slice::from_ref(&candidate),
                     )
                     .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))??;
-                    let candidate_delta = epoch(&added)? - epoch(start)?;
+                    let candidate_delta = temporal_epoch_nanoseconds(&added)?
+                        - temporal_epoch_nanoseconds(start)?;
                     if candidate_delta > actual {
                         days -= 1;
                     } else if candidate_delta < actual {
@@ -3979,7 +3982,10 @@ mod stubs {
                     std::slice::from_ref(&anchor),
                 )
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))??;
-                let residual = (actual - (epoch(&added)? - epoch(start)?)).abs();
+                let residual = (actual
+                    - (temporal_epoch_nanoseconds(&added)?
+                        - temporal_epoch_nanoseconds(start)?))
+                    .abs();
                 let sign = if actual < 0 { -1.0 } else { 1.0 };
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[3] = Value::Number(days as f64);
@@ -4004,38 +4010,39 @@ mod stubs {
                 && rounding_mode == "trunc"
                 && increment_number.is_none()
             {
+                let since = builtin == crate::ops::Builtin::TemporalZonedDateTimeSince;
+                let fixed_wall_timezone = receiver_timezone.starts_with(['+', '-'])
+                    || super::timezone_primary_name(&receiver_timezone) == "UTC";
                 let forward = right_epoch >= left_epoch;
-                let (start, end) = if forward {
+                let (start, end) = if fixed_wall_timezone {
+                    (receiver, &other)
+                } else if forward {
                     (receiver, &other)
                 } else {
                     (&other, receiver)
                 };
-                let result_sign = if builtin == crate::ops::Builtin::TemporalZonedDateTimeSince {
-                    if left_epoch >= right_epoch {
-                        1.0
-                    } else {
-                        -1.0
-                    }
+                let operation_factor = if fixed_wall_timezone {
+                    if since { -1_i32 } else { 1 }
+                } else if since {
+                    if left_epoch >= right_epoch { 1 } else { -1 }
                 } else if right_epoch >= left_epoch {
-                    1.0
+                    1
                 } else {
-                    -1.0
+                    -1
                 };
-                let number = |value: &Value, name: &str| -> Result<i32, VmError> {
-                    Ok(
-                        crate::conversion::to_number(&crate::execute::get_property_result(
-                            value, name,
-                        )?)? as i32,
-                    )
-                };
-                let start_year = number(start, "year")?;
-                let start_month = number(start, "month")?;
-                let start_day = number(start, "day")?;
-                let end_year = number(end, "year")?;
-                let end_month = number(end, "month")?;
-                let end_day = number(end, "day")?;
+                let start_year = temporal_property_number(start, "year")? as i32;
+                let start_month = temporal_property_number(start, "month")? as i32;
+                let start_day = temporal_property_number(start, "day")? as i32;
+                let end_year = temporal_property_number(end, "year")? as i32;
+                let end_month = temporal_property_number(end, "month")? as i32;
+                let end_day = temporal_property_number(end, "day")? as i32;
+                let raw_sign = (right_epoch - left_epoch).signum() as i32;
                 let mut months = (end_year - start_year) * 12 + end_month - start_month;
-                if end_day < start_day {
+                if fixed_wall_timezone && raw_sign > 0 && end_day < start_day {
+                    months -= 1;
+                } else if fixed_wall_timezone && raw_sign < 0 && end_day > start_day {
+                    months += 1;
+                } else if !fixed_wall_timezone && end_day < start_day {
                     months -= 1;
                 }
                 let month_duration = crate::temporal::duration::construct(&[
@@ -4056,7 +4063,8 @@ mod stubs {
                     std::slice::from_ref(&month_duration),
                 )
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))??;
-                let eom_correction = if end_day < start_day
+                let eom_correction = if (!fixed_wall_timezone || raw_sign > 0)
+                    && end_day < start_day
                     && start_day
                         == super::plain_date::days_in_month_for_record(
                             start_year,
@@ -4069,7 +4077,7 @@ mod stubs {
                     let year = crate::conversion::to_number(
                         &crate::execute::get_property_result(&anchor, "year")?,
                     )? as i32;
-                    let anchor_day = number(&anchor, "day")?;
+                    let anchor_day = temporal_property_number(&anchor, "day")? as i32;
                     i128::from(
                         super::plain_date::days_in_month_for_record(year, month) as i32
                             - anchor_day,
@@ -4077,23 +4085,13 @@ mod stubs {
                 } else {
                     0
                 };
-                let epoch = |value: &Value| -> Result<i128, VmError> {
-                    match crate::execute::get_property_result(value, "epochNanoseconds")? {
-                        Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
-                            crate::value::error::throw_range_error("Invalid epochNanoseconds")
-                        }),
-                        _ => Err(crate::value::error::throw_type_error(
-                            "Invalid epochNanoseconds",
-                        )),
-                    }
-                };
-                let start_epoch = epoch(start)?;
-                let end_epoch = epoch(end)?;
-                let anchor_epoch = epoch(&anchor)?;
+                let start_epoch = temporal_epoch_nanoseconds(start)?;
+                let end_epoch = temporal_epoch_nanoseconds(end)?;
+                let anchor_epoch = temporal_epoch_nanoseconds(&anchor)?;
                 let target_sign = (end_epoch - start_epoch).signum();
                 if months != 0 && (anchor_epoch - end_epoch) * target_sign > 0 {
                     let mut fields = vec![Value::Number(0.0); 10];
-                    let signed = (end_epoch - start_epoch) * result_sign as i128;
+                    let signed = (end_epoch - start_epoch) * i128::from(operation_factor);
                     let sign = signed.signum();
                     let mut residual = signed.abs();
                     fields[3] = Value::Number((residual / 86_400_000_000_000) as f64 * sign as f64);
@@ -4114,15 +4112,33 @@ mod stubs {
                     }
                     return crate::temporal::duration::construct(&fields);
                 }
-                let mut residual =
-                    (end_epoch - start_epoch).abs() - (anchor_epoch - start_epoch).abs();
-                if number(&anchor, "hour")? != number(start, "hour")? {
-                    residual += 3_600_000_000_000;
+                let mut residual = if fixed_wall_timezone {
+                    end_epoch - anchor_epoch
+                } else {
+                    (end_epoch - start_epoch).abs() - (anchor_epoch - start_epoch).abs()
+                };
+                if temporal_property_number(&anchor, "hour")?
+                    != temporal_property_number(start, "hour")?
+                {
+                    residual += if fixed_wall_timezone {
+                        if residual < 0 { 3_600_000_000_000 } else { -3_600_000_000_000 }
+                    } else {
+                        3_600_000_000_000
+                    };
                 }
-                residual -= eom_correction;
+                residual -= if fixed_wall_timezone {
+                    eom_correction * i128::from(raw_sign)
+                } else {
+                    eom_correction
+                };
                 let mut fields = vec![Value::Number(0.0); 10];
-                fields[1] = Value::Number(months as f64 * result_sign);
-                let sign = result_sign as i128;
+                fields[1] = Value::Number((months * operation_factor) as f64);
+                let sign = if fixed_wall_timezone {
+                    i128::from(residual.signum()) * i128::from(operation_factor)
+                } else {
+                    i128::from(operation_factor)
+                };
+                let mut residual = residual.abs();
                 for (index, scale) in [
                     86_400_000_000_000_i128,
                     3_600_000_000_000,
