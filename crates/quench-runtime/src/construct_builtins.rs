@@ -364,39 +364,6 @@ fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> V
     ])))
 }
 
-fn regexp_flag_entries(flags: &str) -> Vec<(String, Value)> {
-    let mut entries = Vec::new();
-    for (flag, enabled) in [
-        ("global", flags.contains('g')),
-        ("ignoreCase", flags.contains('i')),
-        ("multiline", flags.contains('m')),
-        ("dotAll", flags.contains('s')),
-        ("unicode", flags.contains('u')),
-        ("unicodeSets", flags.contains('v')),
-        ("sticky", flags.contains('y')),
-    ] {
-        let descriptor = regexp_data_descriptor(false, true, Value::Boolean(enabled));
-        entries.push((flag.to_string(), Value::Boolean(enabled)));
-        entries.push((crate::builtins::descriptor_key(flag), descriptor));
-    }
-    entries
-}
-
-fn is_error_builtin(builtin: crate::ops::Builtin) -> bool {
-    matches!(
-        builtin,
-        crate::ops::Builtin::TypeError
-            | crate::ops::Builtin::Error
-            | crate::ops::Builtin::RangeError
-            | crate::ops::Builtin::ReferenceError
-            | crate::ops::Builtin::SyntaxError
-            | crate::ops::Builtin::EvalError
-            | crate::ops::Builtin::URIError
-            | crate::ops::Builtin::AggregateError
-            | crate::ops::Builtin::SuppressedError
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::construct_regexp;
@@ -571,6 +538,9 @@ fn construct_error(
     builtin: &crate::ops::Builtin,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if *builtin == crate::ops::Builtin::DOMException {
+        return crate::builtins::dom_exception_value(arguments);
+    }
     if *builtin == crate::ops::Builtin::SuppressedError {
         return crate::builtins::suppressed_error(arguments);
     }

@@ -530,7 +530,9 @@ fn tail_dispatch(
     if let Some(result) = tail_constructor_dispatch(builtin, arguments) {
         return result;
     }
-    Ok(Value::Undefined)
+    Err(VmError::EvalError(format!(
+        "unimplemented builtin: {builtin:?}"
+    )))
 }
 
 fn tail_object_dispatch(

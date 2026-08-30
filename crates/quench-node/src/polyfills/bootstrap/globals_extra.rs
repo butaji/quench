@@ -28,6 +28,7 @@ globalThis.DOMException = class DOMException extends Error {
     super(message);
     this.name = name;
     this.code = __nodeDomExceptionCodes[name] || 0;
+    this["\0domexception"] = true;
   }
   toString() {
     return `${this.name}: ${this.message}`;
