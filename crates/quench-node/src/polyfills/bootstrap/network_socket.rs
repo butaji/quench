@@ -10,6 +10,8 @@ pub const JS: &str = quench_js_check::checked_js!(
     this.allowHalfOpen = false;
     this.destroyed = false;
     this._bufferSize = 0;
+    this.writableHighWaterMark =
+      typeof options?.highWaterMark === "number" ? options.highWaterMark : 16 * 1024;
     this.bytesRead = 0;
     this.bytesWritten = 0;
     this._handle = options?.handle || null;
@@ -429,7 +431,7 @@ pub const JS: &str = quench_js_check::checked_js!(
     } else {
       if (typeof callback === "function") queueMicrotask(callback);
     }
-    return true;
+    return this._bufferSize < this.writableHighWaterMark;
   }
   end(_data, callback) {
     if (typeof _data === "function") {

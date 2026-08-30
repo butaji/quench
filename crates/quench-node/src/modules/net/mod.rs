@@ -176,6 +176,10 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
         vec![
             ("bytesRead".to_string(), Value::Number(0.0)),
             ("bytesWritten".to_string(), Value::Number(0.0)),
+            (
+                "writableHighWaterMark".to_string(),
+                Value::Number(16_384.0),
+            ),
             ("pending".to_string(), Value::Boolean(true)),
             ("connecting".to_string(), Value::Boolean(false)),
             (
@@ -187,9 +191,15 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
 }
 
 pub(crate) fn set_socket_state(socket: &Value, pending: bool, connecting: bool, ready_state: &str) {
-    execute::set_property_in_place(socket, "pending", Value::Boolean(pending));
-    execute::set_property_in_place(socket, "connecting", Value::Boolean(connecting));
-    execute::set_property_in_place(socket, "readyState", Value::String(ready_state.to_string()));
+    for (key, value) in [
+        ("pending", Value::Boolean(pending)),
+        ("connecting", Value::Boolean(connecting)),
+        ("readyState", Value::String(ready_state.to_string())),
+    ] {
+        execute::set_property_in_place(socket, key, value.clone());
+        let updated = execute::set_property(socket.clone(), key, value);
+        execute::replace_value(socket, &updated);
+    }
 }
 
 pub(crate) fn update_socket_counters(socket: &NetSocket) {
