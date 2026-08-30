@@ -2067,7 +2067,10 @@ pub fn socket_end(
         .net
         .sockets
         .get(&id)
-        .is_some_and(|socket| !socket.borrow().connect_announced);
+        .is_some_and(|socket| {
+            let socket = socket.borrow();
+            socket.stream.is_some() && !socket.connect_announced
+        });
     let pending = state
         .borrow()
         .net
@@ -2081,8 +2084,12 @@ pub fn socket_end(
     // receiver before consulting the native registry so aliases and sockets
     // whose host entry is being retired observe the same transition.
     if !connecting {
-        execute::set_property_in_place(receiver, "writable", Value::Boolean(false));
-        execute::set_property_in_place(receiver, "readyState", Value::String("readOnly".into()));
+        super::set_socket_property(receiver, "writable", Value::Boolean(false));
+        super::set_socket_property(
+            receiver,
+            "readyState",
+            Value::String("readOnly".into()),
+        );
     }
     let mut queue_finish = false;
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
