@@ -354,9 +354,9 @@ pub fn read_intrinsic_prototype_override(builtin: Builtin) -> Option<Value> {
 /// fresh program can start with a clean prototype view.
 pub fn reset_intrinsic_prototype_state() {
     overrides::reset();
-    GENERATOR_PROTOTYPES.with(|cell| cell.borrow_mut().clear());
-    ASYNC_ITERATOR_PROTOTYPES.with(|cell| cell.borrow_mut().clear());
-    ASYNC_GENERATOR_PROTOTYPES.with(|cell| cell.borrow_mut().clear());
+    GENERATOR_PROTOTYPES.with(|cell| cell.replace(HashMap::new()));
+    ASYNC_ITERATOR_PROTOTYPES.with(|cell| cell.replace(HashMap::new()));
+    ASYNC_GENERATOR_PROTOTYPES.with(|cell| cell.replace(HashMap::new()));
 }
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
