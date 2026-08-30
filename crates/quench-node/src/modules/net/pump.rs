@@ -228,6 +228,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             };
             execute::call(&callback, &js, &[Value::Number(0.0), buffer])?;
         }
+        super::set_socket_property(&js, "readable", Value::Boolean(false));
         emit(state, &js, "end", Vec::new())?;
     }
     Ok(())
