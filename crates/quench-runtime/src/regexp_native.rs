@@ -317,6 +317,9 @@ fn find_repeat(
     max: Option<usize>,
     sticky: bool,
 ) -> Option<std::ops::Range<usize>> {
+    if min == 0 && input.first().copied() != Some(unit) {
+        return Some(0..0);
+    }
     let mut start = 0;
     while start < input.len() {
         if input[start] != unit {
@@ -349,6 +352,9 @@ fn find_repeat_units(
     max: Option<usize>,
     sticky: bool,
 ) -> Option<std::ops::Range<usize>> {
+    if min == 0 && input.first().copied() != Some(u16::from(unit)) {
+        return Some(0..0);
+    }
     let mut start = 0;
     while start < input.len() {
         if input[start] != u16::from(unit) {
