@@ -1222,6 +1222,10 @@ fn connect_with_receiver(
             "setKeepAlive".into(),
             Value::Builtin(quench_runtime::ops::Builtin::Object),
         ),
+        (
+            "close".into(),
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET_HANDLE_CLOSE),
+        ),
     ]);
     if let Value::Number(fd) = execute::get_property(&object, PIPE_FD_PROP) {
         execute::set_property_in_place(&handle, "fd", Value::Number(fd));
@@ -2131,6 +2135,14 @@ pub fn socket_write(
         Some(value) => return Err(write_chunk_type_error(value)),
         None => return Err(write_chunk_type_error(&Value::Undefined)),
     };
+    let callback = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+        .or_else(|| {
+            args.get(2)
+                .filter(|value| quench_runtime::is_callable(value))
+        })
+        .cloned();
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
         let pending = state
             .borrow()
@@ -2148,10 +2160,67 @@ pub fn socket_write(
                 .extend_from_slice(&bytes);
             return Ok(Value::Boolean(true));
         }
+        if let Some(callback) = callback {
+            state.borrow_mut().event_loop.queue_microtask(
+                callback,
+                vec![super::handle_write_error(
+                    "EPIPE",
+                    "This socket has been ended by the other party",
+                )],
+            );
+        }
         return Ok(Value::Boolean(false));
     };
+    let handle = execute::get_property(&receiver, "_handle");
+    let server_owned = sock.borrow().server_id.is_some();
+    let handle_closed = matches!(
+        execute::get_property(&handle, super::HANDLE_CLOSED_PROP),
+        Value::Boolean(true)
+    );
+    let handle_missing = !server_owned && matches!(handle, Value::Undefined | Value::Null);
+    if handle_closed || handle_missing {
+        let error = if handle_missing {
+            super::handle_write_error("ERR_SOCKET_CLOSED", "Socket is closed")
+        } else {
+            super::handle_write_error("EBADF", "write EBADF")
+        };
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "error".into(), vec![error]));
+        socket_destroy(state, Some(&receiver), &[])?;
+        return Ok(Value::Boolean(false));
+    }
     let mut guard = sock.borrow_mut();
+    let allow_half_open = matches!(
+        execute::get_property(&guard.js, "allowHalfOpen"),
+        Value::Boolean(true)
+    );
+    if guard.read_eof && !allow_half_open {
+        drop(guard);
+        if let Some(callback) = callback {
+            state.borrow_mut().event_loop.queue_microtask(
+                callback,
+                vec![super::handle_write_error(
+                    "EPIPE",
+                    "This socket has been ended by the other party",
+                )],
+            );
+        }
+        socket_destroy(state, Some(&receiver), &[])?;
+        return Ok(Value::Boolean(false));
+    }
     if guard.state == SocketState::Closed {
+        if let Some(callback) = callback {
+            state.borrow_mut().event_loop.queue_microtask(
+                callback,
+                vec![super::handle_write_error(
+                    "EPIPE",
+                    "This socket has been ended by the other party",
+                )],
+            );
+        }
         return Ok(Value::Boolean(false));
     }
     guard.bytes_written = guard.bytes_written.saturating_add(bytes.len() as u64);
@@ -2176,13 +2245,6 @@ pub fn socket_write(
     };
     let result = Value::Boolean(super::pending_write_len(&guard) < high_water_mark);
     drop(guard);
-    let callback = args
-        .get(1)
-        .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| {
-            args.get(2)
-                .filter(|value| quench_runtime::is_callable(value))
-        });
     if let Some(callback) = callback {
         if connecting {
             crate::modules::events::method_once(
@@ -2468,6 +2530,17 @@ pub fn socket_get_type_of_service(
         .map(|socket| execute::get_property(socket, super::TOS_PROP))
         .filter(|value| matches!(value, Value::Number(_)))
         .unwrap_or(Value::Number(0.0)))
+}
+
+pub fn socket_handle_close(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, super::HANDLE_CLOSED_PROP, Value::Boolean(true));
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// `socket.setKeepAlive([enable][, initialDelay])` — no-op.
