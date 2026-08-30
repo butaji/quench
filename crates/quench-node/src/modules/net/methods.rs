@@ -2284,6 +2284,10 @@ pub fn socket_unref(
         if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
             socket.borrow_mut().refed = false;
         }
+        let timer = { state.borrow().net.timeout_timers.get(&id).cloned() };
+        if let Some(timer) = timer {
+            let _ = crate::modules::timers::method_unref(state, Some(&timer));
+        }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -2296,6 +2300,10 @@ pub fn socket_ref(
     if let Some(id) = receiver.and_then(net_id) {
         if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
             socket.borrow_mut().refed = true;
+        }
+        let timer = { state.borrow().net.timeout_timers.get(&id).cloned() };
+        if let Some(timer) = timer {
+            let _ = crate::modules::timers::method_ref(state, Some(&timer));
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -2359,9 +2367,11 @@ pub fn socket_set_timeout(
     let receiver = execute::canonical_value(&receiver.cloned().unwrap_or(Value::Undefined));
     let timeout = match args.first() {
         Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value,
-        Some(Value::Number(_)) => {
-            return Err(crate::modules::buffer_enc::invalid_arg_value(
-                "The \"timeout\" value is out of range".into(),
+        Some(Value::Number(value)) => {
+            return Err(crate::modules::buffer_enc::out_of_range(
+                "timeout",
+                ">= 0",
+                &value.to_string(),
             ))
         }
         _ => {
@@ -2370,6 +2380,13 @@ pub fn socket_set_timeout(
             ))
         }
     };
+    if let Some(callback) = args.get(1) {
+        if !quench_runtime::is_callable(callback) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"callback\" argument must be a function".into(),
+            ));
+        }
+    }
     if let Value::Object(_) | Value::ObjectAlias(_) = receiver {
         // Runtime aliases can expose the same socket with distinct property
         // maps. Resolve the host-owned net record first so timeout state and
@@ -2395,13 +2412,22 @@ pub fn socket_set_timeout(
         }
         execute::set_property_in_place(&target, SOCKET_TIMEOUT_PROP, Value::Undefined);
         execute::set_property_in_place(&target, "timeout", Value::Number(timeout));
+        if matches!(execute::get_property(&target, "destroyed"), Value::Boolean(true)) {
+            return Ok(receiver);
+        }
+        let has_transport = socket_id.is_some_and(|id| {
+            state
+                .borrow()
+                .net
+                .sockets
+                .get(&id)
+                .is_some_and(|socket| socket.borrow().stream.is_some())
+        });
+        if timeout > 0.0 && !has_transport {
+            return Ok(receiver);
+        }
         if timeout > 0.0 {
             if let Some(callback) = args.get(1) {
-                if !quench_runtime::is_callable(callback) {
-                    return Err(crate::modules::buffer_enc::invalid_arg_type(
-                        "The \"callback\" argument must be a function".into(),
-                    ));
-                }
                 let once = crate::host::capability(crate::registry::SPEC_EVENTS_ONCE);
                 execute::call(
                     &once,
