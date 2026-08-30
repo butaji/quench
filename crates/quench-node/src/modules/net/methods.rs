@@ -972,6 +972,10 @@ pub fn socket_destroy(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
+    if let Some(timer) = timeout_timer(&receiver) {
+        crate::modules::timers::clear_timeout(state, &[timer])?;
+        execute::set_property_in_place(&receiver, SOCKET_TIMEOUT_PROP, Value::Undefined);
+    }
     let mut emit_close = false;
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
