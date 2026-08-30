@@ -1,5 +1,5 @@
 # No guest Wasm interpreter
 
-Wasmi is removed from the tree. It is a third-party interpreter that currently owns compile, instantiate, invoke, and the wast harness; it is not Quench’s runtime and must not remain as a fallback or dual execute path. Spec-suite tests stay red until the shared VM can run them.
-
-**Considered Options**: keep Wasmi as a result checker only; keep it as a bootstrap executor until each instruction is implemented.
+The shared runtime is the only Wasm executor. Third-party libraries may parse,
+validate, and read wast scripts, but they must not provide fallback execution or
+alternate semantics.

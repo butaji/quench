@@ -1,7 +1,6 @@
 # Format crate vs VM crate
 
-`quench-wasm` is the Wasm **format**: parse, validate, wast scoring. `quench-runtime` is the **VM**: load bytes into the store, instantiate, interpret Native | Fast | Dynamic with Arena | GC.
-
-**Considered Options**: frontend lowers to HIR; runtime never sees Wasm bytes.
-
-**Decision**: the VM loads validated binaries (`wasm::load`). The format crate does not own execute or a second lowering compiler.
+`quench-wasm` owns Wasm format handling and validation. `quench-runtime` owns
+the shared HIR/MIR, instantiation, execution, arena, and GC. Validated input
+crosses that boundary once; the format crate does not provide a second
+executor.
