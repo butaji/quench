@@ -8,7 +8,9 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
       fn = () => {};
     }
     let calls = 0;
-    const wrapped = function (...args) {
+    const wrapped = function () {
+      "use strict";
+      const args = Array.from(arguments);
       calls++;
       wrapped.calls = calls;
       try {
