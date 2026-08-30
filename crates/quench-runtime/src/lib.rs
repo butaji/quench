@@ -129,6 +129,7 @@ pub fn reset_fixture_caches() {
     construct::reset_weak_refs();
     global_environment::reset_global_bindings();
     module_bindings::reset_module_jobs();
+    promise::reset_fixture_state();
     templates::reset_tagged_template_cache();
     value::reset_object_layout_cache();
     regexp::reset_compiled_cache();
