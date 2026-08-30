@@ -60,7 +60,7 @@ fn immediate_plain_prototype(
 fn has_builtin_object_parent(prototype: &crate::value::ObjectData) -> bool {
     let parent = prototype.hot_properties().position_rev("\0prototype")
         .and_then(|slot| prototype.hot_properties().slot_value(slot));
-    parent.is_none_or(|value| {
+    parent.map_or(true, |value| {
         matches!(
             value,
             crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
@@ -128,7 +128,7 @@ fn install_named_write_transition(
         }
         entries[index] = Some(source);
     });
-    cache.set(WRITE_TRANSITION_TAG | index as u64 + 1);
+    cache.set(WRITE_TRANSITION_TAG | (index as u64 + 1));
     true
 }
 

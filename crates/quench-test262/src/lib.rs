@@ -267,9 +267,20 @@ pub struct StageReport {
 impl StageReport {
     /// Whether this report accounts for every discovered path exactly once.
     pub fn covers(&self, paths: &[std::path::PathBuf]) -> bool {
-        self.total == paths.len()
-            && self.passed + self.failed == self.total
-            && self.failures.iter().all(|(path, _)| paths.contains(path))
+        if self.total != paths.len()
+            || self.passed.checked_add(self.failed) != Some(self.total)
+        {
+            return false;
+        }
+        let expected = paths.iter().collect::<std::collections::HashSet<_>>();
+        let failures = self
+            .failures
+            .iter()
+            .map(|(path, _)| path)
+            .collect::<std::collections::HashSet<_>>();
+        expected.len() == paths.len()
+            && failures.len() == self.failures.len()
+            && failures.iter().all(|path| expected.contains(path))
     }
 
     /// Build a per-path outcome map for a completed stage report. Paths that
@@ -282,10 +293,14 @@ impl StageReport {
         paths: &[std::path::PathBuf],
     ) -> std::collections::HashMap<std::path::PathBuf, TestOutcome> {
         let mut indexed = std::collections::HashMap::new();
+        indexed.reserve(paths.len());
         for path in paths {
             indexed.insert(path.clone(), TestOutcome::Pass);
         }
         for (path, _) in &report.failures {
+            if !indexed.contains_key(path) {
+                continue;
+            }
             indexed.insert(
                 path.clone(),
                 TestOutcome::Fail {

@@ -1,4 +1,5 @@
 include!("vm_properties_virtual_cache.rs");
+const GLOBAL_STATIC_SLOT: u32 = u32::MAX;
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
     // A materialized global binding can transiently leave the receiver nullish
@@ -336,11 +337,11 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
             .find(|index| {
                 caches[*index]
                     .as_ref()
-                    .is_none_or(|cached| cached.site == entry.site)
+                    .map_or(true, |cached| cached.site == entry.site)
             })
             .unwrap_or(start);
         caches[index] = Some(entry);
-        cache.set(PROTOTYPE_CACHE_TAG | index as u64 + 1);
+        cache.set(PROTOTYPE_CACHE_TAG | (index as u64 + 1));
     });
 }
 

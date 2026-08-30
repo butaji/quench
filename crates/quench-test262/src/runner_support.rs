@@ -15,7 +15,7 @@ pub(crate) fn cached_harness<'a>(
     cache: &'a mut HarnessCache,
 ) -> Result<Vec<&'a str>, String> {
     // AGENTS.md: harness fidelity is absolute; load only exact declared sources.
-    cache.sources(&names(metadata))
+    cache.sources(names(metadata))
 }
 
 pub(crate) fn record(report: &mut StageReport, path: PathBuf, outcome: TestOutcome) {
@@ -33,25 +33,51 @@ where
     F: FnMut(&str) -> Result<String, String>,
 {
     // AGENTS.md: harness fidelity is absolute; compose only exact declared sources.
-    names(metadata).into_iter().map(load).collect()
+    names(metadata).map(load).collect()
 }
 
-pub(crate) fn names(metadata: &TestMetadata) -> Vec<&str> {
-    if metadata.is_raw {
-        return Vec::new();
+/// Canonical harness order, replayable without allocating its names.
+#[derive(Clone)]
+pub(crate) struct HarnessNames<'a> {
+    metadata: &'a TestMetadata,
+    index: usize,
+    include_index: usize,
+}
+
+pub(crate) fn names(metadata: &TestMetadata) -> HarnessNames<'_> {
+    HarnessNames {
+        metadata,
+        index: 0,
+        include_index: 0,
     }
-    let mut names = vec!["assert.js", "sta.js"];
-    if metadata.is_async {
-        names.push("doneprintHandle.js");
+}
+
+impl<'a> Iterator for HarnessNames<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let metadata = self.metadata;
+        if metadata.is_raw {
+            return None;
+        }
+        let name = match self.index {
+            0 => Some("assert.js"),
+            1 => Some("sta.js"),
+            2 if metadata.is_async => Some("doneprintHandle.js"),
+            _ => None,
+        };
+        self.index += 1;
+        if name.is_some() {
+            return name;
+        }
+        while let Some(include) = metadata.includes.get(self.include_index) {
+            self.include_index += 1;
+            if !matches!(include.as_str(), "assert.js" | "sta.js") {
+                return Some(include.as_str());
+            }
+        }
+        None
     }
-    names.extend(
-        metadata
-            .includes
-            .iter()
-            .map(String::as_str)
-            .filter(|include| !matches!(*include, "assert.js" | "sta.js")),
-    );
-    names
 }
 
 pub(crate) fn negative(outcome: TestOutcome, metadata: &TestMetadata) -> TestOutcome {

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+};
 
 /// Cached exact test262 harness sources rooted at one harness directory.
 pub struct HarnessCache {
@@ -21,7 +24,8 @@ impl HarnessCache {
 
     fn ensure(&mut self, name: &str) -> Result<(), String> {
         if !self.sources.contains_key(name) {
-            let source = std::fs::read_to_string(self.root.join(name))
+            let path = harness_path(&self.root, name)?;
+            let source = std::fs::read_to_string(path)
                 .map_err(|error| format!("harness {name}: {error}"))?;
             self.sources.insert(name.to_string(), source);
         }
@@ -35,10 +39,33 @@ impl HarnessCache {
             .ok_or_else(|| format!("harness cache missing {name}"))
     }
 
-    pub(crate) fn sources(&mut self, names: &[&str]) -> Result<Vec<&str>, String> {
-        for name in names {
+    pub(crate) fn sources<'cache, 'name, I>(
+        &'cache mut self,
+        names: I,
+    ) -> Result<Vec<&'cache str>, String>
+    where
+        I: IntoIterator<Item = &'name str>,
+        I::IntoIter: Clone,
+    {
+        let names = names.into_iter();
+        for name in names.clone() {
             self.ensure(name)?;
         }
-        names.iter().map(|name| self.get(name)).collect()
+        names.map(|name| self.get(name)).collect()
     }
+}
+
+fn harness_path(root: &Path, name: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(name);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!("harness path escapes root: {name}"));
+    }
+    Ok(root.join(relative))
 }
