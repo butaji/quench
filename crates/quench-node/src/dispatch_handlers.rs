@@ -708,6 +708,40 @@ pub fn process_set_source_maps_enabled(
     Ok(Value::Undefined)
 }
 
+pub fn process_ref(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    process_ref_like(args.first(), "Symbol.for.nodejs.ref\0", "ref")
+}
+
+pub fn process_unref(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    process_ref_like(args.first(), "Symbol.for.nodejs.unref\0", "unref")
+}
+
+fn process_ref_like(
+    target: Option<&Value>,
+    symbol_key: &str,
+    legacy_key: &str,
+) -> Result<Value, VmError> {
+    let Some(target) = target else {
+        return Ok(Value::Undefined);
+    };
+    for key in [symbol_key, legacy_key] {
+        let method = execute::get_property(target, key);
+        if quench_runtime::is_callable(&method) {
+            execute::call(&method, target, &[])?;
+            return Ok(Value::Undefined);
+        }
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn util_convert_signal_to_exit_code(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

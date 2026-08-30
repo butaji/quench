@@ -292,6 +292,14 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "setSourceMapsEnabled",
             crate::host::capability(crate::registry::SPEC_PROCESS_SET_SOURCE_MAPS_ENABLED),
         ),
+        (
+            "ref",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        (
+            "unref",
+            crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+        ),
         ("uptime", crate::host::process_uptime_capability()),
         (
             "availableMemory",
