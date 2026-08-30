@@ -387,6 +387,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQ_WRITE => crate::modules::http_client::req_write,
         CAP_HTTP_REQ_END => crate::modules::http_client::req_end,
         CAP_HTTP_REQ_SET_HEADER => crate::modules::http_client::req_set_header,
+        CAP_HTTP_REQ_SET_TIMEOUT => crate::modules::http_client::req_set_timeout,
+        CAP_HTTP_REQ_TIMEOUT_FIRE => crate::modules::http_client::req_timeout_fire,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_call,
         CAP_HTTP_AGENT_GET_NAME => crate::modules::http_client::agent_get_name,
         CAP_HTTP_REQ_RESUME => crate::modules::http::request_resume,
