@@ -17,6 +17,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     let h = match cap {
         CAP_REQUIRE => node_require,
+        CAP_PROCESS_ENV_SET => handlers::process_env_set,
         CAP_EVENTS_NEW => handlers::events_call,
         CAP_EVENTS_ABORT_LISTENER => handlers::events_abort_listener,
         CAP_EVENTS_ABORT_DISPOSE => handlers::events_abort_dispose,

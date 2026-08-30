@@ -2459,6 +2459,17 @@ pub fn node_require(
     crate::modules::require::require(state, args)
 }
 
+pub fn process_env_set(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(Value::String(value)) = args.first() {
+        quench_runtime::date::set_local_timezone(Some(value));
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn cjs_wrap(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

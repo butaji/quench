@@ -471,6 +471,7 @@ pub const SPEC_PROCESS_EMIT: NodeSpec = NodeSpec::new("process:emit", 0x0A0C);
 pub const SPEC_PROCESS_EMIT_WARNING: NodeSpec = NodeSpec::new("process:emitWarning", 0x0A0D);
 pub const SPEC_PROCESS_EXIT_CODE_GET: NodeSpec = NodeSpec::new("process:exitCode:get", 0x0A21);
 pub const SPEC_PROCESS_EXIT_CODE_SET: NodeSpec = NodeSpec::new("process:exitCode:set", 0x0A22);
+pub const SPEC_PROCESS_ENV_SET: NodeSpec = NodeSpec::new("process:env:set", 0x0A23);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -1176,6 +1177,7 @@ pub const CAP_PROCESS_EMIT_WARNING: CapId = SPEC_PROCESS_EMIT_WARNING.cap;
 pub const CAP_PROCESS_EXIT: CapId = SPEC_PROCESS_EXIT.cap;
 pub const CAP_PROCESS_EXIT_CODE_GET: CapId = SPEC_PROCESS_EXIT_CODE_GET.cap;
 pub const CAP_PROCESS_EXIT_CODE_SET: CapId = SPEC_PROCESS_EXIT_CODE_SET.cap;
+pub const CAP_PROCESS_ENV_SET: CapId = SPEC_PROCESS_ENV_SET.cap;
 pub const CAP_PROCESS_GETEGID: CapId = SPEC_PROCESS_GETEGID.cap;
 pub const CAP_PROCESS_GETEUID: CapId = SPEC_PROCESS_GETEUID.cap;
 pub const CAP_PROCESS_GETGID: CapId = SPEC_PROCESS_GETGID.cap;

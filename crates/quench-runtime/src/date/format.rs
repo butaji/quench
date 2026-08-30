@@ -52,8 +52,11 @@ fn time_part(ms: f64) -> String {
     local_fields(ms).map_or_else(invalid, |(_, _, _, h, min, sec, _)| {
         let offset = chrono_utils::local_tz_offset_minutes();
         let sign = if offset >= 0 { '+' } else { '-' };
+        let zone = chrono_utils::local_tz_name()
+            .map(|name| format!(" ({name})"))
+            .unwrap_or_default();
         format!(
-            "{h:02}:{min:02}:{sec:02} GMT{sign}{:02}{:02}",
+            "{h:02}:{min:02}:{sec:02} GMT{sign}{:02}{:02}{zone}",
             offset.abs() / 60,
             offset.abs() % 60
         )
