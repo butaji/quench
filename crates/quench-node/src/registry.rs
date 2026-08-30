@@ -1355,6 +1355,10 @@ pub fn namespace_bindings(
         crate::registry::SPEC_TIMERS_CLEARIMMEDIATE,
     ));
     out.push((
+        "__quench_sleep_ms".to_string(),
+        crate::host::capability(SPEC_INTERNAL_UTIL_SLEEP),
+    ));
+    out.push((
         "queueMicrotask".to_string(),
         crate::host::capability(SPEC_QUEUE_MICROTASK),
     ));
