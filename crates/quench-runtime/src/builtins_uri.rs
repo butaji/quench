@@ -100,18 +100,23 @@ fn percent_run(units: &[u16], index: &mut usize) -> Result<Vec<u8>, VmError> {
     let mut bytes = Vec::new();
     while units.get(*index) == Some(&u16::from(b'%')) {
         let escape = units.get(*index + 1..*index + 3).ok_or_else(uri_error)?;
-        if !escape
-            .iter()
-            .all(|unit| char::from_u32(*unit as u32).is_some_and(|c| c.is_ascii_hexdigit()))
-        {
-            return Err(uri_error());
-        }
-        let text = String::from_utf16_lossy(escape);
-        let byte = u8::from_str_radix(&text, 16).map_err(|_| uri_error())?;
+        let high = decode_hex_digit(escape[0]).ok_or_else(uri_error)?;
+        let low = decode_hex_digit(escape[1]).ok_or_else(uri_error)?;
+        let byte = (high << 4) | low;
         bytes.push(byte);
         *index += 3;
     }
     Ok(bytes)
+}
+
+#[inline]
+fn decode_hex_digit(unit: u16) -> Option<u8> {
+    match unit {
+        0x30..=0x39 => Some((unit - 0x30) as u8),
+        0x61..=0x66 => Some((unit - 0x61 + 10) as u8),
+        0x41..=0x46 => Some((unit - 0x41 + 10) as u8),
+        _ => None,
+    }
 }
 
 fn append_decoded(
