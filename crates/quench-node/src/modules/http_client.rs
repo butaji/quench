@@ -1067,6 +1067,10 @@ pub fn req_end(
     if let Some(req) = guard.http.clientreqs.get_mut(&id) {
         req.socket = Some(socket.clone());
         set_request_property(Some(&req.req), "socket", socket.clone());
+        // The socket carries the one current HTTP message identity. Expose
+        // it before the first response event so agent/remove and destroy
+        // observers see the same request object as the host state.
+        set_request_property(Some(&socket), "_httpMessage", req.req.clone());
         if let Some(agent) = req.agent.clone() {
             let name = agent_name(&target, &agent);
             add_agent_socket(&agent, &name, &socket);
