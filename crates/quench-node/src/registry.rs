@@ -623,6 +623,7 @@ pub const SPEC_NET_SOCKET_RESET_AND_DESTROY: NodeSpec =
 pub const SPEC_NET_SOCKET_ONREAD: NodeSpec = NodeSpec::new("net:socket:onread", 0x102C);
 pub const SPEC_NET_SOCKET_SET_TOS: NodeSpec = NodeSpec::new("net:socket:setTypeOfService", 0x102D);
 pub const SPEC_NET_SOCKET_GET_TOS: NodeSpec = NodeSpec::new("net:socket:getTypeOfService", 0x102E);
+pub const SPEC_NET_SOCKET_HANDLE_CLOSE: NodeSpec = NodeSpec::new("net:socket:handleClose", 0x102F);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);
