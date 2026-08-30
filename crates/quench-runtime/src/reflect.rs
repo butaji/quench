@@ -14,6 +14,10 @@ fn take_shadow_method_realm() -> Option<crate::ops::RealmId> {
     SHADOW_METHOD_REALM.with(|slot| slot.take())
 }
 
+pub(crate) fn reset_fixture_state() {
+    SHADOW_METHOD_REALM.with(|slot| slot.set(None));
+}
+
 pub(crate) fn builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
