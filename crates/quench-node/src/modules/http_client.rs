@@ -2328,8 +2328,25 @@ fn pool_response_socket(
             subscribe_event(state, socket, "timeout", destroy)?;
         }
     }
-    net::emit(state, socket, "free", Vec::new())?;
-    emit_agent_free(state, &agent, &target, socket)
+    // Agent callbacks may destroy the socket while the response event is
+    // still unwinding.  In that case Node does not deliver a late `free`
+    // notification for the dead socket (nor allow it to re-enter the pool).
+    let still_alive = !matches!(
+        execute::get_property(socket, "destroyed"),
+        Value::Boolean(true)
+    ) && net::net_id(socket).is_some_and(|id| {
+        state
+            .borrow()
+            .net
+            .sockets
+            .get(&id)
+            .is_some_and(|value| value.borrow().state != net::SocketState::Closed)
+    });
+    if still_alive {
+        net::emit(state, socket, "free", Vec::new())?;
+        emit_agent_free(state, &agent, &target, socket)?;
+    }
+    Ok(())
 }
 
 /// Socket `'end'` → the response's `'end'`.
