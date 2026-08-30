@@ -934,7 +934,10 @@ impl PropertyEntries for ObjectProperties {
     #[inline]
     fn value_for_key(&self, key: &str) -> Option<Value> {
         if key == "length" && self.names.first().is_some_and(|name| name == key) {
-            return self.values.first().map(crate::register_file::SlotWord::load);
+            return self
+                .values
+                .first()
+                .map(crate::register_file::SlotWord::load);
         }
         self.position_rev(key)
             .and_then(|slot| self.slot_value(slot))
@@ -1062,12 +1065,13 @@ impl ObjectData {
         if let Some(index) = crate::arrays::array_index(key) {
             let append = self.plain_index_state.get() == 1
                 && self.properties.iter().next_back().is_some_and(|(name, _)| {
-                    crate::arrays::array_index(name.as_str()).is_some_and(|last| last < index)
+                    crate::arrays::array_index(name.as_str())
+                        .is_some_and(|last| last < index)
+                        || (index == 0 && name == "length")
                 });
             if append {
                 self.properties.push((key.into(), value));
                 self.created.push(key.into());
-                self.layout_id.set(0);
                 return;
             }
         }
@@ -1226,16 +1230,12 @@ impl ObjectData {
         } else {
             1
         };
-        let plain_index_state = if properties
-            .iter()
-            .any(|(name, _)| {
-                name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator")
-            })
-            || properties.iter().any(|(name, value)| {
-                name == "\0prototype"
-                    && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype))
-            })
-        {
+        let plain_index_state = if properties.iter().any(|(name, _)| {
+            name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator")
+        }) || properties.iter().any(|(name, value)| {
+            name == "\0prototype"
+                && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype))
+        }) {
             2
         } else {
             1
@@ -2925,7 +2925,20 @@ include!("value_helpers.rs");
 #[cfg(test)]
 mod error_tests {
     use super::error;
-    use crate::{execute::get_property, execute::VmError, value::Value};
+    use crate::{
+        execute::get_property,
+        execute::VmError,
+        value::{ObjectData, Value},
+    };
+
+    #[test]
+    fn plain_index_appends_keep_named_layout_stable() {
+        let mut object = ObjectData::new(vec![("length".into(), Value::Number(3.0))]);
+        let layout = object.semantic_layout_id();
+        object.set_property_in_place("0", Value::Number(7.0));
+        object.set_property_in_place("1", Value::Number(8.0));
+        assert_eq!(object.semantic_layout_id(), layout);
+    }
 
     #[test]
     fn cold_error_helpers_preserve_error_kind_and_message() {
