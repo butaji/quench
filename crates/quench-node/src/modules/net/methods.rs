@@ -420,6 +420,33 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             encoding: None,
         })),
     );
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let signal = execute::get_property(options, "signal");
+        if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+                state.borrow_mut().net.pending_events.push((
+                    object.clone(),
+                    "error".into(),
+                    vec![abort_error()],
+                ));
+                socket_destroy(state, Some(&object), &[])?;
+            } else {
+                let listener = host_api::bound_capability_with_arguments(
+                    crate::host::capability_ref(crate::registry::SPEC_NET_SOCKET_ABORT),
+                    vec![object.clone()],
+                );
+                let listener_options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
+                crate::modules::event_target::add_event_listener(
+                    state,
+                    Some(&signal),
+                    &[Value::String("abort".into()), listener, listener_options],
+                )?;
+            }
+        }
+    }
     Ok(object)
 }
 
@@ -1137,11 +1164,11 @@ fn connect_with_receiver(
                 execute::get_property(&signal, "aborted"),
                 Value::Boolean(true)
             ) {
-                state
-                    .borrow_mut()
-                    .net
-                    .pending_errors
-                    .push((object.clone(), abort_error()));
+                state.borrow_mut().net.pending_events.push((
+                    object.clone(),
+                    "error".into(),
+                    vec![abort_error()],
+                ));
             } else {
                 let listener = host_api::bound_capability_with_arguments(
                     crate::host::capability_ref(crate::registry::SPEC_NET_SOCKET_ABORT),
@@ -1170,6 +1197,14 @@ pub fn socket_abort(
     let Some(socket) = args.first() else {
         return Ok(Value::Undefined);
     };
+    if let Some(id) = net_id(socket) {
+        state
+            .borrow_mut()
+            .net
+            .pending_lookups
+            .retain(|pending| net_id(&pending.socket) != Some(id));
+        state.borrow_mut().net.pending_connect_writes.remove(&id);
+    }
     // `AbortSignal` dispatch is synchronous, but net errors are delivered on
     // the next loop turn so listeners attached immediately after `abort()`
     // still observe the failure (the Node contract used by Agent tests).
