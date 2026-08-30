@@ -1258,6 +1258,18 @@ fn connect_refused(
         let (object, _) = new_net_object(state, socket_props())?;
         object
     };
+    // A refused connection is terminal for an already-constructed socket.
+    // Mark its connect announcement consumed before the next pump tick so a
+    // socket.connect(...).on('connect', cb) cannot report a false success
+    // alongside the queued error. The error remains deferred until listeners
+    // attached by the caller have been installed.
+    if let Some(id) = net_id(&object) {
+        if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+            let mut socket = socket.borrow_mut();
+            socket.connect_announced = true;
+            socket.state = SocketState::Closed;
+        }
+    }
     let attempted = receiver.and_then(|socket| {
         let value = execute::get_property(socket, "autoSelectFamilyAttemptedAddresses");
         let length = match execute::get_property(&value, "length") {
