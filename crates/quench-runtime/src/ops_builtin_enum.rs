@@ -415,7 +415,7 @@ pub enum Builtin {
     AsyncIteratorDisposeFulfilled, GeneratorNext,
     GeneratorReturn, GeneratorThrow, AsyncGeneratorNext,
     AsyncGeneratorReturn, AsyncGeneratorThrow,
-    Error, ErrorPrototype,
+    Error, ErrorPrototype, DOMException, DOMExceptionPrototype,
     RangeErrorPrototype, TypeErrorPrototype, EvalErrorPrototype,
     ReferenceErrorPrototype, SyntaxErrorPrototype, URIErrorPrototype,
     AggregateErrorPrototype,

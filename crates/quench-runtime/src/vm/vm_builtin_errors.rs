@@ -17,7 +17,7 @@ fn error_builtin(
             crate::construct::construct_value(&Value::Builtin(builtin), arguments)
         }
         Builtin::ErrorIsError => Ok(error_is_error(arguments.first())),
-        Builtin::ErrorCaptureStackTrace => Ok(Value::Undefined),
+        Builtin::ErrorCaptureStackTrace => capture_stack_trace(arguments),
         Builtin::ErrorPrototypeToString => error_to_string(receiver),
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
@@ -79,10 +79,48 @@ fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
         );
     }
     if has_error_slot(value) {
-        Ok(Value::String("Error".to_string()))
+        Ok(Value::String(stack_text(value)?))
     } else {
         Ok(Value::Undefined)
     }
+}
+
+fn capture_stack_trace(arguments: &[Value]) -> Result<Value, VmError> {
+    let target = arguments.first().ok_or_else(|| {
+        crate::value::error::throw_type_error("Error.captureStackTrace requires an object")
+    })?;
+    if !crate::value::is_object(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Error.captureStackTrace requires an object",
+        ));
+    }
+    let stack = Value::String(stack_text(target)?);
+    let descriptor = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), stack),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])));
+    let updated = crate::builtins::define_property(&[
+        target.clone(),
+        Value::String("stack".to_string()),
+        descriptor,
+    ])?;
+    crate::locals::replace_value(target, &updated);
+    Ok(Value::Undefined)
+}
+
+fn stack_text(value: &Value) -> Result<String, VmError> {
+    let name = crate::conversion::to_string(&crate::execute::get_property_result(value, "name")?)?;
+    let message =
+        crate::conversion::to_string(&crate::execute::get_property_result(value, "message")?)?;
+    Ok(if message.is_empty() {
+        name
+    } else if name.is_empty() {
+        message
+    } else {
+        format!("{name}: {message}")
+    })
 }
 
 fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -175,17 +213,26 @@ fn set_error_stack_home() -> Option<Value> {
 }
 
 fn has_error_slot(value: &Value) -> bool {
-    match value {
-        Value::Object(value) => value
-            .iter()
-            .any(|(key, _)| key == crate::builtins::ERROR_SLOT),
-        Value::ObjectAlias(alias) => alias.0.borrow().upgrade().is_some_and(|value| {
-            value
-                .iter()
-                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
-        }),
-        _ => false,
+    let mut current = Some(value.clone());
+    for _ in 0..16 {
+        let Some(candidate) = current else { break };
+        match &candidate {
+            Value::Object(object)
+                if object.iter().any(|(key, _)| {
+                    key == crate::builtins::ERROR_SLOT || key == "\0domexception"
+                }) => return true,
+            Value::ObjectAlias(alias)
+                if alias.0.borrow().upgrade().is_some_and(|object| {
+                    object.iter().any(|(key, _)| {
+                        key == crate::builtins::ERROR_SLOT || key == "\0domexception"
+                    })
+                }) => return true,
+            Value::Builtin(crate::ops::Builtin::DOMExceptionPrototype) => return true,
+            _ => {}
+        }
+        current = crate::execute::get_prototype_of(&candidate).ok();
     }
+    false
 }
 
 fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {

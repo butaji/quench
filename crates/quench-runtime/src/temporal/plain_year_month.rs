@@ -521,8 +521,8 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             ));
         }
         if base.len() == 9 && base.starts_with('+') {
-            let year = base[0..7].parse().unwrap_or(0.0);
-            let month = base[7..9].parse().unwrap_or(0.0);
+            let year = parse_component(&base[0..7], "Invalid PlainYearMonth")?;
+            let month = parse_component(&base[7..9], "Invalid PlainYearMonth")?;
             let _ = overflow_option(options)?;
             return construct_with_calendar(
                 year,
@@ -581,15 +581,15 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 ))
             }
         };
-        let year = year_text.parse().unwrap_or(0.0);
-        let month = month_text.parse().unwrap_or(0.0);
+        let year = parse_component(year_text, "Invalid PlainYearMonth")?;
+        let month = parse_component(month_text, "Invalid PlainYearMonth")?;
         if (year == -271_821.0 && month < 4.0) || (year == 275_760.0 && month > 9.0) {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
         }
         if let Some(day_text) = day_text {
-            let day = day_text.parse::<f64>().unwrap_or(0.0);
+            let day = parse_component(day_text, "Invalid PlainYearMonth")?;
             if !matches!(
                 calendar_id.as_deref(),
                 None | Some("iso8601") | Some("gregory")
@@ -935,8 +935,14 @@ fn parse_month_code(value: &str) -> Result<f64, VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
-    let month = value[1..3].parse::<f64>().unwrap_or(0.0);
+    let month = parse_component(&value[1..3], "Invalid monthCode")?;
     Ok(if leap { month + 1_000.0 } else { month })
+}
+
+fn parse_component(value: &str, message: &'static str) -> Result<f64, VmError> {
+    value
+        .parse::<f64>()
+        .map_err(|_| crate::value::error::throw_range_error(message))
 }
 
 fn overflow_option(options: Option<&Value>) -> Result<bool, VmError> {

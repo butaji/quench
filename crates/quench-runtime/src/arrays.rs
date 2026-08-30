@@ -33,10 +33,11 @@ fn execute_builtin_match(
     arguments: &[Value],
 ) -> BuiltinResult {
     use crate::ops::Builtin::*;
-    let result = match builtin {
+    match builtin {
         Array => return Some(crate::builtins::array(arguments)),
         ArrayIsArray => return Some(crate::builtins::is_array(arguments.first())),
         ArrayFrom => return Some(from(receiver, arguments)),
+        ArrayFromAsync => return Some(from_async(receiver, arguments)),
         ArrayOf => {
             return Some(of(receiver, arguments));
         }
@@ -85,9 +86,8 @@ fn execute_builtin_match(
         TypedArrayForEach => return Some(typed_array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         TypedArrayToLocaleString => return Some(typed_array_to_locale_string(receiver, arguments)),
-        _ => return None,
-    };
-    Some(Ok(result))
+        _ => None,
+    }
 }
 
 fn typed_array_for_each(
@@ -1534,22 +1534,6 @@ pub(crate) fn reduce_values(
         accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
     }
     Ok(accumulator)
-}
-fn relative_index(value: Option<&Value>, length: isize) -> isize {
-    let number = match value {
-        None | Some(Value::Undefined) => 0.0,
-        Some(Value::Number(number)) => *number,
-        _ => 0.0,
-    };
-    if number.is_nan() {
-        return 0;
-    }
-    let integer = number.trunc() as isize;
-    if integer < 0 {
-        (length + integer).max(0)
-    } else {
-        integer.min(length)
-    }
 }
 include!("arrays_concat.rs");
 include!("arrays_slice.rs");

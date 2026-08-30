@@ -721,6 +721,12 @@ fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
+        (DOMException, "prototype") => Some(Value::Builtin(DOMExceptionPrototype)),
+        (DOMExceptionPrototype, "name") => Some(Value::String("DOMException".to_string())),
+        (DOMExceptionPrototype, "message") => Some(Value::String("".to_string())),
+        (DOMExceptionPrototype, "code") => Some(Value::Number(0.0)),
+        (DOMExceptionPrototype, "constructor") => Some(Value::Builtin(DOMException)),
+        (DOMExceptionPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (DisposableStackPrototype, "Symbol.toStringTag") => {
             Some(Value::String("DisposableStack".into()))
         }

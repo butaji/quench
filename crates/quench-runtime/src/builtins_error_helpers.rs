@@ -29,8 +29,91 @@ fn error_parts(builtin: Builtin) -> (&'static str, Builtin, Builtin) {
             Builtin::ErrorPrototype,
         ),
         Builtin::Error => ("Error", Builtin::Error, Builtin::ErrorPrototype),
+        Builtin::DOMException => (
+            "DOMException",
+            Builtin::DOMException,
+            Builtin::DOMExceptionPrototype,
+        ),
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     }
+}
+
+pub(crate) fn dom_exception_value(
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let message = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .unwrap_or_default();
+    let (name, cause) = match arguments.get(1) {
+        Some(Value::Object(options)) => {
+            let options = Value::Object(options.clone());
+            let name = crate::execute::get_property(&options, "name");
+            let name = if matches!(name, Value::Undefined) {
+                "Error".to_string()
+            } else {
+                crate::conversion::to_string(&name)?
+            };
+            let cause = if crate::with_scope::has_property(&options, "cause")? {
+                Some(crate::execute::get_property(&options, "cause"))
+            } else {
+                None
+            };
+            (name, cause)
+        }
+        Some(value) if !matches!(value, Value::Undefined) => {
+            (crate::conversion::to_string(value)?, None)
+        }
+        _ => ("Error".to_string(), None),
+    };
+    let code = match name.as_str() {
+        "IndexSizeError" => 1.0,
+        "DOMStringSizeError" => 2.0,
+        "HierarchyRequestError" => 3.0,
+        "WrongDocumentError" => 4.0,
+        "InvalidCharacterError" => 5.0,
+        "NoModificationAllowedError" => 7.0,
+        "NotFoundError" => 8.0,
+        "NotSupportedError" => 9.0,
+        "InUseAttributeError" => 10.0,
+        "InvalidStateError" => 11.0,
+        "SyntaxError" => 12.0,
+        "InvalidModificationError" => 13.0,
+        "NamespaceError" => 14.0,
+        "InvalidAccessError" => 15.0,
+        "TypeMismatchError" => 17.0,
+        "SecurityError" => 18.0,
+        "NetworkError" => 19.0,
+        "AbortError" => 20.0,
+        "URLMismatchError" => 21.0,
+        "QuotaExceededError" => 22.0,
+        "TimeoutError" => 23.0,
+        "InvalidNodeTypeError" => 24.0,
+        "DataCloneError" => 25.0,
+        _ => 0.0,
+    };
+    let stack = Value::String(format!("{name}: {message}"));
+    let name_value = Value::String(name);
+    let message_value = Value::String(message);
+    let code_value = Value::Number(code);
+    let prototype = crate::vm::realm_intrinsic(Builtin::DOMExceptionPrototype);
+    let mut properties = vec![
+        ("\0domexception_name".to_string(), name_value),
+        ("\0domexception_message".to_string(), message_value),
+        ("\0domexception_code".to_string(), code_value),
+        ("\0prototype".to_string(), prototype),
+        ("\0domexception".to_string(), Value::Boolean(true)),
+        (crate::builtins::ERROR_SLOT.to_string(), Value::Boolean(true)),
+        ("stack".to_string(), stack.clone()),
+        (descriptor_key("stack"), non_enumerable_descriptor(&stack)),
+    ];
+    if let Some(cause) = cause {
+        properties.push(("cause".to_string(), cause.clone()));
+        properties.push((descriptor_key("cause"), non_enumerable_descriptor(&cause)));
+    }
+    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
 }
 
 pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -70,6 +153,34 @@ pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::exec
         Value::Boolean(true),
     ));
     Ok(Value::Object(Rc::new(ObjectData::new(properties))))
+}
+
+#[cfg(test)]
+mod dom_exception_tests {
+    use super::dom_exception_value;
+    use crate::execute::get_property_result;
+    use crate::value::Value;
+
+    #[test]
+    fn dom_exception_exposes_legacy_name_and_code() {
+        let value = dom_exception_value(&[
+            Value::String("cancelled".into()),
+            Value::String("AbortError".into()),
+        ])
+        .expect("constructs");
+        assert_eq!(
+            get_property_result(&value, "name").expect("name"),
+            Value::String("AbortError".into())
+        );
+        assert_eq!(
+            get_property_result(&value, "message").expect("message"),
+            Value::String("cancelled".into())
+        );
+        assert_eq!(
+            get_property_result(&value, "code").expect("code"),
+            Value::Number(20.0)
+        );
+    }
 }
 
 include!("builtins_descriptor_core.rs");
