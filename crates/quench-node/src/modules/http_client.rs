@@ -97,6 +97,9 @@ pub fn agent_construct(
     let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
     let option = |name: &str| execute::get_property(&options, name);
     let mut object = crate::modules::events::new_emitter_object(state)?;
+    if let Some(prototype) = state.borrow().http.agent_prototype.clone() {
+        object = execute::set_prototype_of(&object, &prototype)?;
+    }
     object = execute::set_property(object, "sockets", host_api::object(Vec::new()));
     object = execute::set_property(object, "freeSockets", host_api::object(Vec::new()));
     object = execute::set_property(object, "requests", host_api::object(Vec::new()));
@@ -178,6 +181,35 @@ pub fn agent_get_name(
     Ok(Value::String(format!("{host}:{port}:{local}{family}{socket_path}")))
 }
 
+pub fn agent_connect(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(request) = args.first().cloned() else {
+        return Ok(Value::Undefined);
+    };
+    let error = args.get(1).cloned().unwrap_or(Value::Null);
+    if !matches!(error, Value::Undefined | Value::Null) {
+        set_request_property(Some(&request), "destroyed", Value::Boolean(true));
+        net::emit(state, &request, "error", vec![error])?;
+        return Ok(Value::Undefined);
+    }
+    let Some(socket) = args.get(2).cloned() else {
+        return Ok(Value::Undefined);
+    };
+    if !matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Ok(Value::Undefined);
+    }
+    if let Some(id) = client_id(Some(&request)) {
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.socket = Some(socket);
+        }
+    }
+    set_request_property(Some(&request), "finished", Value::Undefined);
+    req_end(state, Some(&request), &[])
+}
+
 pub fn res_set_encoding(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -221,6 +253,15 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         let connector = execute::get_property(options, "createConnection");
         quench_runtime::is_callable(&connector).then(|| options.clone())
     });
+    let default_agent = state
+        .borrow()
+        .module_cache
+        .get("http")
+        .map(|module| execute::get_property(module, "globalAgent"))
+        .filter(|value| !matches!(value, Value::Undefined | Value::Null));
+    let agent = agent
+        .or(default_agent)
+        .or_else(|| state.borrow().http.global_agent.clone());
     let lookup = args.first().and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
@@ -837,19 +878,7 @@ pub fn req_end(
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         set_request_property(Some(&req.req), "_header", Value::String(head.clone()));
     }
-    let custom = agent.as_ref().and_then(custom_connection).filter(|_| {
-        let Some(agent) = agent.as_ref() else { return false; };
-        let key = target_key(&target);
-        let mut guard = state.borrow_mut();
-        if guard.http.agent_connections.iter().any(|(known, known_key)| {
-            known_key == &key && execute::same_identity(known, agent)
-        }) {
-            false
-        } else {
-            guard.http.agent_connections.push((agent.clone(), key));
-            true
-        }
-    });
+    let custom = agent.as_ref().and_then(custom_connection);
     let existing = state
         .borrow()
         .http
@@ -878,8 +907,14 @@ pub fn req_end(
                 option_props.push(("port".into(), Value::String(path.clone())));
             }
             let options = host_api::object(option_props);
-            let callback = host_api::object(Vec::new());
+            let callback = host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(crate::registry::SPEC_HTTP_AGENT_CONNECT),
+                vec![receiver.cloned().unwrap_or(Value::Undefined)],
+            );
             let socket = execute::call(&connection, agent.as_ref().unwrap(), &[options, callback])?;
+            if matches!(socket, Value::Undefined | Value::Null) {
+                return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+            }
             let mut bytes = request_head(&request_host(&target), &method, &path, &headers, body.len(), omit_host).into_bytes();
             bytes.extend_from_slice(&body);
             if matches!(target, RequestTarget::Unix { .. }) {
@@ -1064,13 +1099,6 @@ fn request_host(target: &RequestTarget) -> String {
         RequestTarget::Tcp { host, port } if *port != 80 => format!("{host}:{port}"),
         RequestTarget::Tcp { host, .. } => host.clone(),
         RequestTarget::Unix { .. } => "localhost".into(),
-    }
-}
-
-fn target_key(target: &RequestTarget) -> String {
-    match target {
-        RequestTarget::Tcp { host, port } => format!("tcp:{host}:{port}"),
-        RequestTarget::Unix { path } => format!("unix:{path}"),
     }
 }
 
