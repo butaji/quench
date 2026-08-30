@@ -409,6 +409,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_AGENT_ADD_REQUEST => crate::modules::http_client::agent_add_request,
         CAP_HTTP_AGENT_KEEP_SOCKET_ALIVE => crate::modules::http_client::agent_keep_socket_alive,
         CAP_HTTP_RES_SET_TIMEOUT => crate::modules::http_client::res_set_timeout,
+        CAP_HTTP_REQ_PATH_GET => crate::modules::http_client::req_path_get,
+        CAP_HTTP_REQ_PATH_SET => crate::modules::http_client::req_path_set,
         CAP_HTTP_REQ_RESUME => crate::modules::http::request_resume,
         CAP_HTTP_REQ_DESTROY => crate::modules::http::request_destroy,
         CAP_HTTP_REQ_ABORT => crate::modules::http_client::req_abort,
