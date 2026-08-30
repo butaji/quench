@@ -1284,7 +1284,7 @@ pub fn socket_set_timeout(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let receiver = execute::canonical_value(&receiver.cloned().unwrap_or(Value::Undefined));
     let timeout = match args.first() {
         Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value,
         Some(Value::Number(_)) => {
