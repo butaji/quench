@@ -1026,6 +1026,12 @@ pub fn socket_write(
     execute::set_property_in_place(&receiver, "bufferSize", Value::Number(buffer_size));
     let connecting = !guard.connect_announced;
     let flushed = try_flush(&mut guard);
+    let pending = guard.write_buf.len();
+    execute::set_property_in_place(
+        &receiver,
+        "writableLength",
+        Value::Number(pending as f64),
+    );
     let high_water_mark = match execute::get_property(&guard.js, "writableHighWaterMark") {
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 16_384,
@@ -1075,6 +1081,7 @@ pub fn socket_end(
         .get(&id)
         .is_some_and(|socket| !socket.borrow().connect_announced);
     execute::set_property_in_place(receiver, "bufferSize", Value::Number(0.0));
+    execute::set_property_in_place(receiver, "writableLength", Value::Number(0.0));
     // The JavaScript half-close state is synchronous. Apply it to the
     // receiver before consulting the native registry so aliases and sockets
     // whose host entry is being retired observe the same transition.
