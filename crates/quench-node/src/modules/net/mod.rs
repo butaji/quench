@@ -27,7 +27,8 @@ mod pump;
 pub use methods::{
     complete_lookup, connect, connect_existing, connect_path, create_server, server_address,
     server_close, server_close_idle, server_listen, server_ref, server_unref, socket_abort,
-    socket_address, socket_construct, socket_destroy, socket_end, socket_pause, socket_ref,
+    pipe_bind, pipe_construct, socket_address, socket_construct, socket_destroy, socket_end,
+    socket_pause, socket_ref,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
 };
@@ -36,6 +37,8 @@ pub use pump::{finalize, poll};
 const LOCAL_HOST: &str = "127.0.0.1";
 /// Hidden property that stores the host-side net id on a JS object.
 const NET_ID_PROP: &str = "\0quench:net:id";
+pub(crate) const PIPE_FD_PROP: &str = "\0quench:net:pipe-fd";
+pub(crate) const PIPE_MARKER_PROP: &str = "\0quench:net:pipe";
 pub(crate) const ONREAD_BUFFER_PROP: &str = "\0quench:net:onread:buffer";
 pub(crate) const ONREAD_CALLBACK_PROP: &str = "\0quench:net:onread:callback";
 pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
@@ -99,6 +102,8 @@ pub struct NetState {
     pub pending_request_writes: Vec<(Value, Vec<u8>, Value)>,
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
+    pub pipe_fds: HashMap<i64, String>,
+    pub next_pipe_fd: i64,
 }
 
 pub struct PendingLookup {
@@ -128,6 +133,8 @@ impl NetState {
             pending_writes: Vec::new(),
             pending_request_writes: Vec::new(),
             timeout_timers: HashMap::new(),
+            pipe_fds: HashMap::new(),
+            next_pipe_fd: 100,
         }
     }
 }

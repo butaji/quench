@@ -24,6 +24,43 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     Ok(object)
 }
 
+/// `new internalBinding('pipe_wrap').Pipe(type)` is a server-owned bound
+/// handle. Its fd is stable identity; binding and closing reuse the ordinary
+/// net server path and lifecycle.
+pub fn pipe_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let object = create_server(state, &[])?;
+    let fd = {
+        let mut net = state.borrow_mut();
+        let fd = net.net.next_pipe_fd;
+        net.net.next_pipe_fd += 1;
+        fd
+    };
+    install_methods(
+        object,
+        vec![
+            (PIPE_MARKER_PROP.to_string(), Value::Boolean(true)),
+            (PIPE_FD_PROP.to_string(), Value::Number(fd as f64)),
+            ("fd".to_string(), Value::Number(fd as f64)),
+            (
+                "bind".to_string(),
+                crate::host::capability(crate::registry::SPEC_NET_PIPE_BIND),
+            ),
+        ],
+    )
+}
+
+pub fn pipe_bind(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = server_listen(state, receiver, args)?;
+    Ok(Value::Number(0.0))
+}
+
 /// `new net.Socket()` creates an unconnected socket whose `connect` method
 /// shares the public connection capability and validation path.
 pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -78,6 +115,14 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             crate::host::capability(crate::registry::SPEC_NET_CONNECT),
         )],
     )?;
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if let Value::Number(fd) = execute::get_property(options, "fd") {
+            execute::set_property_in_place(&object, PIPE_FD_PROP, Value::Number(fd));
+        }
+    }
     let object = execute::canonical_value(&object);
     state.borrow_mut().net.sockets.insert(
         _id,
@@ -166,31 +211,115 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value, VmError> {
     let port = state.borrow().net.paths.get(path).copied();
     match port {
-        Some(port) => connect(
-            state,
-            &[
-                Value::Number(port as f64),
-                Value::String("127.0.0.1".into()),
-            ],
-        ),
-        None => {
-            let (object, _) = new_net_object(state, socket_props())?;
-            let error = host_api::object(vec![
-                ("name".into(), Value::String("Error".into())),
-                (
-                    "message".into(),
-                    Value::String(format!("connect ENOENT {path}")),
-                ),
-                ("code".into(), Value::String("ENOENT".into())),
-                ("syscall".into(), Value::String("connect".into())),
-            ]);
-            state
-                .borrow_mut()
-                .net
-                .pending_errors
-                .push((object.clone(), error));
-            Ok(object)
+        Some(port) => {
+            if let Some(code) = path_connect_error_code(path) {
+                return path_connect_error(state, path, code);
+            }
+            connect(
+                state,
+                &[
+                    Value::Number(port as f64),
+                    Value::String("127.0.0.1".into()),
+                ],
+            )
         }
+        None => {
+            let code = path_connect_error_code(path).unwrap_or_else(|| {
+                if Path::new(path).exists() { "ENOTSOCK" } else { "ENOENT" }
+            });
+            path_connect_error(state, path, code)
+        }
+    }
+}
+
+fn path_connect_error_code(path: &str) -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        if path.len() > 108 {
+            return Some("EINVAL");
+        }
+        if std::fs::metadata(path).ok().is_some_and(|meta| {
+            use std::os::unix::fs::MetadataExt;
+            meta.mode() & 0o777 == 0
+        }) {
+            return Some("EACCES");
+        }
+    }
+    None
+}
+
+fn path_connect_error(
+    state: &Rc<RefCell<HostState>>,
+    path: &str,
+    code: &str,
+) -> Result<Value, VmError> {
+    let (object, _) = new_net_object(state, socket_props())?;
+    let error = host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String(format!("connect {code} {path}"))),
+        ("code".into(), Value::String(code.into())),
+        ("syscall".into(), Value::String("connect".into())),
+    ]);
+    state.borrow_mut().net.pending_errors.push((object.clone(), error));
+    Ok(object)
+}
+
+fn path_connect_error_for_receiver(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    path: &str,
+    code: &str,
+) -> Result<Value, VmError> {
+    let error = host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String(format!("connect {code} {path}"))),
+        ("code".into(), Value::String(code.into())),
+        ("syscall".into(), Value::String("connect".into())),
+    ]);
+    state
+        .borrow_mut()
+        .net
+        .pending_errors
+        .push((receiver.clone(), error));
+    Ok(receiver.clone())
+}
+
+fn connect_path_for_receiver(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    path: &str,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(code) = path_connect_error_code(path) {
+        if let Some(receiver) = receiver {
+            return path_connect_error_for_receiver(state, receiver, path, code);
+        }
+        return path_connect_error(state, path, code);
+    }
+    let Some(port) = state.borrow().net.paths.get(path).copied() else {
+        let code = if Path::new(path).exists() { "ENOTSOCK" } else { "ENOENT" };
+        if let Some(receiver) = receiver {
+            return path_connect_error_for_receiver(state, receiver, path, code);
+        }
+        return connect_path(state, path);
+    };
+    let mut properties = vec![
+        ("port".into(), Value::Number(port as f64)),
+        ("host".into(), Value::String(LOCAL_HOST.into())),
+    ];
+    if let Some(Value::Object(_) | Value::ObjectAlias(_)) = args.first() {
+        if let Value::Number(fd) = execute::get_property(args.first().unwrap(), "fd") {
+            properties.push(("fd".into(), Value::Number(fd)));
+        }
+    }
+    let options = host_api::object(properties);
+    let mut connect_args = vec![options];
+    if args.last().is_some_and(quench_runtime::is_callable) {
+        connect_args.push(args.last().cloned().unwrap_or(Value::Undefined));
+    }
+    match receiver {
+        Some(receiver) => connect_with_receiver(state, Some(receiver), &connect_args),
+        None => connect(state, &connect_args),
     }
 }
 
@@ -271,8 +400,8 @@ fn connect_with_receiver(
         .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
     {
         let path = execute::to_js_string(path)?;
-        if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
-            return connect_path(state, &path);
+        if path.parse::<u16>().is_err() {
+            return connect_path_for_receiver(state, receiver, &path, args);
         }
     }
     if let Some(options) = args
@@ -281,19 +410,17 @@ fn connect_with_receiver(
     {
         validate_connect_options(options)?;
         if let Some(path) = string_property(options, "socketPath") {
-            if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
-                return connect_path(state, &path);
-            }
+            return connect_path_for_receiver(state, receiver, &path, args);
         }
         if let Some(path) = string_property(options, "port") {
             if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
-                return connect_path(state, &path);
+                return connect_path_for_receiver(state, receiver, &path, args);
             }
         }
         if matches!(execute::get_property(options, "port"), Value::Undefined) {
             if let Some(path) = string_property(options, "path") {
-                if path.starts_with('/') || state.borrow().net.paths.contains_key(&path) {
-                    return connect_path(state, &path);
+                if path.parse::<u16>().is_err() {
+                    return connect_path_for_receiver(state, receiver, &path, args);
                 }
             }
         }
@@ -549,6 +676,9 @@ fn connect_with_receiver(
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
+        if let Value::Number(fd) = execute::get_property(options, "fd") {
+            execute::set_property_in_place(&object, PIPE_FD_PROP, Value::Number(fd));
+        }
         configure_onread(&object, options);
         let no_delay = execute::get_property(options, "noDelay");
         if execute::is_truthy(&no_delay) {
@@ -568,6 +698,9 @@ fn connect_with_receiver(
             Value::Builtin(quench_runtime::ops::Builtin::Object),
         ),
     ]);
+    if let Value::Number(fd) = execute::get_property(&object, PIPE_FD_PROP) {
+        execute::set_property_in_place(&handle, "fd", Value::Number(fd));
+    }
     execute::set_property_in_place(&object, "_handle", handle);
     let local = stream.local_addr().ok();
     set_socket_state(&object, true, true, "opening");
@@ -890,6 +1023,23 @@ pub fn server_listen(
     });
     if let Some(path) = path_argument {
         if path.starts_with('/') || path.parse::<u16>().is_err() {
+            if state.borrow().net.paths.contains_key(&path) {
+                let error = host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    (
+                        "message".into(),
+                        Value::String(format!("listen EADDRINUSE: address already in use {path}")),
+                    ),
+                    ("code".into(), Value::String("EADDRINUSE".into())),
+                    ("syscall".into(), Value::String("listen".into())),
+                ]);
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((receiver.clone(), error));
+                return Ok(receiver);
+            }
             if path.starts_with('/')
                 && Path::new(&path)
                     .parent()
@@ -923,8 +1073,27 @@ pub fn server_listen(
                     return Ok(receiver);
                 }
             };
+            if let Err(error) = create_pipe_placeholder(&path, args.first()) {
+                state.borrow_mut().net.pending_errors.push((
+                    receiver.clone(),
+                    server_bind_error(&error, None, 0),
+                ));
+                return Ok(receiver);
+            }
             let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
             state.borrow_mut().net.paths.insert(path.clone(), port);
+            if matches!(
+                execute::get_property(&receiver, PIPE_MARKER_PROP),
+                Value::Boolean(true)
+            ) {
+                if let Value::Number(fd) = execute::get_property(&receiver, PIPE_FD_PROP) {
+                    state
+                        .borrow_mut()
+                        .net
+                        .pipe_fds
+                        .insert(fd as i64, path.clone());
+                }
+            }
             register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
             add_listener_cb(state, &receiver, args.last(), "listening", true)?;
             return Ok(receiver);
@@ -971,6 +1140,23 @@ fn bind_listener(port: u16, host: Option<&str>) -> std::io::Result<TcpListener> 
     Ok(listener)
 }
 
+fn create_pipe_placeholder(path: &str, options: Option<&Value>) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    let _file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    #[cfg(unix)]
+    if options.is_some_and(|value| {
+        matches!(execute::get_property(value, "readableAll"), Value::Boolean(true))
+            || matches!(execute::get_property(value, "writableAll"), Value::Boolean(true))
+    }) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+    }
+    Ok(())
+}
+
 /// Register a callable callback for a lifecycle event.
 fn add_listener_cb(
     state: &Rc<RefCell<HostState>>,
@@ -1014,6 +1200,7 @@ fn bind_code(error: &std::io::Error) -> &'static str {
         match raw {
             48 => "EADDRINUSE",
             49 => "EADDRNOTAVAIL",
+            22 | 36 | 63 => "EINVAL",
             _ => "EADDRINUSE",
         }
     } else {
@@ -1040,6 +1227,15 @@ pub fn server_close(
         .and_then(|server| server.borrow().path.clone());
     if let Some(path) = path {
         state.borrow_mut().net.paths.remove(&path);
+        let _ = std::fs::remove_file(&path);
+    }
+    if matches!(
+        execute::get_property(&receiver, PIPE_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        if let Value::Number(fd) = execute::get_property(&receiver, PIPE_FD_PROP) {
+            state.borrow_mut().net.pipe_fds.remove(&(fd as i64));
+        }
     }
     if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
         let mut server = server.borrow_mut();
