@@ -235,6 +235,10 @@ fn accept_one(
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
     if let Some(js) = server_js {
+        // Accepted sockets expose the exact JS Server instance that owns the
+        // transport.  Install this before emitting `connection` so listeners
+        // observe stable identity during construction.
+        execute::set_property_in_place(&object, "server", js.clone());
         let server_handle = execute::get_property(&js, "_handle");
         let onconnection = execute::get_property(&server_handle, "onconnection");
         if quench_runtime::is_callable(&onconnection)
