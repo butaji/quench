@@ -320,10 +320,11 @@ fn run_stage_files(
     files: Vec<PathBuf>,
     isolated: bool,
 ) -> Result<Vec<StageFileResult>, String> {
-    // Generated RegExp property fixtures can retain large Unicode tables in
-    // the child allocator even after a fixture realm is reset. Keep child
-    // batches small so peak RSS stays proportional to one short fixture set.
-    const WORK_BATCH: usize = 4;
+    // Generated RegExp fixtures can retain large Unicode tables in the child
+    // allocator even after a fixture realm is reset. Isolated children must
+    // therefore process one fixture at a time; small in-process stages keep a
+    // modest batch for throughput.
+    let work_batch = if isolated { 1 } else { 4 };
     // OXC and the reducer need more than the platform default for deeply
     // nested fixtures, but 256 MiB per worker makes a four-worker RegExp
     // stage reserve a gigabyte before the engine heap is counted.
@@ -336,7 +337,7 @@ fn run_stage_files(
         .min(files.len());
     let files = Arc::new(files);
     let next = Arc::new(AtomicUsize::new(0));
-    let (sender, receiver) = mpsc::sync_channel(worker_count * WORK_BATCH);
+    let (sender, receiver) = mpsc::sync_channel(worker_count * work_batch);
     let mut workers = Vec::with_capacity(worker_count);
     for worker in 0..worker_count {
         let files = Arc::clone(&files);
@@ -351,11 +352,11 @@ fn run_stage_files(
                     let mut runner = Test262Runner::new(RuntimeHost);
                     let mut harness = HarnessCache::new(root.join("harness"));
                     loop {
-                        let start = next.fetch_add(WORK_BATCH, Ordering::Relaxed);
+                        let start = next.fetch_add(work_batch, Ordering::Relaxed);
                         if start >= files.len() {
                             break;
                         }
-                        let stop = (start + WORK_BATCH).min(files.len());
+                        let stop = (start + work_batch).min(files.len());
                         if isolated {
                             let outcomes = run_files_in_process(&root, &files[start..stop]);
                             for (offset, outcome) in batch_outcomes(outcomes, stop - start) {
