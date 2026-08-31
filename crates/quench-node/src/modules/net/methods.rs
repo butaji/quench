@@ -399,8 +399,13 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
     }
     let (object, _id) = new_net_object(state, socket_props())?;
     let global = quench_runtime::vm::current_global_object();
-    let prototype = execute::get_property(&global, "\0quench:net:socket-prototype");
-    let object = if matches!(prototype, Value::Object(_)) {
+    let prototype = state
+        .borrow()
+        .net
+        .socket_prototype
+        .clone()
+        .unwrap_or_else(|| execute::get_property(&global, "\0quench:net:socket-prototype"));
+    let object = if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_prototype_of(&object, &prototype)?
     } else {
         object
