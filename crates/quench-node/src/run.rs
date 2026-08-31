@@ -83,6 +83,8 @@ pub fn run_script_with_sink(
     let report_surface = crate::polyfills::bootstrap::lookup("report").unwrap_or("");
     let async_resource_surface =
         crate::polyfills::bootstrap::lookup("async-resource").unwrap_or("");
+    let webcrypto_surface =
+        crate::polyfills::bootstrap::lookup("webcrypto-global").unwrap_or("");
     let performance_surface = crate::polyfills::bootstrap::lookup("performance").unwrap_or("");
     let persistent_globals = crate::registry::PERSISTENT_GLOBALS
         .iter()
@@ -92,7 +94,7 @@ pub fn run_script_with_sink(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let bootstrap_surface = format!("{globals_surface}\n{report_surface}\n{async_resource_surface}");
+    let bootstrap_surface = format!("{globals_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}");
     let wrapped = format!(
         "{bootstrap_surface}\nObject.defineProperty(globalThis, '__nodePath', {{ value: __nodePath, configurable: true, enumerable: false }}); Object.defineProperty(globalThis, '__quench_fs_mkdir', {{ value: __quench_fs_mkdir, configurable: true, enumerable: false }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{performance_surface}\n{url_pattern_surface}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{wrapped}\n// Materialize persistent host globals after module setup and before the pump.\n{persistent_globals}"
     );

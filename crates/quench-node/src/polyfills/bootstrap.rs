@@ -16,4 +16,5 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "membership" => membership,
     "async-resource" => async_resource,
     "web-streams" => web_streams,
+    "webcrypto-global" => webcrypto_global,
 );
