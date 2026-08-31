@@ -207,7 +207,7 @@ pub(crate) fn define_global_declaration_property(
                 }
             }
         }
-        staged.properties.retain(|(key, _)| {
+        staged.properties.retain_names(|key| {
             key != name && key != &descriptor_key && key != &deleted_key
         });
         let value = effective_descriptor
