@@ -258,6 +258,18 @@ fn accept_one(
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
     if let Some(js) = server_js {
+        let previous_scope = state.borrow().cluster.process_scope();
+        let server_scope = state
+            .borrow()
+            .net
+            .servers
+            .get(&server_id)
+            .map(|server| server.borrow().process_scope)
+            .unwrap_or(previous_scope);
+        state
+            .borrow_mut()
+            .cluster
+            .set_process_scope(server_scope);
         // Accepted sockets expose the exact JS Server instance that owns the
         // transport.  Install this before emitting `connection` so listeners
         // observe stable identity during construction.
@@ -295,17 +307,22 @@ fn accept_one(
                     .worker_object(worker_id)
                     .map(|worker| (worker_id, worker))
             });
-        if let Some((worker_id, worker)) = owner {
+        let connection_result = if let Some((worker_id, worker)) = owner {
             let previous = state.borrow().cluster.worker_context;
             crate::modules::cluster::set_worker_mode(state, worker_id, &worker, true);
             state.borrow_mut().cluster.worker_context = Some(worker_id);
             let result = emit(state, &js, "connection", vec![object]);
             state.borrow_mut().cluster.worker_context = previous;
             crate::modules::cluster::set_worker_mode(state, worker_id, &worker, false);
-            result?;
+            result
         } else {
-            emit(state, &js, "connection", vec![object])?;
-        }
+            emit(state, &js, "connection", vec![object])
+        };
+        state
+            .borrow_mut()
+            .cluster
+            .set_process_scope(previous_scope);
+        connection_result?;
     }
     Ok(())
 }

@@ -47,6 +47,18 @@ impl EventLoop {
         self.queue_microtask_with_resource(cb, args, None);
     }
 
+    pub fn queue_microtask_scope(&self, cb: Value, args: Vec<Value>, process_scope: u64) {
+        self.microtasks.borrow_mut().push(Microtask {
+            callback: cb,
+            args,
+            receiver: None,
+            resource: None,
+            domain: None,
+            domain_stack: None,
+            process_scope,
+        });
+    }
+
     pub fn queue_microtask_with_resource(
         &self,
         cb: Value,
