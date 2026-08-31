@@ -218,17 +218,15 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let global = observable_bool(&receiver, "global")?;
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if crate::conversion::is_callable(&replacement) {
-        if dynamic_exec(&receiver, global) {
-            if let Value::StringUnits(units) = &input {
-                return replace_with_exec_units_callable(
-                    &receiver,
-                    input.clone(),
-                    units,
-                    &replacement,
-                    global,
-                    unicode,
-                );
-            }
+        if let Value::StringUnits(units) = &input {
+            return replace_with_exec_units_callable(
+                &receiver,
+                input.clone(),
+                units,
+                &replacement,
+                global,
+                unicode,
+            );
         }
         let s = crate::strings::materialize(&input).unwrap_or_default();
         if dynamic_exec(&receiver, global) {
