@@ -2180,11 +2180,9 @@ pub fn server_listen(
     // fresh ephemeral port.  The host models workers in one VM, so preserve
     // that shared descriptor identity by cloning the first worker-owned
     // listener for the same address family (and explicit port, when given).
-    let cluster_listener = state
-        .borrow()
-        .cluster
-        .worker_context
-        .is_some()
+    // An ephemeral listen is a new logical endpoint for each call. Only
+    // explicit ports participate in the shared cluster descriptor.
+    let cluster_listener = (state.borrow().cluster.worker_context.is_some() && port != 0)
         .then(|| {
             let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
             state.borrow().net.servers.values().find_map(|server| {

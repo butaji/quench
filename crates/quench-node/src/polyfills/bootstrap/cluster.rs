@@ -1178,6 +1178,7 @@ const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
   process.disconnect = () => worker.disconnect();
   process.send = (...values) => worker.send(...values);
   globalThis.__quench_in_cluster_worker = true;
+  globalThis.__quench_cluster_worker_id = worker.id;
   globalThis.__nodeCurrentAsyncResource = { id: worker.id };
   let workerError = null;
   try {
@@ -1195,6 +1196,7 @@ ${globalThis.__quench_script_source}`;
     workerError = error;
   }
   delete globalThis.__quench_cluster_worker;
+  delete globalThis.__quench_cluster_worker_id;
   cluster.isWorker = previousIsWorker;
   process.argv = previousArgv;
   process.connected = previousConnected;
@@ -1593,6 +1595,7 @@ let __quenchClusterModule;
       }
       disconnect() {
         if (this.state === "dead") return this;
+        globalThis.__quench_cluster_close_worker_net?.(this.id);
         this.exitedAfterDisconnect = true;
         const previousState = this.state;
         this.process.exitCode = 0;
@@ -1638,7 +1641,10 @@ let __quenchClusterModule;
       return worker;
     };
     cluster.disconnect = (callback) => {
-      for (const worker of cluster.workers) worker.disconnect();
+      for (const worker of cluster.workers) {
+        globalThis.__quench_cluster_close_worker_net?.(worker.id);
+        worker.disconnect();
+      }
       if (typeof callback === "function") queueMicrotask(callback);
       return cluster;
     };
