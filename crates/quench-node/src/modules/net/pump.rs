@@ -239,8 +239,21 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             // The socket is already visible to JS callbacks. Add address
             // metadata in place so emitter identity and listener tables stay
             // attached to the same object.
+            // An adopted BoundSocket owns the source endpoint observable. The
+            // transport stream is created normally, but its public localPort
+            // must remain the reserved bound port rather than the kernel's
+            // unrelated ephemeral source port.
+            let local = match execute::get_property(&js, BOUND_LOCAL_PORT_PROP) {
+                Value::Number(port) if port.is_finite() && (0.0..=u16::MAX as f64).contains(&port) => {
+                    SocketAddr::new(local.ip(), port as u16)
+                }
+                _ => local,
+            };
             for (key, value) in net_info_props(peer, Some(local)) {
                 execute::set_property_in_place(&js, &key, value);
+            }
+            if let Value::String(address) = execute::get_property(&js, BOUND_LOCAL_ADDRESS_PROP) {
+                execute::set_property_in_place(&js, "localAddress", Value::String(address));
             }
         }
         set_socket_state(&js, false, false, "open");
