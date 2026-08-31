@@ -51,14 +51,16 @@ impl NodeFixture {
     }
 }
 
-/// Node's test files carry executable options in `// Flags:` directives.
-/// Keep those declarations as runner data so every invocation path (single
-/// file, manifest, and isolated sweep) observes the same argv facts.
+/// Node's test files carry executable options in `// Flags:` directives. They
+/// configure the host invocation, but are not script arguments: Node exposes
+/// them through `process.execArgv`, never through `process.argv`. The current
+/// runner does not model every option yet, so keep only the script-visible
+/// boundary here instead of leaking host flags into fixture argv.
 fn fixture_flags(source: &str) -> Vec<String> {
     source
         .lines()
         .find_map(|line| line.trim().strip_prefix("// Flags:"))
-        .map(|flags| flags.split_whitespace().map(str::to_owned).collect())
+        .map(|_| Vec::new())
         .unwrap_or_default()
 }
 

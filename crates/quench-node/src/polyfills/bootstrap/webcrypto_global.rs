@@ -1,6 +1,7 @@
 //! Polyfill: the always-present global WebCrypto surface.
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchWebCryptoCopy = (value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.process?.versions?.openssl) {
+const __quenchWebCryptoCopy = (value) => {
   if (value instanceof ArrayBuffer) return value.slice(0);
   if (ArrayBuffer.isView(value)) {
     return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
@@ -81,5 +82,6 @@ if (!globalThis.crypto) {
     writable: true,
     value: __quenchGlobalCrypto
   });
+}
 }
 "#);
