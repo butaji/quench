@@ -19,7 +19,10 @@ pub enum NodeOutcome {
 pub struct NodeFixture {
     pub path: PathBuf,
     pub source: String,
+    /// Script arguments supplied by the runner/child process.
     pub argv: Vec<String>,
+    /// Host invocation flags declared by the fixture header.
+    pub exec_argv: Vec<String>,
 }
 
 impl NodeFixture {
@@ -29,7 +32,8 @@ impl NodeFixture {
         let path = path.canonicalize().unwrap_or(path);
         Ok(Self {
             path,
-            argv: fixture_flags(&source),
+            argv: Vec::new(),
+            exec_argv: fixture_flags(&source),
             source,
         })
     }
@@ -37,7 +41,8 @@ impl NodeFixture {
     pub fn from_source(path: PathBuf, source: String) -> Self {
         Self {
             path,
-            argv: fixture_flags(&source),
+            argv: Vec::new(),
+            exec_argv: fixture_flags(&source),
             source,
         }
     }
@@ -53,14 +58,12 @@ impl NodeFixture {
 
 /// Node's test files carry executable options in `// Flags:` directives. They
 /// configure the host invocation, but are not script arguments: Node exposes
-/// them through `process.execArgv`, never through `process.argv`. The current
-/// runner does not model every option yet, so keep only the script-visible
-/// boundary here instead of leaking host flags into fixture argv.
+/// them through `process.execArgv`, never through `process.argv`.
 fn fixture_flags(source: &str) -> Vec<String> {
     source
         .lines()
         .find_map(|line| line.trim().strip_prefix("// Flags:"))
-        .map(|_| Vec::new())
+        .map(|flags| flags.split_whitespace().map(str::to_owned).collect())
         .unwrap_or_default()
 }
 
@@ -112,7 +115,7 @@ impl NodeRunner {
         );
         let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
-        self.context = context
+        let mut context = context
             .with_source_text(fixture_source.clone())
             .with_host_value(
                 "__quench_script_source".to_string(),
@@ -122,6 +125,31 @@ impl NodeRunner {
                 "__quench_script_filename".to_string(),
                 Value::String(script.clone()),
             );
+        // Invocation flags are visible through execArgv, never argv.  Apply
+        // realm-shaping visibility options at this test-runner boundary while
+        // keeping Node host behavior in Rust.
+        let global = quench_runtime::vm::current_global_object();
+        let process = quench_runtime::execute::get_property(&global, "process");
+        let exec_argv = quench_runtime::host_api::array(
+            fixture
+                .exec_argv
+                .iter()
+                .cloned()
+                .map(Value::String)
+                .collect(),
+        );
+        let _ = quench_runtime::execute::set_property_in_place(&process, "execArgv", exec_argv);
+        if fixture
+            .exec_argv
+            .iter()
+            .any(|flag| flag == "--enable-sharedarraybuffer-per-context")
+        {
+            // Intrinsic globals are immutable host facts; shadow the one
+            // visibility option in this fixture's realm context instead of
+            // mutating the shared intrinsic table.
+            context = context.with_host_value("SharedArrayBuffer", Value::Undefined);
+        }
+        self.context = context;
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
