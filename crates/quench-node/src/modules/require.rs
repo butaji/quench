@@ -694,41 +694,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             }
         }
         "tls" => {
-            let tls = quench_runtime::execute::get_property(
-                &quench_runtime::vm::current_global_object(),
-                "__nodeTlsModule",
-            );
-            if !matches!(tls, Value::Undefined | Value::Null) {
-                Some(tls)
-            } else {
-                let net = crate::modules::net::build_with_state(Some(state));
-                let net_socket = quench_runtime::execute::get_property(&net, "Socket");
-                let net_socket_prototype =
-                    quench_runtime::execute::get_property(&net_socket, "prototype");
-                // Match Node's constructor inheritance as well as the
-                // instance prototype: `Object.getPrototypeOf(TLSSocket)` is
-                // `net.Socket`, while instances inherit from
-                // `net.Socket.prototype`.
-                let tls_socket = quench_runtime::execute::set_property(
-                    placeholder_constructor(Some(&net_socket)),
-                    "prototype",
-                    net_socket_prototype,
-                );
-                let base = placeholder_constructor(None);
-                Some(crate::host::namespace_object_from_pairs(vec![
-                    ("TLSSocket".into(), tls_socket),
-                    ("Server".into(), placeholder_constructor(Some(&base))),
-                    ("SecureContext".into(), placeholder_constructor(Some(&base))),
-                    (
-                        "connect".into(),
-                        crate::host::capability(crate::registry::SPEC_NET_CONNECT),
-                    ),
-                    (
-                        "createServer".into(),
-                        crate::host::capability(crate::registry::SPEC_NET_SERVER),
-                    ),
-                ]))
-            }
+            Some(crate::modules::tls::build(state))
         }
         "cluster" => {
             if let Some(module) = state.borrow().cluster.module() {
