@@ -394,10 +394,7 @@ fn flag_text(flags: Flags) -> String {
 }
 
 fn first_unit_at_or_after(units: &[Unit], start: usize) -> usize {
-    units
-        .iter()
-        .position(|unit| unit.offset_start >= start)
-        .unwrap_or(units.len())
+    units.partition_point(|unit| unit.offset_start < start)
 }
 
 fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
@@ -2017,7 +2014,9 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expr, Flags, Regex, MAX_BACKTRACK_STATES};
+    use super::{
+        first_unit_at_or_after, units_from_str, Expr, Flags, Regex, MAX_BACKTRACK_STATES,
+    };
 
     #[test]
     fn captures_partition_a_greedy_run() {
@@ -2112,6 +2111,15 @@ mod tests {
             legacy.find_from_utf16_str("a😀b", 1).next().unwrap().range,
             1..2
         );
+    }
+
+    #[test]
+    fn search_start_uses_monotonic_offsets() {
+        let units = units_from_str("a😀b", true);
+        assert_eq!(first_unit_at_or_after(&units, 0), 0);
+        assert_eq!(first_unit_at_or_after(&units, 1), 1);
+        assert_eq!(first_unit_at_or_after(&units, 3), 2);
+        assert_eq!(first_unit_at_or_after(&units, 6), 3);
     }
 
     #[test]
