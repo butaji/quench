@@ -66,6 +66,7 @@ const CAP_PROCESS_CPU_USAGE: u16 = 0x0A10;
 const CAP_PROCESS_UPTIME: u16 = 0x0A11;
 const CAP_PROCESS_AVAILABLE_MEMORY: u16 = 0x0A1B;
 const CAP_PROCESS_CONSTRAINED_MEMORY: u16 = 0x0A1C;
+const CAP_PROCESS_MEMORY_USAGE: u16 = 0x0A2C;
 const CAP_PROCESS_GETUID: u16 = 0x0A12;
 const CAP_PROCESS_GETGID: u16 = 0x0A13;
 const CAP_PROCESS_GETEUID: u16 = 0x0A14;
@@ -696,6 +697,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_UPTIME => process_uptime,
         CAP_PROCESS_AVAILABLE_MEMORY => process_available_memory,
         CAP_PROCESS_CONSTRAINED_MEMORY => process_constrained_memory,
+        CAP_PROCESS_MEMORY_USAGE => process_memory_usage,
         CAP_PROCESS_GETUID => process_getuid,
         CAP_PROCESS_GETGID => process_getgid,
         CAP_PROCESS_GETEUID => process_geteuid,
@@ -793,6 +795,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_INCOMING_DESTROY => crate::modules::http::incoming_destroy,
         CAP_HTTP_REQ_SIGNAL_ABORT => crate::modules::http_client::req_signal_abort,
         CAP_HTTP_RES_SET_ENCODING => crate::modules::http_client::res_set_encoding,
+        CAP_HTTP_RES_READ => crate::modules::http_client::res_read,
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
         CAP_HTTP_REQCLOSE => crate::modules::http_client::req_close,
