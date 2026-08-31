@@ -40,3 +40,22 @@ semantics; the host never recognizes benchmark or fixture identity.
 ### 9. Observability and performance APIs
 ### 10. Web and special modules
 ### 11. Full-suite closure and reduction
+
+## Evidence gates
+
+`run-parallel` has two deliberately different gates:
+
+- The checked-in manifest (`cargo run -p quench-node-test --bin run-parallel`)
+  is the reproducible regression gate. It currently contains 695 fixtures.
+- The recursive inventory (`... run-parallel -- --all`) is the coverage gate.
+  It discovers every `test-*.js`, `test-*.mjs`, and `test-*.cjs` under
+  `tests/node/test/parallel` (currently 4,235 files), isolates each fixture in
+  a process group, and records pass/skip/fail/timeout/crash/unclassified plus
+  an inventory hash. A filtered run is diagnostic; it never changes the
+  manifest or implies full-suite completion.
+
+Every family advancement must therefore record both the focused inventory
+result and the manifest result. A timeout remains an unresolved runtime or
+fixture-capability fact; it is not converted into a pass by omitting the
+fixture. The `tests/node` submodule is the upstream oracle and is intentionally
+not staged by compatibility commits.
