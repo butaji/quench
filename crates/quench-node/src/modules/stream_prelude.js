@@ -2315,7 +2315,9 @@
     if (allStreams) {
       const composed = new Duplex({
         read() {},
-        write(chunk, encoding, callback) { first.write(chunk, encoding, callback); },
+        write(chunk, encoding, callback) {
+          first.write(chunk, encoding === "buffer" ? undefined : encoding, callback);
+        },
         final(callback) { first.end(callback); },
         destroy(error, callback) {
           for (const stage of stages) if (!stage.destroyed) stage.destroy?.(error);
