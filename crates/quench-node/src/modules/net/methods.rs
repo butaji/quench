@@ -414,6 +414,16 @@ pub fn bound_socket_close(
 
 /// `new net.Socket()` creates an unconnected socket whose `connect` method
 /// shares the public connection capability and validation path.
+pub fn register_fd_stream(state: &Rc<RefCell<HostState>>, fd: i64, stream: TcpStream) {
+    state
+        .borrow_mut()
+        .net
+        .fd_streams
+        .entry(fd)
+        .or_default()
+        .push(stream);
+}
+
 pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     if let Some(options) = args
         .first()
@@ -433,6 +443,15 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             ])));
         }
     }
+    let fd_stream = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .and_then(|options| match execute::get_property(options, "fd") {
+            Value::Number(fd) => Some(fd as i64),
+            _ => None,
+        })
+        .and_then(|fd| state.borrow_mut().net.fd_streams.get_mut(&fd).and_then(Vec::pop));
+    let fd_local = fd_stream.as_ref().and_then(|stream| stream.local_addr().ok());
     let (object, _id) = new_net_object(state, socket_props())?;
     let global = quench_runtime::vm::current_global_object();
     let prototype = state
@@ -544,7 +563,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         _id,
         Rc::new(RefCell::new(NetSocket {
             id: _id,
-            stream: None,
+            stream: fd_stream,
             js: object.clone(),
             state: SocketState::Open,
             refed: true,
@@ -559,13 +578,24 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             close_deferred: false,
             write_shutdown_pending: false,
             finish_emitted: false,
-            connect_announced: false,
+            connect_announced: fd_local.is_some(),
         peer: None,
-        local: None,
+        local: fd_local,
         encoding: None,
         decode_buf: Vec::new(),
         })),
     );
+    if fd_local.is_some() {
+        set_socket_state(&object, false, false, "open");
+        let handle = host_api::object(vec![
+            ("fd".into(), Value::Number(4.0)),
+            (
+                "close".into(),
+                crate::host::capability(crate::registry::SPEC_NET_SOCKET_HANDLE_CLOSE),
+            ),
+        ]);
+        execute::set_property_in_place(&object, "_handle", handle);
+    }
     if let Some(options) = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
