@@ -95,7 +95,12 @@ pub(crate) fn find_units(
     match pattern {
         NativePattern::Literal(pattern) => {
             let offset = if sticky {
-                0
+                (tail.len() >= pattern.len()
+                    && tail[..pattern.len()]
+                        .iter()
+                        .zip(pattern.iter())
+                        .all(|(unit, byte)| *unit == u16::from(*byte)))
+                .then_some(0)?
             } else {
                 tail.windows(pattern.len()).position(|window| {
                     window
@@ -104,14 +109,6 @@ pub(crate) fn find_units(
                         .all(|(unit, byte)| *unit == u16::from(*byte))
                 })?
             };
-            if tail.len() < offset + pattern.len()
-                || !tail[offset..offset + pattern.len()]
-                    .iter()
-                    .zip(pattern.iter())
-                    .all(|(unit, byte)| *unit == u16::from(*byte))
-            {
-                return None;
-            }
             Some(NativeMatch {
                 start: start + offset,
                 end: start + offset + pattern.len(),
@@ -518,6 +515,10 @@ mod tests {
         assert_eq!(
             find_units("\\d", "y", &[b'7' as u16], 0),
             Some(super::NativeMatch { start: 0, end: 1 })
+        );
+        assert_eq!(
+            find_units("abc", "", &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16], 0),
+            Some(super::NativeMatch { start: 1, end: 4 })
         );
     }
 
