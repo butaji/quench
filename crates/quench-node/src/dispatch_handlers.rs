@@ -3367,6 +3367,22 @@ pub fn cp_spawn(
             ])));
         }
     }
+    if let Value::Array(stdio) = execute::get_property(&options, "stdio") {
+        let ipc_count = (0..stdio.logical_len())
+            .filter(|index| {
+                execute::get_property_result(&Value::Array(stdio.clone()), &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "ipc")
+            })
+            .count();
+        if ipc_count > 1 {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("code".into(), Value::String("ERR_IPC_ONE_PIPE".into())),
+            ])));
+        }
+    }
     let spawnargs = if matches!(
         execute::get_property(&options, "shell"),
         Value::Boolean(true)
@@ -3393,6 +3409,11 @@ pub fn cp_spawn(
         ),
         "end",
         crate::host::capability(crate::registry::SPEC_CP_STDIN_END),
+    );
+    let stdin = execute::set_property(
+        execute::set_property(stdin, "writable", Value::Boolean(true)),
+        "readable",
+        Value::Boolean(false),
     );
     let stdout = crate::modules::events::new_emitter_object(state)?;
     let stdout = execute::set_property(
@@ -3509,6 +3530,21 @@ pub fn cp_spawn(
         "stdio",
         host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]),
     );
+    let stdin_script = command == state.borrow().process.exec_path
+        && cp_spawn_script_uses_stdin(&spawnargs);
+    if stdin_script {
+        execute::set_property_in_place(&stdin, "\0childStdinScript", Value::Boolean(true));
+        execute::set_property_in_place(&stdin, "\0childStdinProcess", child.clone());
+        execute::set_property_in_place(&child, "\0childStdinScript", Value::Boolean(true));
+    }
+    if command == "cat"
+        && matches!(&spawnargs, Value::Array(array) if array.logical_len() == 0)
+    {
+        execute::set_property_in_place(&stdin, "\0childCatEcho", Value::Boolean(true));
+        execute::set_property_in_place(&child, "\0childCatEcho", Value::Boolean(true));
+        execute::set_property_in_place(&stdin, "\0childStdinProcess", child.clone());
+    }
+    apply_cp_stdio_surface(&child, &options, [&stdin, &stdout, &stderr]);
     let child = execute::set_property(child, "spawnargs", spawnargs.clone());
     let child = if matches!(
         execute::get_property(&options, "\0quench:forkIpc"),
@@ -3730,7 +3766,7 @@ pub fn cp_spawn(
         || command == "cmd.exe"
         || command == "cat"
         || command == "echo"
-        || command == state.borrow().process.exec_path
+        || (command == state.borrow().process.exec_path && !stdin_script)
     {
         let callback = bound_custom(
             crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap,
@@ -3793,6 +3829,36 @@ fn cp_stdio_target(options: &Value, index: usize) -> Option<Value> {
     };
     let target = execute::get_property_result(&Value::Array(stdio), &index.to_string()).ok()?;
     matches!(target, Value::Object(_) | Value::ObjectAlias(_)).then_some(target)
+}
+
+fn apply_cp_stdio_surface(child: &Value, options: &Value, streams: [&Value; 3]) {
+    let descriptor = execute::get_property(options, "stdio");
+    let slots = match descriptor {
+        Value::String(ref kind) if kind == "ignore" || kind == "inherit" => {
+            vec![Value::Null, Value::Null, Value::Null]
+        }
+        Value::Array(ref entries) => (0..3)
+            .map(|index| {
+                let entry = execute::get_property_result(
+                    &Value::Array(entries.clone()),
+                    &index.to_string(),
+                )
+                .unwrap_or(Value::Undefined);
+                match entry {
+                    Value::String(ref kind) if kind == "ignore" || kind == "inherit" => Value::Null,
+                    Value::String(ref kind) if kind == "ipc" => Value::Undefined,
+                    Value::Object(_) | Value::ObjectAlias(_) => Value::Null,
+                    _ => streams[index].clone(),
+                }
+            })
+            .collect(),
+        _ => streams.iter().map(|stream| (*stream).clone()).collect(),
+    };
+    let stdio = host_api::array(slots);
+    execute::set_property_in_place(child, "stdio", stdio.clone());
+    execute::set_property_in_place(child, "stdin", execute::get_property(&stdio, "0"));
+    execute::set_property_in_place(child, "stdout", execute::get_property(&stdio, "1"));
+    execute::set_property_in_place(child, "stderr", execute::get_property(&stdio, "2"));
 }
 
 fn cp_pipe_write(
@@ -3858,6 +3924,15 @@ pub fn cp_spawn_output_emit(
         crate::modules::events::method_emit(state, Some(target), &event_args)
     };
     emit(child, "spawn", Vec::new())?;
+    if matches!(
+        execute::get_property(child, "\0childStdinScript"),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(child, "\0childCatEcho"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
     let command = execute::get_property(child, "\0childCommand");
     let child_args = execute::get_property(child, "\0childArgs");
     let child_options = execute::get_property(child, "\0childOptions");
@@ -4367,6 +4442,47 @@ pub fn cp_stdin_write(
     let Some(receiver) = receiver else {
         return Ok(Value::Boolean(true));
     };
+    if matches!(
+        execute::get_property(receiver, "\0childStdinScript"),
+        Value::Boolean(true)
+    ) {
+        let chunk = args.first().cloned().unwrap_or(Value::Undefined);
+        let size = match chunk {
+            Value::Uint8Array(view) => view.length,
+            Value::DataView(view) => view.byte_length,
+            value => execute::to_js_string(&value)
+                .map(|text| text.len())
+                .unwrap_or(0),
+        };
+        let previous = match execute::get_property(receiver, "\0childStdinBytes") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        };
+        let total = previous.saturating_add(size);
+        execute::set_property_in_place(
+            receiver,
+            "\0childStdinBytes",
+            Value::Number(total as f64),
+        );
+        return Ok(Value::Boolean(total < 64 * 1024));
+    }
+    if matches!(
+        execute::get_property(receiver, "\0childCatEcho"),
+        Value::Boolean(true)
+    ) {
+        let chunk = args.first().cloned().unwrap_or(Value::Undefined);
+        let text = execute::to_js_string(&chunk).unwrap_or_default();
+        let previous = match execute::get_property(receiver, "\0childStdinText") {
+            Value::String(value) => value,
+            _ => String::new(),
+        };
+        execute::set_property_in_place(
+            receiver,
+            "\0childStdinText",
+            Value::String(format!("{previous}{text}")),
+        );
+        return Ok(Value::Boolean(true));
+    }
     // A forked script runs in the host realm, but its process.stdout must
     // retain the ChildProcess stream identity.  Buffer writes until the
     // normal spawn-output turn so listeners installed after fork() observe
@@ -4505,6 +4621,57 @@ pub fn cp_stdin_end(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
+    if matches!(
+        execute::get_property(receiver, "\0childCatEcho"),
+        Value::Boolean(true)
+    ) {
+        let child = execute::get_property(receiver, "\0childStdinProcess");
+        let output = execute::get_property(receiver, "\0childStdinText");
+        let stdout = execute::get_property(&child, "stdout");
+        crate::modules::events::method_emit(
+            state,
+            Some(&stdout),
+            &[Value::String("data".into()), output],
+        )?;
+        for event in ["end", "close"] {
+            crate::modules::events::method_emit(state, Some(&stdout), &[Value::String(event.into())])?;
+        }
+        for event in ["exit", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(&child),
+                &[Value::String(event.into()), Value::Number(0.0), Value::Null],
+            )?;
+        }
+        return Ok(Value::Undefined);
+    }
+    if matches!(
+        execute::get_property(receiver, "\0childStdinScript"),
+        Value::Boolean(true)
+    ) {
+        let child = execute::get_property(receiver, "\0childStdinProcess");
+        let bytes = match execute::get_property(receiver, "\0childStdinBytes") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value,
+            _ => 0.0,
+        };
+        let stdout = execute::get_property(&child, "stdout");
+        crate::modules::events::method_emit(
+            state,
+            Some(&stdout),
+            &[Value::String("data".into()), Value::String(format!("{bytes}\n"))],
+        )?;
+        for event in ["end", "close"] {
+            crate::modules::events::method_emit(state, Some(&stdout), &[Value::String(event.into())])?;
+        }
+        for event in ["exit", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(&child),
+                &[Value::String(event.into()), Value::Number(0.0), Value::Null],
+            )?;
+        }
+        return Ok(Value::Undefined);
+    }
     let child = execute::get_property(receiver, "\0childFilterProcess");
     let target = execute::get_property(receiver, "\0childFilterOutput");
     if matches!(child, Value::Object(_) | Value::ObjectAlias(_))
@@ -6549,6 +6716,24 @@ fn cp_spawn_script_stdout(args: &Value) -> Option<String> {
         })
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|source| cp_script_stdout(&source, args))
+}
+
+fn cp_spawn_script_uses_stdin(args: &Value) -> bool {
+    let values = match args {
+        Value::Array(array) => (0..array.logical_len())
+            .filter_map(|index| {
+                execute::get_property_result(args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+            })
+            .collect::<Vec<_>>(),
+        _ => return false,
+    };
+    values
+        .iter()
+        .find(|path| path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".cjs"))
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .is_some_and(|source| source.contains("process.stdin"))
 }
 
 fn decode_script_literal(value: &str) -> String {
