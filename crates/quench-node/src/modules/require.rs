@@ -468,6 +468,12 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_GET_CIDR),
             ),
             (
+                "constructSharedArrayBuffer".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER,
+                ),
+            ),
+            (
                 "customPromisifyArgs".to_string(),
                 Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
             ),
