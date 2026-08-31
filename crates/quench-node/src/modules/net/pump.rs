@@ -409,7 +409,14 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     for sock in events.write_failures {
         let js = sock.borrow().js.clone();
-        emit(state, &js, "error", vec![super::peer_write_error()])?;
+        let http_owned = sock.borrow().server_id.is_some()
+            && matches!(
+                execute::get_property(&js, crate::modules::http::HTTP_SERVER_SOCKET_PROP),
+                Value::Boolean(true)
+            );
+        if !http_owned {
+            emit(state, &js, "error", vec![super::peer_write_error()])?;
+        }
         super::socket_destroy(state, Some(&js), &[])?;
     }
     Ok(())

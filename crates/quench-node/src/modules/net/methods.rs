@@ -2555,6 +2555,12 @@ pub fn socket_write(
     };
     let handle = execute::get_property(&receiver, "_handle");
     let server_owned = sock.borrow().server_id.is_some();
+    let http_owned = server_owned
+        && (state.borrow().http.conns.contains_key(&id)
+            || matches!(
+                execute::get_property(&receiver, crate::modules::http::HTTP_SERVER_SOCKET_PROP),
+                Value::Boolean(true)
+            ));
     let handle_closed = matches!(
         execute::get_property(&handle, super::HANDLE_CLOSED_PROP),
         Value::Boolean(true)
@@ -2580,7 +2586,7 @@ pub fn socket_write(
                 .borrow_mut()
                 .event_loop
                 .queue_microtask(callback, vec![error]);
-        } else {
+        } else if !http_owned {
             state
                 .borrow_mut()
                 .net
@@ -2605,11 +2611,13 @@ pub fn socket_write(
             "EPIPE",
             "This socket has been ended by the other party",
         );
-        state
-            .borrow_mut()
-            .net
-            .pending_events
-            .push((receiver.clone(), "error".into(), vec![error.clone()]));
+        if !http_owned {
+            state
+                .borrow_mut()
+                .net
+                .pending_events
+                .push((receiver.clone(), "error".into(), vec![error.clone()]));
+        }
         if let Some(callback) = callback {
             state.borrow_mut().event_loop.queue_microtask(
                 callback,
