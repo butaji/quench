@@ -849,7 +849,7 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         state: State,
         flags: Flags,
         output: &mut Vec<State>,
-        seen: &mut HashSet<State>,
+        seen: &mut Option<HashSet<State>>,
     ) {
         if backtrack_reached(output.len()) {
             return;
@@ -875,15 +875,27 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         }
     }
     let mut output = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = None;
     visit(parts, 0, input, state, flags, &mut output, &mut seen);
     output
 }
 
-fn push_unique(output: &mut Vec<State>, seen: &mut HashSet<State>, state: State) {
-    if seen.insert(state.clone()) {
-        output.push(state);
+fn push_unique(output: &mut Vec<State>, seen: &mut Option<HashSet<State>>, state: State) {
+    if let Some(seen) = seen {
+        if seen.insert(state.clone()) {
+            output.push(state);
+        }
+        return;
     }
+    if output.iter().any(|candidate| candidate == &state) {
+        return;
+    }
+    if output.len() >= 8 {
+        let mut promoted = output.iter().cloned().collect::<HashSet<_>>();
+        promoted.insert(state.clone());
+        *seen = Some(promoted);
+    }
+    output.push(state);
 }
 
 fn is_single_option_expr(expr: &Expr) -> bool {
@@ -960,7 +972,7 @@ fn repeat_options(
         limit: usize,
         greedy: bool,
         output: &mut Vec<State>,
-        seen: &mut HashSet<State>,
+        seen: &mut Option<HashSet<State>>,
     ) {
         if backtrack_reached(output.len()) {
             return;
@@ -1006,7 +1018,7 @@ fn repeat_options(
         }
     }
     let mut output = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = None;
     visit(
         body,
         input,
