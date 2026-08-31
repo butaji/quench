@@ -1362,6 +1362,8 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             "destroy".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_REQ_CLIENT_DESTROY),
         ),
+        ("cork".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("uncork".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
     ]);
     state.borrow_mut().http.client_request_prototype = Some(client_request_prototype);
     let client_request = quench_runtime::execute::set_property(

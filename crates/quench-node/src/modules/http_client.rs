@@ -640,8 +640,124 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     if expect_continue {
         set_request_property(Some(&req), CLIENT_EXPECT_CONTINUE_PROP, Value::Boolean(true));
         let _ = req_end(state, Some(&req), &[])?;
+    } else {
+        start_request_socket(state, &req)?;
     }
     Ok(req)
+}
+
+/// Node reserves a ClientRequest's socket as soon as the request is created.
+/// Keep the request body deferred until `end()` while exposing the same
+/// socket identity through the ordinary pending `"socket"` transition.
+fn start_request_socket(
+    state: &Rc<RefCell<HostState>>,
+    request: &Value,
+) -> Result<(), VmError> {
+    let Some(id) = client_id(Some(request)) else {
+        return Ok(());
+    };
+    let (target, agent, lookup, high_water_mark, aborted, existing) = {
+        let guard = state.borrow();
+        let Some(req) = guard.http.clientreqs.get(&id) else {
+            return Ok(());
+        };
+        (
+            req.target.clone(),
+            req.agent.clone(),
+            req.lookup.clone(),
+            req.high_water_mark,
+            req.aborted,
+            req.socket.clone(),
+        )
+    };
+    if aborted || existing.is_some() || lookup.is_some() {
+        return Ok(());
+    }
+    // A user supplied connector owns its own construction and callback
+    // contract; it is started by `end()` where the full request options are
+    // available. The ordinary net path can reserve its socket immediately.
+    if agent.as_ref().is_some_and(|agent| {
+        custom_connection(state, agent).is_some() || custom_socket(state, agent).is_some()
+    }) {
+        return Ok(());
+    }
+    let pooled = agent
+        .as_ref()
+        .and_then(|agent| take_agent_socket(agent, &agent_name(&target, agent)));
+    if pooled.is_none()
+        && agent
+            .as_ref()
+            .is_some_and(|agent| !agent_socket_capacity_available(agent, &target))
+    {
+        return Ok(());
+    }
+    let socket = if let Some(socket) = pooled {
+        crate::modules::http::clear_idle_socket(state, &socket);
+        net::socket_ref(state, Some(&socket), &[])?;
+        net::socket_set_timeout(state, Some(&socket), &[Value::Number(0.0)])?;
+        if let Some(value) = high_water_mark {
+            execute::set_property_in_place(
+                &socket,
+                "writableHighWaterMark",
+                Value::Number(value),
+            );
+        }
+        socket
+    } else {
+        open_socket(state, &target)?
+    };
+    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+        req.socket = Some(socket.clone());
+        set_request_property(Some(&req.req), "socket", socket.clone());
+        set_request_property(Some(&socket), "_httpMessage", req.req.clone());
+        if let Some(agent) = req.agent.clone() {
+            let name = agent_name(&target, &agent);
+            add_agent_socket(&agent, &name, &socket);
+        }
+    }
+    if let Some(socket_id) = net::net_id(&socket) {
+        state.borrow_mut().http.clients.insert(socket_id, id);
+    }
+    subscribe_socket(state, &socket)?;
+    state
+        .borrow_mut()
+        .net
+        .pending_events
+        .push((request.clone(), "socket".into(), vec![socket]));
+    Ok(())
+}
+
+fn agent_socket_capacity_available(agent: &Value, target: &RequestTarget) -> bool {
+    let name = agent_name(target, agent);
+    let sockets = execute::get_property(agent, "sockets");
+    let active = match execute::get_property(&sockets, &name) {
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::get_property(&sockets, &name)
+        }
+        _ => return true,
+    };
+    let active_count = execute::get_property(&active, "length");
+    let active_count = match active_count {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    let max = match execute::get_property(agent, "maxSockets") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => usize::MAX,
+    };
+    if active_count >= max {
+        return false;
+    }
+    let total = execute::get_property(agent, "totalSocketCount");
+    let total = match total {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    let max_total = match execute::get_property(agent, "maxTotalSockets") {
+        Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+        _ => usize::MAX,
+    };
+    total < max_total
 }
 
 fn preabort_request(state: &Rc<RefCell<HostState>>, request: &Value) {
@@ -2185,6 +2301,13 @@ fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
             list
         }
     };
+    if execute::own_enumerable_keys(&list)
+        .into_iter()
+        .map(|key| execute::get_property(&list, &key))
+        .any(|value| same_socket(&value, socket))
+    {
+        return;
+    }
     let length = match execute::get_property(&list, "length") {
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 0,
@@ -2286,7 +2409,7 @@ fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
         .into_iter()
         .filter_map(|key| {
             let value = execute::get_property(&sockets, &key);
-            (!execute::same_identity(&value, socket)).then_some(value)
+            (!same_socket(&value, socket)).then_some(value)
         })
         .filter(|value| !matches!(value, Value::Undefined))
         .collect();
@@ -2781,6 +2904,15 @@ fn pool_response_socket(
             matches!(execute::get_property(&agent, "keepAlive"), Value::Boolean(true))
                 && response_allows_reuse(response)
         });
+    let drained = net::net_id(socket).is_some_and(|id| {
+        state
+            .borrow()
+            .net
+            .sockets
+            .get(&id)
+            .is_some_and(|value| net::pending_write_len(&value.borrow()) == 0)
+    });
+    let keep_alive = keep_alive && drained;
     let alive = net::net_id(socket).is_some_and(|id| {
         state
             .borrow()

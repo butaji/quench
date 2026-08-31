@@ -490,27 +490,6 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
         if guard.state == SocketState::Closed {
             continue;
         }
-        if matches!(
-            execute::get_property(&guard.js, ONREAD_PAUSED_PROP),
-            Value::Boolean(true)
-        ) {
-            continue;
-        }
-        if !guard.read_buf.is_empty() {
-            let pending = std::mem::take(&mut guard.read_buf);
-            events.datas.push((sock.clone(), pending));
-            continue;
-        }
-        if guard.read_eof
-            && matches!(
-                execute::get_property(&guard.js, ONREAD_EOF_PROP),
-                Value::Boolean(true)
-            )
-        {
-            execute::set_property_in_place(&guard.js, ONREAD_EOF_PROP, Value::Boolean(false));
-            events.eofs.push(sock.clone());
-            continue;
-        }
         if guard.stream.is_some()
             && guard.state != SocketState::Closed
             && !guard.connect_announced
@@ -518,8 +497,29 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
             guard.connect_announced = true;
             events.connects.push(sock.clone());
         }
-        if read_available(sock, &mut guard, &mut events.datas) {
-            events.eofs.push(sock.clone());
+        let paused = matches!(
+            execute::get_property(&guard.js, ONREAD_PAUSED_PROP),
+            Value::Boolean(true)
+        );
+        if !paused {
+            if !guard.read_buf.is_empty() {
+                let pending = std::mem::take(&mut guard.read_buf);
+                events.datas.push((sock.clone(), pending));
+                continue;
+            }
+            if guard.read_eof
+                && matches!(
+                    execute::get_property(&guard.js, ONREAD_EOF_PROP),
+                    Value::Boolean(true)
+                )
+            {
+                execute::set_property_in_place(&guard.js, ONREAD_EOF_PROP, Value::Boolean(false));
+                events.eofs.push(sock.clone());
+                continue;
+            }
+            if read_available(sock, &mut guard, &mut events.datas) {
+                events.eofs.push(sock.clone());
+            }
         }
         let pending_before = pending_write_len(&guard);
         let flushed = try_flush(&mut guard);
