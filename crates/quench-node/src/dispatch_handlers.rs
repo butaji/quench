@@ -1548,6 +1548,33 @@ pub fn internal_util_is_error(
     Ok(Value::Boolean(is_error))
 }
 
+/// Node's internal WeakReference is the same weak-reference primitive exposed
+/// by the runtime. The host adds only the Node spelling (`get`) and delegates
+/// lifetime/collection to `quench-runtime`, so there is one weak-reference
+/// state machine rather than a second host implementation.
+pub fn internal_util_weak_reference_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let weak = execute::construct_value(&Value::Builtin(quench_runtime::ops::Builtin::WeakRef), args)?;
+    Ok(execute::set_property(
+        weak,
+        "get",
+        crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_WEAK_REFERENCE_GET),
+    ))
+}
+
+pub fn internal_util_weak_reference_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    Ok(execute::get_property(receiver, "\0weakref"))
+}
+
 pub fn internal_binding(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
