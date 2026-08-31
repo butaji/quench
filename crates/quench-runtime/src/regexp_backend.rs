@@ -3,7 +3,12 @@
 //! OXC supplies syntax facts; the VM owns the executable representation and
 //! matching algorithm. No third-party regular-expression engine is involved.
 
-use std::{cell::Cell, collections::VecDeque, ops::Range, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::{HashSet, VecDeque},
+    ops::Range,
+    rc::Rc,
+};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -126,6 +131,8 @@ struct ClassExpr {
     negative: bool,
     kind: ClassKind,
     items: Vec<ClassItem>,
+    single_width: bool,
+    max_width: usize,
 }
 #[derive(Clone, Copy)]
 enum ClassKind {
@@ -158,7 +165,7 @@ struct Unit {
     offset_start: usize,
     offset_end: usize,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct State {
     position: usize,
     captures: Vec<Option<Range<usize>>>,
@@ -392,10 +399,7 @@ fn flag_text(flags: Flags) -> String {
 }
 
 fn first_unit_at_or_after(units: &[Unit], start: usize) -> usize {
-    units
-        .iter()
-        .position(|unit| unit.offset_start >= start)
-        .unwrap_or(units.len())
+    units.partition_point(|unit| unit.offset_start < start)
 }
 
 fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
@@ -529,20 +533,20 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
         },
         ast::Term::Character(character) => Expr::Literal(character.value),
         ast::Term::Dot(_) => Expr::Dot,
-        ast::Term::CharacterClassEscape(escape) => Expr::Class(ClassExpr {
-            negative: false,
-            kind: ClassKind::Union,
-            items: vec![ClassItem::Escape(escape.kind)],
-        }),
-        ast::Term::UnicodePropertyEscape(property) => Expr::Class(ClassExpr {
-            negative: false,
-            kind: ClassKind::Union,
-            items: vec![property_item(
+        ast::Term::CharacterClassEscape(escape) => Expr::Class(make_class_expr(
+            false,
+            ClassKind::Union,
+            vec![ClassItem::Escape(escape.kind)],
+        )),
+        ast::Term::UnicodePropertyEscape(property) => Expr::Class(make_class_expr(
+            false,
+            ClassKind::Union,
+            vec![property_item(
                 property.negative,
                 property.name.to_string(),
                 property.value.as_ref().map(ToString::to_string),
             )],
-        }),
+        )),
         ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering)),
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
@@ -680,10 +684,10 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
                 ClassItem::Nested(lower_class(nested, lowering))
             }
             ast::CharacterClassContents::ClassStringDisjunction(strings) => {
-                ClassItem::Nested(ClassExpr {
-                    negative: false,
-                    kind: ClassKind::Union,
-                    items: strings
+                ClassItem::Nested(make_class_expr(
+                    false,
+                    ClassKind::Union,
+                    strings
                         .body
                         .iter()
                         .map(|string| {
@@ -696,18 +700,30 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
                             )
                         })
                         .collect(),
-                })
+                ))
             }
         });
     }
-    ClassExpr {
-        negative: class.negative,
-        kind: match class.kind {
+    make_class_expr(
+        class.negative,
+        match class.kind {
             ast::CharacterClassContentsKind::Union => ClassKind::Union,
             ast::CharacterClassContentsKind::Intersection => ClassKind::Intersection,
             ast::CharacterClassContentsKind::Subtraction => ClassKind::Subtraction,
         },
         items,
+    )
+}
+
+fn make_class_expr(negative: bool, kind: ClassKind, items: Vec<ClassItem>) -> ClassExpr {
+    let single_width = items.iter().all(class_item_is_single_width);
+    let max_width = items.iter().map(class_item_max_width).max().unwrap_or(1);
+    ClassExpr {
+        negative,
+        kind,
+        items,
+        single_width,
+        max_width,
     }
 }
 
@@ -833,24 +849,25 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         state: State,
         flags: Flags,
         output: &mut Vec<State>,
+        seen: &mut Option<HashSet<State>>,
     ) {
         if backtrack_reached(output.len()) {
             return;
         }
         let Some(part) = parts.get(index) else {
-            output.push(state);
+            push_unique(output, seen, state);
             return;
         };
         if is_single_option_expr(part) {
             if let Some(candidate) = match_expr(part, input, state, flags) {
-                visit(parts, index + 1, input, candidate, flags, output);
+                visit(parts, index + 1, input, candidate, flags, output, seen);
                 if backtrack_reached(output.len()) {
                     return;
                 }
             }
         } else {
             for candidate in match_options(part, input, state, flags) {
-                visit(parts, index + 1, input, candidate, flags, output);
+                visit(parts, index + 1, input, candidate, flags, output, seen);
                 if backtrack_reached(output.len()) {
                     return;
                 }
@@ -858,8 +875,27 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         }
     }
     let mut output = Vec::new();
-    visit(parts, 0, input, state, flags, &mut output);
+    let mut seen = None;
+    visit(parts, 0, input, state, flags, &mut output, &mut seen);
     output
+}
+
+fn push_unique(output: &mut Vec<State>, seen: &mut Option<HashSet<State>>, state: State) {
+    if let Some(seen) = seen {
+        if seen.insert(state.clone()) {
+            output.push(state);
+        }
+        return;
+    }
+    if output.iter().any(|candidate| candidate == &state) {
+        return;
+    }
+    if output.len() >= 8 {
+        let mut promoted = output.iter().cloned().collect::<HashSet<_>>();
+        promoted.insert(state.clone());
+        *seen = Some(promoted);
+    }
+    output.push(state);
 }
 
 fn is_single_option_expr(expr: &Expr) -> bool {
@@ -936,12 +972,13 @@ fn repeat_options(
         limit: usize,
         greedy: bool,
         output: &mut Vec<State>,
+        seen: &mut Option<HashSet<State>>,
     ) {
         if backtrack_reached(output.len()) {
             return;
         }
         if !greedy && count >= min {
-            output.push(state.clone());
+            push_unique(output, seen, state.clone());
             if backtrack_reached(output.len()) {
                 return;
             }
@@ -968,6 +1005,7 @@ fn repeat_options(
                         limit,
                         greedy,
                         output,
+                        seen,
                     );
                     if backtrack_reached(output.len()) {
                         return;
@@ -976,10 +1014,11 @@ fn repeat_options(
             }
         }
         if greedy && count >= min && !backtrack_reached(output.len()) {
-            output.push(state);
+            push_unique(output, seen, state);
         }
     }
     let mut output = Vec::new();
+    let mut seen = None;
     visit(
         body,
         input,
@@ -991,6 +1030,7 @@ fn repeat_options(
         limit,
         greedy,
         &mut output,
+        &mut seen,
     );
     output
 }
@@ -1280,12 +1320,7 @@ fn reverse_class_options(
 }
 
 fn class_max_width(class: &ClassExpr) -> usize {
-    class
-        .items
-        .iter()
-        .map(class_item_max_width)
-        .max()
-        .unwrap_or(1)
+    class.max_width
 }
 
 fn class_item_max_width(item: &ClassItem) -> usize {
@@ -1294,7 +1329,7 @@ fn class_item_max_width(item: &ClassItem) -> usize {
         ClassItem::Property { name, .. } if is_string_property(name) => {
             string_property_max_width(name)
         }
-        ClassItem::Nested(nested) => class_max_width(nested),
+        ClassItem::Nested(nested) => nested.max_width,
         _ => 1,
     }
 }
@@ -1700,12 +1735,16 @@ fn class_match_widths(
 }
 
 fn class_is_single_width(class: &ClassExpr) -> bool {
-    class.items.iter().all(|item| match item {
+    class.single_width
+}
+
+fn class_item_is_single_width(item: &ClassItem) -> bool {
+    match item {
         ClassItem::String(_) => false,
         ClassItem::Property { name, .. } => !is_string_property(name),
-        ClassItem::Nested(nested) => class_is_single_width(nested),
+        ClassItem::Nested(nested) => nested.single_width,
         _ => true,
-    })
+    }
 }
 
 fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool) -> bool {
@@ -2006,7 +2045,9 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expr, Flags, Regex, MAX_BACKTRACK_STATES};
+    use super::{
+        first_unit_at_or_after, units_from_str, Expr, Flags, Regex, MAX_BACKTRACK_STATES,
+    };
 
     #[test]
     fn captures_partition_a_greedy_run() {
@@ -2101,6 +2142,15 @@ mod tests {
             legacy.find_from_utf16_str("a😀b", 1).next().unwrap().range,
             1..2
         );
+    }
+
+    #[test]
+    fn search_start_uses_monotonic_offsets() {
+        let units = units_from_str("a😀b", true);
+        assert_eq!(first_unit_at_or_after(&units, 0), 0);
+        assert_eq!(first_unit_at_or_after(&units, 1), 1);
+        assert_eq!(first_unit_at_or_after(&units, 3), 2);
+        assert_eq!(first_unit_at_or_after(&units, 6), 3);
     }
 
     #[test]
