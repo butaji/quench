@@ -288,6 +288,7 @@ const __quenchNetModule = {
     server.keepAlive = options?.keepAlive;
     server.keepAliveInitialDelay = options?.keepAliveInitialDelay;
     server._allowHalfOpen = options?.allowHalfOpen === true;
+    server.__quench_cluster_worker_id = globalThis.__quench_cluster_worker_id;
     server.address = () => {
       if (!server.listening) return null;
       if (server._path !== undefined) return server._path;
