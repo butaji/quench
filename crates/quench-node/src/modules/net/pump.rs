@@ -208,7 +208,12 @@ fn accept_one(
     if let Some(js) = server_js {
         let server_handle = execute::get_property(&js, "_handle");
         let onconnection = execute::get_property(&server_handle, "onconnection");
-        if quench_runtime::is_callable(&onconnection) {
+        if quench_runtime::is_callable(&onconnection)
+            && !matches!(
+                onconnection,
+                Value::Builtin(quench_runtime::ops::Builtin::Object)
+            )
+        {
             execute::call(
                 &onconnection,
                 &server_handle,
