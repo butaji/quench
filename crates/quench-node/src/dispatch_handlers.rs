@@ -4685,6 +4685,7 @@ fn fork_child_start(
         .collect::<std::collections::HashSet<_>>();
     let previous_argv = execute::get_property(&process, "argv");
     let previous_send = execute::get_property(&process, "send");
+    let previous_cluster_sender = execute::get_property(&process, "\0clusterProcessSender");
     let previous_disconnect = execute::get_property(&process, "disconnect");
     let previous_connected = execute::get_property(&process, "connected");
     let previous_stdout = execute::get_property(&process, "stdout");
@@ -4738,6 +4739,11 @@ fn fork_child_start(
         process.clone(),
     );
     execute::set_property_in_place(child, "\0forkPreviousSend", previous_send.clone());
+    execute::set_property_in_place(
+        child,
+        "\0forkPreviousClusterSender",
+        previous_cluster_sender,
+    );
     execute::set_property_in_place(child, "\0forkPreviousDisconnect", previous_disconnect.clone());
     execute::set_property_in_place(child, "\0forkPreviousConnected", previous_connected.clone());
     execute::set_property_in_place(
@@ -4955,7 +4961,11 @@ pub fn cp_send(
         };
         if active_scope != child_scope {
             let previous_send = execute::get_property(&fork_child, "\0forkPreviousSend");
-            if quench_runtime::is_callable(&previous_send) {
+            if matches!(
+                execute::get_property(&fork_child, "\0forkPreviousClusterSender"),
+                Value::Boolean(true)
+            ) && quench_runtime::is_callable(&previous_send)
+            {
                 return execute::call(&previous_send, receiver, args);
             }
         }

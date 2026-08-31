@@ -518,6 +518,11 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             "send",
             crate::host::capability(SPEC_CLUSTER_WORKER_PROCESS_SEND),
         );
+        let _ = execute::set_property_in_place(
+            &process,
+            "\0clusterProcessSender",
+            Value::Boolean(true),
+        );
     }
     let parent_exit_code = state.borrow().process.exit_code;
     state.borrow_mut().process.exit_code = None;
@@ -612,6 +617,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
                 let _ = execute::set_property_in_place(&process, key, value);
             }
         }
+        let _ = execute::delete_property(process, "\0clusterProcessSender");
     }
     // Worker re-entry must not turn runner bookkeeping into enumerable
     // process globals. The upstream leak check observes the global object
