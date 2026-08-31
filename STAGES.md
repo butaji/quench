@@ -63,9 +63,14 @@ not staged by compatibility commits.
 ## Current evidence
 
 After the Rust TLS validation surface, self-reexec argv boundary, Blob URL
-registry, `util.parseEnv`, filesystem encoding, and WebCrypto receiver fixes,
-the latest manifest gate reports **589 pass, 100 fail, 3 timeout** of 692
-fixtures. The count is a point-in-time measurement because unsupported and
-timing-sensitive fixtures remain variable. TLS/HTTPS failures are encrypted
+registry, shared TTY helper, receiver-sensitive `process.binding('util')`,
+internal encoding/CIDR/SAB capabilities, and fixture `execArgv` boundary, the
+latest manifest gate reports **591 pass, 98 fail, 3 timeout** of 692 fixtures.
+The count is a point-in-time measurement because unsupported and timing-
+sensitive fixtures remain variable. TLS/HTTPS failures are encrypted
 transport effects, not validation gaps; they remain explicit until a bounded
 Rust transport capability exists.
+
+The focused util inventory after these changes is **40 pass, 13 fail, 1
+timeout** of 54 fixtures. Filtered results guide family selection but do not
+replace the manifest gate above.
