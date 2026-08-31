@@ -2295,10 +2295,11 @@ pub fn queue_microtask(
             "The \"callback\" argument must be of type function",
         ));
     }
+    let process_scope = state.borrow().cluster.process_scope();
     state
-        .borrow_mut()
+        .borrow()
         .event_loop
-        .queue_microtask(callback, vec![]);
+        .queue_microtask_scope(callback, vec![], process_scope);
     Ok(Value::Undefined)
 }
 pub fn process_hrtime(
