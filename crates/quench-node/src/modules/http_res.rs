@@ -63,6 +63,84 @@ pub fn res_set_header(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+pub fn res_set_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let headers_sent = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .is_some_and(|res| res.headers_sent)
+        || matches!(
+            execute::get_property(receiver.unwrap_or(&Value::Undefined), "headersSent"),
+            Value::Boolean(true)
+        );
+    if headers_sent {
+        return Err(headers_sent_error("Cannot set headers after they are sent to the client"));
+    }
+    let Some(source) = args.first() else {
+        return Err(invalid_headers_argument());
+    };
+    let entries = header_entries(source).ok_or_else(invalid_headers_argument)?;
+    let mut guard = state.borrow_mut();
+    if let Some(res) = guard.http.res.get_mut(&id) {
+        res.headers.clear();
+        for (name, value) in entries {
+            validate_header_value(&name, &value)?;
+            res.headers.push((name, value));
+        }
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn invalid_headers_argument() -> VmError {
+    crate::modules::buffer_enc::invalid_arg_type(
+        "The \"headers\" argument must be an instance of Headers or Map".into(),
+    )
+}
+
+fn header_entries(source: &Value) -> Option<Vec<(String, String)>> {
+    let is_headers = matches!(
+        execute::get_property(source, "_entries"),
+        Value::Array(_)
+    );
+    if !matches!(source, Value::Map(_)) && !is_headers {
+        return None;
+    }
+    let entries = execute::get_property(source, "entries");
+    if !quench_runtime::is_callable(&entries) {
+        return None;
+    }
+    let iterator = execute::call(&entries, source, &[]).ok()?;
+    let next = execute::get_property(&iterator, "next");
+    if !quench_runtime::is_callable(&next) {
+        return None;
+    }
+    let mut result = Vec::new();
+    for _ in 0..10_000 {
+        let step = execute::call(&next, &iterator, &[]).ok()?;
+        if matches!(execute::get_property(&step, "done"), Value::Boolean(true)) {
+            return Some(result);
+        }
+        let pair = execute::get_property(&step, "value");
+        let Value::Array(_) = pair else {
+            return None;
+        };
+        let name = execute::to_js_string(&execute::get_property(&pair, "0")).ok()?;
+        let values = header_values(Some(&execute::get_property(&pair, "1"))).ok()?;
+        for value in values {
+            result.push((name.clone(), value));
+        }
+    }
+    None
+}
+
 fn header_values(value: Option<&Value>) -> Result<Vec<String>, VmError> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -151,7 +229,6 @@ pub fn res_write_head(
         let mut guard = state.borrow_mut();
         if let Some(res) = guard.http.res.get_mut(&id) {
             res.status = status;
-            res.headers.clear();
             let keys = execute::own_enumerable_keys(&array);
             for pair in keys.chunks(2) {
                 let (Some(name), Some(value)) = (pair.first(), pair.get(1)) else {
@@ -166,6 +243,8 @@ pub fn res_write_head(
                 for value in &values {
                     validate_header_value(&name, value)?;
                 }
+                res.headers
+                    .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
                 res.headers
                     .extend(values.into_iter().map(|value| (name.clone(), value)));
             }
@@ -268,13 +347,14 @@ pub fn res_uncork(
 }
 
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
-    res.headers.clear();
     for key in execute::own_enumerable_keys(object) {
         if let Ok(item) = execute::get_property_result(object, &key) {
             if let Ok(values) = header_values_for(&key, Some(&item)) {
                 for value in &values {
                     validate_header_value(&key, value)?;
                 }
+                res.headers
+                    .retain(|(name, _)| !name.eq_ignore_ascii_case(&key));
                 res.headers
                     .extend(values.into_iter().map(|value| (key.clone(), value)));
             }
