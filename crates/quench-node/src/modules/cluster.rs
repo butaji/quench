@@ -352,6 +352,26 @@ pub(crate) fn set_worker_mode(
     }
 }
 
+/// Queue a primary cluster `listening` notification for a worker-owned server.
+pub(crate) fn notify_listening(
+    state: &Rc<RefCell<HostState>>,
+    worker_id: u64,
+    address: Value,
+) {
+    let worker = {
+        let host = state.borrow();
+        host.cluster.worker_object(worker_id)
+    };
+    let module = { state.borrow().cluster.module.clone() };
+    if let (Some(worker), Some(module)) = (worker, module) {
+        state.borrow_mut().net.pending_events.push((
+            module,
+            "listening".into(),
+            vec![worker, address],
+        ));
+    }
+}
+
 fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
     let server_info = state
         .borrow()
