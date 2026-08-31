@@ -629,22 +629,13 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         }
         "net" => Some(crate::modules::net::build_with_state(Some(state))),
         "tty" => {
-            let tty = quench_runtime::execute::get_property(
-                &quench_runtime::vm::current_global_object(),
-                "__nodeTtyModule",
-            );
-            if !matches!(tty, Value::Undefined | Value::Null) {
-                Some(tty)
-            } else {
-                let base = placeholder_constructor(None);
-                let write_stream = placeholder_constructor(Some(&base));
-                let read_stream = placeholder_constructor(Some(&write_stream));
-                Some(crate::host::namespace_object_from_pairs(vec![
-                    ("isatty".into(), crate::host::capability(crate::registry::SPEC_TTY_ISATTY)),
-                    ("ReadStream".into(), read_stream),
-                    ("WriteStream".into(), write_stream),
-                ]))
-            }
+            let write_stream = crate::host::capability(crate::registry::SPEC_TTY_WRITE_STREAM);
+            let read_stream = crate::host::capability(crate::registry::SPEC_TTY_READ_STREAM);
+            Some(crate::host::namespace_object_from_pairs(vec![
+                ("isatty".into(), crate::host::capability(crate::registry::SPEC_TTY_ISATTY)),
+                ("ReadStream".into(), read_stream),
+                ("WriteStream".into(), write_stream),
+            ]))
         }
         "fs" => Some(crate::modules::fs::build()),
         "http" => Some(crate::modules::http::build(state)),

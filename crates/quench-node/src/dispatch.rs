@@ -1042,6 +1042,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_HTTP_SERVER => http_create_server_construct,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
         CAP_HTTPS_AGENT => crate::modules::http_client::https_agent_construct,
+        CAP_TTY_READ_STREAM | CAP_TTY_WRITE_STREAM => crate::modules::tty::stream_construct,
         CAP_HTTP_CLIENT_REQUEST => crate::modules::http_client::request,
         CAP_HTTP_INCOMING => crate::modules::http::incoming_construct,
         CAP_HTTP_OUTGOING => handlers::http_outgoing_construct,
