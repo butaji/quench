@@ -552,9 +552,8 @@ fn find_match_utf16(
     start: usize,
     sticky: bool,
 ) -> Result<Option<Match>, VmError> {
-    let units: Vec<u16> = text.encode_utf16().collect();
     let start_units = crate::strings::byte_to_utf16(text, start);
-    let mut matched = regex.find_from_utf16(&units, start_units).next();
+    let mut matched = regex.find_from_utf16_str(text, start_units).next();
     if let Some(found) = &mut matched {
         found.range = utf16_range_to_bytes(text, &found.range);
         for capture in &mut found.captures {
