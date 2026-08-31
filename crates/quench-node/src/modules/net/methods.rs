@@ -1956,8 +1956,22 @@ pub fn server_listen(
             .is_some_and(|server| {
                 let server = server.borrow();
                 server.listening && !server.closed
-            });
+        });
         if already_listening {
+            if state.borrow().cluster.worker_context.is_some() {
+                let process_emit = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
+                let message = host_api::object(vec![
+                    ("cmd".into(), Value::String("NODE_CLUSTER".into())),
+                ]);
+                let mut host = state.borrow_mut();
+                for _ in 0..2 {
+                    host.event_loop.queue_microtask(
+                        process_emit.clone(),
+                        vec![Value::String("internalMessage".into()), message.clone()],
+                    );
+                }
+                return Ok(receiver);
+            }
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("Error".into())),
                 (
