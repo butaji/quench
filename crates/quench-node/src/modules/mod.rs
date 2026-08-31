@@ -1,6 +1,7 @@
-//! Node API modules. Each module is implemented as pure Rust
-//! objects installed via the runtime's host contract. There is no
-//! self-hosted JavaScript builtin layer.
+//! Node API modules. Observable host behavior and state machines are Rust
+//! objects installed through the runtime's host contract. A few modules still
+//! use explicit bridge fragments to assemble object/prototype shape; those
+//! fragments delegate to Rust capabilities and do not implement a VM.
 
 pub mod assert;
 pub mod assert_validate;
