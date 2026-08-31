@@ -37,6 +37,7 @@ pub use methods::{
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
     server_get_connections,
     tcp_bind, tcp_construct,
+    server_listen2,
 };
 pub use pump::{finalize, poll};
 
@@ -376,6 +377,7 @@ fn net_info_props(peer: SocketAddr, local: Option<SocketAddr>) -> Vec<(String, V
 fn server_props() -> Vec<(&'static str, Value)> {
     vec![
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
+        ("_listen2", cap(crate::registry::SPEC_NET_SERVER_LISTEN2)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
         (
             "closeIdleConnections",
