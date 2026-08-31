@@ -3476,6 +3476,17 @@ pub fn cp_spawn_output_emit(
     };
     let stderr_text = if !fork_stderr.is_empty() {
         fork_stderr
+    } else if matches!(
+        execute::get_property(child, "\0childForkIpc"),
+        Value::Boolean(true)
+    ) {
+        match &command {
+            Value::String(filename) => std::fs::read_to_string(filename)
+                .ok()
+                .and_then(|source| cp_script_write_output(&source, "process.stderr.write"))
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
     } else if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path)
@@ -3899,6 +3910,20 @@ pub fn cp_stdin_write(
                 &[Value::String("data".into()), Value::String(output)],
             )?;
         }
+    } else if matches!(
+        execute::get_property(receiver, "\0forkParentChild"),
+        Value::Object(_) | Value::ObjectAlias(_)
+    ) {
+        let child = execute::get_property(receiver, "\0forkParentChild");
+        let text = args
+            .first()
+            .and_then(|chunk| execute::to_js_string(chunk).ok())
+            .unwrap_or_default();
+        crate::modules::events::method_emit(
+            state,
+            Some(&child),
+            &[Value::String("message".into()), Value::String(text)],
+        )?;
     }
     Ok(Value::Boolean(true))
 }
@@ -4052,7 +4077,7 @@ pub fn cp_fork(
             )));
         }
     }
-    let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
+    let (fork_args, mut options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
         (Value::Undefined, second)
     } else {
         let fork_args = if matches!(second, Value::Null) {
@@ -4066,6 +4091,7 @@ pub fn cp_fork(
         };
         (fork_args, options)
     };
+    options = execute::set_property(options, "\0quench:forkIpc", Value::Boolean(true));
     if let Value::Array(stdio) = execute::get_property(&options, "stdio") {
         let has_ipc = (0..stdio.logical_len()).any(|index| {
             execute::get_property_result(&Value::Array(stdio.clone()), &index.to_string())
@@ -4103,6 +4129,13 @@ pub fn cp_fork(
                 (_, "ipc") => Value::Undefined,
                 (_, "pipe") => {
                     let stream = crate::modules::events::new_emitter_object(state)?;
+                    if index >= 3 {
+                        execute::set_property_in_place(
+                            &stream,
+                            "\0forkParentChild",
+                            child.clone(),
+                        );
+                    }
                     execute::set_property(
                         stream,
                         "write",
@@ -5169,6 +5202,15 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
     }
     let value = expression.trim_matches(['\'', '"']);
     Some((stream, format_output(value, newline)))
+}
+
+fn cp_script_write_output(source: &str, call: &str) -> Option<String> {
+    let (_, marker) = source.split_once(call)?;
+    let open = marker.find('(')? + 1;
+    let expression = marker
+        .get(open..marker[open..].find(')')? + open)?
+        .trim_end_matches([';', ' ', '\n']);
+    Some(expression.trim_matches(['\'', '"']).to_string())
 }
 
 fn cp_script_output_named(source: &str, call: &str) -> Option<String> {
