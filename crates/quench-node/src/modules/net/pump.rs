@@ -604,7 +604,18 @@ fn poll_listening(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     for server in announce {
         let js = server.borrow().js.clone();
+        let owner = server.borrow().owner_worker;
+        let address = server.borrow().bind_addr.map(|address| {
+            host_api::object(vec![
+                ("address".into(), Value::String(address.ip().to_string())),
+                ("family".into(), Value::String(family(address))),
+                ("port".into(), Value::Number(address.port() as f64)),
+            ])
+        });
         emit(state, &js, "listening", Vec::new())?;
+        if let (Some(worker_id), Some(address)) = (owner, address) {
+            crate::modules::cluster::notify_listening(state, worker_id, address);
+        }
     }
     Ok(())
 }
