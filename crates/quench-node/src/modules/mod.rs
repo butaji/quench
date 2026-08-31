@@ -59,6 +59,7 @@ pub mod text_decoder;
 pub mod text_encoder;
 pub mod timers;
 pub mod tty;
+pub mod tls;
 pub mod url;
 pub mod url_file;
 pub mod url_whatwg;
