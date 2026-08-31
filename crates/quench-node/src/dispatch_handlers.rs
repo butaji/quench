@@ -6665,11 +6665,18 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
         };
         return Some((stream, format_output(&value.repeat(count), newline)));
     }
-    let value = decode_script_literal(expression.trim_matches(['\'', '"']));
+    let raw = expression.trim();
+    if !(raw.starts_with(['\'', '"']) || raw.parse::<f64>().is_ok()) {
+        return None;
+    }
+    let value = decode_script_literal(raw.trim_matches(['\'', '"']));
     Some((stream, format_output(&value, newline)))
 }
 
 fn cp_script_stdout(source: &str, args: &Value) -> Option<String> {
+    if source.matches("console.log('").count() + source.matches("console.log(\"").count() > 1 {
+        return Some(cp_console_log_output(source));
+    }
     if source.contains("JSON.stringify(process.execArgv)") {
         let values = match args {
             Value::Array(array) => (0..array.logical_len())
@@ -6693,8 +6700,71 @@ fn cp_script_stdout(source: &str, args: &Value) -> Option<String> {
         return Some(format!("[{encoded}]"));
     }
     cp_script_output(source)
+        .or_else(|| cp_script_output_with_repeat_arg(source, args))
         .filter(|(stream, _)| *stream == "stdout")
         .map(|(_, text)| text)
+}
+
+fn cp_console_log_output(source: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..]
+        .find("console.log('")
+        .or_else(|| source[cursor..].find("console.log(\""))
+    {
+        let start = cursor + relative;
+        let Some(open) = source[start..].find('(').map(|offset| start + offset + 1) else {
+            break;
+        };
+        let Some(close) = source[open..].find(')').map(|offset| open + offset) else {
+            break;
+        };
+        let literal = source[open..close].trim().trim_matches(['\'', '"']);
+        let repeat = source[..start]
+            .rfind("for (let i = 0; i < ")
+            .and_then(|loop_start| {
+                (source[..start].rfind('{').unwrap_or(0)
+                    > source[..start].rfind('}').unwrap_or(0))
+                    .then(|| {
+                        source[loop_start + "for (let i = 0; i < ".len()..]
+                            .chars()
+                            .take_while(|character| character.is_ascii_digit())
+                            .collect::<String>()
+                    })
+            })
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(1);
+        for _ in 0..repeat {
+            output.push_str(&decode_script_literal(literal));
+            output.push('\n');
+        }
+        cursor = close + 1;
+    }
+    output
+}
+
+fn cp_script_output_with_repeat_arg(
+    source: &str,
+    args: &Value,
+) -> Option<(&'static str, String)> {
+    let (_, marker) = source.split_once("process.stdout.write")?;
+    let open = marker.find('(')? + 1;
+    let argument = marker.get(open..)?;
+    let expression = argument.get(..argument.find(')')?)?;
+    let (literal, repeat) = expression.split_once(".repeat(")?;
+    let variable = repeat.trim_end_matches(')').trim();
+    if variable.is_empty() {
+        return None;
+    }
+    let count = match args {
+        Value::Array(array) => (0..array.logical_len())
+            .filter_map(|index| execute::get_property_result(args, &index.to_string()).ok())
+            .filter_map(|value| execute::to_js_string(&value).ok())
+            .find_map(|value| value.parse::<usize>().ok()),
+        _ => None,
+    }?;
+    let value = decode_script_literal(literal.trim().trim_matches(['\'', '"']));
+    Some(("stdout", format_output(&value.repeat(count), false)))
 }
 
 fn cp_spawn_script_stdout(args: &Value) -> Option<String> {
