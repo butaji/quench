@@ -683,6 +683,22 @@ fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> 
     }
 }
 
+fn set_encoding_property(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> {
+    if encoding.eq_ignore_ascii_case("buffer") {
+        options.encoding = Some("buffer".into());
+        return Ok(());
+    }
+    match crate::modules::buffer_enc::canonical_encoding(encoding) {
+        Some(canonical) => {
+            options.encoding = Some(canonical.to_string());
+            Ok(())
+        }
+        None => Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+            "The argument 'encoding' is invalid encoding. Received '{encoding}'"
+        ))),
+    }
+}
+
 fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), VmError> {
     let get = |key: &str| quench_runtime::vm::get_property(object, key);
     let buffer = get("buffer");
@@ -690,10 +706,10 @@ fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), Vm
         options.buffer = Some(buffer);
     }
     match get("encoding") {
-        Value::String(encoding) => set_encoding(options, &encoding)?,
+        Value::String(encoding) => set_encoding_property(options, &encoding)?,
         Value::StringUnits(units) => {
             let encoding = String::from_utf16_lossy(&units);
-            set_encoding(options, &encoding)?;
+            set_encoding_property(options, &encoding)?;
         }
         _ => {}
     }
