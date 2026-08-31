@@ -100,6 +100,15 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         let global = quench_runtime::vm::current_global_object();
         let module = quench_runtime::execute::get_property(&global, "__nodeRequireChildProcess");
         if matches!(module, Value::Object(_) | Value::ObjectAlias(_)) {
+            let constructor = quench_runtime::execute::get_property(&module, "ChildProcess");
+            let prototype = quench_runtime::execute::get_property(&constructor, "prototype");
+            if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+                state.borrow_mut().child_process_prototype = Some(prototype);
+            }
+            state
+                .borrow_mut()
+                .module_cache
+                .insert("child_process".into(), module.clone());
             return Ok(module);
         }
         let factory = quench_runtime::execute::get_property(&global, "__nodeChildProcessModule");
@@ -116,12 +125,29 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         // Keep the channel key as a stable host-owned property name.  The
         // channel object itself lives on process, so all internal consumers
         // observe one identity without introducing a second IPC runtime.
-        return Ok(host_api::object(vec![
+        let public = state
+            .borrow()
+            .module_cache
+            .get("child_process")
+            .cloned()
+            .or_else(|| resolve(state, "child_process"))
+            .unwrap_or(Value::Undefined);
+        let child_process = quench_runtime::execute::get_property(&public, "ChildProcess");
+        let spawn_sync = crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC);
+        let internal = host_api::object(vec![
+            ("ChildProcess".into(), child_process),
+            ("spawnSync".into(), spawn_sync.clone()),
+            ("\0originalSpawnSync".into(), spawn_sync),
             (
                 "kChannelHandle".into(),
                 Value::String("Symbol.kChannelHandle\0".into()),
             ),
-        ]));
+        ]);
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("internal/child_process".into(), internal.clone());
+        return Ok(internal);
     }
     if let Some(mock) = crate::modules::test::mocked_module(&spec) {
         if crate::modules::test::mock_module_cache(&spec) {
@@ -842,7 +868,24 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "child_process" => {
             let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
             let constructor = crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR);
-            let prototype = host_api::object(Vec::new());
+            let prototype = host_api::object(vec![
+                (
+                    "kill".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_KILL),
+                ),
+                (
+                    "ref".to_string(),
+                    crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+                ),
+                (
+                    "unref".to_string(),
+                    crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+                ),
+                (
+                    "spawn".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_INSTANCE_SPAWN),
+                ),
+            ]);
             let constructor =
                 quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
             state.borrow_mut().child_process_prototype = Some(prototype);
