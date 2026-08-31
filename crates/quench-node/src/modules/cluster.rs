@@ -456,12 +456,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let result =
         quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
             let context = quench_runtime::vm::current_context();
-            let mut registers = quench_runtime::register_file::RegisterFile::new();
-            quench_runtime::vm::execute_code_in_place_context(
-                program.code(),
-                &mut registers,
-                &context,
-            )
+            quench_runtime::vm::execute_code_isolated_in_context(program.code(), &context)
             .map(|_| ())
             .map_err(|error| vec![error.render()])
         });
@@ -470,7 +465,13 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     // work made visible by this script; persistent work remains in the host
     // loop after the worker transitions back to primary mode.
     for _ in 0..64 {
-        let _ = crate::modules::net::poll(state);
+        if let Err(error) = crate::modules::net::poll(state) {
+            if crate::modules::pump::handle_uncaught(state, error).is_ok() {
+                let _ = crate::modules::pump::run_uncaught(state);
+            } else {
+                break;
+            }
+        }
         match crate::modules::pump::drain_one_tick(state) {
             Ok(true) => {}
             Ok(false) | Err(_) => break,

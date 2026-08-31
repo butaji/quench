@@ -75,6 +75,26 @@ pub fn execute_code_with_context(
     result
 }
 
+/// Execute a top-level code fragment in a fresh lexical frame without
+/// draining promise jobs. Hosts use this for synchronous re-entry (for
+/// example a worker script invoked from a callback): the caller's frame stays
+/// intact while the host retains ownership of the event-loop turn.
+pub fn execute_code_isolated_in_context(
+    code: crate::machine::CodeView<'_>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    crate::builtins::reset_intrinsic_prototype_state();
+    crate::vm::with_current_context(context, || {
+        let mut registers = crate::register_file::RegisterFile::new();
+        prepare_register_stack(&mut registers);
+        let environment = crate::environment::Environment::child_registers(
+            &crate::environment::Environment::new(),
+            registers.clone(),
+        );
+        execute_code_in_environment(code, &mut registers, context, environment)
+    })
+}
+
 /// The context currently active on this thread, or a default one.
 /// Hosts use this to re-enter the VM from inside a capability call.
 pub fn current_context() -> Rc<VmContext> {
