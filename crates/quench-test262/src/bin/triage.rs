@@ -67,15 +67,11 @@ fn main() -> ExitCode {
     if files.is_empty() {
         return fail("no tests matched the requested filters");
     }
-    let sources = match load_test_sources(&files) {
-        Ok(sources) => sources,
-        Err(error) => return fail(&error),
-    };
     println!("selected={} discovered={discovered_count}", files.len());
     let threads = args.threads.max(1).min(files.len());
     let emit_outcomes = args.json.is_some();
     let (passed, failed, failures, outcomes) =
-        run_parallel(&root, sources, args.limit, threads, emit_outcomes);
+        run_parallel(&root, files, args.limit, threads, emit_outcomes);
     if let Some(path) = &args.json {
         if let Err(error) = write_json_report(path, &args, &root, passed, failed, &outcomes) {
             return fail(&error);
@@ -256,7 +252,7 @@ fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<Pat
 /// Run the files across `threads` independent runners and merge the results.
 fn run_parallel(
     root: &Path,
-    files: Vec<TestSource>,
+    files: Vec<PathBuf>,
     limit: usize,
     threads: usize,
     emit_outcomes: bool,
@@ -295,7 +291,7 @@ fn run_parallel(
 
 /// Pull tests from a shared queue, stopping when the global failure cap is hit.
 fn run_worker(
-    files: Arc<Vec<TestSource>>,
+    files: Arc<Vec<PathBuf>>,
     root: PathBuf,
     limit: usize,
     counter: Arc<AtomicUsize>,
@@ -311,10 +307,22 @@ fn run_worker(
             break;
         }
         let stop = (start + WORK_BATCH).min(files.len());
+        let sources = files[start..stop]
+            .iter()
+            .filter_map(|path| match load_test_source(path) {
+                Ok(source) => Some(source),
+                Err(error) => {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    report.failed += 1;
+                    report.failures.push((path.clone(), error));
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         run_fixture_batch(
             &mut runner,
             &mut harness,
-            &files[start..stop],
+            &sources,
             limit,
             &counter,
             emit_outcomes,
@@ -375,25 +383,20 @@ fn run_fixture_batch(
     }
 }
 
-fn load_test_sources(files: &[PathBuf]) -> Result<Vec<TestSource>, String> {
-    files
-        .iter()
-        .map(|path| {
-            let source = std::fs::read_to_string(path)
-                .map_err(|error| format!("test262 read failed for {}: {error}", path.display()))?;
-            let metadata = TestMetadata::parse(&source).map_err(|error| {
-                format!(
-                    "test262 metadata parse failed for {}: {error}",
-                    path.display()
-                )
-            })?;
-            Ok(TestSource {
-                path: path.clone(),
-                source,
-                metadata,
-            })
-        })
-        .collect()
+fn load_test_source(path: &Path) -> Result<TestSource, String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|error| format!("test262 read failed for {}: {error}", path.display()))?;
+    let metadata = TestMetadata::parse(&source).map_err(|error| {
+        format!(
+            "test262 metadata parse failed for {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok(TestSource {
+        path: path.to_path_buf(),
+        source,
+        metadata,
+    })
 }
 
 /// Group failures by normalized reason, highest-impact buckets first.
