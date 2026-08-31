@@ -313,6 +313,17 @@ fn prefix_length(mask: &[u8]) -> Option<u32> {
     }
     Some(length)
 }
+
+pub fn util_construct_shared_array_buffer(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    execute::construct_value(
+        &Value::Builtin(quench_runtime::ops::Builtin::SharedArrayBuffer),
+        args,
+    )
+}
 pub fn util_inspect(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
