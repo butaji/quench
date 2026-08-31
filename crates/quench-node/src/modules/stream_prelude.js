@@ -2344,7 +2344,7 @@
       objectMode: inputMode,
       transform(chunk, encoding, callback) {
         composeValues(stages, [chunk]).then((values) => {
-          for (const value of values) this.push(value);
+          if (values) for (const value of values) this.push(value);
           callback();
         }, callback);
       }
