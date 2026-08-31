@@ -2274,6 +2274,13 @@
             }
           });
         }
+        await new Promise((resolve, reject) => {
+          try {
+            stage.end((error) => error ? reject(error) : resolve());
+          } catch (error) {
+            reject(error);
+          }
+        });
       } finally {
         stage.removeListener?.("data", onData);
       }
@@ -2347,6 +2354,20 @@
     result.readable = composeReadable(last);
     if (firstSource) {
       result.writable = false;
+      const sourceStreamChain = first && typeof first.pipe === "function" &&
+        stages.slice(1).every((stage) => stage && typeof stage.write === "function" &&
+          typeof stage.on === "function");
+      if (sourceStreamChain) {
+        for (let index = 0; index + 1 < stages.length; index++) {
+          stages[index].pipe(stages[index + 1]);
+        }
+        last.on("data", (chunk) => result.push(chunk));
+        last.once("end", () => result.push(null));
+        for (const stage of stages) {
+          stage.on("error", (error) => result.destroy(error));
+        }
+        return result;
+      }
       queueMicrotask(async () => {
         try {
           const source = typeof first === "function" ? first() : first;
