@@ -169,6 +169,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "internal/util" || name == "node:internal/util" {
+            return Ok(crate::modules::require::internal_util_module());
+            #[allow(unreachable_code)]
             return Ok(Value::object(vec![
                 (
                     "customInspectSymbol".into(),
