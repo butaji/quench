@@ -721,10 +721,13 @@ pub fn on(
         let child = state.borrow().cluster.worker_context == Some(id);
         {
             let mut guard = state.borrow_mut();
+            let Some(worker) = guard.cluster.workers.get_mut(&id) else {
+                return Ok(obj);
+            };
             let listeners = if child {
-                &mut guard.cluster.workers.get_mut(&id).unwrap().child_listeners
+                &mut worker.child_listeners
             } else {
-                &mut guard.cluster.workers.get_mut(&id).unwrap().listeners
+                &mut worker.listeners
             };
             listeners.entry(name.clone()).or_default().push(cb.clone());
         }
@@ -748,13 +751,9 @@ pub fn on(
                 .get(&id)
                 .is_some_and(|worker| worker.pending_disconnect);
             if pending {
-                state
-                    .borrow_mut()
-                    .cluster
-                    .workers
-                    .get_mut(&id)
-                    .unwrap()
-                    .pending_disconnect = false;
+                if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
+                    worker.pending_disconnect = false;
+                }
                 let terminal = state.borrow().cluster.workers.get(&id).is_some_and(|worker| {
                     worker.dead || worker.pending_exit.is_some()
                 });
