@@ -1250,6 +1250,9 @@ fn connect_with_receiver(
         }
     };
     let object = execute::canonical_value(&object);
+    if let Some(prototype) = state.borrow().net.socket_prototype.clone() {
+        execute::set_prototype_of(&object, &prototype)?;
+    }
     if let Some(options) = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
