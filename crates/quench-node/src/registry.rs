@@ -191,6 +191,9 @@ node_api! {
     (SPEC_CLUSTER_WORKER_KILL, "cluster:Worker:kill", 0x1F67),
     (SPEC_CLUSTER_WORKER_SEND, "cluster:Worker:send", 0x1F68),
     (SPEC_CLUSTER_WORKER_PROCESS_SEND, "cluster:Worker:process.send", 0x1F69),
+    (SPEC_CLUSTER_SETUP_PRIMARY, "cluster:setupPrimary", 0x1F6A),
+    (SPEC_CLUSTER_SETUP_MASTER, "cluster:setupMaster", 0x1F6B),
+    (SPEC_CLUSTER_SETUP_EVENT, "cluster:setup:event", 0x1F6C),
     (SPEC_DIAGNOSTICS_TRACING_CHANNEL, "diagnostics_channel:tracingChannel", 0x1F0A),
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),
@@ -1054,6 +1057,9 @@ pub const CAP_CLUSTER_WORKER_IS_DEAD: CapId = SPEC_CLUSTER_WORKER_IS_DEAD.cap;
 pub const CAP_CLUSTER_WORKER_KILL: CapId = SPEC_CLUSTER_WORKER_KILL.cap;
 pub const CAP_CLUSTER_WORKER_ON: CapId = SPEC_CLUSTER_WORKER_ON.cap;
 pub const CAP_CLUSTER_WORKER_PROCESS_SEND: CapId = SPEC_CLUSTER_WORKER_PROCESS_SEND.cap;
+pub const CAP_CLUSTER_SETUP_PRIMARY: CapId = SPEC_CLUSTER_SETUP_PRIMARY.cap;
+pub const CAP_CLUSTER_SETUP_MASTER: CapId = SPEC_CLUSTER_SETUP_MASTER.cap;
+pub const CAP_CLUSTER_SETUP_EVENT: CapId = SPEC_CLUSTER_SETUP_EVENT.cap;
 pub const CAP_CLUSTER_WORKER_SEND: CapId = SPEC_CLUSTER_WORKER_SEND.cap;
 pub const CAP_CONSOLE_DEBUG: CapId = SPEC_CONSOLE_DEBUG.cap;
 pub const CAP_CONSOLE_ERROR: CapId = SPEC_CONSOLE_ERROR.cap;

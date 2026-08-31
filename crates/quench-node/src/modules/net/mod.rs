@@ -32,6 +32,7 @@ pub use methods::{
     socket_pause, socket_ref,
     socket_reset_and_destroy,
     socket_onread,
+    register_fd_stream,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
     socket_set_type_of_service, socket_get_type_of_service, socket_handle_close,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
@@ -143,6 +144,8 @@ pub struct NetState {
     /// Canonical socket timeout timers, independent of VM alias properties.
     pub timeout_timers: HashMap<u64, Value>,
     pub pipe_fds: HashMap<i64, String>,
+    /// Host-owned stream endpoints handed to `new net.Socket({ fd })`.
+    pub fd_streams: HashMap<i64, Vec<TcpStream>>,
     pub next_pipe_fd: i64,
     pub async_streams: HashMap<u64, NetAsyncStream>,
     pub socket_prototype: Option<Value>,
@@ -187,6 +190,7 @@ impl NetState {
             pending_request_writes: Vec::new(),
             timeout_timers: HashMap::new(),
             pipe_fds: HashMap::new(),
+            fd_streams: HashMap::new(),
             next_pipe_fd: 100,
             async_streams: HashMap::new(),
             socket_prototype: None,
