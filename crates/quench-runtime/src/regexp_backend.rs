@@ -1839,7 +1839,7 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Flags, Regex};
+    use super::{Expr, Flags, Regex};
 
     #[test]
     fn captures_partition_a_greedy_run() {
@@ -1880,6 +1880,23 @@ mod tests {
             1..2
         );
     }
+
+    #[test]
+    fn surrogate_literal_lowering_keeps_code_unit() {
+        let regex = Regex::with_flags("\\udc00", Flags::default()).unwrap();
+        let value = match &regex.program {
+            Expr::Literal(value) => *value,
+            Expr::Sequence(parts) if parts.len() == 1 => match parts.first() {
+                Some(Expr::Literal(value)) => *value,
+                _ => panic!("expected literal"),
+            },
+            _ => panic!("expected literal"),
+        };
+        assert_eq!(value, 0xDC00);
+        let input = "😀".encode_utf16().collect::<Vec<_>>();
+        assert_eq!(regex.find_from_utf16(&input, 0).next().map(|m| m.range), Some(1..2));
+    }
+
     #[test]
     fn lookahead_capture_preserves_extent() {
         let regex = Regex::with_flags("(?:(?=(abc)))a", Flags::default()).unwrap();
