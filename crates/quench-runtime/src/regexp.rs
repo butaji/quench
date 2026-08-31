@@ -668,6 +668,12 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             "RegExp.prototype.test requires RegExp",
         ));
     }
+    let exec_method = crate::execute::get_property_result(receiver, "exec")?;
+    if !matches!(exec_method, Value::Builtin(crate::ops::Builtin::RegExpExec)) {
+        let input = string_value_argument(arguments)?;
+        let result = regexp_exec_value(receiver, input)?;
+        return Ok(Value::Boolean(!matches!(result, Value::Null)));
+    }
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
     if let Some(matched) = surrogate_property_test(arguments.first(), &source, &flags) {
         return Ok(Value::Boolean(matched));
@@ -705,9 +711,11 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         }
         return Ok(Value::Boolean(found.is_some()));
     }
-    let s = argument_string(arguments)?;
+    let input = string_value_argument(arguments)?;
+    let Value::String(s) = input else {
+        unreachable!("string_value_argument returns String or StringUnits");
+    };
     if !flags.contains(['u', 'v'])
-        && builtin_regexp_exec_property(receiver)
         && contains_astral(&s)
     {
         let units = s.encode_utf16().collect::<Vec<_>>();
@@ -2123,6 +2131,27 @@ mod tests {
         assert_eq!(
             crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
             Value::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn test_invokes_overridden_exec_protocol() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("a".to_string())),
+                ("\0regexp_flags".to_string(), Value::String(String::new())),
+                (
+                    "exec".to_string(),
+                    Value::Builtin(crate::ops::Builtin::Array),
+                ),
+            ])
+            .into(),
+        );
+        assert_eq!(
+            super::test(Some(&regexp), &[Value::String("no match".to_string())])
+                .expect("test"),
+            Value::Boolean(true)
         );
     }
 }
