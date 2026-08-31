@@ -4940,6 +4940,25 @@ pub fn cp_send(
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let fork_child = execute::get_property(receiver, "\0forkChild");
     let from_fork_process = matches!(fork_child, Value::Object(_) | Value::ObjectAlias(_));
+    // `fork_child_start` temporarily installs the child IPC sender on the
+    // shared process object.  Once control returns to the parent worker that
+    // same receiver must resume its saved sender; otherwise a parent
+    // `process.send()` is mistaken for another child message and loops back
+    // into the forked process.  The fork scope is the semantic boundary, so
+    // no fixture-specific receiver test is needed.
+    if from_fork_process {
+        let active_scope = state.borrow().cluster.process_scope();
+        let child_scope = match execute::get_property(&fork_child, "\0forkScope") {
+            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => scope as u64,
+            _ => 0,
+        };
+        if active_scope != child_scope {
+            let previous_send = execute::get_property(&fork_child, "\0forkPreviousSend");
+            if quench_runtime::is_callable(&previous_send) {
+                return execute::call(&previous_send, receiver, args);
+            }
+        }
+    }
     let child_process = execute::get_property(receiver, "\0forkProcess");
     let to_fork_process = matches!(child_process, Value::Object(_) | Value::ObjectAlias(_));
     let child = if from_fork_process {
