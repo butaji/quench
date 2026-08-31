@@ -17,11 +17,11 @@ use super::*;
 pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let events = std::mem::take(&mut state.borrow_mut().net.pending_events);
     for (receiver, event, args) in events {
-        emit(state, &receiver, &event, args)?;
+        emit_server_scoped(state, &receiver, &event, args)?;
     }
     let errors = std::mem::take(&mut state.borrow_mut().net.pending_errors);
     for (receiver, error) in errors {
-        emit(state, &receiver, "error", vec![error])?;
+        emit_server_scoped(state, &receiver, "error", vec![error])?;
     }
     let writes = std::mem::take(&mut state.borrow_mut().net.pending_writes);
     for (socket, bytes) in writes {
@@ -47,6 +47,29 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     finalize(state)?;
     poll_listening(state)?;
     poll_server_close(state)
+}
+
+fn emit_server_scoped(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    args: Vec<Value>,
+) -> Result<(), VmError> {
+    let scope = super::net_id(receiver).and_then(|id| {
+        state
+            .borrow()
+            .net
+            .servers
+            .get(&id)
+            .map(|server| server.borrow().process_scope)
+    });
+    let previous = state.borrow().cluster.process_scope();
+    if let Some(scope) = scope {
+        state.borrow_mut().cluster.set_process_scope(scope);
+    }
+    let result = emit(state, receiver, event, args);
+    state.borrow_mut().cluster.set_process_scope(previous);
+    result
 }
 
 fn poll_accept(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -619,7 +642,7 @@ fn poll_listening(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 ("port".into(), Value::Number(address.port() as f64)),
             ])
         });
-        emit(state, &js, "listening", Vec::new())?;
+        emit_server_scoped(state, &js, "listening", Vec::new())?;
         if let (Some(worker_id), Some(address)) = (owner, address) {
             crate::modules::cluster::notify_listening(state, worker_id, address);
         }

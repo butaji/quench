@@ -76,6 +76,8 @@ pub enum SocketState {
 pub struct NetServer {
     pub id: u64,
     pub owner_worker: Option<u64>,
+    /// Logical process scope that created the server in the shared host VM.
+    pub process_scope: u64,
     /// Cluster construction-order slot for `listen(0)` sharing.
     pub ephemeral_slot: Option<usize>,
     pub listener: Option<TcpListener>,
@@ -549,11 +551,13 @@ fn register_server_path(
         });
         (worker, refed)
     };
+    let process_scope = state.borrow().cluster.process_scope();
     state.borrow_mut().net.servers.insert(
         id,
         Rc::new(RefCell::new(NetServer {
             id,
             owner_worker,
+            process_scope,
             ephemeral_slot: None,
             listener,
             path,

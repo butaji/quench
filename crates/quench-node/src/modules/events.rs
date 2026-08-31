@@ -218,6 +218,35 @@ fn add_listener(
             let updated = execute::set_property(events.clone(), &event, value);
             execute::replace_value(&events, &updated);
         }
+        if event == "message"
+            && matches!(
+                execute::get_property(receiver, "\0childForkIpc"),
+                Value::Boolean(true)
+            )
+        {
+            let pending = execute::get_property(receiver, "\0childPendingMessages");
+            execute::set_property_in_place(
+                receiver,
+                "\0childPendingMessages",
+                host_api::array(Vec::new()),
+            );
+            if let Value::Array(ref values) = pending {
+                for index in 0..values.logical_len() {
+                    let entry = execute::get_property(&pending, &index.to_string());
+                    let args = match entry {
+                        Value::Array(ref array) => (0..array.logical_len())
+                            .map(|arg| execute::get_property(&entry, &arg.to_string()))
+                            .collect(),
+                        value => vec![value],
+                    };
+                    state.borrow().event_loop.queue_microtask_with_receiver(
+                        callback.clone(),
+                        args,
+                        receiver.clone(),
+                    );
+                }
+            }
+        }
     }
     let limit = max.unwrap_or(state.borrow().emitters.default_max);
     if count > limit && limit > 0 && !already_warned {

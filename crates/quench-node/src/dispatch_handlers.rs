@@ -4637,7 +4637,13 @@ pub fn cp_fork(
     // Run the forked fixture with child argv and a real bidirectional IPC
     // channel. This is source-driven process semantics, not a fixture-name
     // table: the child sends whatever its `process.send` call supplies.
-    fork_child_start(state, &child, &script, &fork_args_for_events)?;
+    let previous_scope = state.borrow().cluster.process_scope();
+    let child_scope = child.object_identity().unwrap_or(previous_scope);
+    execute::set_property_in_place(&child, "\0forkScope", Value::Number(child_scope as f64));
+    state.borrow_mut().cluster.set_process_scope(child_scope);
+    let fork_result = fork_child_start(state, &child, &script, &fork_args_for_events);
+    state.borrow_mut().cluster.set_process_scope(previous_scope);
+    fork_result?;
     // An already-aborted signal can mark the child before its shared-realm
     // source executes.  Remove resources created by that source as part of
     // the same terminal transition rather than leaking them into the parent
@@ -4802,11 +4808,33 @@ pub fn cp_message_emit(
         if let Some(handle) = args.get(2).filter(|value| !matches!(value, Value::Undefined)) {
             event_args.push(handle.clone());
         }
-        crate::modules::events::method_emit(
+        let emitted = crate::modules::events::method_emit(
             state,
             Some(child),
             &event_args,
         )?;
+        // Forked source executes synchronously before the caller can attach
+        // its ChildProcess listener. Retain only that IPC edge until the
+        // EventEmitter observes the listener; ordinary emitters still drop
+        // events with no subscribers.
+        if matches!(
+            execute::get_property(child, "\0childForkIpc"),
+            Value::Boolean(true)
+        ) && !execute::is_truthy(&emitted)
+        {
+            let pending = execute::get_property(child, "\0childPendingMessages");
+            let pending = match pending {
+                Value::Array(_) => pending,
+                _ => host_api::array(Vec::new()),
+            };
+            let entry = host_api::array(event_args.into_iter().skip(1).collect());
+            let index = match &pending {
+                Value::Array(array) => array.logical_len().to_string(),
+                _ => "0".into(),
+            };
+            let updated = execute::set_property(pending, &index, entry);
+            execute::set_property_in_place(child, "\0childPendingMessages", updated);
+        }
     }
     Ok(Value::Undefined)
 }
@@ -5061,7 +5089,19 @@ pub fn cp_send(
         {
             process_args.push(handle.clone());
         }
-        crate::modules::process::emit(state, &process_args)?;
+        let previous_scope = state.borrow().cluster.process_scope();
+        if let Value::Number(scope) = execute::get_property(receiver, "\0forkScope") {
+            state
+                .borrow_mut()
+                .cluster
+                .set_process_scope(scope as u64);
+        }
+        let result = crate::modules::process::emit(state, &process_args);
+        state
+            .borrow_mut()
+            .cluster
+            .set_process_scope(previous_scope);
+        result?;
     } else if from_fork_process {
         let callback = host_api::bound_capability_with_arguments(
             quench_runtime::ops::HostCapabilityRef {
