@@ -3260,6 +3260,11 @@ pub fn cp_spawn(
         "read",
         crate::host::capability(crate::registry::SPEC_CP_STDOUT_READ),
     );
+    let stdout = execute::set_property(
+        stdout,
+        "pipe",
+        Value::Builtin(quench_runtime::ops::Builtin::Object),
+    );
     if command == "grep"
         || command.ends_with("/grep")
         || command == "sed"
@@ -3275,6 +3280,11 @@ pub fn cp_spawn(
         execute::set_property_in_place(&stdin, "\0childFilterOutput", stdout.clone());
     }
     let stderr = crate::modules::events::new_emitter_object(state)?;
+    let stderr = execute::set_property(
+        stderr,
+        "pipe",
+        Value::Builtin(quench_runtime::ops::Builtin::Object),
+    );
     let set_encoding = crate::host::capability(crate::registry::SPEC_CP_STREAM_SET_ENCODING);
     let stdout = execute::set_property(stdout, "setEncoding", set_encoding.clone());
     let stderr = execute::set_property(stderr, "setEncoding", set_encoding);
@@ -3316,6 +3326,30 @@ pub fn cp_spawn(
         "Symbol.dispose",
         crate::host::capability(crate::registry::SPEC_CP_KILL),
     );
+    let has_ipc = matches!(
+        execute::get_property(&options, "stdio"),
+        Value::Array(ref stdio)
+            if (0..stdio.logical_len()).any(|index| {
+                execute::get_property_result(&Value::Array(stdio.clone()), &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "ipc")
+            })
+    );
+    if has_ipc {
+        execute::set_property_in_place(
+            &child,
+            "send",
+            crate::host::capability(crate::registry::SPEC_CP_SEND),
+        );
+        execute::set_property_in_place(
+            &child,
+            "disconnect",
+            crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
+        );
+        execute::set_property_in_place(&child, "connected", Value::Boolean(true));
+        execute::set_property_in_place(&child, "\0childIpc", Value::Boolean(true));
+    }
     // ChildProcess follows the same ref/unref capability contract as other
     // event-loop handles.  The host has no separate child runtime object, so
     // these operations are intentionally allocation-free no-ops while still
@@ -3815,15 +3849,27 @@ pub fn cp_spawn_output_emit(
             &[Value::String("data".into())],
         )?;
         if matches!(data_listeners, Value::Number(value) if value > 0.0) {
-            emit(&stdout, "data", vec![Value::String(stdout_text)])?;
+            emit(
+                &stdout,
+                "data",
+                vec![cp_stream_output_value(&stdout, &stdout_text)?],
+            )?;
         } else {
             emit(&stdout, "readable", Vec::new())?;
         }
     } else {
-        emit(&stdout, "data", vec![Value::String(stdout_text)])?;
+        emit(
+            &stdout,
+            "data",
+            vec![cp_stream_output_value(&stdout, &stdout_text)?],
+        )?;
     }
     if !stderr_text.is_empty() {
-        emit(&stderr, "data", vec![Value::String(stderr_text)])?;
+        emit(
+            &stderr,
+            "data",
+            vec![cp_stream_output_value(&stderr, &stderr_text)?],
+        )?;
     }
     emit(&stdout, "end", Vec::new())?;
     emit(&stderr, "end", Vec::new())?;
@@ -4637,6 +4683,65 @@ pub fn cp_send(
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
         ])));
     }
+    // A spawned process with an IPC stdio slot has the same bounded send
+    // backlog as a fork, but no shared `process` receiver to deliver into.
+    // Keep the backlog as one hidden state fact and acknowledge callbacks on
+    // the drain edge; ordinary fork routing below remains unchanged.
+    let generic_ipc = !from_fork_process
+        && !to_fork_process
+        && (matches!(
+            execute::get_property(receiver, "\0childIpc"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(&execute::get_property(receiver, "\0childOptions"), "stdio"),
+            Value::Array(ref stdio)
+                if (0..stdio.logical_len()).any(|index| {
+                    execute::get_property_result(&Value::Array(stdio.clone()), &index.to_string())
+                        .ok()
+                        .and_then(|value| execute::to_js_string(&value).ok())
+                        .is_some_and(|value| value == "ipc")
+                })
+        ));
+    if generic_ipc {
+        if matches!(execute::get_property(receiver, "connected"), Value::Boolean(false)) {
+            return Ok(Value::Boolean(false));
+        }
+        let count = match execute::get_property(receiver, "sendCount") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as u32,
+            _ => 0,
+        };
+        let callback = args
+            .iter()
+            .skip(1)
+            .rev()
+            .find(|value| quench_runtime::is_callable(value))
+            .cloned();
+        if count >= 2 {
+            let ack = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_CP_SEND_ACK.cap,
+                    ),
+                },
+                vec![receiver.clone(), callback.unwrap_or(Value::Undefined)],
+            );
+            state.borrow().event_loop.queue_immediate(ack, vec![]);
+            return Ok(Value::Boolean(false));
+        }
+        execute::set_property_in_place(
+            receiver,
+            "sendCount",
+            Value::Number((count + 1) as f64),
+        );
+        if let Some(callback) = callback {
+            state
+                .borrow()
+                .event_loop
+                .queue_immediate(callback, vec![]);
+        }
+        return Ok(Value::Boolean(true));
+    }
     let delivered = if from_fork_process || to_fork_process {
         message.clone()
     } else if args
@@ -4718,6 +4823,21 @@ pub fn cp_send(
         }
     }
     Ok(Value::Boolean(true))
+}
+
+pub fn cp_send_ack(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(child) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    execute::set_property_in_place(child, "sendCount", Value::Number(0.0));
+    if let Some(callback) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+        execute::call(callback, &Value::Undefined, &[])?;
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn cp_constructor(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -4893,6 +5013,14 @@ pub fn cp_exec_sync(
         return Err(VmError::Thrown(error));
     }
     Ok(Value::String(String::new()))
+}
+
+fn cp_stream_output_value(stream: &Value, text: &str) -> Result<Value, VmError> {
+    let encoding = execute::get_property(stream, "\0childEncoding");
+    if !matches!(encoding, Value::Undefined | Value::Null) {
+        return Ok(Value::String(text.to_string()));
+    }
+    cp_buffer_value(text)
 }
 
 fn cp_buffer_value(text: &str) -> Result<Value, VmError> {
@@ -5581,8 +5709,9 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
         return None;
     };
     let open = marker.find('(')? + 1;
-    let expression = marker
-        .get(open..)?
+    let argument = marker.get(open..)?;
+    let expression = argument
+        .get(..argument.find(')')?)?
         .trim_end_matches([';', ')', ' ', '\n', '"']);
     if let Some((literal, rest)) = expression.split_once(".repeat(") {
         let value = literal.trim().trim_matches(['\'', '"']);

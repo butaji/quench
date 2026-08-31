@@ -138,6 +138,23 @@ pub fn build_with_title(argv: &[String], exec_path: &str, title: &str) -> Value 
 }
 
 fn info_props(argv: &[String], exec_path: &str, title: &str) -> Vec<(&'static str, Value)> {
+    let channel_handle = host_api::object(vec![
+        (
+            "readStop".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "readStart".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+    ]);
+    let stdin = crate::host::namespace_object_from_pairs(vec![
+        ("on".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("once".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("resume".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("ref".into(), crate::host::capability(crate::registry::SPEC_PROCESS_REF)),
+        ("unref".into(), crate::host::capability(crate::registry::SPEC_PROCESS_UNREF)),
+    ]);
     vec![
         ("Symbol.toStringTag", Value::String("process".into())),
         (
@@ -190,6 +207,8 @@ fn info_props(argv: &[String], exec_path: &str, title: &str) -> Vec<(&'static st
         ("features", features()),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
+        ("stdin", stdin),
+        ("\0kChannelHandle", channel_handle),
     ]
 }
 
@@ -243,6 +262,14 @@ fn std_stream(is_error: bool) -> Value {
                 },
                 if is_error { 0x0A0A } else { 0x0A09 },
             )),
+        ),
+        (
+            "ref".to_string(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        (
+            "unref".to_string(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
         ),
     ])
 }

@@ -53,10 +53,18 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     execute::set_property_in_place(
         &object,
         "_handle",
-        host_api::object(vec![(
-            "onconnection".into(),
-            Value::Builtin(quench_runtime::ops::Builtin::Object),
-        )]),
+        host_api::object(vec![
+            (
+                "onconnection".into(),
+                Value::Builtin(quench_runtime::ops::Builtin::Object),
+            ),
+            // Internal handles retain a callable close hook even though the
+            // owning Server remains responsible for listener lifecycle.
+            (
+                "close".into(),
+                Value::Builtin(quench_runtime::ops::Builtin::Object),
+            ),
+        ]),
     );
     if let Some(options) = args
         .first()

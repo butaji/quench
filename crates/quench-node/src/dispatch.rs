@@ -868,6 +868,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_ABORT_EMIT => cp_abort_emit,
         CAP_CP_FORK => cp_fork,
         CAP_CP_SEND => cp_send,
+        CAP_CP_SEND_ACK => cp_send_ack,
         CAP_CP_MESSAGE_EMIT => cp_message_emit,
         CAP_CP_DISCONNECT => cp_disconnect,
         CAP_CP_DISCONNECT_EMIT => cp_disconnect_emit,
