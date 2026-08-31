@@ -1,12 +1,25 @@
 fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@split")?;
-    let mut input = to_string_argument(arguments)?;
+    let input = string_value_argument(arguments)?;
     let flags = match_all_flags(&receiver)?;
     let matcher = split_matcher(&receiver, &flags)?;
     let limit = split_limit(arguments)?;
     if dynamic_splitter(&matcher) {
+        let input = crate::strings::materialize(&input).unwrap_or_default();
         return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
+    if let Value::StringUnits(units) = &input {
+        if !extract_source(&matcher).starts_with('^') {
+            return split_units_compiled(
+                input.clone(),
+                units,
+                &matcher,
+                limit,
+                unicode_mode(&flags),
+            );
+        }
+    }
+    let mut input = crate::strings::materialize(&input).unwrap_or_default();
     split_compiled(&mut input, &matcher, limit)
 }
 
@@ -44,6 +57,60 @@ fn split_compiled(input: &mut String, matcher: &Value, limit: usize) -> Result<V
         pieces.push(Value::String(input.clone()));
     }
     Ok(Value::array(pieces.into_iter().take(limit).collect()))
+}
+
+fn split_units_compiled(
+    input: Value,
+    units: &[u16],
+    matcher: &Value,
+    limit: usize,
+    unicode: bool,
+) -> Result<Value, VmError> {
+    let (re, _) = compiled_regex(matcher)?;
+    if units.is_empty() {
+        return split_empty_units(&re, units);
+    }
+    let mut pieces = Vec::new();
+    let mut offset = 0;
+    let mut empty = false;
+    while pieces.len() < limit && offset < units.len() {
+        let Some(m) = crate::regexp::find_match_units(&re, units, offset, false)? else {
+            break;
+        };
+        let start = m.start();
+        let end = m.end();
+        if start == end {
+            let next = advance_string_index_value(&input, end, unicode)
+                .min(units.len());
+            pieces.push(crate::strings::from_units(units[offset..next].to_vec()));
+            offset = next;
+            empty = true;
+            continue;
+        }
+        pieces.push(crate::strings::from_units(units[offset..start].to_vec()));
+        for group in m.groups().skip(1) {
+            pieces.push(group.map_or(Value::Undefined, |range| {
+                crate::strings::from_units(units[range].to_vec())
+            }));
+        }
+        offset = end;
+    }
+    if pieces.len() < limit && (!empty || offset < units.len()) {
+        pieces.push(crate::strings::from_units(units[offset..].to_vec()));
+    }
+    Ok(Value::array(pieces.into_iter().take(limit).collect()))
+}
+
+fn split_empty_units(
+    re: &crate::regexp_backend::Regex,
+    units: &[u16],
+) -> Result<Value, VmError> {
+    let values = if crate::regexp::find_match_units(re, units, 0, false)?.is_some() {
+        Vec::new()
+    } else {
+        vec![crate::strings::from_units(units.to_vec())]
+    };
+    Ok(Value::array(values))
 }
 
 fn split_empty_compiled(re: &crate::regexp_backend::Regex, input: &str) -> Result<Value, VmError> {
