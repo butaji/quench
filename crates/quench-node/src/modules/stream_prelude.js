@@ -266,7 +266,12 @@
     const state = stream._readableState;
     state.readRequests += 1;
     state.reading = true;
-    stream._read(state.highWaterMark);
+    try {
+      stream._read(state.highWaterMark);
+    } catch (error) {
+      state.reading = false;
+      stream.destroy(error);
+    }
   }
 
   function flowReadable(stream) {
@@ -1893,8 +1898,14 @@
     const suppliedArgs = args.length;
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
-    const streams = args.map((stage) =>
-      typeof stage === "function" ? compose(stage) : stage);
+    const streams = args.map((stage, index) => {
+      if (index === 0 && stage && typeof stage.pipe !== "function" &&
+          (typeof stage[Symbol.iterator] === "function" ||
+           typeof stage[Symbol.asyncIterator] === "function")) {
+        return Readable.from(stage);
+      }
+      return typeof stage === "function" ? compose(stage) : stage;
+    });
     if (streams.length === 0) {
       const error = new TypeError(
         suppliedArgs === 0
@@ -2182,12 +2193,115 @@
   DuplexCompat.prototype = Duplex.prototype;
   Object.setPrototypeOf(DuplexCompat, Duplex);
   DuplexCompat.from = (source, options = {}) => {
-    const pair = source && source.readable && source.readable.getReader
-      ? source
-      : source && source.getReader
-        ? { readable: source }
-        : null;
+    if (source && source._isDuplex) return source;
+    if (typeof source === "function") {
+      const functionName = source.constructor?.name;
+      if (functionName === "AsyncGeneratorFunction" || functionName === "GeneratorFunction") {
+        return compose(source);
+      }
+      const produced = source();
+      if (produced === undefined) {
+        const error = new TypeError("The function must return a stream or iterable");
+        error.code = "ERR_INVALID_RETURN_VALUE";
+        throw error;
+      }
+      return DuplexCompat.from(produced, options);
+    }
+    if (isReadableNodeStream(source) || isWritableNodeStream(source)) {
+      return DuplexCompat.from({
+        readable: isReadableNodeStream(source) ? source : null,
+        writable: isWritableNodeStream(source) ? source : null,
+      }, options);
+    }
+    const pair = source && typeof source.getReader === "function"
+      ? { readable: source }
+      : null;
     if (pair) return DuplexCompat.fromWeb(pair, options);
+    if (source && ("readable" in source || "writable" in source)) {
+      const readable = isReadableNodeStream(source.readable) ? source.readable : null;
+      const writable = isWritableNodeStream(source.writable) ? source.writable : null;
+      const webReadable = source.readable?.getReader ? source.readable : null;
+      const webWritable = source.writable?.getWriter ? source.writable : null;
+      const reader = webReadable?.getReader?.();
+      let reading = false;
+      const result = new Duplex({
+        ...options,
+        readable: !!(readable || webReadable),
+        writable: !!(writable || webWritable),
+        read() {
+          if (!webReadable || reading) return;
+          reading = true;
+          reader.read().then(({ value, done }) => {
+            reading = false;
+            if (done) {
+              reader.releaseLock();
+              this.push(null);
+            }
+            else this.push(value);
+          }, (error) => {
+            reading = false;
+            reader.releaseLock();
+            this.destroy(error);
+          });
+        },
+        write(chunk, encoding, callback) {
+          if (writable) writable.write(chunk, encoding, callback);
+          else if (webWritable) {
+            const writer = webWritable.getWriter();
+            writer.write(chunk).then(() => {
+              writer.releaseLock();
+              callback?.();
+            }, (error) => {
+              writer.releaseLock();
+              callback?.(error);
+            });
+          }
+          else callback?.();
+        },
+        final(callback) {
+          if (writable) writable.end(callback);
+          else if (webWritable) {
+            const writer = webWritable.getWriter();
+            writer.close().then(() => {
+              writer.releaseLock();
+              callback?.();
+            }, (error) => {
+              writer.releaseLock();
+              callback?.(error);
+            });
+          }
+          else callback?.();
+        }
+      });
+      if (readable) {
+        readable.on("data", (chunk) => result.push(chunk));
+        readable.once("end", () => result.push(null));
+        readable.once("error", (error) => result.destroy(error));
+      }
+      return result;
+    }
+    if (source && typeof source.stream === "function") {
+      return DuplexCompat.from(source.stream(), options);
+    }
+    if (source && typeof source.getWriter === "function") {
+      return DuplexCompat.from({ writable: source }, options);
+    }
+    if (source && typeof source.then === "function") {
+      let started = false;
+      return new Duplex({
+        ...options,
+        readable: true,
+        writable: false,
+        read() {
+          if (started) return;
+          started = true;
+          Promise.resolve(source).then((value) => {
+            this.push(value);
+            this.push(null);
+          }, (error) => this.destroy(error));
+        }
+      });
+    }
     return Readable.from(source, options);
   };
   DuplexCompat.fromWeb = (pair, options) =>
