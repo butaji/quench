@@ -567,11 +567,12 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         let read_start = execute::get_property(&handle, "readStart");
         execute::call(&read_start, &handle, &[])?;
     }
+    let process_scope = state.borrow().cluster.process_scope();
     state.borrow_mut().net.sockets.insert(
         _id,
         Rc::new(RefCell::new(NetSocket {
             id: _id,
-            process_scope: state.borrow().cluster.process_scope(),
+            process_scope,
             stream: fd_stream,
             js: object.clone(),
             state: SocketState::Open,
