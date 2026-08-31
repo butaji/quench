@@ -664,11 +664,10 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
     if !flags.contains('m') {
         return false;
     }
-    let bytes = input.as_bytes();
     [last_index.saturating_sub(1), last_index]
         .into_iter()
-        .filter_map(|index| bytes.get(index))
-        .any(|byte| *byte == b'\n' || *byte == b'\r')
+        .filter_map(|index| crate::strings::utf16_code_unit(input, index))
+        .any(|unit| unit == b'\n' as u16 || unit == b'\r' as u16)
 }
 
 fn anchored_match_units(source: &str, flags: &str, last_index: usize, input: &[u16]) -> bool {
@@ -1933,6 +1932,35 @@ mod tests {
         assert_eq!(
             result,
             crate::strings::from_units(vec![0xD800, b'x' as u16, 0xDC00])
+        );
+    }
+
+    #[test]
+    fn multiline_anchor_uses_utf16_last_index_after_astral_input() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("^a".to_string())),
+                (
+                    "\0regexp_flags".to_string(),
+                    Value::String("gm".to_string()),
+                ),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(3.0))),
+                ),
+            ])
+            .into(),
+        );
+        let result = super::test(
+            Some(&regexp),
+            &[Value::String("😀\na".to_string())],
+        )
+        .expect("test");
+        assert_eq!(result, Value::Boolean(true));
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
+            Value::Number(4.0)
         );
     }
 }
