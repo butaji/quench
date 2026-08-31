@@ -39,6 +39,7 @@ pub fn internal_util_module() -> Value {
         ("decorateErrorStack".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK)),
         ("assignFunctionName".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME)),
         ("isError".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR)),
+        ("WeakReference".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_WEAK_REFERENCE_CONSTRUCT)),
         ("kEnumerableProperty".into(), enumerable),
         ("kEmptyObject".into(), empty),
     ])
@@ -476,70 +477,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let util = require(state, &[Value::String("util".into())]).ok()?;
             Some(quench_runtime::execute::get_property(&util, "types"))
         }
-        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                // Node's internal modules share the registry symbol used by
-                // util.inspect.custom.  Keep the symbol spelling canonical
-                // so symbol-keyed hooks resolve to the same identity as
-                // Symbol.for("nodejs.util.inspect.custom").
-                "customInspectSymbol".to_string(),
-                Value::String("Symbol.for.nodejs.util.inspect.custom\0".into()),
-            ),
-            (
-                "pendingDeprecate".to_string(),
-                crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
-            ),
-            (
-                "emitExperimentalWarning".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_EMIT_WARNING),
-            ),
-            (
-                "sleep".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
-            ),
-            (
-                "assertCrypto".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSERT_CRYPTO),
-            ),
-            (
-                "normalizeEncoding".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING),
-            ),
-            (
-                "getCIDR".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_GET_CIDR),
-            ),
-            (
-                "constructSharedArrayBuffer".to_string(),
-                crate::host::capability(
-                    crate::registry::SPEC_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER,
-                ),
-            ),
-            (
-                "customPromisifyArgs".to_string(),
-                Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
-            ),
-            (
-                "decorateErrorStack".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK),
-            ),
-            (
-                "assignFunctionName".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME),
-            ),
-            (
-                "isError".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR),
-            ),
-            (
-                "kEnumerableProperty".to_string(),
-                frozen_null_object(vec![("enumerable".into(), Value::Boolean(true))]),
-            ),
-            (
-                "kEmptyObject".to_string(),
-                frozen_null_object(Vec::new()),
-            ),
-        ])),
+        // Internal util is one Rust-owned namespace. Keep all require paths
+        // on the same value so symbols, frozen sentinels, and capabilities
+        // cannot diverge between resolver implementations.
+        "internal/util" => Some(internal_util_module()),
         "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(
             "internalBinding".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),
