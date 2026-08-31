@@ -131,6 +131,42 @@ pub fn pipe_bind(
     Ok(Value::Number(0.0))
 }
 
+/// Construct an internal TCP listener handle consumed by `server.listen`.
+/// Binding port zero eagerly yields a stable descriptor and listener while
+/// preserving the ordinary bound-socket adoption path.
+pub fn tcp_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let options = host_api::object(vec![
+        ("host".into(), Value::String("0.0.0.0".into())),
+        ("port".into(), Value::Number(0.0)),
+    ]);
+    let object = bound_socket_construct(state, &[options])?;
+    let object = install_methods(
+        object,
+        vec![(
+            "bind".into(),
+            crate::host::capability(crate::registry::SPEC_NET_TCP_BIND),
+        )],
+    )?;
+    // Internal TCP handles expose a numeric fd field, unlike the public
+    // BoundSocket accessor method.
+    let fd = bound_socket_fd(state, Some(&object), &[])?;
+    execute::set_property_in_place(&object, "fd", fd);
+    Ok(object)
+}
+
+/// Complete the internal TCP handle bind call. The listener was allocated at
+/// construction, so adoption only needs the success errno contract.
+pub fn tcp_bind(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(0.0))
+}
+
 pub fn bound_socket_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
@@ -1822,12 +1858,55 @@ pub fn server_listen(
             execute::set_property_in_place(&receiver, "ipv6Only", Value::Boolean(value));
         }
     }
+    // `internalBinding('pipe_wrap').Pipe` is itself a server-owned handle.
+    // After `bind(path)`, adopting it through `server.listen(handle)` moves
+    // the existing listener instead of treating the handle as connect opts.
+    if let Some(handle) = args.first().filter(|value| {
+        matches!(execute::get_property(value, PIPE_MARKER_PROP), Value::Boolean(true))
+    }) {
+        if let Some(id) = super::net_id(handle) {
+            let existing = { state.borrow().net.servers.get(&id).cloned() };
+            if let Some(server) = existing {
+                let (listener, path, port) = {
+                    let mut server = server.borrow_mut();
+                    let listener = server.listener.take();
+                    let path = server.path.clone();
+                    let port = server.bind_addr.map(|address| address.port()).unwrap_or(0);
+                    server.closed = true;
+                    (listener, path, port)
+                };
+                if let Some(listener) = listener {
+                    register_server_path(state, &receiver, Some(listener), path.clone())?;
+                    if path.is_none() {
+                        super::set_server_connection_key(&receiver, port, None)?;
+                    }
+                    add_listener_cb(state, &receiver, args.get(1), "listening", true)?;
+                    configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
+                    return Ok(receiver);
+                }
+            }
+        }
+    }
+    let fd_bound = args.first().and_then(|value| {
+        let fd = match execute::get_property(value, "fd") {
+            Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 => Some(fd as i64),
+            _ => None,
+        }?;
+        state
+            .borrow()
+            .net
+            .bound_sockets
+            .iter()
+            .find(|(_, bound)| bound.borrow().fd == fd)
+            .map(|(id, _)| *id)
+    });
     if let Some(options) = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         if matches!(execute::get_property(options, "fd"), Value::Number(_))
             && matches!(execute::get_property(options, "handle"), Value::Undefined)
+            && fd_bound.is_none()
         {
             let error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
@@ -1859,7 +1938,16 @@ pub fn server_listen(
             ])));
         }
     }
-    if let Some(bound_id) = args.first().and_then(bound_id) {
+    let supplied_bound = args.first().and_then(|value| {
+        bound_id(value).or_else(|| {
+            let handle = execute::get_property(value, "handle");
+            bound_id(&handle).or_else(|| {
+                let handle = execute::get_property(value, "_handle");
+                bound_id(&handle)
+            })
+        })
+    }).or(fd_bound);
+    if let Some(bound_id) = supplied_bound {
         let bound = state
             .borrow()
             .net
@@ -2688,20 +2776,45 @@ pub fn socket_address(
 
 /// `socket.setNoDelay([noDelay])` — accepted for loopback; no-op.
 pub fn socket_set_no_delay(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
         let enabled = args.first().map(execute::is_truthy).unwrap_or(true);
         let previous = matches!(execute::get_property(receiver, super::NO_DELAY_PROP), Value::Boolean(true));
-        if enabled == previous {
-            return Ok(receiver.clone());
-        }
         let handle = execute::get_property(receiver, "_handle");
-        let set_no_delay = execute::get_property(&handle, "setNoDelay");
-        if quench_runtime::is_callable(&set_no_delay) {
-            execute::call(&set_no_delay, &handle, &[Value::Boolean(enabled)])?;
+        let handle_is_object = matches!(handle, Value::Object(_) | Value::ObjectAlias(_));
+        let applied = matches!(
+            execute::get_property(&handle, HANDLE_NO_DELAY_PROP),
+            Value::Boolean(true)
+        );
+        if enabled != previous || (handle_is_object && !applied) {
+            let binding = state
+                .borrow()
+                .tcp_binding
+                .clone()
+                .unwrap_or_else(|| {
+                    let global = quench_runtime::vm::current_global_object();
+                    execute::get_property(&global, TCP_WRAP_BINDING_PROP)
+                });
+            let prototype = execute::get_property(&execute::get_property(&binding, "TCPWrap"), "prototype");
+            let set_no_delay = execute::get_property(&prototype, "setNoDelay");
+            let set_no_delay = if handle_is_object && quench_runtime::is_callable(&set_no_delay) {
+                set_no_delay
+            } else if handle_is_object {
+                execute::get_property(&handle, "setNoDelay")
+            } else {
+                Value::Undefined
+            };
+            if quench_runtime::is_callable(&set_no_delay) {
+                execute::call(&set_no_delay, &handle, &[Value::Boolean(enabled)])?;
+                if handle_is_object {
+                    execute::set_property_in_place(&handle, HANDLE_NO_DELAY_PROP, Value::Boolean(true));
+                }
+            }
+        } else {
+            return Ok(receiver.clone());
         }
         execute::set_property_in_place(receiver, super::NO_DELAY_PROP, Value::Boolean(enabled));
     }
