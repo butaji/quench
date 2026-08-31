@@ -218,6 +218,16 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let global = observable_bool(&receiver, "global")?;
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if crate::conversion::is_callable(&replacement) {
+        if let Value::StringUnits(units) = &input {
+            return replace_with_exec_units_callable(
+                &receiver,
+                input.clone(),
+                units,
+                &replacement,
+                global,
+                unicode,
+            );
+        }
         let s = crate::strings::materialize(&input).unwrap_or_default();
         if dynamic_exec(&receiver, global) {
             return replace_with_exec_callable(&receiver, &s, &replacement, global);
@@ -225,6 +235,21 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         return replace_with_callable(&receiver, &s, &replacement);
     }
     let replacement = string_value(&replacement)?;
+    if dynamic_exec(&receiver, global) {
+        if let (Value::StringUnits(units), Some(replacement_units)) = (
+            &input,
+            crate::strings::expand_utf16(&replacement),
+        ) {
+            return replace_with_exec_units(
+                &receiver,
+                input.clone(),
+                units,
+                &replacement_units,
+                global,
+                unicode,
+            );
+        }
+    }
     if let (Some(units), Some(replacement_units)) = (
         crate::strings::view_of(&input).and_then(|view| match view {
             crate::strings::StringView::Utf16(units) => Some(units),
@@ -594,6 +619,62 @@ fn replace_with_exec(
     Ok(Value::String(output))
 }
 
+fn replace_with_exec_units(
+    receiver: &Value,
+    input: Value,
+    units: &[u16],
+    replacement: &[u16],
+    global: bool,
+    unicode: bool,
+) -> Result<Value, VmError> {
+    if global {
+        set_last_index(receiver, 0.0)?;
+    }
+    let mut output = Vec::with_capacity(units.len() + replacement.len());
+    let mut next_source = 0;
+    loop {
+        let result = regexp_exec_value(receiver, input.clone())?;
+        let Some(result) = (!matches!(result, Value::Null)).then_some(result) else {
+            break;
+        };
+        let start = crate::conversion::to_number(
+            &crate::execute::get_property_result(&result, "index")?,
+        )?
+        .max(0.0) as usize;
+        let matched = crate::execute::get_property_result(&result, "0")?;
+        let matched_units = value_units(&matched)?;
+        let start = start.min(units.len());
+        let end = start.saturating_add(matched_units.len()).min(units.len());
+        if start >= next_source {
+            output.extend_from_slice(&units[next_source..start]);
+            let captures = result_captures(&result)?;
+            let groups = crate::execute::get_property_result(&result, "groups")?;
+            expand_units_template(
+                &mut output,
+                units,
+                start,
+                end,
+                replacement,
+                &captures,
+                &groups,
+            )?;
+            next_source = end;
+        }
+        if !global {
+            break;
+        }
+        if start == end {
+            let current = extract_last_index(receiver)?;
+            set_last_index(
+                receiver,
+                advance_string_index_value(&input, current, unicode) as f64,
+            )?;
+        }
+    }
+    output.extend_from_slice(&units[next_source.min(units.len())..]);
+    Ok(crate::strings::from_units(output))
+}
+
 fn replace_with_exec_callable(
     receiver: &Value,
     input: &str,
@@ -629,6 +710,81 @@ fn replace_with_exec_callable(
     }
     output.push_str(&input[next_source.min(input.len())..]);
     Ok(Value::String(output))
+}
+
+fn replace_with_exec_units_callable(
+    receiver: &Value,
+    input: Value,
+    units: &[u16],
+    replacement: &Value,
+    global: bool,
+    unicode: bool,
+) -> Result<Value, VmError> {
+    if global {
+        set_last_index(receiver, 0.0)?;
+    }
+    let mut output = Vec::with_capacity(units.len());
+    let mut next_source = 0;
+    loop {
+        let result = regexp_exec_value(receiver, input.clone())?;
+        let Some(result) = (!matches!(result, Value::Null)).then_some(result) else {
+            break;
+        };
+        let position = crate::conversion::to_number(
+            &crate::execute::get_property_result(&result, "index")?,
+        )?
+        .max(0.0) as usize;
+        let matched = crate::execute::get_property_result(&result, "0")?;
+        let matched_units = value_units(&matched)?;
+        let start = position.min(units.len());
+        let end = start.saturating_add(matched_units.len()).min(units.len());
+        if start >= next_source {
+            output.extend_from_slice(&units[next_source..start]);
+            let mut args = vec![matched];
+            let length = crate::conversion::to_number(
+                &crate::execute::get_property_result(&result, "length")?,
+            )?;
+            for index in 1..to_length(length) {
+                args.push(crate::execute::get_property_result(
+                    &result,
+                    &index.to_string(),
+                )?);
+            }
+            args.push(Value::Number(position as f64));
+            args.push(input.clone());
+            let groups = crate::execute::get_property_result(&result, "groups")?;
+            if !matches!(groups, Value::Undefined) {
+                args.push(groups);
+            }
+            let replaced = crate::functions::execute_target(replacement, &Value::Undefined, &args)?;
+            append_value_units(&mut output, &replaced)?;
+            next_source = end;
+        }
+        if !global {
+            break;
+        }
+        if start == end {
+            let current = extract_last_index(receiver)?;
+            set_last_index(
+                receiver,
+                advance_string_index_value(&input, current, unicode) as f64,
+            )?;
+        }
+    }
+    output.extend_from_slice(&units[next_source.min(units.len())..]);
+    Ok(crate::strings::from_units(output))
+}
+
+fn value_units(value: &Value) -> Result<Vec<u16>, VmError> {
+    if let Some(units) = crate::strings::expand_utf16(value) {
+        return Ok(units);
+    }
+    Ok(crate::conversion::to_string(value)?.encode_utf16().collect())
+}
+
+fn append_value_units(output: &mut Vec<u16>, value: &Value) -> Result<(), VmError> {
+    output.extend(value_units(value)?);
+    Ok(())
 }
 
 struct ExecMatch {
