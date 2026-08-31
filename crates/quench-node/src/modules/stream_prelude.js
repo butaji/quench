@@ -211,6 +211,8 @@
       flowScheduled: false,
       reading: false,
       readingMore: false,
+      resumeScheduled: false,
+      resumeEventPending: false,
       readRequests: 0,
       ended: false,
       endEmitted: false,
@@ -260,6 +262,13 @@
   function flowReadable(stream) {
     if (stream.destroyed) return;
     const st = stream._readableState;
+    const resumePending = st.resumeScheduled && st.resumeEventPending;
+    const restoreResume = resumePending && st.buffer.length > 0;
+    if (resumePending) {
+      st.resumeScheduled = false;
+      st.resumeEventPending = false;
+      stream._emitter.emit("resume");
+    }
     if (stream.listenerCount("readable") > 0 &&
         (st.buffer.length > 0 || st.ended)) {
       st.emittedReadable = true;
@@ -325,6 +334,10 @@
           }
         }
       }));
+    }
+    if (restoreResume && !stream.destroyed) {
+      st.resumeScheduled = true;
+      nextTick(() => { st.resumeScheduled = false; });
     }
   }
 
@@ -412,6 +425,10 @@
       if (this.destroyed) return this;
       this._readableState.paused = false;
       this._readableState.flowing = true;
+      if (!this._readableState.resumeScheduled) {
+        this._readableState.resumeScheduled = true;
+        this._readableState.resumeEventPending = true;
+      }
       scheduleFlow(this);
       return this;
     }
