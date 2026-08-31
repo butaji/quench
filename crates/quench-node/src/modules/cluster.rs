@@ -18,6 +18,9 @@ use std::rc::Rc;
 const ID: &str = "\0quench:cluster:id";
 struct Worker {
     object: Value,
+    /// Logical process scope; workers from separately forked primaries must
+    /// not share a listener even though they inhabit one host VM.
+    scope: u64,
     connected: bool,
     dead: bool,
     listeners: HashMap<String, Vec<Value>>,
@@ -37,6 +40,7 @@ pub struct ClusterState {
     stdio: Option<Value>,
     script: Option<(String, String)>,
     pub(crate) worker_context: Option<u64>,
+    process_scope: u64,
     worker_listen_slots: HashMap<u64, usize>,
     pending_cluster_listening: Vec<(Value, Value)>,
 }
@@ -51,6 +55,7 @@ impl ClusterState {
             stdio: None,
             script: None,
             worker_context: None,
+            process_scope: 0,
             worker_listen_slots: HashMap::new(),
             pending_cluster_listening: Vec::new(),
         }
@@ -71,6 +76,25 @@ impl ClusterState {
 
     pub(crate) fn module(&self) -> Option<Value> {
         self.module.clone()
+    }
+
+    pub(crate) fn worker_scope(&self, id: u64) -> Option<u64> {
+        self.workers.get(&id).map(|worker| worker.scope)
+    }
+
+    pub(crate) fn worker_scopes(&self) -> HashMap<u64, u64> {
+        self.workers
+            .iter()
+            .map(|(id, worker)| (*id, worker.scope))
+            .collect()
+    }
+
+    pub(crate) fn process_scope(&self) -> u64 {
+        self.process_scope
+    }
+
+    pub(crate) fn set_process_scope(&mut self, scope: u64) {
+        self.process_scope = scope;
     }
 }
 
@@ -364,10 +388,12 @@ pub fn fork(
         worker = execute::set_prototype_of(&worker, &prototype).unwrap_or(worker);
     }
     let _ = execute::set_property_in_place(&worker, "state", Value::String("none".into()));
+    let process_scope = host.cluster.process_scope;
     host.cluster.workers.insert(
         id,
         Worker {
             object: worker.clone(),
+            scope: process_scope,
             connected: true,
             dead: false,
             listeners: HashMap::new(),
@@ -436,6 +462,18 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let _ = execute::set_property_in_place(worker, "state", Value::String("online".into()));
     let global = quench_runtime::vm::current_global_object();
     let process_value = execute::get_property_result(&global, "process").ok();
+    let previous_process_id = process_value
+        .as_ref()
+        .map(|process| execute::get_property(process, ID));
+    let previous_process_send = process_value
+        .as_ref()
+        .map(|process| execute::get_property(process, "send"));
+    let previous_process_disconnect = process_value
+        .as_ref()
+        .map(|process| execute::get_property(process, "disconnect"));
+    let previous_process_connected = process_value
+        .as_ref()
+        .map(|process| execute::get_property(process, "connected"));
     let env_restore = process_value
         .as_ref()
         .map(|process| enter_worker_env(process, worker));
@@ -538,10 +576,24 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         if let Some(previous_argv) = previous_argv {
             let _ = execute::set_property_in_place(&process, "argv", previous_argv);
         }
-        let _ = execute::delete_property(process.clone(), ID);
-        let _ = execute::delete_property(process.clone(), "send");
-        let _ = execute::delete_property(process.clone(), "disconnect");
-        let _ = execute::delete_property(process, "connected");
+        for (key, value) in [
+            (ID, previous_process_id.unwrap_or(Value::Undefined)),
+            ("send", previous_process_send.unwrap_or(Value::Undefined)),
+            (
+                "disconnect",
+                previous_process_disconnect.unwrap_or(Value::Undefined),
+            ),
+            (
+                "connected",
+                previous_process_connected.unwrap_or(Value::Undefined),
+            ),
+        ] {
+            if matches!(value, Value::Undefined) {
+                let _ = execute::delete_property(process.clone(), key);
+            } else {
+                let _ = execute::set_property_in_place(&process, key, value);
+            }
+        }
     }
     // Worker re-entry must not turn runner bookkeeping into enumerable
     // process globals. The upstream leak check observes the global object
@@ -1187,23 +1239,6 @@ pub fn send(
             worker.pending_messages.push(message.clone());
         }
         return Ok(Value::Boolean(true));
-    } else {
-        let _ = emit(
-            state,
-            Some(&obj),
-            &[Value::String("message".into()), message.clone()],
-        );
-    }
-    if let Some(module) = state.borrow().cluster.module.clone() {
-        let _ = crate::modules::events::method_emit(
-            state,
-            Some(&module),
-            &[
-                Value::String("message".into()),
-                obj.clone(),
-                message.clone(),
-            ],
-        );
     }
     let previous_context = state.borrow().cluster.worker_context;
     set_worker_mode(state, id, &obj, true);
@@ -1245,15 +1280,44 @@ pub fn process_send(
             .ok_or_else(|| err("worker"))
     })?;
     let message = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut guard = state.borrow_mut();
-    let active = guard.cluster.worker_context == Some(id);
-    let Some(worker) = guard.cluster.workers.get_mut(&id) else {
-        return Ok(Value::Boolean(false));
+    let (active, callbacks, worker_object) = {
+        let guard = state.borrow();
+        let Some(worker) = guard.cluster.workers.get(&id) else {
+            return Ok(Value::Boolean(false));
+        };
+        (
+            guard.cluster.worker_context == Some(id),
+            worker.listeners.get("message").cloned().unwrap_or_default(),
+            worker.object.clone(),
+        )
     };
-    if !active || !worker.connected || worker.dead {
+    if !active {
         return Ok(Value::Boolean(false));
     }
-    worker.pending_messages.push(message);
+    if callbacks.is_empty() {
+        let mut guard = state.borrow_mut();
+        let Some(worker) = guard.cluster.workers.get_mut(&id) else {
+            return Ok(Value::Boolean(false));
+        };
+        worker.pending_messages.push(message);
+    } else {
+        for callback in callbacks {
+            state.borrow().event_loop.queue_microtask_with_receiver(
+                callback,
+                vec![message.clone()],
+                worker_object.clone(),
+            );
+        }
+    }
+    let connected = state
+        .borrow()
+        .cluster
+        .workers
+        .get(&id)
+        .is_some_and(|worker| worker.connected && !worker.dead);
+    if !connected {
+        return Ok(Value::Boolean(false));
+    }
     Ok(Value::Boolean(true))
 }
 pub fn disconnect_all(

@@ -1,7 +1,7 @@
 //! `process` module — pure Rust process info.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -29,6 +29,10 @@ pub struct ProcessState {
     pub unhandled_rejection_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_mode: UnhandledRejectionMode,
     pub other_handlers: Vec<(String, Value, bool)>,
+    /// Process listeners are scoped when a forked primary/worker is
+    /// re-entered in the host VM; separate logical processes must not see one
+    /// another's message channels.
+    pub scoped_handlers: HashMap<u64, Vec<(String, Value, bool)>>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
     pub deprecations_emitted: Vec<(Value, Option<String>)>,
@@ -71,6 +75,7 @@ impl ProcessState {
             unhandled_rejection_handlers: Vec::new(),
             unhandled_rejection_mode: UnhandledRejectionMode::Throw,
             other_handlers: Vec::new(),
+            scoped_handlers: HashMap::new(),
             warnings_emitted: Vec::new(),
             deprecations_emitted: Vec::new(),
             exit_handlers_ran: false,
@@ -795,11 +800,7 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "uncaughtException" | "warning" | "unhandledRejection" => {
                 push_handler(state, handler, event.as_str(), true)
             }
-            _ => state.borrow_mut().process.other_handlers.push((
-                event.clone(),
-                handler.clone(),
-                true,
-            )),
+            _ => push_other_handler(state, event, handler, true),
         }
     }
     Ok(Value::Undefined)
@@ -817,6 +818,24 @@ fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, on
             .unhandled_rejection_handlers
             .push((handler.clone(), once)),
         _ => {}
+    }
+}
+
+fn push_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &Value, once: bool) {
+    let scope = state.borrow().cluster.process_scope();
+    let mut guard = state.borrow_mut();
+    if scope == 0 {
+        guard
+            .process
+            .other_handlers
+            .push((event.to_string(), handler.clone(), once));
+    } else {
+        guard
+            .process
+            .scoped_handlers
+            .entry(scope)
+            .or_default()
+            .push((event.to_string(), handler.clone(), once));
     }
 }
 
@@ -913,11 +932,7 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 push_handler(state, handler, event, false)
             }
             "warning" => push_handler(state, handler, "warning", false),
-            _ => state.borrow_mut().process.other_handlers.push((
-                event.clone(),
-                handler.clone(),
-                false,
-            )),
+            _ => push_other_handler(state, event, handler, false),
         }
     }
     Ok(Value::Undefined)
@@ -929,59 +944,108 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         return Ok(Value::Boolean(false));
     };
     let values = args.get(1..).unwrap_or(&[]).to_vec();
-    let (normal, once) = {
+    let (normal, once, worker) = {
         let guard = state.borrow();
-        let handlers = match event.as_str() {
-            "warning" => &guard.process.warning_handlers,
-            "uncaughtException" => &guard.process.uncaught_exception_handlers,
-            "unhandledRejection" => &guard.process.unhandled_rejection_handlers,
-            _ => {
-                let callbacks = guard
+        match event.as_str() {
+            "warning" => (
+                guard
                     .process
-                    .other_handlers
+                    .warning_handlers
                     .iter()
-                    .filter(|(name, _, _)| name == event)
-                    .map(|(_, handler, once)| (handler.clone(), *once))
-                    .collect::<Vec<_>>();
-                let worker = guard.cluster.active_worker();
-                drop(guard);
-                for (handler, once) in callbacks {
-                    if once {
-                        remove_other_handler(state, event, &handler);
-                    }
-                    quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
-                }
-                if let Some(worker) = worker {
-                    let _ = crate::modules::cluster::emit(
-                        state,
-                        Some(&worker),
-                        &std::iter::once(Value::String(event.clone()))
-                            .chain(values.iter().cloned())
-                            .collect::<Vec<_>>(),
-                    )?;
-                }
-                return Ok(Value::Boolean(true));
+                    .filter(|(_, once)| !*once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                guard
+                    .process
+                    .warning_handlers
+                    .iter()
+                    .filter(|(_, once)| *once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            "uncaughtException" => (
+                guard
+                    .process
+                    .uncaught_exception_handlers
+                    .iter()
+                    .filter(|(_, once)| !*once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                guard
+                    .process
+                    .uncaught_exception_handlers
+                    .iter()
+                    .filter(|(_, once)| *once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            "unhandledRejection" => (
+                guard
+                    .process
+                    .unhandled_rejection_handlers
+                    .iter()
+                    .filter(|(_, once)| !*once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                guard
+                    .process
+                    .unhandled_rejection_handlers
+                    .iter()
+                    .filter(|(_, once)| *once)
+                    .map(|(handler, _)| handler.clone())
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            _ => {
+                let scope = guard.cluster.process_scope();
+                let handlers = if scope == 0 {
+                    guard.process.other_handlers.iter().collect::<Vec<_>>()
+                } else {
+                    guard
+                        .process
+                        .scoped_handlers
+                        .get(&scope)
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                };
+                (
+                    handlers
+                        .iter()
+                        .filter(|(name, _, once)| name == event && !*once)
+                        .map(|(_, handler, _)| handler.clone())
+                        .collect(),
+                    handlers
+                        .iter()
+                        .filter(|(name, _, once)| name == event && *once)
+                        .map(|(_, handler, _)| handler.clone())
+                        .collect(),
+                    guard.cluster.active_worker(),
+                )
             }
-        };
-        (
-            handlers
-                .iter()
-                .filter(|(_, once)| !*once)
-                .map(|(handler, _)| handler.clone())
-                .collect::<Vec<_>>(),
-            handlers
-                .iter()
-                .filter(|(_, once)| *once)
-                .map(|(handler, _)| handler.clone())
-                .collect::<Vec<_>>(),
-        )
+        }
     };
     for handler in once {
-        remove_handler(state, event, &handler);
+        if matches!(event.as_str(), "warning" | "uncaughtException" | "unhandledRejection") {
+            remove_handler(state, event, &handler);
+        } else {
+            remove_other_handler(state, event, &handler);
+        }
         quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
     }
     for handler in normal {
         quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
+    }
+    if let Some(worker) = worker {
+        let _ = crate::modules::cluster::emit(
+            state,
+            Some(&worker),
+            &std::iter::once(Value::String(event.clone()))
+                .chain(values.iter().cloned())
+                .collect::<Vec<_>>(),
+        )?;
     }
     Ok(Value::Boolean(true))
 }
@@ -1032,18 +1096,31 @@ pub fn remove_all_listeners(
     process
         .other_handlers
         .retain(|(name, _, _)| event.is_some_and(|target| target != name));
+    for handlers in process.scoped_handlers.values_mut() {
+        handlers.retain(|(name, _, _)| event.is_some_and(|target| target != name));
+    }
     Ok(Value::Undefined)
 }
 
 fn remove_other_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
     let mut guard = state.borrow_mut();
-    if let Some(index) = guard
-        .process
-        .other_handlers
-        .iter()
-        .position(|(name, handler, once)| name == event && *once && handler == target)
-    {
-        guard.process.other_handlers.remove(index);
+    let scope = guard.cluster.process_scope();
+    if scope == 0 {
+        if let Some(index) = guard
+            .process
+            .other_handlers
+            .iter()
+            .position(|(name, handler, once)| name == event && *once && handler == target)
+        {
+            guard.process.other_handlers.remove(index);
+        }
+    } else if let Some(handlers) = guard.process.scoped_handlers.get_mut(&scope) {
+        if let Some(index) = handlers
+            .iter()
+            .position(|(name, handler, once)| name == event && *once && handler == target)
+        {
+            handlers.remove(index);
+        }
     }
 }
 
