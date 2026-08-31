@@ -1024,6 +1024,39 @@ pub fn util_promisified_call(
     let mut call_args = args.get(1..).unwrap_or_default().to_vec();
     call_args.push(callback);
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let is_exec = matches!(
+        &original,
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+                    quench_runtime::ops::HostCapabilityKind::Custom(0x1e02)
+                ))
+            )
+    );
+    if is_exec {
+        if let Some(options) = call_args.get(1) {
+            let signal = execute::get_property(options, "signal");
+            let valid = matches!(signal, Value::Undefined)
+                || matches!(
+                    execute::get_property(&signal, "aborted"),
+                    Value::Boolean(_)
+                );
+            if !valid {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                    (
+                        "message".into(),
+                        Value::String(
+                            "The \"options.signal\" property must be an instance of AbortSignal."
+                                .into(),
+                        ),
+                    ),
+                ])));
+            }
+        }
+    }
     match quench_runtime::vm::call_value(original, &receiver, &call_args) {
         Ok(result) => {
             if matches!(result, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -1043,17 +1076,17 @@ pub fn util_promisified_call(
         Err(VmError::Thrown(error)) => {
             // execFile's Node promisifier validates its AbortSignal before
             // creating the promise; preserve that synchronous TypeError.
-            let is_exec_file = matches!(
+            let is_exec_or_file = matches!(
                 &original,
                 Value::BoundFunction(bound)
                     if matches!(
                         bound.target,
                         Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-                            quench_runtime::ops::HostCapabilityKind::Custom(0x1e03)
-                        ))
+                            quench_runtime::ops::HostCapabilityKind::Custom(cap)
+                        )) if cap == 0x1e02 || cap == 0x1e03
                     )
             );
-            if is_exec_file
+            if is_exec_or_file
                 && matches!(
                     execute::get_property(&error, "code"),
                     Value::String(ref code) if code == "ERR_INVALID_ARG_TYPE"
@@ -4699,11 +4732,14 @@ pub fn cp_async(
             ("\0quench:suppressSpawnError".into(), Value::Boolean(true)),
         ])
     } else {
-        execute::set_property(
+        let options = execute::set_property(
             options.clone(),
             "\0quench:suppressSpawnError",
             Value::Boolean(true),
-        )
+        );
+        // cp_async owns the AbortSignal completion and promise rejection;
+        // avoid also installing ChildProcess's unhandled `error` path.
+        execute::set_property(options, "signal", Value::Undefined)
     };
     let child = cp_spawn(
         state,
