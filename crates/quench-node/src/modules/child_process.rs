@@ -70,10 +70,16 @@ pub fn spawn_sync(
         .into_iter()
         .filter(|arg| arg != "--enable-source-maps")
         .collect::<Vec<_>>();
+    if command.contains('\0') || child_args.iter().any(|arg| arg.contains('\0')) {
+        return Err(nul_error());
+    }
     let options = args.get(2).or_else(|| {
         args.get(1)
             .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     });
+    if options.is_some_and(|value| options_have_nul(value)) {
+        return Err(nul_error());
+    }
 
     if let Some(shell) = options.and_then(|value| {
         match execute::get_property_result(value, "shell").ok()? {
@@ -705,6 +711,31 @@ fn timeout_millis(options: &Value) -> Option<u128> {
         Value::Number(value) if value.is_finite() && value > 0.0 => Some(value as u128),
         _ => None,
     }
+}
+
+fn nul_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+    ]))
+}
+
+fn options_have_nul(options: &Value) -> bool {
+    ["cwd", "argv0", "shell"].iter().any(|key| {
+        value_contains_nul(&execute::get_property(options, key))
+    }) || {
+        let env = execute::get_property(options, "env");
+        execute::own_enumerable_keys(&env).into_iter().any(|key| {
+            key.contains('\0')
+                || value_contains_nul(&execute::get_property(&env, &key))
+        })
+    }
+}
+
+fn value_contains_nul(value: &Value) -> bool {
+    execute::to_js_string(value)
+        .ok()
+        .is_some_and(|text| text.contains('\0'))
 }
 
 fn stdio_inherit(options: &Value) -> bool {

@@ -3071,6 +3071,20 @@ pub fn cp_spawn_sync(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let command_nul = args
+        .first()
+        .and_then(|value| execute::to_js_string(value).ok())
+        .is_some_and(|value| value.contains('\0'));
+    let args_nul = matches!(args.get(1), Some(Value::Array(values)) if (0..values.logical_len()).any(|index| {
+        matches!(execute::to_js_string(&execute::get_property_result(&args[1], &index.to_string()).unwrap_or(Value::Undefined)), Ok(value) if value.contains('\0'))
+    }));
+    let options = args
+        .get(2)
+        .or_else(|| args.get(1))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+    if command_nul || args_nul || options.is_some_and(cp_options_have_nul) {
+        return Err(cp_nul_error());
+    }
     if let Some(options) = args
         .get(2)
         .or_else(|| args.get(1))
@@ -3273,6 +3287,9 @@ pub fn cp_spawn(
             ),
         ])));
     }
+    if command.contains('\0') {
+        return Err(cp_nul_error());
+    }
     if let Some(value) = args.get(1) {
         let valid = matches!(
             value,
@@ -3327,6 +3344,18 @@ pub fn cp_spawn(
         .filter(|value| matches!(value, Value::Array(_)))
         .cloned()
         .unwrap_or_else(|| host_api::array(vec![]));
+    if let Value::Array(array) = &spawnargs {
+        let has_nul = (0..array.logical_len()).any(|index| {
+            execute::to_js_string(
+                &execute::get_property_result(&spawnargs, &index.to_string())
+                    .unwrap_or(Value::Undefined),
+            )
+            .is_ok_and(|value| value.contains('\0'))
+        });
+        if has_nul {
+            return Err(cp_nul_error());
+        }
+    }
     let options = args
         .get(2)
         .cloned()
@@ -3336,6 +3365,9 @@ pub fn cp_spawn(
                 .cloned()
         })
         .unwrap_or(Value::Undefined);
+    if cp_options_have_nul(&options) {
+        return Err(cp_nul_error());
+    }
     if let Value::Object(_) | Value::ObjectAlias(_) = options {
         let timeout = execute::get_property(&options, "timeout");
         if !matches!(timeout, Value::Undefined | Value::Number(_)) {
@@ -4872,11 +4904,18 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(script, Value::String(ref value) if !value.starts_with("Symbol.")) {
+    let script_text = execute::to_js_string(&script).ok();
+    if script_text
+        .as_deref()
+        .is_none_or(|value| value.starts_with("Symbol."))
+    {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"modulePath\" argument must be of type string.{}",
             crate::modules::util::invalid_arg_received(&script)
         )));
+    }
+    if script_text.as_deref().is_some_and(|value| value.contains('\0')) {
+        return Err(cp_nul_error());
     }
     let second = args.get(1).cloned().unwrap_or(Value::Undefined);
     if !matches!(
@@ -4913,6 +4952,21 @@ pub fn cp_fork(
         };
         (fork_args, options)
     };
+    if let Value::Array(array) = &fork_args {
+        let has_nul = (0..array.logical_len()).any(|index| {
+            execute::to_js_string(
+                &execute::get_property_result(&fork_args, &index.to_string())
+                    .unwrap_or(Value::Undefined),
+            )
+            .is_ok_and(|value| value.contains('\0'))
+        });
+        if has_nul {
+            return Err(cp_nul_error());
+        }
+    }
+    if cp_options_have_nul(&options) {
+        return Err(cp_nul_error());
+    }
     if let Value::String(stdio) = execute::get_property(&options, "stdio") {
         if !matches!(stdio.as_str(), "pipe" | "inherit" | "ignore") {
             return Err(VmError::Thrown(host_api::object(vec![
@@ -5628,6 +5682,38 @@ fn cp_send_arg_error(code: &str, message: &str) -> VmError {
     ]))
 }
 
+fn cp_nul_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+    ]))
+}
+
+fn cp_options_have_nul(options: &Value) -> bool {
+    let string_fields = ["cwd", "argv0", "shell", "execPath"];
+    if string_fields.iter().any(|key| {
+        value_contains_nul(&execute::get_property(options, key))
+    }) {
+        return true;
+    }
+    let env = execute::get_property(options, "env");
+    let env_nul = execute::own_enumerable_keys(&env).into_iter().any(|key| {
+        key.contains('\0')
+            || value_contains_nul(&execute::get_property(&env, &key))
+    });
+    let exec_argv = execute::get_property(options, "execArgv");
+    let argv_nul = matches!(exec_argv, Value::Array(ref values) if (0..values.logical_len()).any(|index| {
+        matches!(execute::to_js_string(&execute::get_property(&exec_argv, &index.to_string())), Ok(value) if value.contains('\0'))
+    }));
+    env_nul || argv_nul
+}
+
+fn value_contains_nul(value: &Value) -> bool {
+    execute::to_js_string(value)
+        .ok()
+        .is_some_and(|text| text.contains('\0'))
+}
+
 pub fn cp_send_ack(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -5726,24 +5812,35 @@ pub fn cp_exec_sync(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let command = args.first().and_then(|value| match value {
-        Value::String(value) => Some(value),
-        _ => None,
-    });
+    let command = args
+        .first()
+        .and_then(|value| execute::to_js_string(value).ok());
+    if command.as_deref().is_some_and(|value| value.contains('\0')) {
+        return Err(cp_nul_error());
+    }
+    let args_nul = matches!(args.get(1), Some(Value::Array(values)) if (0..values.logical_len()).any(|index| {
+        value_contains_nul(&execute::get_property(&args[1], &index.to_string()))
+    }));
+    if args_nul {
+        return Err(cp_nul_error());
+    }
     let missing_entry = args.get(1).and_then(|value| match value {
         Value::Array(entries) => entries.first(),
         _ => None,
     });
     let shell_options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if cp_options_have_nul(&shell_options) {
+        return Err(cp_nul_error());
+    }
     if let Some(source) = command
-        .map(String::as_str)
+        .as_deref()
         .and_then(|command| cp_shell_script(command, &shell_options))
     {
         if let Some((stream, output)) = cp_script_output(&source) {
             return cp_sync_script_result(&stream, &output, &shell_options);
         }
     }
-    if command == Some(&state.borrow().process.exec_path) {
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         if let Some(Value::Array(values)) = args.get(1) {
             if let Some(Value::String(source)) = values.get(1) {
                 if let Some((stream, output)) = cp_script_output(&source) {
@@ -5753,7 +5850,7 @@ pub fn cp_exec_sync(
             }
         }
     }
-    if command.is_some_and(|value| {
+    if command.as_deref().is_some_and(|value| {
         value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")
     }) {
         let output = match args.get(1) {
@@ -5770,7 +5867,7 @@ pub fn cp_exec_sync(
         };
         return Ok(Value::String(format!("{output}\n")));
     }
-    if command == Some(&state.borrow().process.exec_path) {
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         let Some(Value::String(entry)) = missing_entry else {
             return Ok(Value::String(String::new()));
         };
@@ -5983,6 +6080,9 @@ pub fn cp_async(
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .cloned()
         .unwrap_or(Value::Undefined);
+    if cp_options_have_nul(&options) {
+        return Err(cp_nul_error());
+    }
     let spawn_options = if matches!(options, Value::Undefined) {
         host_api::object(vec![
             ("shell".into(), Value::Boolean(true)),
@@ -6290,6 +6390,21 @@ pub fn cp_exec_file(
             ),
         ]))
     };
+    let command_nul = args.first().is_some_and(value_contains_nul);
+    let array_nul = args.iter().any(|value| {
+        let Value::Array(array) = value else {
+            return false;
+        };
+        (0..array.logical_len()).any(|index| {
+            value_contains_nul(&execute::get_property(value, &index.to_string()))
+        })
+    });
+    let options_nul = args.iter().any(|value| {
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_)) && cp_options_have_nul(value)
+    });
+    if command_nul || array_nul || options_nul {
+        return Err(cp_nul_error());
+    }
     let mut saw_args = false;
     let mut saw_options = false;
     let mut callback_in_args = false;
