@@ -3288,7 +3288,39 @@ fn build_incoming(
         if let Some(colon) = line.find(':') {
             let key = line[..colon].trim().to_lowercase();
             let value = line[colon + 1..].trim();
-            headers.push((key, Value::String(value.to_string())));
+            if let Some((_, existing)) = headers.iter_mut().find(|(name, _)| name == &key) {
+                if crate::modules::http_res::NON_REPEATABLE_HEADERS
+                    .iter()
+                    .any(|name| *name == key)
+                {
+                    continue;
+                }
+                if key == "set-cookie" {
+                    let updated = match existing {
+                        Value::Array(_) => {
+                            let mut values = execute::own_enumerable_keys(existing)
+                                .into_iter()
+                                .map(|key| execute::get_property(existing, &key))
+                                .collect::<Vec<_>>();
+                            values.push(Value::String(value.to_string()));
+                            host_api::array(values)
+                        }
+                        Value::String(previous) => host_api::array(vec![
+                            Value::String(previous.clone()),
+                            Value::String(value.to_string()),
+                        ]),
+                        _ => Value::String(value.to_string()),
+                    };
+                    *existing = updated;
+                } else if let Value::String(previous) = existing {
+                    previous.push_str(", ");
+                    previous.push_str(value);
+                }
+            } else if key == "set-cookie" {
+                headers.push((key, host_api::array(vec![Value::String(value.to_string())])));
+            } else {
+                headers.push((key, Value::String(value.to_string())));
+            }
         }
     }
     let res = crate::modules::events::new_emitter_object(state)?;
