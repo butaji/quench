@@ -4640,6 +4640,10 @@ pub fn cp_fork(
     let previous_scope = state.borrow().cluster.process_scope();
     let child_scope = child.object_identity().unwrap_or(previous_scope);
     execute::set_property_in_place(&child, "\0forkScope", Value::Number(child_scope as f64));
+    state
+        .borrow_mut()
+        .cluster
+        .register_fork_process(child_scope, child.clone());
     state.borrow_mut().cluster.set_process_scope(child_scope);
     let fork_result = fork_child_start(state, &child, &script, &fork_args_for_events);
     state.borrow_mut().cluster.set_process_scope(previous_scope);
