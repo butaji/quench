@@ -1007,7 +1007,8 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         guard.http.next_res += 1;
         id
     };
-    let res = host_api::object(vec![
+    let mut res = crate::modules::events::new_emitter_object(state)?;
+    for (name, value) in [
         (
             "setHeader".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_SET_HEADER),
@@ -1046,7 +1047,9 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         ("sendDate".to_string(), Value::Boolean(true)),
         ("statusCode".to_string(), Value::Number(200.0)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
-    ]);
+    ] {
+        res = execute::set_property(res, &name, value);
+    }
     Ok((res, id))
 }
 

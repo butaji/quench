@@ -29,19 +29,19 @@ pub fn res_set_header(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(id) = res_state(receiver) else {
-        return Ok(Value::Undefined);
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
     let name = args.first().map(execute::to_js_string).transpose()?;
     let value = args.get(1).map(execute::to_js_string).transpose()?;
     let Some((name, value)) = name.zip(value) else {
-        return Ok(Value::Undefined);
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
         res.headers.retain(|(key, _)| key != &name);
         res.headers.push((name, value));
     }
-    Ok(Value::Undefined)
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// `res.writeHead(statusCode[, reasonPhrase][, headers])`.
@@ -53,7 +53,10 @@ pub fn res_write_head(
     let Some(id) = res_state(receiver) else {
         return Ok(Value::Undefined);
     };
-    let status = args.first().and_then(number).unwrap_or(200).clamp(100, 599);
+    let requested = args.first().unwrap_or(&Value::Undefined);
+    let Some(status) = valid_status(requested) else {
+        return Err(invalid_status(requested));
+    };
     if let Some(receiver) = receiver {
         execute::set_property_in_place(receiver, "statusCode", Value::Number(status as f64));
     }
@@ -77,7 +80,7 @@ pub fn res_write_head(
                 res.headers.push((name, value));
             }
         }
-        return Ok(Value::Undefined);
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
     if let Some(Value::Object(_)) = args.get(1) {
         let object = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -86,7 +89,7 @@ pub fn res_write_head(
             res.status = status;
             merge_headers(res, &object)?;
         }
-        return Ok(Value::Undefined);
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
     let mut text = String::new();
     if let Some(Value::String(s)) = args.get(1) {
@@ -99,7 +102,7 @@ pub fn res_write_head(
             res.text = text;
         }
     }
-    Ok(Value::Undefined)
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
@@ -329,6 +332,11 @@ pub fn res_destroy(
         .map(|res| res.socket.clone());
     if let Some(socket) = socket {
         net::socket_destroy(state, Some(&socket), &[])?;
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.cloned().unwrap_or(Value::Undefined), "close".into(), Vec::new()));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -466,9 +474,32 @@ fn chunk_frame(body: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn number(value: &Value) -> Option<u16> {
+fn valid_status(value: &Value) -> Option<u16> {
     match value {
-        Value::Number(n) if n.is_finite() => Some(*n as u16),
+        Value::Number(number)
+            if number.is_finite()
+                && number.fract() == 0.0
+                && (100.0..=999.0).contains(number) =>
+        {
+            Some(*number as u16)
+        }
         _ => None,
     }
+}
+
+fn invalid_status(value: &Value) -> VmError {
+    let rendered = match value {
+        Value::Array(_) => "[]".to_string(),
+        Value::Object(_) | Value::ObjectAlias(_) => "{}".to_string(),
+        _ => execute::to_js_string(value).unwrap_or_else(|_| "undefined".into()),
+    };
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::RangeError,
+        &[Value::String(format!("Invalid status code: {rendered}"))],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_HTTP_INVALID_STATUS_CODE".into()),
+    ))
 }
