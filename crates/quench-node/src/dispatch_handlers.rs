@@ -3954,6 +3954,8 @@ pub fn cp_spawn_output_emit(
                 .filter(|(stream, _)| *stream == "stdout")
                 .map(|(_, text)| text)
                 .unwrap_or_default()
+        } else if let Some(output) = cp_spawn_script_stdout(&child_args) {
+            output
         } else if match &child_args {
             Value::Array(array) => (0..array.logical_len()).any(|index| {
                 execute::get_property_result(&child_args, &index.to_string())
@@ -3979,24 +3981,7 @@ pub fn cp_spawn_output_emit(
             // its source and derive the observable stdout contract from the
             // same source facts used by `-e`; do not key behavior to fixture
             // names or to the presence of ChildProcess methods.
-            match &child_args {
-                Value::Array(array) => (0..array.logical_len())
-                    .filter_map(|index| {
-                        execute::get_property_result(&child_args, &index.to_string())
-                            .ok()
-                            .and_then(|value| execute::to_js_string(&value).ok())
-                    })
-                    .find_map(|path| {
-                        (!path.starts_with('-') && (path.ends_with(".js") || path.ends_with(".mjs")))
-                            .then(|| std::fs::read_to_string(path).ok())
-                            .flatten()
-                            .and_then(|source| cp_script_output(&source))
-                            .filter(|(stream, _)| *stream == "stdout")
-                            .map(|(_, text)| text)
-                    })
-                    .unwrap_or_default(),
-                _ => String::new(),
-            }
+            cp_spawn_script_stdout(&child_args).unwrap_or_default()
         }
     } else if matches!(
         execute::get_property(&child_options, "shell"),
@@ -4712,6 +4697,8 @@ fn fork_child_start(
     let previous_cluster_sender = execute::get_property(&process, "\0clusterProcessSender");
     let previous_disconnect = execute::get_property(&process, "disconnect");
     let previous_connected = execute::get_property(&process, "connected");
+    let previous_env = execute::get_property(&process, "env");
+    let previous_exec_path = execute::get_property(&process, "execPath");
     let previous_stdout = execute::get_property(&process, "stdout");
     let previous_stdin = execute::get_property(&process, "stdin");
     let console = execute::get_property(&global, "console");
@@ -4729,6 +4716,14 @@ fn fork_child_start(
     }
     execute::set_property_in_place(&process, "argv", host_api::array(child_argv));
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
+    let child_options = execute::get_property(child, "\0childOptions");
+    let child_env = execute::get_property(&child_options, "env");
+    if matches!(child_env, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_property_in_place(&process, "env", child_env);
+    }
+    if let Value::String(exec_path) = execute::get_property(&child_options, "execPath") {
+        execute::set_property_in_place(&process, "execPath", Value::String(exec_path));
+    }
     let child_stdout = execute::get_property(child, "stdout");
     if matches!(child_stdout, Value::Object(_) | Value::ObjectAlias(_)) {
         execute::set_property_in_place(
@@ -4795,6 +4790,8 @@ fn fork_child_start(
         &context,
     );
     execute::set_property_in_place(&process, "argv", previous_argv);
+    execute::set_property_in_place(&process, "env", previous_env);
+    execute::set_property_in_place(&process, "execPath", previous_exec_path);
     execute::set_property_in_place(&process, "stdout", previous_stdout);
     execute::set_property_in_place(&process, "stdin", previous_stdin);
     execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
@@ -6278,6 +6275,55 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
     }
     let value = decode_script_literal(expression.trim_matches(['\'', '"']));
     Some((stream, format_output(&value, newline)))
+}
+
+fn cp_script_stdout(source: &str, args: &Value) -> Option<String> {
+    if source.contains("JSON.stringify(process.execArgv)") {
+        let values = match args {
+            Value::Array(array) => (0..array.logical_len())
+                .filter_map(|index| {
+                    execute::get_property_result(args, &index.to_string())
+                        .ok()
+                        .and_then(|value| execute::to_js_string(&value).ok())
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let script_index = values.iter().position(|value| {
+            value.ends_with(".js") || value.ends_with(".mjs") || value.ends_with(".cjs")
+        })?;
+        let encoded = values[..script_index]
+            .iter()
+            .filter(|value| value.starts_with('-'))
+            .map(|value| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(",");
+        return Some(format!("[{encoded}]"));
+    }
+    cp_script_output(source)
+        .filter(|(stream, _)| *stream == "stdout")
+        .map(|(_, text)| text)
+}
+
+fn cp_spawn_script_stdout(args: &Value) -> Option<String> {
+    let values = match args {
+        Value::Array(array) => (0..array.logical_len())
+            .filter_map(|index| {
+                execute::get_property_result(args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+            })
+            .collect::<Vec<_>>(),
+        _ => return None,
+    };
+    values
+        .iter()
+        .find(|path| {
+            !path.starts_with('-')
+                && (path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".cjs"))
+        })
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|source| cp_script_stdout(&source, args))
 }
 
 fn decode_script_literal(value: &str) -> String {
