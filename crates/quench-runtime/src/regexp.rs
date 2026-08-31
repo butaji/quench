@@ -771,9 +771,10 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         .flatten();
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
-        let new_index = found.map_or(0, |match_| {
-            crate::strings::byte_to_utf16(&s, match_.end() + search_start)
-        });
+        // `compile_and_find` returns ranges in absolute input coordinates;
+        // adding the already-applied search offset can produce an invalid
+        // byte index and incorrectly reset lastIndex to zero.
+        let new_index = found.map_or(0, |match_| crate::strings::byte_to_utf16(&s, match_.end()));
         set_last_index(receiver, new_index as f64)?;
     }
     Ok(Value::Boolean(matched))
@@ -1339,5 +1340,24 @@ mod tests {
         );
         let result = replace_with_template(&regexp, "ab", "x").expect("replace");
         assert_eq!(result, Value::String("xaxbx".to_string()));
+    }
+
+    #[test]
+    fn global_test_keeps_last_index_in_absolute_input_coordinates() {
+        let last_index = crate::value::BindingCell::new(Value::Number(2.0));
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("a.".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                ("lastIndex".to_string(), Value::BindingCell(last_index.clone())),
+            ])
+            .into(),
+        );
+        assert_eq!(
+            super::test(Some(&regexp), &[Value::String("xxab".to_string())]),
+            Ok(Value::Boolean(true))
+        );
+        assert_eq!(*last_index.borrow(), Value::Number(4.0));
     }
 }
