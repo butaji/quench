@@ -437,6 +437,15 @@
     return pieces.length === 1 ? pieces[0] : Buffer.concat(pieces);
   }
 
+  function readWouldWait(stream, state, requested, buffered) {
+    if (state.objectMode || !Number.isFinite(requested) || requested <= buffered || state.ended) {
+      return false;
+    }
+    const writable = stream._writableState;
+    if (!writable) return state.reading;
+    return !writable.ended || writable.writing || writable.pending.length > 0;
+  }
+
   function readableChunkError(stream) {
     const error = new TypeError("The chunk argument must be of type string or an instance of Buffer");
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -616,7 +625,7 @@
       if (st.buffer.length > 0) {
         const requested = Number(size);
         const buffered = this.readableLength;
-        if (!st.objectMode && Number.isFinite(requested) && requested > buffered && !st.ended) {
+        if (readWouldWait(this, st, requested, buffered)) {
           if (!st.reading) {
             st.reading = true;
             requestRead(this);
@@ -660,7 +669,7 @@
       if (st.buffer.length > 0) {
         const requested = Number(size);
         const buffered = this.readableLength;
-        if (!st.objectMode && Number.isFinite(requested) && requested > buffered && !st.ended) {
+        if (readWouldWait(this, st, requested, buffered)) {
           releaseTransform(this);
           return null;
         }
