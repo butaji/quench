@@ -347,7 +347,7 @@ pub(crate) fn make_string(input: Vec<u16>) -> Value {
 
 pub(crate) fn make_regexp_string(
     regexp: Value,
-    input: String,
+    input: Value,
     global: bool,
     unicode: bool,
 ) -> Value {
