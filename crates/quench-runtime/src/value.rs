@@ -1206,11 +1206,8 @@ impl ObjectData {
             .into_iter()
             .map(|(name, value)| (name.into(), value))
             .collect();
-        Self::with_creation_order(
-            properties.clone(),
-            private_slots,
-            creation_order(&properties),
-        )
+        let created = creation_order(&properties);
+        Self::with_creation_order(properties, private_slots, created)
     }
 
     pub(crate) fn with_shared_properties(
