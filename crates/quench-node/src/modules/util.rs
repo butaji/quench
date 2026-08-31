@@ -1200,7 +1200,7 @@ fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
             value,
             depth.saturating_sub(1),
             0,
-            value.object_identity(),
+            inspect_identity(value),
         );
     }
     let own_keys = quench_runtime::execute::own_keys(value)
@@ -1345,6 +1345,10 @@ fn inspect_getter_recursive(
     }
 }
 
+fn inspect_identity(value: &Value) -> Option<u64> {
+    quench_runtime::execute::canonical_value(value).object_identity()
+}
+
 fn inspect_getter_property(
     value: &Value,
     key: &str,
@@ -1357,7 +1361,7 @@ fn inspect_getter_property(
             quench_runtime::execute::get_property(&Value::Object(descriptor.clone()), "get");
         if !matches!(getter, Value::Undefined) {
             if let Ok(result) = quench_runtime::execute::call(&getter, value, &[]) {
-                let shown = if result.object_identity() == root_identity {
+                let shown = if inspect_identity(&result) == root_identity {
                     "[Circular *1]".into()
                 } else if depth == 0 {
                     inspect_shallow(&result)
@@ -1376,7 +1380,7 @@ fn inspect_getter_property(
         }
     }
     let result = quench_runtime::execute::get_property(value, key);
-    if result.object_identity() == root_identity {
+    if inspect_identity(&result) == root_identity {
         "[Circular *1]".into()
     } else if depth == 0 {
         inspect_shallow(&result)

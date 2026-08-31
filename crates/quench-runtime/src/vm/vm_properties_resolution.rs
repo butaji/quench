@@ -26,7 +26,7 @@ pub(crate) fn get_named_property_result(
     let retry_resolved = !matches!(value, Value::Object(object) if !object.has_replacement());
     if let Value::Object(object) = value {
         if let Some(value) = get_named_cached_object(object, cache) {
-            return Ok(value);
+            return Ok(crate::locals::resolved_replacement(value).strong_function());
         }
     }
     let resolved = crate::locals::resolved_replacement(value.clone());
@@ -34,7 +34,7 @@ pub(crate) fn get_named_property_result(
         if let Value::Object(object) = &resolved {
             if let Some(value) = get_named_cached_object(object, cache) {
                 crate::execution_trace::named_get_miss_reason("unknown");
-                return Ok(value);
+                return Ok(crate::locals::resolved_replacement(value).strong_function());
             }
         }
     }
@@ -74,6 +74,7 @@ pub(crate) fn get_global_named_property_result(
         }
     }
     if let Some(value) = get_named_cached_object(object, cache) {
+        let value = crate::locals::resolved_replacement(value).strong_function();
         return Ok(global_placeholder_value(property_value(&value), key));
     }
     let result = get_property_result(value, key)?;

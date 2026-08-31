@@ -1685,6 +1685,10 @@ pub fn internal_binding(
                     Value::String("Symbol.node:arrowMessage\0internal".into()),
                 )]),
             ));
+            binding.push((
+                "getProxyDetails".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
+            ));
         }
         return Ok(crate::host::namespace_object_from_pairs(binding));
     }
