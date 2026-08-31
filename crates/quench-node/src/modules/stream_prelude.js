@@ -145,9 +145,16 @@
     }
   }
 
-  function defaultHwm(options) {
+  function defaultHwm(options, side) {
+    const sideHighWaterMark = side === "readable"
+      ? options.readableHighWaterMark
+      : options.writableHighWaterMark;
+    if (sideHighWaterMark != null) return sideHighWaterMark;
     if (options.highWaterMark != null) return options.highWaterMark;
-    return options.objectMode ? 16 : 16384;
+    const objectMode = side === "readable"
+      ? options.objectMode || options.readableObjectMode
+      : options.objectMode || options.writableObjectMode;
+    return objectMode ? 16 : 16384;
   }
 
   function validateEncoding(encoding) {
@@ -204,8 +211,8 @@
   function initReadable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._readableState = {
-      objectMode: !!options.objectMode,
-      highWaterMark: defaultHwm(options),
+      objectMode: !!(options.objectMode || options.readableObjectMode),
+      highWaterMark: defaultHwm(options, "readable"),
       buffer: [],
       flowing: null,
       flowScheduled: false,
@@ -1147,11 +1154,11 @@
   function initWritable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._writableState = {
-      objectMode: !!options.objectMode,
+      objectMode: !!(options.objectMode || options.writableObjectMode),
       writable: options.writable === false ? false : undefined,
       decodeStrings: options.decodeStrings !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
-      highWaterMark: defaultHwm(options),
+      highWaterMark: defaultHwm(options, "writable"),
       buffered: 0,
       needDrain: false,
       bufferedRequestCount: 0,
@@ -1295,7 +1302,7 @@
           st.errorEmitted = true;
           stream._emitter.emit("error", error);
         }
-        if (!error && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
+        if (!error && !st.destroyed && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
         if (!error) finishWritable(stream);
       };
       try {
@@ -1486,7 +1493,7 @@
                     st.errorEmitted = true;
                     this._emitter.emit("error", batchError);
                   }
-                  if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
+                  if (!st.destroyed && st.buffered <= st.highWaterMark) this._emitter.emit("drain");
                   if (!batchError) finishWritable(this);
                 }
               );
@@ -1513,7 +1520,7 @@
           st.ended = wasEnded;
           return;
         }
-        if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
+        if (!st.destroyed && st.buffered <= st.highWaterMark) this._emitter.emit("drain");
         finishWritable(this);
       };
       try {
@@ -1636,8 +1643,20 @@
       const destroy = this._destroy;
       nextTick(() => {
         const finish = (destroyError) => {
-          const endError = destroyError || stream._writableState.errored;
-          if (endError) completeEndCallbacks(stream._writableState, endError);
+          const state = stream._writableState;
+          const endError = destroyError || state.errored;
+          // A pending end callback observes destruction even when destroy()
+          // itself carried no error. Keep `w.errored` null, as Node does, but
+          // complete the callback with the destruction contract error.
+          if (endError) {
+            completeEndCallbacks(state, endError);
+          } else if (state.endCallbacks.length) {
+            const destroyedError = Object.assign(
+              new Error("Cannot call write after a stream was destroyed"),
+              { code: "ERR_STREAM_DESTROYED" }
+            );
+            completeEndCallbacks(state, destroyedError);
+          }
           if (destroyError && !stream._writableState.errorEmitted) {
           stream._writableState.errorEmitted = true;
           stream._destroyError = destroyError;
@@ -2070,6 +2089,15 @@
   Readable.isDisturbed = isDisturbed;
   Readable.toWeb = readableToWeb;
   Writable.destroy = destroy;
+  // `Stream` is the legacy EventEmitter base, not a readable with the
+  // auto-destroy lifecycle. Reuse the readable mechanics for pipe support,
+  // but keep its base-stream error behavior by disabling that lifecycle.
+  function Stream(options) {
+    const baseOptions = Object.assign({}, options || {}, { autoDestroy: false });
+    return new ReadableClass(baseOptions);
+  }
+  Stream.prototype = ReadableClass.prototype;
+  Stream.prototype.constructor = Stream;
   // Keep the public stream module's Duplex family connected to the canonical
   // NodeDuplex adapters installed by the bootstrap layer.
   const DuplexCompat = function (options = {}) {
@@ -2120,7 +2148,7 @@
     Duplex: DuplexCompat,
     Transform,
     PassThrough,
-    Stream: Readable,
+    Stream,
     destroy,
     addAbortSignal(signal, stream) {
       if (!signal || !stream || typeof stream.destroy !== "function") return stream;
