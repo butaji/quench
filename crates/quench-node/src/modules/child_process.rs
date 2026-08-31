@@ -391,7 +391,10 @@ pub fn spawn_sync(
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
-        cmd.env("QUENCH_ARGV0", &command);
+        let argv0 = options
+            .and_then(|value| opt_str(value, "argv0"))
+            .unwrap_or_else(|| command.clone());
+        cmd.env("QUENCH_ARGV0", argv0);
     }
 
     let mut child = match cmd
@@ -574,10 +577,10 @@ fn validate_text_option(options: &Value, key: &str) -> Result<(), VmError> {
     if matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
         return Ok(());
     }
-    Err(VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-    ])))
+    Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+        "The \"options.{key}\" property must be of type string.{}",
+        crate::modules::util::invalid_arg_received(&value)
+    )))
 }
 
 fn validate_bool_option(options: &Value, key: &str) -> Result<(), VmError> {
