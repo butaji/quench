@@ -592,6 +592,7 @@ pub const SPEC_NET_BOUND_SOCKET_CLOSE: NodeSpec =
     NodeSpec::new("net:BoundSocket.close", 0x1025);
 pub const SPEC_NET_TCP: NodeSpec = NodeSpec::new("net:TCP", 0x1031);
 pub const SPEC_NET_TCP_BIND: NodeSpec = NodeSpec::new("net:TCP.bind", 0x1032);
+pub const SPEC_NET_SERVER_LISTEN2: NodeSpec = NodeSpec::new("net:server:_listen2", 0x1033);
 
 // net socket / server methods (dispatched with the JS receiver).
 pub const SPEC_NET_SERVER_LISTEN: NodeSpec = NodeSpec::new("net:server:listen", 0x1007);
@@ -1208,6 +1209,7 @@ pub const CAP_NET_BOUND_SOCKET_FD: CapId = SPEC_NET_BOUND_SOCKET_FD.cap;
 pub const CAP_NET_BOUND_SOCKET_CLOSE: CapId = SPEC_NET_BOUND_SOCKET_CLOSE.cap;
 pub const CAP_NET_TCP: CapId = SPEC_NET_TCP.cap;
 pub const CAP_NET_TCP_BIND: CapId = SPEC_NET_TCP_BIND.cap;
+pub const CAP_NET_SERVER_LISTEN2: CapId = SPEC_NET_SERVER_LISTEN2.cap;
 pub const CAP_NET_SOCKET: CapId = SPEC_NET_SOCKET.cap;
 pub const CAP_NET_SOCKET_ADDRESS: CapId = SPEC_NET_SOCKET_ADDRESS.cap;
 pub const CAP_NET_SOCKET_DESTROY: CapId = SPEC_NET_SOCKET_DESTROY.cap;
