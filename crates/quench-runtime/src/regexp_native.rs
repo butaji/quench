@@ -28,6 +28,8 @@ enum NativePattern<'a> {
     },
 }
 
+const PROPERTY_RANGE_THRESHOLD: usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeMatch {
     pub(crate) start: usize,
@@ -222,7 +224,7 @@ fn property_matches(
 fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
     matches!(
         (name, value),
-        ("Any", _)
+        ("Any" | "Assigned", _)
             | ("Other", None)
             | ("C", None)
             | ("General_Category" | "gc", Some("Other" | "C" | "Surrogate" | "Cs"))
@@ -249,6 +251,11 @@ fn find_property_repeat_str(
             end: input.len(),
         });
     }
+    if input.len() >= PROPERTY_RANGE_THRESHOLD {
+        if let Some(ranges) = property_ranges(name, value, negative) {
+            return find_property_repeat_char_ranges(input, &ranges);
+        }
+    }
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
     let mut count = 0;
     for character in input.chars() {
@@ -261,6 +268,31 @@ fn find_property_repeat_str(
         start: 0,
         end: count,
     })
+}
+
+fn find_property_repeat_char_ranges(
+    input: &str,
+    ranges: &[std::ops::RangeInclusive<u32>],
+) -> Option<NativeMatch> {
+    let mut range_index = 0;
+    let mut count = 0;
+    for character in input.chars() {
+        let value = u32::from(character);
+        while ranges
+            .get(range_index)
+            .is_some_and(|range| *range.end() < value)
+        {
+            range_index += 1;
+        }
+        if !ranges
+            .get(range_index)
+            .is_some_and(|range| range.contains(&value))
+        {
+            return None;
+        }
+        count += character.len_utf8();
+    }
+    (count > 0).then_some(NativeMatch { start: 0, end: count })
 }
 
 fn find_property_repeat_units(
@@ -279,6 +311,11 @@ fn find_property_repeat_units(
             start: 0,
             end: input.len(),
         });
+    }
+    if input.len() >= PROPERTY_RANGE_THRESHOLD {
+        if let Some(ranges) = property_ranges(name, value, negative) {
+            return find_property_repeat_ranges(name, value, negative, input, flags, &ranges);
+        }
     }
     let unicode = flags.contains('u') || flags.contains('v');
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
@@ -308,6 +345,170 @@ fn find_property_repeat_units(
         start: 0,
         end: count,
     })
+}
+
+fn property_ranges(
+    name: &str,
+    value: Option<&str>,
+    negative: bool,
+) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
+    use icu_properties::{props, CodePointMapData, PropertyParser};
+    let ranges = if name == "ASCII" {
+        vec![0..=0x7F]
+    } else if matches!(name, "Script" | "sc") {
+        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
+        icu_properties::CodePointMapData::<props::Script>::new()
+            .iter_ranges_for_value(target)
+            .collect()
+    } else if matches!(name, "Script_Extensions" | "scx") {
+        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
+        icu_properties::script::ScriptWithExtensions::new()
+            .get_script_extensions_ranges(target)
+            .collect()
+    } else if matches!(name, "General_Category" | "gc") {
+        let parser = PropertyParser::<props::GeneralCategory>::new();
+        if let Some(target) = parser.get_loose(value?) {
+            CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_value(target)
+                .collect()
+        } else {
+            let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
+            CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_group(target)
+                .collect()
+        }
+    } else if name == "Assigned" {
+        CodePointMapData::<props::GeneralCategory>::new()
+            .iter_ranges_for_value_complemented(props::GeneralCategory::Unassigned)
+            .collect()
+    } else {
+        binary_property_ranges(name)?
+    };
+    Some(if negative {
+        complement_ranges(ranges)
+    } else {
+        ranges
+    })
+}
+
+fn binary_property_ranges(
+    name: &str,
+) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
+    use icu_properties::{props, CodePointSetData};
+    macro_rules! ranges {
+        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
+            match name {
+                $( $( $property => Some(CodePointSetData::new::<props::$kind>().iter_ranges().collect()), )+ )*
+                _ => None,
+            }
+        };
+    }
+    ranges!(
+        "ASCII_Hex_Digit" | "AHex" => AsciiHexDigit,
+        "Alphabetic" | "Alpha" => Alphabetic,
+        "Bidi_Control" | "Bidi_C" => BidiControl,
+        "Bidi_Mirrored" | "Bidi_M" => BidiMirrored,
+        "Case_Ignorable" | "CI" => CaseIgnorable,
+        "Cased" => Cased,
+        "Changes_When_Casefolded" | "CWCF" => ChangesWhenCasefolded,
+        "Changes_When_Casemapped" | "CWCM" => ChangesWhenCasemapped,
+        "Changes_When_NFKC_Casefolded" | "CWKCF" => ChangesWhenNfkcCasefolded,
+        "Changes_When_Lowercased" | "CWL" => ChangesWhenLowercased,
+        "Changes_When_Titlecased" | "CWT" => ChangesWhenTitlecased,
+        "Changes_When_Uppercased" | "CWU" => ChangesWhenUppercased,
+        "Dash" => Dash,
+        "Deprecated" | "Dep" => Deprecated,
+        "Default_Ignorable_Code_Point" | "DI" => DefaultIgnorableCodePoint,
+        "Diacritic" | "Dia" => Diacritic,
+        "Emoji" => Emoji,
+        "Emoji_Component" | "EComp" => EmojiComponent,
+        "Emoji_Modifier" | "EMod" => EmojiModifier,
+        "Emoji_Modifier_Base" | "EBase" => EmojiModifierBase,
+        "Emoji_Presentation" | "EPres" => EmojiPresentation,
+        "Extended_Pictographic" | "ExtPict" => ExtendedPictographic,
+        "Extender" | "Ext" => Extender,
+        "Grapheme_Base" | "Gr_Base" => GraphemeBase,
+        "Grapheme_Extend" | "Gr_Ext" => GraphemeExtend,
+        "Hex_Digit" | "Hex" => HexDigit,
+        "ID_Continue" | "IDC" => IdContinue,
+        "ID_Start" | "IDS" => IdStart,
+        "Ideographic" | "Ideo" => Ideographic,
+        "IDS_Binary_Operator" | "IDSB" => IdsBinaryOperator,
+        "IDS_Trinary_Operator" | "IDST" => IdsTrinaryOperator,
+        "Join_Control" | "Join_C" => JoinControl,
+        "Logical_Order_Exception" | "LOE" => LogicalOrderException,
+        "Lowercase" | "Lower" => Lowercase,
+        "Math" => Math,
+        "Noncharacter_Code_Point" | "NChar" => NoncharacterCodePoint,
+        "Pattern_Syntax" | "Pat_Syn" => PatternSyntax,
+        "Pattern_White_Space" | "Pat_WS" => PatternWhiteSpace,
+        "Quotation_Mark" | "QMark" => QuotationMark,
+        "Radical" => Radical,
+        "Regional_Indicator" | "RI" => RegionalIndicator,
+        "Sentence_Terminal" | "STerm" => SentenceTerminal,
+        "Soft_Dotted" | "SD" => SoftDotted,
+        "Terminal_Punctuation" | "Term" => TerminalPunctuation,
+        "Unified_Ideograph" | "UIdeo" => UnifiedIdeograph,
+        "Uppercase" | "Upper" => Uppercase,
+        "Variation_Selector" | "VS" => VariationSelector,
+        "White_Space" | "space" | "WSpace" => WhiteSpace,
+        "XID_Continue" | "XIDC" => XidContinue,
+        "XID_Start" | "XIDS" => XidStart,
+    )
+}
+
+fn complement_ranges(ranges: Vec<std::ops::RangeInclusive<u32>>) -> Vec<std::ops::RangeInclusive<u32>> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    for range in ranges {
+        let end = *range.end();
+        if start < *range.start() {
+            result.push(start..=*range.start() - 1);
+        }
+        start = end.saturating_add(1);
+    }
+    if start <= 0x10FFFF {
+        result.push(start..=0x10FFFF);
+    }
+    result
+}
+
+fn find_property_repeat_ranges(
+    name: &str,
+    value: Option<&str>,
+    negative: bool,
+    input: &[u16],
+    flags: &str,
+    ranges: &[std::ops::RangeInclusive<u32>],
+) -> Option<NativeMatch> {
+    let unicode = flags.contains('u') || flags.contains('v');
+    let mut index = 0;
+    let mut range_index = 0;
+    while index < input.len() {
+        let Some((character, width)) = next_code_point(input, index, unicode) else {
+            let matched = surrogate_property_matches(name, value);
+            if if negative { matched } else { !matched } {
+                return None;
+            }
+            index += 1;
+            continue;
+        };
+        let value = u32::from(character);
+        while ranges
+            .get(range_index)
+            .is_some_and(|range| *range.end() < value)
+        {
+            range_index += 1;
+        }
+        if !ranges
+            .get(range_index)
+            .is_some_and(|range| range.contains(&value))
+        {
+            return None;
+        }
+        index += width;
+    }
+    (index > 0).then_some(NativeMatch { start: 0, end: index })
 }
 
 fn next_code_point(input: &[u16], index: usize, unicode: bool) -> Option<(char, usize)> {
@@ -462,7 +663,7 @@ fn unit_matches(class: CharacterClass, unit: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_str, find_units, test_str, test_units};
+    use super::{find_str, find_units, surrogate_property_matches, test_str, test_units};
 
     #[test]
     fn literal_scan_respects_sticky_start() {
@@ -534,6 +735,10 @@ mod tests {
 
     #[test]
     fn property_repetition_reuses_compiled_unicode_data() {
+        assert!(surrogate_property_matches(
+            "General_Category",
+            Some("Surrogate")
+        ));
         assert_eq!(test_str("^\\p{Assigned}+$", "u", "abc", 0), Some(true));
         assert_eq!(test_str("^\\P{Assigned}+$", "u", "\u{38b}", 0), Some(true));
         assert_eq!(
@@ -542,6 +747,11 @@ mod tests {
         );
         assert_eq!(
             test_units("^\\p{Assigned}+$", "u", &[b'a' as u16, b'b' as u16], 0),
+            Some(true)
+        );
+        assert_eq!(test_units("^\\p{Assigned}+$", "u", &[0xD800], 0), Some(true));
+        assert_eq!(
+            test_units("^\\p{General_Category=Surrogate}+$", "u", &[0xD800], 0),
             Some(true)
         );
     }
