@@ -536,7 +536,16 @@ fn register_server_path(
             .get(&id)
             .map(|server| server.borrow().refed)
             .unwrap_or(true);
-        (host.cluster.worker_context, refed)
+        let worker = host.cluster.worker_context.or_else(|| {
+            match execute::get_property(
+                &quench_runtime::vm::current_global_object(),
+                "__quench_cluster_worker_id",
+            ) {
+                Value::Number(id) if id.is_finite() && id >= 0.0 => Some(id as u64),
+                _ => None,
+            }
+        });
+        (worker, refed)
     };
     state.borrow_mut().net.servers.insert(
         id,
