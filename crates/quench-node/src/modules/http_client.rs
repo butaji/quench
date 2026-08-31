@@ -766,11 +766,14 @@ fn agent_socket_capacity_available(agent: &Value, target: &RequestTarget) -> boo
     if active_count >= max {
         return false;
     }
-    let total = execute::get_property(agent, "totalSocketCount");
-    let total = match total {
-        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
-        _ => 0,
-    };
+    let total = execute::own_enumerable_keys(&sockets)
+        .into_iter()
+        .map(|key| execute::get_property(&sockets, &key))
+        .map(|list| match execute::get_property(&list, "length") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        })
+        .sum::<usize>();
     let max_total = match execute::get_property(agent, "maxTotalSockets") {
         Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
         _ => usize::MAX,
