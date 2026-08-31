@@ -18,6 +18,7 @@ thread_local! {
 /// Drop compiled patterns at a fixture or realm boundary.
 pub fn reset_compiled_cache() {
     COMPILED_REGEXPS.with(|cache| cache.replace(HashMap::new()));
+    crate::regexp_native::reset_property_range_cache();
 }
 
 #[inline]
