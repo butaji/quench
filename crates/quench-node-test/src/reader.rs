@@ -171,6 +171,8 @@ impl NodeRunner {
         let support_surface = quench_node::polyfills::bootstrap::lookup("support").unwrap_or("");
         let async_resource_surface =
             quench_node::polyfills::bootstrap::lookup("async-resource").unwrap_or("");
+        let webcrypto_surface =
+            quench_node::polyfills::bootstrap::lookup("webcrypto-global").unwrap_or("");
         let web_streams_surface = ["web-streams"]
             .into_iter()
             .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
@@ -192,7 +194,7 @@ impl NodeRunner {
         // the runner realm so fixtures using `global.gc`, `global.process`,
         // and identity checks observe the same host surface as `globalThis`.
         let source =
-            format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{report_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+            format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         self.host
             .state()
             .borrow_mut()
