@@ -291,6 +291,7 @@ const CAP_NET_SERVER_CLOSE: u16 = 0x1008;
 const CAP_NET_SERVER_ADDRESS: u16 = 0x1009;
 const CAP_NET_SERVER_UNREF: u16 = 0x1014;
 const CAP_NET_SERVER_REF: u16 = 0x1015;
+const CAP_NET_SERVER_GET_CONNECTIONS: u16 = 0x1028;
 const CAP_NET_SOCKET_WRITE: u16 = 0x100A;
 const CAP_NET_SOCKET_END: u16 = 0x100B;
 const CAP_NET_SOCKET_DESTROY: u16 = 0x100C;
@@ -804,6 +805,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SERVER_ADDRESS => crate::modules::net::server_address,
         CAP_NET_SERVER_UNREF => crate::modules::net::server_unref,
         CAP_NET_SERVER_REF => crate::modules::net::server_ref,
+        CAP_NET_SERVER_GET_CONNECTIONS => crate::modules::net::server_get_connections,
         CAP_NET_SOCKET_WRITE => crate::modules::net::socket_write,
         CAP_NET_SOCKET_END => crate::modules::net::socket_end,
         CAP_NET_SOCKET_DESTROY => crate::modules::net::socket_destroy,
