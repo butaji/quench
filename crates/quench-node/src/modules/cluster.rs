@@ -6,6 +6,7 @@ use crate::registry::{
     SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON, SPEC_CLUSTER_WORKER_PROCESS_SEND,
     SPEC_CLUSTER_WORKER_SEND, SPEC_CLUSTER_SETUP_EVENT, SPEC_CLUSTER_SETUP_MASTER,
     SPEC_CLUSTER_SETUP_PRIMARY,
+    SPEC_EVENTS_EMIT,
 };
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -37,6 +38,7 @@ pub struct ClusterState {
     script: Option<(String, String)>,
     pub(crate) worker_context: Option<u64>,
     worker_listen_slots: HashMap<u64, usize>,
+    pending_cluster_listening: Vec<(Value, Value)>,
 }
 impl ClusterState {
     pub fn new() -> Self {
@@ -50,6 +52,7 @@ impl ClusterState {
             script: None,
             worker_context: None,
             worker_listen_slots: HashMap::new(),
+            pending_cluster_listening: Vec::new(),
         }
     }
 
@@ -389,13 +392,28 @@ pub fn fork(
         );
     }
     run_worker_script(state, id, &worker);
+    let pending_listening = state
+        .borrow_mut()
+        .cluster
+        .pending_cluster_listening
+        .drain(..)
+        .collect::<Vec<_>>();
     let module = { state.borrow().cluster.module.clone() };
-    if let Some(module) = module {
+    if let Some(module) = module.clone() {
         let _ = crate::modules::events::method_emit(
             state,
             Some(&module),
             &[Value::String("online".into()), worker.clone()],
         );
+    }
+    if let Some(module) = module {
+        for (worker, address) in pending_listening {
+            state.borrow().event_loop.queue_microtask_with_receiver(
+                crate::host::capability(SPEC_EVENTS_EMIT),
+                vec![Value::String("listening".into()), worker, address],
+                module.clone(),
+            );
+        }
     }
     Ok(worker)
 }
@@ -600,8 +618,19 @@ pub(crate) fn notify_listening(
         .workers
         .get_mut(&worker_id)
     {
-        worker.pending_listening.push(address);
+        worker.pending_listening.push(address.clone());
     }
+    // `fork().on(...)` registers after synchronous worker re-entry. Retain a
+    // module-level event until `fork` has returned and can queue it after the
+    // caller installs listeners on `cluster`.
+    let Some(worker) = state.borrow().cluster.worker_object(worker_id) else {
+        return;
+    };
+    state
+        .borrow_mut()
+        .cluster
+        .pending_cluster_listening
+        .push((worker, listening_info(&address)));
 }
 
 /// Reserve the next construction-order slot for a worker's ephemeral server.
@@ -935,14 +964,6 @@ pub fn on(
                         cb.clone(),
                         vec![info],
                         obj.clone(),
-                    );
-                }
-                let module = state.borrow().cluster.module.clone();
-                if let Some(module) = module {
-                    let _ = crate::modules::events::method_emit(
-                        state,
-                        Some(&module),
-                        &[Value::String("listening".into()), obj.clone()],
                     );
                 }
             }
