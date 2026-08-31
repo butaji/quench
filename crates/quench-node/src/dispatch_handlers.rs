@@ -5181,42 +5181,6 @@ pub fn cp_send(
     } else {
         crate::modules::events::method_emit(state, Some(child), &event_args)?;
     }
-    if let Value::Object(_) | Value::ObjectAlias(_) = message {
-        let what = execute::get_property(message, "what");
-        if let Value::String(what) = what {
-            let follow_up = match what.as_str() {
-                "server" => Some("listening"),
-                "close" => Some("close"),
-                _ => None,
-            };
-            if what == "socket" {
-                if let Some(handle) = args.get(1) {
-                    let end = execute::get_property(handle, "end");
-                    if quench_runtime::is_callable(&end) {
-                        let _ = execute::call(&end, handle, &[Value::String("echo".into())]);
-                    }
-                }
-            }
-            if let Some(what) = follow_up {
-                let callback = host_api::bound_capability_with_arguments(
-                    quench_runtime::ops::HostCapabilityRef {
-                        realm: quench_runtime::ops::RealmId::ROOT,
-                        kind: quench_runtime::ops::HostCapabilityKind::Custom(
-                            crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
-                        ),
-                    },
-                    vec![
-                        child.clone(),
-                        host_api::object(vec![("what".into(), Value::String(what.into()))]),
-                    ],
-                );
-                state
-                    .borrow_mut()
-                    .event_loop
-                    .queue_microtask(callback, vec![]);
-            }
-        }
-    }
     Ok(Value::Boolean(true))
 }
 
