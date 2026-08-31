@@ -1141,6 +1141,41 @@ fn connect_with_receiver(
         .as_deref()
         .or(host.as_deref())
         .unwrap_or(LOCAL_HOST);
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if let Value::Number(local_port) = execute::get_property(options, "localPort") {
+            let local_port = local_port as u16;
+            let local_address = string_property(options, "localAddress");
+            let conflict = state.borrow().net.servers.values().any(|server| {
+                let server = server.borrow();
+                server
+                    .bind_addr
+                    .is_some_and(|address| address.port() == local_port
+                        && local_address
+                            .as_deref()
+                            .is_none_or(|host| host == address.ip().to_string()))
+            });
+            if conflict {
+                let object = match receiver.or(lookup_socket_for_result.as_ref()) {
+                    Some(object) => object.clone(),
+                    None => {
+                        let (object, _) = new_net_object(state, socket_props())?;
+                        install_socket_counters(object)?
+                    }
+                };
+                let error = host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    ("message".into(), Value::String("bind EADDRINUSE".into())),
+                    ("code".into(), Value::String("EADDRINUSE".into())),
+                    ("syscall".into(), Value::String("bind".into())),
+                ]);
+                state.borrow_mut().net.pending_errors.push((object.clone(), error));
+                return Ok(object);
+            }
+        }
+    }
     if port == 0 {
         let loopback = SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), 0);
         return connect_refused(state, receiver.or(lookup_socket_for_result.as_ref()), &loopback);
