@@ -232,12 +232,8 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         }),
         crate::strings::expand_utf16(&replacement),
     ) {
-        let has_substitution = replacement_units.contains(&(b'$' as u16));
-        if !has_substitution
-            && !dynamic_exec(&receiver, global)
-            && !extract_source(&receiver).starts_with('^')
-        {
-            return replace_units_simple(
+        if !dynamic_exec(&receiver, global) && !extract_source(&receiver).starts_with('^') {
+            return replace_units_template(
                 &receiver,
                 input.clone(),
                 units,
@@ -265,7 +261,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     replace_with_template(&receiver, &s, &replacement)
 }
 
-fn replace_units_simple(
+fn replace_units_template(
     receiver: &Value,
     input: Value,
     units: &[u16],
@@ -277,14 +273,16 @@ fn replace_units_simple(
         set_last_index(receiver, 0.0)?;
     }
     let mut output = Vec::with_capacity(units.len() + replacement.len());
+    let has_substitution = replacement.contains(&(b'$' as u16));
     let mut copied = 0;
     loop {
         let result = regexp_exec_value(receiver, input.clone())?;
         if matches!(result, Value::Null) {
             break;
         }
-        let start = crate::conversion::to_number(&crate::execute::get_property_result(&result, "index")?)?
-            .max(0.0) as usize;
+        let start =
+            crate::conversion::to_number(&crate::execute::get_property_result(&result, "index")?)?
+                .max(0.0) as usize;
         let matched = crate::execute::get_property_result(&result, "0")?;
         let length = crate::strings::view_of(&matched)
             .map(crate::strings::view_len_units)
@@ -293,7 +291,21 @@ fn replace_units_simple(
         let end = start.saturating_add(length).min(units.len());
         if start >= copied {
             output.extend_from_slice(&units[copied..start]);
-            output.extend_from_slice(replacement);
+            if has_substitution {
+                let captures = result_captures(&result)?;
+                let groups = crate::execute::get_property_result(&result, "groups")?;
+                expand_units_template(
+                    &mut output,
+                    units,
+                    start,
+                    end,
+                    replacement,
+                    &captures,
+                    &groups,
+                )?;
+            } else {
+                output.extend_from_slice(replacement);
+            }
             copied = end;
         }
         if !global {
@@ -309,6 +321,138 @@ fn replace_units_simple(
     }
     output.extend_from_slice(&units[copied..]);
     Ok(crate::strings::from_units(output))
+}
+
+fn result_captures(result: &Value) -> Result<Vec<Value>, VmError> {
+    let length =
+        crate::conversion::to_number(&crate::execute::get_property_result(result, "length")?)?;
+    let length = to_length(length);
+    (1..length)
+        .map(|index| crate::execute::get_property_result(result, &index.to_string()))
+        .collect()
+}
+
+fn expand_units_template(
+    output: &mut Vec<u16>,
+    input: &[u16],
+    start: usize,
+    end: usize,
+    template: &[u16],
+    captures: &[Value],
+    groups: &Value,
+) -> Result<(), VmError> {
+    let mut index = 0;
+    while index < template.len() {
+        if template[index] != b'$' as u16 || index + 1 >= template.len() {
+            output.push(template[index]);
+            index += 1;
+            continue;
+        }
+        if let Some(next) =
+            expand_units_token(output, input, start, end, template, index, captures, groups)?
+        {
+            index = next;
+        } else {
+            output.push(template[index]);
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+fn expand_units_token(
+    output: &mut Vec<u16>,
+    input: &[u16],
+    start: usize,
+    end: usize,
+    template: &[u16],
+    index: usize,
+    captures: &[Value],
+    groups: &Value,
+) -> Result<Option<usize>, VmError> {
+    const DOLLAR: u16 = b'$' as u16;
+    const AMPERSAND: u16 = b'&' as u16;
+    const BACKTICK: u16 = b'`' as u16;
+    const APOSTROPHE: u16 = b'\'' as u16;
+    const OPEN_ANGLE: u16 = b'<' as u16;
+    let token = template[index + 1];
+    match token {
+        DOLLAR => {
+            output.push(b'$' as u16);
+            Ok(Some(index + 2))
+        }
+        AMPERSAND => {
+            output.extend_from_slice(&input[start..end]);
+            Ok(Some(index + 2))
+        }
+        BACKTICK => {
+            output.extend_from_slice(&input[..start]);
+            Ok(Some(index + 2))
+        }
+        APOSTROPHE => {
+            output.extend_from_slice(&input[end..]);
+            Ok(Some(index + 2))
+        }
+        0x30..=0x39 => expand_units_capture(output, template, index, captures),
+        OPEN_ANGLE => expand_units_named(output, template, index, groups),
+        _ => Ok(None),
+    }
+}
+
+fn append_capture(output: &mut Vec<u16>, capture: &Value) {
+    if let Some(units) = crate::strings::expand_utf16(capture) {
+        output.extend_from_slice(&units);
+    }
+}
+
+fn expand_units_capture(
+    output: &mut Vec<u16>,
+    template: &[u16],
+    index: usize,
+    captures: &[Value],
+) -> Result<Option<usize>, VmError> {
+    let first = usize::from(template[index + 1] - b'0' as u16);
+    let has_second = template
+        .get(index + 2)
+        .is_some_and(|value| (b'0' as u16..=b'9' as u16).contains(value));
+    let second = has_second.then(|| usize::from(template[index + 2] - b'0' as u16));
+    let number = second.map_or(first, |second| first * 10 + second);
+    if number > 0 && number <= captures.len() {
+        append_capture(output, &captures[number - 1]);
+        return Ok(Some(index + if has_second { 3 } else { 2 }));
+    }
+    if let Some(second) = second {
+        if first > 0 && first <= captures.len() {
+            append_capture(output, &captures[first - 1]);
+            output.push(b'0' as u16 + second as u16);
+            return Ok(Some(index + 3));
+        }
+    }
+    Ok(None)
+}
+
+fn expand_units_named(
+    output: &mut Vec<u16>,
+    template: &[u16],
+    index: usize,
+    groups: &Value,
+) -> Result<Option<usize>, VmError> {
+    let Some(close) = template[index + 2..]
+        .iter()
+        .position(|value| *value == b'>' as u16)
+    else {
+        return Ok(None);
+    };
+    if matches!(groups, Value::Undefined) {
+        return Ok(None);
+    }
+    let close = index + 2 + close;
+    let name = String::from_utf16_lossy(&template[index + 2..close]);
+    let capture = crate::execute::get_property_result(groups, &name)?;
+    if !matches!(capture, Value::Undefined) {
+        append_capture(output, &capture);
+    }
+    Ok(Some(close + 1))
 }
 
 fn simple_class_run(source: &str) -> Option<bool> {
