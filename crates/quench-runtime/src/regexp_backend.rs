@@ -3,7 +3,12 @@
 //! OXC supplies syntax facts; the VM owns the executable representation and
 //! matching algorithm. No third-party regular-expression engine is involved.
 
-use std::{cell::Cell, collections::VecDeque, ops::Range, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::{HashSet, VecDeque},
+    ops::Range,
+    rc::Rc,
+};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -160,7 +165,7 @@ struct Unit {
     offset_start: usize,
     offset_end: usize,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct State {
     position: usize,
     captures: Vec<Option<Range<usize>>>,
@@ -844,24 +849,25 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         state: State,
         flags: Flags,
         output: &mut Vec<State>,
+        seen: &mut HashSet<State>,
     ) {
         if backtrack_reached(output.len()) {
             return;
         }
         let Some(part) = parts.get(index) else {
-            output.push(state);
+            push_unique(output, seen, state);
             return;
         };
         if is_single_option_expr(part) {
             if let Some(candidate) = match_expr(part, input, state, flags) {
-                visit(parts, index + 1, input, candidate, flags, output);
+                visit(parts, index + 1, input, candidate, flags, output, seen);
                 if backtrack_reached(output.len()) {
                     return;
                 }
             }
         } else {
             for candidate in match_options(part, input, state, flags) {
-                visit(parts, index + 1, input, candidate, flags, output);
+                visit(parts, index + 1, input, candidate, flags, output, seen);
                 if backtrack_reached(output.len()) {
                     return;
                 }
@@ -869,8 +875,15 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         }
     }
     let mut output = Vec::new();
-    visit(parts, 0, input, state, flags, &mut output);
+    let mut seen = HashSet::new();
+    visit(parts, 0, input, state, flags, &mut output, &mut seen);
     output
+}
+
+fn push_unique(output: &mut Vec<State>, seen: &mut HashSet<State>, state: State) {
+    if seen.insert(state.clone()) {
+        output.push(state);
+    }
 }
 
 fn is_single_option_expr(expr: &Expr) -> bool {
@@ -947,12 +960,13 @@ fn repeat_options(
         limit: usize,
         greedy: bool,
         output: &mut Vec<State>,
+        seen: &mut HashSet<State>,
     ) {
         if backtrack_reached(output.len()) {
             return;
         }
         if !greedy && count >= min {
-            output.push(state.clone());
+            push_unique(output, seen, state.clone());
             if backtrack_reached(output.len()) {
                 return;
             }
@@ -979,6 +993,7 @@ fn repeat_options(
                         limit,
                         greedy,
                         output,
+                        seen,
                     );
                     if backtrack_reached(output.len()) {
                         return;
@@ -987,10 +1002,11 @@ fn repeat_options(
             }
         }
         if greedy && count >= min && !backtrack_reached(output.len()) {
-            output.push(state);
+            push_unique(output, seen, state);
         }
     }
     let mut output = Vec::new();
+    let mut seen = HashSet::new();
     visit(
         body,
         input,
@@ -1002,6 +1018,7 @@ fn repeat_options(
         limit,
         greedy,
         &mut output,
+        &mut seen,
     );
     output
 }
