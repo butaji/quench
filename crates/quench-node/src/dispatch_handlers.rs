@@ -4764,6 +4764,48 @@ pub fn cp_send(
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
         ])));
     }
+    if let Some(handle) = args.get(1) {
+        let handle_is_callback = quench_runtime::is_callable(handle);
+        let valid_handle = matches!(
+            handle,
+            Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)
+        ) || handle_is_callback;
+        if !valid_handle {
+            return Err(cp_send_arg_error(
+                "ERR_INVALID_HANDLE_TYPE",
+                "The \"sendHandle\" argument must be a handle object",
+            ));
+        }
+        if let Some(options) = args.get(2) {
+            let callback_slot = quench_runtime::is_callable(options);
+            let valid_options = matches!(
+                options,
+                Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+            ) || callback_slot;
+            if !valid_options {
+                return Err(cp_send_arg_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "The \"options\" argument must be an object",
+                ));
+            }
+        }
+        if let Some(callback) = args.get(3) {
+            if !quench_runtime::is_callable(callback) {
+                return Err(cp_send_arg_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "The \"callback\" argument must be a function",
+                ));
+            }
+        }
+        if matches!(handle, Value::Null)
+            && matches!(args.get(2), Some(Value::Null))
+        {
+            return Err(cp_send_arg_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The \"options\" argument must be an object",
+            ));
+        }
+    }
     // A spawned process with an IPC stdio slot has the same bounded send
     // backlog as a fork, but no shared `process` receiver to deliver into.
     // Keep the backlog as one hidden state fact and acknowledge callbacks on
@@ -4904,6 +4946,14 @@ pub fn cp_send(
         }
     }
     Ok(Value::Boolean(true))
+}
+
+fn cp_send_arg_error(code: &str, message: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
 }
 
 pub fn cp_send_ack(
