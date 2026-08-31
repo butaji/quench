@@ -218,7 +218,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let global = observable_bool(&receiver, "global")?;
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     let source = extract_source(&receiver);
-    let legacy_units = crate::regexp::legacy_string_units(&input, &source, &flags);
+    let legacy_units = crate::regexp::legacy_string_units(&input, &flags);
     if crate::conversion::is_callable(&replacement) {
         if let Value::StringUnits(units) = &input {
             return replace_with_exec_units_callable(
@@ -279,9 +279,9 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
             crate::strings::StringView::Utf16(units) => Some(units),
             crate::strings::StringView::Utf8(_) => None,
         }),
-            crate::strings::expand_utf16(&replacement),
+        crate::strings::expand_utf16(&replacement),
     ) {
-        if !dynamic_exec(&receiver, global) && !source.starts_with('^') {
+        if !dynamic_exec(&receiver, global) {
             return replace_units_template(
                 &receiver,
                 input.clone(),
@@ -293,7 +293,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         }
     }
     if let Some(units) = legacy_units.as_deref() {
-        if !dynamic_exec(&receiver, global) && !source.starts_with('^') {
+        if !dynamic_exec(&receiver, global) {
             if let Some(replacement_units) = crate::strings::expand_utf16(&replacement) {
                 return replace_units_template(
                     &receiver,
