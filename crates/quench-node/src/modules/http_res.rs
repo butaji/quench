@@ -189,6 +189,66 @@ fn headers_sent_error(message: &str) -> VmError {
     ))
 }
 
+pub fn res_cork(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let depth = match execute::get_property(receiver, "writableCorked") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as u64,
+        _ => 0,
+    } + 1;
+    execute::set_property_in_place(receiver, "writableCorked", Value::Number(depth as f64));
+    if res_state(Some(receiver)).is_some() {
+        let socket = execute::get_property(receiver, "socket");
+        if matches!(socket, Value::Object(_) | Value::ObjectAlias(_)) {
+            let current = match execute::get_property(&socket, "writableCorked") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => value as u64,
+                _ => 0,
+            } + 1;
+            net::set_socket_property(&socket, "writableCorked", Value::Number(current as f64));
+        }
+    }
+    Ok(receiver.clone())
+}
+
+pub fn res_uncork(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let depth = match execute::get_property(receiver, "writableCorked") {
+        Value::Number(value) if value.is_finite() && value > 0.0 => value as u64 - 1,
+        _ => 0,
+    };
+    execute::set_property_in_place(receiver, "writableCorked", Value::Number(depth as f64));
+    let socket = res_state(Some(receiver)).map(|_| execute::get_property(receiver, "socket"));
+    if let Some(socket) = socket {
+        let socket_depth = match execute::get_property(&socket, "writableCorked") {
+            Value::Number(value) if value.is_finite() && value > 0.0 => value as u64 - 1,
+            _ => 0,
+        };
+        net::set_socket_property(&socket, "writableCorked", Value::Number(socket_depth as f64));
+    }
+    if depth == 0
+        && matches!(
+            execute::get_property(receiver, "writableNeedDrain"),
+            Value::Boolean(true)
+        )
+    {
+        execute::set_property_in_place(receiver, "writableNeedDrain", Value::Boolean(false));
+        execute::set_property_in_place(receiver, "writableLength", Value::Number(0.0));
+        net::emit(state, receiver, "drain", Vec::new())?;
+    }
+    Ok(receiver.clone())
+}
+
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     res.headers.clear();
     for key in execute::own_enumerable_keys(object) {
@@ -240,6 +300,28 @@ pub fn res_write(
             .ok_or_else(|| execute::type_error("chunk required"))?;
         chunk_bytes(Some(value))
     };
+    let high_water_mark = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .map(|res| execute::get_property(&execute::get_property(&res.socket, "_writableState"), "highWaterMark"))
+        .and_then(|value| match value {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
+            _ => None,
+        })
+        .unwrap_or(16_384.0);
+    let current_length = match receiver.map(|value| execute::get_property(value, "writableLength")) {
+        Some(Value::Number(value)) if value.is_finite() && value >= 0.0 => value,
+        _ => 0.0,
+    };
+    let writable_length = current_length + bytes.len() as f64;
+    let writable_ok = writable_length <= high_water_mark;
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, "writableHighWaterMark", Value::Number(high_water_mark));
+        execute::set_property_in_place(receiver, "writableLength", Value::Number(writable_length));
+        execute::set_property_in_place(receiver, "writableNeedDrain", Value::Boolean(!writable_ok));
+    }
     let (status, text, mut headers, socket, keep_alive, http10, send_date, first_write, chunked) = {
         let mut guard = state.borrow_mut();
         let response_socket = guard
@@ -316,7 +398,7 @@ pub fn res_write(
     {
         execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+    Ok(Value::Boolean(writable_ok))
 }
 
 /// `res.writeContinue([callback])` — send the interim 100 response.
