@@ -23,6 +23,7 @@ const CLIENT_EXPECT_CONTINUE_PROP: &str = "\0quench:http:req:expect-continue";
 const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 const CLIENT_SOCKET_SUBSCRIBED_PROP: &str = "\0quench:http:req:socket-subscribed";
+const CLIENT_SOCKET_EVENT_QUEUED_PROP: &str = "\0quench:http:req:socket-event-queued";
 const CLIENT_PATH_PROP: &str = "\0quench:http:req:path";
 
 /// `(host, port, method, path, headers)` for one outbound request.
@@ -55,6 +56,9 @@ pub struct ClientReq {
     pub dispatched: bool,
     pub timeout: Option<Value>,
     pub timeout_set: bool,
+    /// The first timeout supplied through request options. Node exposes this
+    /// value on the socket event before a later req.setTimeout override.
+    pub initial_timeout: Option<f64>,
     /// Explicit req.setTimeout value waiting for a connecting socket to open.
     pub pending_timeout: Option<f64>,
     pub buffer: Vec<u8>,
@@ -587,6 +591,7 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             dispatched: false,
             timeout: None,
             timeout_set: false,
+            initial_timeout: None,
             pending_timeout: None,
             buffer: Vec::new(),
             res: None,
@@ -656,7 +661,7 @@ fn start_request_socket(
     let Some(id) = client_id(Some(request)) else {
         return Ok(());
     };
-    let (target, agent, lookup, high_water_mark, aborted, existing) = {
+    let (target, agent, lookup, high_water_mark, initial_timeout, aborted, existing) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(());
@@ -666,6 +671,7 @@ fn start_request_socket(
             req.agent.clone(),
             req.lookup.clone(),
             req.high_water_mark,
+            req.initial_timeout,
             req.aborted,
             req.socket.clone(),
         )
@@ -702,9 +708,16 @@ fn start_request_socket(
                 Value::Number(value),
             );
         }
+        if let Some(value) = initial_timeout {
+            execute::set_property_in_place(&socket, "timeout", Value::Number(value));
+        }
         socket
     } else {
-        open_socket(state, &target)?
+        let socket = open_socket(state, &target)?;
+        if let Some(value) = initial_timeout {
+            execute::set_property_in_place(&socket, "timeout", Value::Number(value));
+        }
+        socket
     };
     if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
         req.socket = Some(socket.clone());
@@ -719,6 +732,11 @@ fn start_request_socket(
         state.borrow_mut().http.clients.insert(socket_id, id);
     }
     subscribe_socket(state, &socket)?;
+    set_request_property(
+        Some(request),
+        CLIENT_SOCKET_EVENT_QUEUED_PROP,
+        Value::Boolean(true),
+    );
     state
         .borrow_mut()
         .net
@@ -1157,6 +1175,12 @@ pub fn req_set_timeout(
         }
     }
     let request = receiver.cloned().unwrap_or(Value::Undefined);
+    let had_timeout = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .is_some_and(|req| req.timeout_set);
     let old_timer = state
         .borrow()
         .http
@@ -1169,6 +1193,9 @@ pub fn req_set_timeout(
     if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
         req.timeout = None;
         req.timeout_set = true;
+        if !had_timeout && req.socket.is_none() && timeout > 0.0 {
+            req.initial_timeout = Some(timeout);
+        }
     }
     set_request_property(Some(&request), "timeout", Value::Number(timeout));
     let timeout_cb = quench_runtime::host_api::bound_capability_with_arguments(
@@ -1741,11 +1768,21 @@ pub fn req_end(
             subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
         }
     }
-    state
-        .borrow_mut()
-        .net
-        .pending_events
-        .push((request, "socket".into(), vec![socket]));
+    if !matches!(
+        execute::get_property(&request, CLIENT_SOCKET_EVENT_QUEUED_PROP),
+        Value::Boolean(true)
+    ) {
+        set_request_property(
+            Some(&request),
+            CLIENT_SOCKET_EVENT_QUEUED_PROP,
+            Value::Boolean(true),
+        );
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((request, "socket".into(), vec![socket]));
+    }
     invoke_end_callback(receiver, args)?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -3303,6 +3340,10 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             (CLIENT_TIMEOUT_PROP.to_string(), Value::Undefined),
             (
                 CLIENT_CLOSE_PENDING_PROP.to_string(),
+                Value::Boolean(false),
+            ),
+            (
+                CLIENT_SOCKET_EVENT_QUEUED_PROP.to_string(),
                 Value::Boolean(false),
             ),
             (CLIENT_ASYNC_RESOURCE_PROP.to_string(), async_resource),
