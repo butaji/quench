@@ -21,13 +21,13 @@ pub fn reset_compiled_cache() {
 }
 
 #[inline]
-fn regexp_cache_key(source: &str, flags: &str) -> u64 {
-    crate::strings::hash_str(source) ^ regexp_flags_key(flags).rotate_left(23)
+fn regexp_cache_key(source: &str, flags_key: u64) -> u64 {
+    crate::strings::hash_str(source) ^ flags_key.rotate_left(23)
 }
 
 fn compiled_for(_: &Value, source: &str, flags: &str) -> Result<Rc<Regex>, VmError> {
-    let key = regexp_cache_key(source, flags);
     let flags_key = regexp_flags_key(flags);
+    let key = regexp_cache_key(source, flags_key);
     COMPILED_REGEXPS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(entry) = cache.get(&key) {
