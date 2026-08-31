@@ -101,6 +101,9 @@ pub(crate) fn find_units(
                         .zip(pattern.iter())
                         .all(|(unit, byte)| *unit == u16::from(*byte)))
                 .then_some(0)?
+            } else if pattern.len() == 1 {
+                tail.iter()
+                    .position(|unit| *unit == u16::from(pattern[0]))?
             } else {
                 tail.windows(pattern.len()).position(|window| {
                     window
@@ -519,6 +522,10 @@ mod tests {
         assert_eq!(
             find_units("abc", "", &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16], 0),
             Some(super::NativeMatch { start: 1, end: 4 })
+        );
+        assert_eq!(
+            find_units("a", "", &[b'x' as u16, b'a' as u16], 0),
+            Some(super::NativeMatch { start: 1, end: 2 })
         );
     }
 
