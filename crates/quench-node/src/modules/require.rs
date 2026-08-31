@@ -19,6 +19,24 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+/// Canonical internal/util namespace owned by the Rust host.
+pub fn internal_util_module() -> Value {
+    crate::host::namespace_object_from_pairs(vec![
+        ("customInspectSymbol".into(), Value::String("Symbol.for.nodejs.util.inspect.custom\0".into())),
+        ("pendingDeprecate".into(), crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE)),
+        ("emitExperimentalWarning".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_EMIT_WARNING)),
+        ("sleep".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP)),
+        ("assertCrypto".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSERT_CRYPTO)),
+        ("normalizeEncoding".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING)),
+        ("getCIDR".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_GET_CIDR)),
+        ("constructSharedArrayBuffer".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER)),
+        ("customPromisifyArgs".into(), Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into())),
+        ("decorateErrorStack".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK)),
+        ("assignFunctionName".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME)),
+        ("isError".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR)),
+    ])
+}
+
 fn placeholder_constructor(parent: Option<&Value>) -> Value {
     let prototype = host_api::object(Vec::new());
     let constructor = host_api::bound_builtin(
@@ -476,6 +494,18 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             (
                 "customPromisifyArgs".to_string(),
                 Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
+            ),
+            (
+                "decorateErrorStack".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK),
+            ),
+            (
+                "assignFunctionName".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME),
+            ),
+            (
+                "isError".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR),
             ),
         ])),
         "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(

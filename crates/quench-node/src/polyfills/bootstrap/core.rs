@@ -27,34 +27,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ["internal/vfs/router", () => globalThis.require("internal/vfs/router")],
   [
     "internal/util",
-    () => {
-      const warnedExperimentalFeatures = new Set();
-      return {
-        emitExperimentalWarning(feature) {
-          if (warnedExperimentalFeatures.has(feature)) return;
-          warnedExperimentalFeatures.add(feature);
-          globalThis.process.emitWarning(
-            `${feature} is an experimental feature. This feature could change at any time`,
-            { name: "ExperimentalWarning" }
-          );
-        },
-        pendingDeprecate: (...args) =>
-          globalThis.__nodeUtil.pendingDeprecate(...args),
-        sleep(milliseconds) {
-          if (typeof milliseconds !== "number") {
-            throw new TypeError('The "msec" argument must be of type number');
-          }
-          if (
-            !Number.isFinite(milliseconds) ||
-            !Number.isInteger(milliseconds) ||
-            milliseconds < 0 ||
-            milliseconds > 0xffffffff
-          ) {
-            throw new RangeError('The value of "msec" is out of range');
-          }
-        }
-      };
-    }
+    () => globalThis.__nodeInternalUtil
   ],
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],
@@ -507,6 +480,8 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
 const __quenchChildProcessModule = () => {
   globalThis.__nodeCompileCacheRuns ||= 0;
   const spawnSync = (command, args = [], options = {}) => {
+    if (typeof globalThis.__quench_cp_spawn_sync === "function")
+      return globalThis.__quench_cp_spawn_sync(command, args, options);
     command = String(command || "");
     const convertOutput = (value) =>
       options.encoding === "buffer"

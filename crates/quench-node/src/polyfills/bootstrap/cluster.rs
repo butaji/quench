@@ -1293,6 +1293,8 @@ const __quenchVmValidateContext = (sandbox) => {
   }
 };
 const __quenchVmRunInContext = (code, sandbox, options) => {
+  if (typeof globalThis.__quench_vm_run_in_context === "function")
+    return globalThis.__quench_vm_run_in_context(code, sandbox, options);
   __quenchVmValidateContext(sandbox);
   const state = __quenchVmInstallContext(sandbox);
   try {

@@ -1485,6 +1485,69 @@ pub fn internal_util_assert_crypto(
     Err(VmError::Thrown(error))
 }
 
+pub fn internal_util_decorate_error_stack(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(value @ (Value::Object(_) | Value::ObjectAlias(_))) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let stack = quench_runtime::execute::get_property_result(value, "stack").ok();
+    let arrow = quench_runtime::execute::get_property_result(
+        value,
+        "Symbol.node:arrowMessage\0internal",
+    )
+    .ok();
+    if let (Some(Value::String(stack)), Some(Value::String(arrow))) = (stack, arrow) {
+        if !stack.starts_with(&arrow) {
+            let _ = quench_runtime::execute::set_property_in_place(
+                value,
+                "stack",
+                Value::String(format!("{arrow}{stack}")),
+            );
+        }
+        let _ = quench_runtime::execute::set_property_in_place(
+            value,
+            "Symbol.node:decorated\0internal",
+            Value::Boolean(true),
+        );
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn internal_util_assign_function_name(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(name) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(function) = args.get(1) else {
+        return Ok(Value::Undefined);
+    };
+    quench_runtime::execute::set_dynamic_function_name(function, name)?;
+    Ok(function.clone())
+}
+
+pub fn internal_util_is_error(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let is_error = matches!(
+        quench_runtime::execute::get_property_result(value, "\0error_slot"),
+        Ok(Value::Boolean(true))
+    ) || matches!(
+        quench_runtime::execute::get_property_result(value, "name"),
+        Ok(Value::String(name)) if name == "Error" &&
+            matches!(quench_runtime::execute::get_property_result(value, "message"), Ok(Value::String(_)))
+    );
+    Ok(Value::Boolean(is_error))
+}
+
 pub fn internal_binding(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -1683,6 +1746,9 @@ pub fn internal_binding(
                 host_api::object(vec![(
                     "arrow_message_private_symbol".to_string(),
                     Value::String("Symbol.node:arrowMessage\0internal".into()),
+                ), (
+                    "decorated_private_symbol".to_string(),
+                    Value::String("Symbol.node:decorated\0internal".into()),
                 )]),
             ));
             binding.push((
@@ -3111,68 +3177,7 @@ pub fn util_get_call_sites(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if args.len() > 2
-        || args
-            .get(1)
-            .is_some_and(|options| !matches!(options, Value::Object(_) | Value::ObjectAlias(_)))
-    {
-        return Err(quench_runtime::execute::type_error(
-            "The options argument must be an object",
-        ));
-    }
-    let count = match args.first() {
-        None | Some(Value::Undefined) | Some(Value::Object(_)) | Some(Value::ObjectAlias(_)) => 10,
-        Some(Value::Number(value))
-            if value.is_finite() && *value >= 1.0 && value.fract() == 0.0 =>
-        {
-            if *value > 200.0 {
-                return Err(VmError::Thrown(Value::object(vec![
-                    ("name".into(), Value::String("RangeError".into())),
-                    ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-                    (
-                        "message".into(),
-                        Value::String("The frame count must be between 1 and 200".into()),
-                    ),
-                ])));
-            }
-            *value as usize
-        }
-        Some(Value::Number(_)) => {
-            return Err(VmError::Thrown(Value::object(vec![
-                ("name".into(), Value::String("RangeError".into())),
-                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-                (
-                    "message".into(),
-                    Value::String("The frame count must be an integer between 1 and 200".into()),
-                ),
-            ])));
-        }
-        Some(_) => {
-            return Err(quench_runtime::execute::type_error(
-                "The frame count must be an integer",
-            ));
-        }
-    };
-    let script_name = state
-        .borrow()
-        .process
-        .argv
-        .get(1)
-        .cloned()
-        .map(Value::String)
-        .unwrap_or_else(|| Value::String(String::new()));
-    Ok(quench_runtime::host_api::array(
-        (0..count)
-            .map(|_| {
-                quench_runtime::host_api::object(vec![
-                    ("scriptName".into(), script_name.clone()),
-                    ("scriptId".into(), script_name.clone()),
-                    ("lineNumber".into(), Value::Number(0.0)),
-                    ("columnNumber".into(), Value::Number(0.0)),
-                ])
-            })
-            .collect(),
-    ))
+    crate::modules::util::get_call_sites(state, args)
 }
 
 pub fn buffer_atob(

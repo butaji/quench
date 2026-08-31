@@ -113,7 +113,10 @@ pub fn execute_script_in_sandbox(
 ) -> Result<Value, VmError> {
     let program = crate::reduce::reduce_global_script_source(source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let mut context = current_context();
+    let parent_context = current_context();
+    let mut context = sandbox
+        .map(|_| Rc::new(parent_context.child_realm()))
+        .unwrap_or(parent_context);
     if let Some(sandbox @ Value::Object(_)) = sandbox {
         for key in crate::execute::own_enumerable_keys(sandbox) {
             let value = crate::execute::get_property_result(sandbox, &key)?;
