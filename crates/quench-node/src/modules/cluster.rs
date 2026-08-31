@@ -766,7 +766,10 @@ pub fn disconnect(
         }
     }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
-        execute::call(cb, &Value::Undefined, &[])?;
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask(cb.clone(), Vec::new());
     }
     Ok(obj)
 }
@@ -965,7 +968,10 @@ pub fn disconnect_all(
         remove_worker(state, id, &obj);
     }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
-        execute::call(cb, &Value::Undefined, &[])?;
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask(cb.clone(), Vec::new());
     }
     Ok(Value::Undefined)
 }
