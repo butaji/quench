@@ -1570,4 +1570,53 @@ mod tests {
             Some(Value::StringUnits(expected))
         );
     }
+
+    #[test]
+    fn exec_units_preserves_captures_and_indices() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("(?<x>.)".to_string()),
+                ),
+                ("\0regexp_flags".to_string(), Value::String("d".to_string())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800]);
+        let Value::StringUnits(expected) = input.clone() else {
+            panic!("test input must retain a lone surrogate");
+        };
+        let Value::Array(match_result) =
+            super::exec(Some(&regexp), &[input]).expect("exec")
+        else {
+            panic!("exec must return a match result");
+        };
+        assert_eq!(
+            match_result.get_index(0),
+            Some(Value::StringUnits(expected.clone()))
+        );
+        assert_eq!(match_result.get_index(1), Some(Value::StringUnits(expected)));
+        let indices = crate::execute::get_property_result(
+            &Value::Array(std::rc::Rc::clone(&match_result)),
+            "indices",
+        )
+        .expect("indices");
+        let Value::Array(indices) = indices else {
+            panic!("indices must be an array");
+        };
+        assert_eq!(
+            indices.get_index(0),
+            Some(Value::array(vec![Value::Number(0.0), Value::Number(1.0)]))
+        );
+        assert_eq!(
+            indices.get_index(1),
+            Some(Value::array(vec![Value::Number(0.0), Value::Number(1.0)]))
+        );
+    }
 }
