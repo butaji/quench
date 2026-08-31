@@ -1239,24 +1239,18 @@ impl ObjectData {
     ) -> Self {
         crate::execution_trace::object_lifecycle(true);
         crate::execution_trace::object_shape(&properties);
-        let extensible_state = if properties
-            .iter()
-            .any(|(name, _)| name == "\0quench:non_extensible")
-        {
-            2
-        } else {
-            1
-        };
-        let plain_index_state = if properties.iter().any(|(name, _)| {
-            name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator")
-        }) || properties.iter().any(|(name, value)| {
-            name == "\0prototype"
-                && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype))
-        }) {
-            2
-        } else {
-            1
-        };
+        let (mut extensible_state, mut plain_index_state) = (1, 1);
+        for (name, value) in properties.iter() {
+            if name == "\0quench:non_extensible" {
+                extensible_state = 2;
+            }
+            if (name != "\0prototype" && (name.starts_with('\0') || name == "Symbol.iterator"))
+                || (name == "\0prototype"
+                    && !matches!(value, Value::Builtin(crate::ops::Builtin::ObjectPrototype)))
+            {
+                plain_index_state = 2;
+            }
+        }
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
