@@ -2353,7 +2353,7 @@
           const values = [];
           for await (const value of source) values.push(value);
           const output = await composeValues(stages.slice(1), values);
-          for (const value of output) result.push(value);
+          if (output) for (const value of output) result.push(value);
           if (result.readable) result.push(null);
           else result.emit("finish");
         } catch (error) { result.destroy(error); }
