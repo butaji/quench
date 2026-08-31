@@ -44,7 +44,14 @@ const __quenchWebCryptoSubtle = {
 };
 const __quenchGlobalCrypto = globalThis.crypto || {};
 if (!__quenchGlobalCrypto.getRandomValues) {
-  __quenchGlobalCrypto.getRandomValues = (values) => values;
+  __quenchGlobalCrypto.getRandomValues = function(values) {
+    if (this !== __quenchGlobalCrypto) {
+      const error = new TypeError("Illegal invocation");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    return values;
+  };
 }
 __quenchGlobalCrypto.subtle ||= __quenchWebCryptoSubtle;
 if (!globalThis.crypto) {
