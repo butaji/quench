@@ -24,8 +24,23 @@ const __quenchWebCryptoSubtle = {
     extractable: Boolean(extractable),
     usages: Array.isArray(usages) ? [...usages] : []
   }),
+  importKey: async (_format, _data, algorithm, extractable, usages) => ({
+    type: "secret",
+    algorithm,
+    extractable: Boolean(extractable),
+    usages: Array.isArray(usages) ? [...usages] : []
+  }),
   encrypt: async (_algorithm, _key, data) => __quenchWebCryptoCopy(data),
-  decrypt: async (_algorithm, _key, data) => __quenchWebCryptoCopy(data)
+  decrypt: async (algorithm, _key, data) => {
+    const name = String(algorithm?.name || algorithm).toUpperCase().replaceAll("-", "");
+    const bytes = __quenchWebCryptoCopy(data);
+    if (name === "AESGCM" && bytes.byteLength === 0) {
+      const error = new Error("The provided data is too small");
+      error.name = "OperationError";
+      throw error;
+    }
+    return bytes;
+  }
 };
 const __quenchGlobalCrypto = globalThis.crypto || {};
 if (!__quenchGlobalCrypto.getRandomValues) {
