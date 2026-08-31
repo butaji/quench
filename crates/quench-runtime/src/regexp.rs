@@ -859,6 +859,13 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             "RegExp.prototype.exec requires RegExp",
         ));
     }
+    if let Some(Value::StringUnits(units)) = arguments.first() {
+        return exec_units(
+            receiver,
+            Value::StringUnits(std::rc::Rc::clone(units)),
+            units,
+        );
+    }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
@@ -891,6 +898,38 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         }
         Ok(Value::Null)
     }
+}
+
+/// Execute directly on the canonical UTF-16 representation. Converting a
+/// `StringUnits` value through `String::from_utf16_lossy` would replace lone
+/// surrogates before matching and would make the returned `input`/captures
+/// observably different from the original JavaScript string.
+fn exec_units(receiver: &Value, input: Value, units: &[u16]) -> Result<Value, VmError> {
+    let (source, flags, last_index) = extract_regex_parts(receiver)?;
+    let global_or_sticky = flags.contains('g') || flags.contains('y');
+    if global_or_sticky && last_index > units.len() {
+        set_last_index(receiver, 0.0)?;
+        return Ok(Value::Null);
+    }
+    let search_start = if global_or_sticky { last_index } else { 0 };
+    if let Some(matched) = crate::regexp_native::find_units(&source, &flags, units, search_start) {
+        return build_units_native_match_result(receiver, input, units, matched, &flags);
+    }
+    let pattern = if source.is_empty() { "(?:)" } else { &source };
+    let found = anchored_match_units(&source, &flags, last_index, units)
+        .then(|| {
+            let regex = compiled_for(receiver, pattern, &flags)?;
+            find_match_units(&regex, units, search_start, flags.contains('y'))
+        })
+        .transpose()?
+        .flatten();
+    if let Some(matched) = found {
+        return build_units_match_result(receiver, input, units, matched, &flags);
+    }
+    if global_or_sticky {
+        set_last_index(receiver, 0.0)?;
+    }
+    Ok(Value::Null)
 }
 
 pub fn has_regexp_internal_slot(value: &Value) -> bool {
@@ -969,6 +1008,65 @@ fn build_native_match_result(
     Ok(result)
 }
 
+fn build_units_native_match_result(
+    receiver: &Value,
+    input: Value,
+    units: &[u16],
+    matched: crate::regexp_native::NativeMatch,
+    flags: &str,
+) -> Result<Value, VmError> {
+    let end = matched.end;
+    if flags.contains('g') || flags.contains('y') {
+        set_last_index(receiver, end as f64)?;
+    }
+    let value = units
+        .get(matched.start..matched.end)
+        .map_or(Value::Undefined, |slice| {
+            crate::strings::from_units(slice.to_vec())
+        });
+    let mut result = match_result_value(
+        vec![value],
+        Value::Number(matched.start as f64),
+        input,
+        None,
+    );
+    if flags.contains('d') {
+        result = crate::builtins::set_property(
+            result,
+            "indices",
+            crate::builtins::set_property(
+                Value::array(vec![Value::array(vec![
+                    Value::Number(matched.start as f64),
+                    Value::Number(end as f64),
+                ])]),
+                "groups",
+                Value::Undefined,
+            ),
+        );
+    }
+    Ok(result)
+}
+
+fn build_units_match_result(
+    receiver: &Value,
+    input: Value,
+    units: &[u16],
+    matched: Match,
+    flags: &str,
+) -> Result<Value, VmError> {
+    if flags.contains('g') || flags.contains('y') {
+        set_last_index(receiver, matched.end() as f64)?;
+    }
+    let values = match_values_units(units, &matched);
+    let groups = named_groups_units(units, &matched);
+    let mut result =
+        match_result_value(values, Value::Number(matched.start() as f64), input, groups);
+    if flags.contains('d') {
+        result = crate::builtins::set_property(result, "indices", match_indices_units(&matched));
+    }
+    Ok(result)
+}
+
 fn nonunicode_code_unit_pattern(source: &str) -> bool {
     source == "."
         || source.contains(".") && source.contains("(?<")
@@ -995,6 +1093,22 @@ fn match_indices(text: &str, m: &Match, offset: usize, unicode: bool) -> Value {
     }));
     let groups = named_index_groups(text, m, offset, unicode);
     crate::builtins::set_property(Value::array(indices), "groups", groups)
+}
+
+fn match_indices_units(m: &Match) -> Value {
+    let mut indices = vec![Value::array(vec![
+        Value::Number(m.start() as f64),
+        Value::Number(m.end() as f64),
+    ])];
+    indices.extend(m.captures.iter().map(|group| {
+        group.as_ref().map_or(Value::Undefined, |range| {
+            Value::array(vec![
+                Value::Number(range.start as f64),
+                Value::Number(range.end as f64),
+            ])
+        })
+    }));
+    crate::builtins::set_property(Value::array(indices), "groups", named_index_groups_units(m))
 }
 
 fn named_index_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Value {
@@ -1032,6 +1146,37 @@ fn named_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Option<V
         .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
 }
 
+fn named_groups_units(units: &[u16], m: &Match) -> Option<Value> {
+    let mut properties = vec![("\0prototype".to_string(), Value::Null)];
+    properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
+        let value = range.map_or(Value::Undefined, |range| {
+            match_value_units(units, range.start, range.end)
+        });
+        (name, value)
+    }));
+    (properties.len() > 1)
+        .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
+}
+
+fn named_index_groups_units(m: &Match) -> Value {
+    if m.named_groups().next().is_none() {
+        Value::Undefined
+    } else {
+        let properties = std::iter::once(("\0prototype".to_string(), Value::Null))
+            .chain(merged_named_ranges(m).into_iter().map(|(name, range)| {
+                let value = range.map_or(Value::Undefined, |range| {
+                    Value::array(vec![
+                        Value::Number(range.start as f64),
+                        Value::Number(range.end as f64),
+                    ])
+                });
+                (name, value)
+            }))
+            .collect();
+        Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
+    }
+}
+
 fn merged_named_ranges(m: &Match) -> Vec<(String, Option<std::ops::Range<usize>>)> {
     let mut merged = Vec::new();
     for (name, range) in m.named_groups() {
@@ -1063,6 +1208,27 @@ fn match_values(text: &str, m: &Match, offset: usize, unicode: bool) -> Vec<Valu
         ));
     }
     values
+}
+
+fn match_values_units(units: &[u16], m: &Match) -> Vec<Value> {
+    let mut values = m
+        .groups()
+        .map(|group| {
+            group.map_or(Value::Undefined, |range| {
+                match_value_units(units, range.start, range.end)
+            })
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        values.push(match_value_units(units, m.start(), m.end()));
+    }
+    values
+}
+
+fn match_value_units(units: &[u16], start: usize, end: usize) -> Value {
+    units.get(start..end).map_or(Value::Undefined, |slice| {
+        crate::strings::from_units(slice.to_vec())
+    })
 }
 
 fn match_start_index(text: &str, start: usize) -> usize {
@@ -1097,9 +1263,18 @@ fn match_value(text: &str, start: usize, end: usize, unicode: bool) -> Value {
 }
 
 fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
+    match_result_value(values, index, Value::String(input.to_string()), groups)
+}
+
+fn match_result_value(
+    values: Vec<Value>,
+    index: Value,
+    input: Value,
+    groups: Option<Value>,
+) -> Value {
     crate::execution_trace::allocation("match_result");
     let result = crate::builtins::set_property(Value::array(values), "index", index);
-    let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
+    let result = crate::builtins::set_property(result, "input", input);
     let groups = groups.unwrap_or(Value::Undefined);
     crate::builtins::define_own_property(
         &result,
@@ -1258,9 +1433,8 @@ include!("regexp_tail.rs");
 mod tests {
     use super::{
         compile, compiled_for, has_regexp_internal_slot, invalid_v_character_class,
-        normalize_legacy_identity_escapes,
-        normalize_named_group_escapes, normalize_new_unicode_scripts, regexp_flags_key,
-        replace_with_template,
+        normalize_legacy_identity_escapes, normalize_named_group_escapes,
+        normalize_new_unicode_scripts, regexp_flags_key, replace_with_template,
     };
     use crate::value::{ObjectData, Value};
 
@@ -1348,9 +1522,15 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 ("\0regexp".to_string(), Value::Boolean(true)),
-                ("\0regexp_source".to_string(), Value::String("a.".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("a.".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
-                ("lastIndex".to_string(), Value::BindingCell(last_index.clone())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(last_index.clone()),
+                ),
             ])
             .into(),
         );
@@ -1359,5 +1539,35 @@ mod tests {
             Ok(Value::Boolean(true))
         );
         assert_eq!(*last_index.borrow(), Value::Number(4.0));
+    }
+
+    #[test]
+    fn exec_preserves_lone_surrogate_input() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
+                ("\0regexp_flags".to_string(), Value::String(String::new())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800]);
+        let Value::StringUnits(expected) = input.clone() else {
+            panic!("test input must retain a lone surrogate");
+        };
+        let Value::Array(match_result) = super::exec(Some(&regexp), &[input]).expect("exec") else {
+            panic!("exec must return a match result");
+        };
+        assert_eq!(
+            match_result.get_index(0),
+            Some(Value::StringUnits(expected))
+        );
     }
 }
