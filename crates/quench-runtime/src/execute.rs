@@ -164,6 +164,10 @@ pub fn set_prototype_of(
     crate::builtins::object::set_prototype_of(&[target.clone(), prototype.clone()])
 }
 
+pub fn prevent_extensions(target: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::properties::prevent_extensions(Some(target))
+}
+
 /// Set an own property on a callable value without invoking inherited
 /// setters. Hosts use this for compatibility metadata such as `super_`.
 pub fn set_callable_property(
