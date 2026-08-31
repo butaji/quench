@@ -27,6 +27,8 @@ const CAP_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: u16 =
 const CAP_UTIL_DEBUGLOG: u16 = 0x0735;
 const CAP_UTIL_EXCEPTION_WITH_HOST_PORT: u16 = 0x0734;
 const CAP_INTERNAL_UTIL_EMIT_WARNING: u16 = crate::registry::SPEC_INTERNAL_UTIL_EMIT_WARNING.cap;
+const CAP_INTERNAL_UTIL_NORMALIZE_ENCODING: u16 =
+    crate::registry::SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING.cap;
 const CAP_OS_GET_PRIORITY: u16 = 0x0736;
 const CAP_OS_AVAILABLE_PARALLELISM: u16 = crate::registry::SPEC_OS_AVAILABLE_PARALLELISM.cap;
 const CAP_OS_SET_PRIORITY: u16 = 0x0737;
@@ -428,6 +430,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_DEBUGLOG => util_debuglog,
         CAP_UTIL_EXCEPTION_WITH_HOST_PORT => util_exception_with_host_port,
         CAP_INTERNAL_UTIL_EMIT_WARNING => internal_util_emit_warning,
+        CAP_INTERNAL_UTIL_NORMALIZE_ENCODING => util_normalize_encoding,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
         CAP_OS_AVAILABLE_PARALLELISM => crate::modules::os::available_parallelism,
