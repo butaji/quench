@@ -203,6 +203,28 @@ fn stdio_channel(state: &Rc<RefCell<HostState>>) -> Option<Value> {
     crate::modules::net::socket_construct(state, &[options]).ok()
 }
 
+fn enter_worker_env(process: &Value, worker: &Value) -> Vec<(String, Value)> {
+    let env = execute::get_property(process, "env");
+    let worker_env = execute::get_property(&execute::get_property(worker, "process"), "env");
+    let mut previous = Vec::new();
+    for key in execute::own_enumerable_keys(&worker_env) {
+        previous.push((key.clone(), execute::get_property(&env, &key)));
+        execute::set_property_in_place(&env, &key, execute::get_property(&worker_env, &key));
+    }
+    previous
+}
+
+fn restore_worker_env(process: &Value, previous: Vec<(String, Value)>) {
+    let env = execute::get_property(process, "env");
+    for (key, value) in previous {
+        if matches!(value, Value::Undefined) {
+            let _ = execute::delete_property(env.clone(), &key);
+        } else {
+            execute::set_property_in_place(&env, &key, value);
+        }
+    }
+}
+
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let workers = host_api::object(Vec::new());
     let module = crate::modules::events::new_emitter_object(state)
@@ -394,6 +416,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let _ = execute::set_property_in_place(worker, "state", Value::String("online".into()));
     let global = quench_runtime::vm::current_global_object();
     let process_value = execute::get_property_result(&global, "process").ok();
+    let env_restore = process_value
+        .as_ref()
+        .map(|process| enter_worker_env(process, worker));
     let previous_argv = process_value
         .as_ref()
         .map(|process| execute::get_property(process, "argv"));
@@ -470,6 +495,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         (!waits_for_ipc && !net_work).then_some(0)
     });
     state.borrow_mut().process.exit_code = parent_exit_code;
+    if let (Some(process), Some(previous)) = (&process_value, env_restore) {
+        restore_worker_env(process, previous);
+    }
     state.borrow_mut().cluster.worker_context = None;
     for (key, value) in [
         ("isPrimary", Value::Boolean(true)),
@@ -969,6 +997,13 @@ pub fn disconnect(
         close_worker_net(state, id);
         if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
             w.dead = true;
+            if child_call {
+                // A worker can disconnect while fork() is still re-entering
+                // its script; retain terminal events until the parent adds
+                // listeners after fork() returns.
+                w.pending_disconnect = true;
+                w.pending_exit = Some((code, None));
+            }
         }
         let _ = emit(
             state,
