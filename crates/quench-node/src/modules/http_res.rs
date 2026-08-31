@@ -55,6 +55,38 @@ pub fn res_set_header(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+pub fn res_remove_header(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let headers_sent = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .is_some_and(|res| res.headers_sent)
+        || matches!(
+            execute::get_property(receiver.unwrap_or(&Value::Undefined), "headersSent"),
+            Value::Boolean(true)
+        );
+    if headers_sent {
+        return Err(headers_sent_error(
+            "Cannot remove headers after they are sent to the client",
+        ));
+    }
+    let Some(name) = args.first().map(execute::to_js_string).transpose()? else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    if let Some(res) = state.borrow_mut().http.res.get_mut(&id) {
+        res.headers.retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 /// `res.writeHead(statusCode[, reasonPhrase][, headers])`.
 pub fn res_write_head(
     state: &Rc<RefCell<HostState>>,
