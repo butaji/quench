@@ -902,11 +902,17 @@ fn repeat_options(
         return repeat_simple_options(body, input, state, flags, min, max, greedy);
     }
     let limit = max.unwrap_or(input.len().saturating_add(1));
+    let capture_indices = if flags.reverse {
+        Vec::new()
+    } else {
+        capture_indices(body)
+    };
     fn visit(
         body: &Expr,
         input: &[Unit],
         state: State,
         flags: Flags,
+        capture_indices: &[usize],
         count: usize,
         min: usize,
         limit: usize,
@@ -925,8 +931,8 @@ fn repeat_options(
         if count < limit {
             let mut iteration_state = state.clone();
             if !flags.reverse {
-                for index in capture_indices(body) {
-                    if let Some(capture) = iteration_state.captures.get_mut(index) {
+                for index in capture_indices {
+                    if let Some(capture) = iteration_state.captures.get_mut(*index) {
                         *capture = None;
                     }
                 }
@@ -938,6 +944,7 @@ fn repeat_options(
                         input,
                         next,
                         flags,
+                        capture_indices,
                         count + 1,
                         min,
                         limit,
@@ -960,6 +967,7 @@ fn repeat_options(
         input,
         state,
         flags,
+        &capture_indices,
         0,
         min,
         limit,
