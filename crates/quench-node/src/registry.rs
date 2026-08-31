@@ -868,6 +868,8 @@ pub const SPEC_TLS_CREATE_SERVER: NodeSpec = NodeSpec::new("tls:createServer", 0
 pub const SPEC_TLS_CONNECT: NodeSpec = NodeSpec::new("tls:connect", 0x1c12);
 pub const SPEC_TLS_CONVERT_ALPN: NodeSpec = NodeSpec::new("tls:convertALPNProtocols", 0x1c13);
 pub const SPEC_TLS_GET_CIPHERS: NodeSpec = NodeSpec::new("tls:getCiphers", 0x1c14);
+pub const SPEC_TTY_READ_STREAM: NodeSpec = NodeSpec::new("tty:ReadStream", 0x1c20);
+pub const SPEC_TTY_WRITE_STREAM: NodeSpec = NodeSpec::new("tty:WriteStream", 0x1c21);
 
 /// Host globals whose value must be materialized before callbacks can outlive
 /// the installing frame. This is policy data, not a second dispatch path.
@@ -1166,6 +1168,8 @@ pub const CAP_TLS_CREATE_SERVER: CapId = SPEC_TLS_CREATE_SERVER.cap;
 pub const CAP_TLS_CONNECT: CapId = SPEC_TLS_CONNECT.cap;
 pub const CAP_TLS_CONVERT_ALPN: CapId = SPEC_TLS_CONVERT_ALPN.cap;
 pub const CAP_TLS_GET_CIPHERS: CapId = SPEC_TLS_GET_CIPHERS.cap;
+pub const CAP_TTY_READ_STREAM: CapId = SPEC_TTY_READ_STREAM.cap;
+pub const CAP_TTY_WRITE_STREAM: CapId = SPEC_TTY_WRITE_STREAM.cap;
 pub const CAP_HTTP_AGENT: CapId = SPEC_HTTP_AGENT.cap;
 pub const CAP_HTTPS_AGENT: CapId = SPEC_HTTPS_AGENT.cap;
 pub const CAP_HTTP_CONN: CapId = SPEC_HTTP_CONN.cap;
