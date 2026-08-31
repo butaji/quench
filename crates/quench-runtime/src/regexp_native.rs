@@ -249,10 +249,38 @@ fn find_property_repeat_str(
             end: input.len(),
         });
     }
+    if let Some(ranges) = property_ranges(name, value, negative) {
+        return find_property_repeat_char_ranges(input, &ranges);
+    }
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
     let mut count = 0;
     for character in input.chars() {
         if !property_matches(matcher, negative, character) {
+            return None;
+        }
+        count += character.len_utf8();
+    }
+    (count > 0).then_some(NativeMatch { start: 0, end: count })
+}
+
+fn find_property_repeat_char_ranges(
+    input: &str,
+    ranges: &[std::ops::RangeInclusive<u32>],
+) -> Option<NativeMatch> {
+    let mut range_index = 0;
+    let mut count = 0;
+    for character in input.chars() {
+        let value = u32::from(character);
+        while ranges
+            .get(range_index)
+            .is_some_and(|range| *range.end() < value)
+        {
+            range_index += 1;
+        }
+        if !ranges
+            .get(range_index)
+            .is_some_and(|range| range.contains(&value))
+        {
             return None;
         }
         count += character.len_utf8();
@@ -276,6 +304,9 @@ fn find_property_repeat_units(
             start: 0,
             end: input.len(),
         });
+    }
+    if let Some(ranges) = property_ranges(name, value, negative) {
+        return find_property_repeat_ranges(input, flags, &ranges);
     }
     let unicode = flags.contains('u') || flags.contains('v');
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
@@ -302,6 +333,96 @@ fn find_property_repeat_units(
         count += width;
     }
     (count > 0).then_some(NativeMatch { start: 0, end: count })
+}
+
+fn property_ranges(
+    name: &str,
+    value: Option<&str>,
+    negative: bool,
+) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
+    use icu_properties::{props, CodePointMapData, PropertyParser};
+    let ranges = if name == "ASCII" {
+        vec![0..=0x7F]
+    } else if matches!(name, "Script" | "sc") {
+        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
+        icu_properties::CodePointMapData::<props::Script>::new()
+            .iter_ranges_for_value(target)
+            .collect()
+    } else if matches!(name, "Script_Extensions" | "scx") {
+        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
+        icu_properties::script::ScriptWithExtensions::new()
+            .get_script_extensions_ranges(target)
+            .collect()
+    } else if matches!(name, "General_Category" | "gc") {
+        let parser = PropertyParser::<props::GeneralCategory>::new();
+        if let Some(target) = parser.get_loose(value?) {
+            CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_value(target)
+                .collect()
+        } else {
+            let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
+            CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_group(target)
+                .collect()
+        }
+    } else if name == "Assigned" {
+        CodePointMapData::<props::GeneralCategory>::new()
+            .iter_ranges_for_value_complemented(props::GeneralCategory::Unassigned)
+            .collect()
+    } else {
+        return None;
+    };
+    Some(if negative {
+        complement_ranges(ranges)
+    } else {
+        ranges
+    })
+}
+
+fn complement_ranges(ranges: Vec<std::ops::RangeInclusive<u32>>) -> Vec<std::ops::RangeInclusive<u32>> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    for range in ranges {
+        let end = *range.end();
+        if start < *range.start() {
+            result.push(start..=*range.start() - 1);
+        }
+        start = end.saturating_add(1);
+    }
+    if start <= 0x10FFFF {
+        result.push(start..=0x10FFFF);
+    }
+    result
+}
+
+fn find_property_repeat_ranges(
+    input: &[u16],
+    flags: &str,
+    ranges: &[std::ops::RangeInclusive<u32>],
+) -> Option<NativeMatch> {
+    let unicode = flags.contains('u') || flags.contains('v');
+    let mut index = 0;
+    let mut range_index = 0;
+    while index < input.len() {
+        let Some((character, width)) = next_code_point(input, index, unicode) else {
+            return None;
+        };
+        let value = u32::from(character);
+        while ranges
+            .get(range_index)
+            .is_some_and(|range| *range.end() < value)
+        {
+            range_index += 1;
+        }
+        if !ranges
+            .get(range_index)
+            .is_some_and(|range| range.contains(&value))
+        {
+            return None;
+        }
+        index += width;
+    }
+    (index > 0).then_some(NativeMatch { start: 0, end: index })
 }
 
 fn next_code_point(input: &[u16], index: usize, unicode: bool) -> Option<(char, usize)> {
