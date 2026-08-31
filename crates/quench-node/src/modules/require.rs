@@ -464,6 +464,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING),
             ),
             (
+                "getCIDR".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_GET_CIDR),
+            ),
+            (
                 "customPromisifyArgs".to_string(),
                 Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
             ),
