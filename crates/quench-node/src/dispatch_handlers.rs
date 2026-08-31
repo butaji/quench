@@ -3190,6 +3190,11 @@ pub fn cp_spawn(
         crate::host::capability(crate::registry::SPEC_CP_STDIN_END),
     );
     let stdout = crate::modules::events::new_emitter_object(state)?;
+    let stdout = execute::set_property(
+        stdout,
+        "read",
+        crate::host::capability(crate::registry::SPEC_CP_STDOUT_READ),
+    );
     if command == "grep"
         || command.ends_with("/grep")
         || command == "sed"
@@ -3683,7 +3688,44 @@ pub fn cp_spawn_output_emit(
         // streams alive until cp_stdin_end observes upstream completion.
         return Ok(Value::Undefined);
     }
-    emit(&stdout, "data", vec![Value::String(stdout_text)])?;
+    let echo_process = matches!(
+        command,
+        Value::String(ref value) if value == "echo" || value.ends_with("/echo")
+    );
+    if echo_process {
+        let stdout_text = if matches!(
+            execute::get_property(&child_options, "shell"),
+            Value::Boolean(true)
+        ) {
+            let line = match &child_args {
+                Value::Array(array) => execute::get_property_result(&child_args, "0")
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            line.strip_prefix("echo ").unwrap_or(&line).to_string() + "\n"
+        } else {
+            stdout_text
+        };
+        execute::set_property_in_place(
+            &stdout,
+            "\0childPendingOutput",
+            cp_buffer_value(&stdout_text)?,
+        );
+        let data_listeners = crate::modules::events::method_listener_count(
+            state,
+            Some(&stdout),
+            &[Value::String("data".into())],
+        )?;
+        if matches!(data_listeners, Value::Number(value) if value > 0.0) {
+            emit(&stdout, "data", vec![Value::String(stdout_text)])?;
+        } else {
+            emit(&stdout, "readable", Vec::new())?;
+        }
+    } else {
+        emit(&stdout, "data", vec![Value::String(stdout_text)])?;
+    }
     if !stderr_text.is_empty() {
         emit(&stderr, "data", vec![Value::String(stderr_text)])?;
     }
@@ -3902,6 +3944,23 @@ pub fn cp_stdin_end(
         }
     }
     Ok(Value::Undefined)
+}
+
+pub fn cp_stdout_read(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Null);
+    };
+    let pending = execute::get_property(receiver, "\0childPendingOutput");
+    execute::set_property_in_place(receiver, "\0childPendingOutput", Value::Undefined);
+    Ok(if matches!(pending, Value::Undefined) {
+        Value::Null
+    } else {
+        pending
+    })
 }
 
 pub fn cp_abort(
