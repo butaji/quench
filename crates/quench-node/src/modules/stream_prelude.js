@@ -754,6 +754,7 @@
   }
 
   function readableOperator(stream, mapper, filtering, options) {
+    sliceOptions(options);
     const concurrency = operatorConcurrency(options);
     const signal = options?.signal;
     const source = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
