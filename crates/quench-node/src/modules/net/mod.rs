@@ -594,6 +594,24 @@ pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
     }
 }
 
+/// Move a transferred net handle into the logical process that received it.
+pub(crate) fn transfer_handle_scope(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    scope: u64,
+) {
+    let Some(id) = net_id(receiver) else {
+        return;
+    };
+    let host = state.borrow();
+    if let Some(server) = host.net.servers.get(&id) {
+        server.borrow_mut().process_scope = scope;
+    }
+    if let Some(socket) = host.net.sockets.get(&id) {
+        socket.borrow_mut().process_scope = scope;
+    }
+}
+
 /// Return the Rust-backed async iterator for a server or socket.
 pub fn async_iterator(
     state: &Rc<RefCell<HostState>>,
@@ -876,9 +894,13 @@ pub(crate) fn emit(
         );
     }
     let id = emitter_id(receiver).or_else(|| state.borrow().emitters.identity(receiver));
+    let process_scope = state.borrow().cluster.process_scope();
     let listeners: Vec<Listener> = id
         .and_then(|id| state.borrow().emitters.get(id))
-        .map(|emitter| emitter.borrow().listeners_of(event).to_vec())
+        .map(|emitter| {
+            let listeners = emitter.borrow().listeners_for_scope(event, process_scope);
+            listeners
+        })
         .unwrap_or_default();
     let result = if listeners.is_empty() {
         if event == "error" {
@@ -892,7 +914,9 @@ pub(crate) fn emit(
             if listener.once {
                 if let Some(id) = id {
                     if let Some(emitter) = state.borrow().emitters.get(id) {
-                        emitter.borrow_mut().remove(event, &listener.callback);
+                        emitter
+                            .borrow_mut()
+                            .remove_for_scope(event, &listener.callback, process_scope);
                     }
                 }
             }
