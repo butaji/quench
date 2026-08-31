@@ -1898,7 +1898,7 @@ mod tests {
         };
         assert_eq!(value, 0xDC00);
         let input = "😀".encode_utf16().collect::<Vec<_>>();
-        assert_eq!(regex.find_from_utf16(&input, 0).next().map(|m| m.range), Some(1..2));
+        assert!(regex.find_from_utf16(&input, 0).next().is_none());
     }
 
     #[test]
