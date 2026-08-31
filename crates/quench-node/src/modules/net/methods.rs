@@ -1737,6 +1737,18 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let signal = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .map(|options| execute::get_property(options, "signal"));
+    if let Some(signal) = signal.as_ref() {
+        if !matches!(signal, Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
+    }
     if let Some(id) = super::net_id(&receiver) {
         let already_listening = state
             .borrow()
@@ -1790,6 +1802,7 @@ pub fn server_listen(
             super::set_server_connection_key(&receiver, port, None)?;
         }
         add_listener_cb(state, &receiver, args.get(1), "listening", true)?;
+        configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
         return Ok(receiver);
     }
     if args.len() == 1 && args.first().is_some_and(quench_runtime::is_callable) {
@@ -1806,6 +1819,7 @@ pub fn server_listen(
         };
         register_server(state, &receiver, Some(listener))?;
         add_listener_cb(state, &receiver, args.first(), "listening", true)?;
+        configure_server_signal(state, &receiver, &Value::Undefined)?;
         return Ok(receiver);
     }
     let path_argument = args.first().and_then(|value| match value {
@@ -1888,6 +1902,7 @@ pub fn server_listen(
             }
             register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
             add_listener_cb(state, &receiver, args.last(), "listening", true)?;
+            configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
             return Ok(receiver);
         }
     }
@@ -1905,7 +1920,33 @@ pub fn server_listen(
     register_server(state, &receiver, Some(listener))?;
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening", true)?;
+    configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
     Ok(receiver.clone())
+}
+
+fn configure_server_signal(
+    state: &Rc<RefCell<HostState>>,
+    server: &Value,
+    signal: &Value,
+) -> Result<(), VmError> {
+    if !matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Ok(());
+    }
+    if matches!(execute::get_property(signal, "aborted"), Value::Boolean(true)) {
+        server_close(state, Some(server), &[])?;
+        return Ok(());
+    }
+    let close = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(crate::registry::SPEC_NET_SERVER_CLOSE),
+        vec![server.clone()],
+    );
+    let options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
+    crate::modules::event_target::add_event_listener(
+        state,
+        Some(signal),
+        &[Value::String("abort".into()), close, options],
+    )?;
+    Ok(())
 }
 
 /// Resolve the `(port, host)` listen target, mirroring `connect_target`.
@@ -2007,7 +2048,11 @@ pub fn server_close(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let receiver = receiver
+        .filter(|value| net_id(value).is_some())
+        .cloned()
+        .or_else(|| args.first().filter(|value| net_id(value).is_some()).cloned())
+        .unwrap_or(Value::Undefined);
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
