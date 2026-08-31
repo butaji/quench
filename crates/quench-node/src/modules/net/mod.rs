@@ -380,6 +380,11 @@ fn net_info_props(peer: SocketAddr, local: Option<SocketAddr>) -> Vec<(String, V
 
 fn server_props() -> Vec<(&'static str, Value)> {
     vec![
+        // Node's net.Server keeps the worker socket lists on every server,
+        // including a plain server with no cluster workers.  Keep the
+        // observable collection present so consumers can inspect its length
+        // without manufacturing a second server representation.
+        ("_workers", host_api::array(Vec::new())),
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
         ("_listen2", cap(crate::registry::SPEC_NET_SERVER_LISTEN2)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
