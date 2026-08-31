@@ -202,6 +202,7 @@ mod tests {
                 "membership",
                 "async-resource",
                 "web-streams",
+                "webcrypto-global",
             ]
         );
         let post_bootstrap = super::post_bootstrap::ABILITIES
