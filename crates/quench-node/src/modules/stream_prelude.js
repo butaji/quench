@@ -753,7 +753,7 @@
     return number;
   }
 
-  function readableOperator(stream, mapper, filtering, options) {
+  function readableOperator(stream, mapper, filtering, options, flattening = false) {
     sliceOptions(options);
     const concurrency = operatorConcurrency(options);
     const signal = options?.signal;
@@ -763,6 +763,7 @@
       ended: false,
       pending: [],
       head: 0,
+      outputQueue: [],
       sourceDone: false,
       operatorError: undefined,
     };
@@ -770,15 +771,20 @@
       state.operatorError = error;
       state.ended = true;
     });
-    const pull = async () => {
+    const pull = () => {
       if (state.sourceDone) return null;
-      const step = await source.next();
-      if (!step || step.done) state.sourceDone = true;
-      return step;
+      const step = source.next();
+      const markDone = (value) => {
+        if (!value || value.done) state.sourceDone = true;
+        return value;
+      };
+      return step && typeof step.then === "function"
+        ? step.then(markDone)
+        : markDone(step);
     };
-    const enqueue = async () => {
-      const step = await pull();
-      if (!step || step.done) return false;
+    const enqueue = () => {
+      const processStep = (step) => {
+        if (!step || step.done) return false;
       let result;
       try {
         result = mapper(step.value, { signal });
@@ -791,18 +797,40 @@
         task.value = value;
         return value;
       };
+      const flatten = (value) => {
+        if (!flattening) return value;
+        if (isReadableNodeStream(value) || isWritableNodeStream(value)) return [value];
+        if (value && typeof value !== "string" &&
+            (typeof value[Symbol.iterator] === "function" ||
+             typeof value[Symbol.asyncIterator] === "function")) {
+          return (async () => {
+            const values = [];
+            for await (const item of value) values.push(item);
+            return values;
+          })();
+        }
+        return [value];
+      };
       if (result && typeof result.then === "function") {
-        task.promise = Promise.resolve(result).then(complete);
+        task.promise = Promise.resolve(result).then(flatten).then(complete);
       } else {
-        task.promise = Promise.resolve(complete(result));
+        const flattened = flatten(result);
+        task.promise = flattened && typeof flattened.then === "function"
+          ? flattened.then(complete)
+          : Promise.resolve(complete(flattened));
       }
       state.pending.push(task);
       return true;
+      };
+      const step = pull();
+      return step && typeof step.then === "function"
+        ? step.then(processStep)
+        : processStep(step);
     };
     const fill = () => {
       const waiters = [];
-      let reserved = 0;
-      while (state.pending.slice(state.head).length + reserved < concurrency && !state.sourceDone) {
+      let reserved = state.pending.slice(state.head).length;
+      while (reserved < concurrency && !state.sourceDone) {
         const result = enqueue();
         reserved++;
         if (result && typeof result.then === "function") {
@@ -817,6 +845,9 @@
       if (state.operatorError) throw state.operatorError;
       if (state.ended) return { value: undefined, done: true };
       if (signal?.aborted) throw sliceAbortError();
+      if (state.outputQueue.length) {
+        return { value: state.outputQueue.shift(), done: false };
+      }
       const initialFill = fill();
       if (initialFill) await initialFill;
       if (state.head >= state.pending.length) {
@@ -835,6 +866,13 @@
       }
       if (state.head >= state.pending.length && !state.sourceDone) await enqueue();
       const value = task.value;
+      if (flattening) {
+        state.outputQueue.push(...value);
+        if (state.outputQueue.length) {
+          return { value: state.outputQueue.shift(), done: false };
+        }
+        return next();
+      }
       if (filtering && !value.keep) return next();
       return { value: filtering ? value.value : value, done: false };
     };
@@ -1038,6 +1076,14 @@
   ReadableClass.prototype.map = function (mapper, options) {
     return operatorMapper(this, mapper, false, options);
   };
+  ReadableClass.prototype.flatMap = function (mapper, options) {
+    if (typeof mapper !== "function") {
+      const error = new TypeError("The callback must be a function");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return readableOperator(this, mapper, false, options, true);
+  };
   ReadableClass.prototype.filter = function (predicate, options) {
     return operatorMapper(this, predicate, true, options);
   };
@@ -1054,6 +1100,18 @@
   };
   ReadableClass.prototype.find = function (predicate, options) {
     return readableTerminal(this, "find", predicate, undefined, false, options);
+  };
+  ReadableClass.prototype.forEach = function (callback, options) {
+    if (typeof callback !== "function") {
+      const error = new TypeError("The callback must be a function");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
+    const operator = readableOperator(this, async (value, context) => {
+      await callback(value, context);
+      return undefined;
+    }, false, options);
+    return operator.toArray().then(() => undefined);
   };
   ReadableClass.prototype.toArray = function () {
     const iterator = this.__quenchIterator || this[Symbol.asyncIterator]();
