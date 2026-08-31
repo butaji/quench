@@ -3423,8 +3423,16 @@ pub fn cp_spawn(
         || command.ends_with("/grep")
         || command == "sed"
         || command.ends_with("/sed")
+        || command == "wc"
+        || command.ends_with("/wc")
     {
-        let filter = if command.ends_with("grep") { "grep" } else { "sed" };
+        let filter = if command.ends_with("grep") {
+            "grep"
+        } else if command.ends_with("sed") {
+            "sed"
+        } else {
+            "wc"
+        };
         execute::set_property_in_place(&stdin, "\0childFilter", Value::String(filter.into()));
         execute::set_property_in_place(
             &stdin,
@@ -3456,6 +3464,35 @@ pub fn cp_spawn(
     let set_encoding = crate::host::capability(crate::registry::SPEC_CP_STREAM_SET_ENCODING);
     let stdout = execute::set_property(stdout, "setEncoding", set_encoding.clone());
     let stderr = execute::set_property(stderr, "setEncoding", set_encoding);
+    let stdout = execute::set_property(
+        stdout,
+        "_handle",
+        host_api::object(vec![(
+            "readStart".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        )]),
+    );
+    let stderr = execute::set_property(
+        stderr,
+        "_handle",
+        host_api::object(vec![(
+            "readStart".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        )]),
+    );
+    for (index, stream) in [(1, &stdout), (2, &stderr)] {
+        if let Some(target) = cp_stdio_target(&options, index) {
+            execute::set_property_in_place(stream, "\0childOutputTarget", target);
+        }
+    }
+    if let Some(source) = cp_stdio_target(&options, 0) {
+        if let Some(identity) = cp_pipe_key(&source) {
+            state
+                .borrow_mut()
+                .child_pipes
+                .insert(identity, stdin.clone());
+        }
+    }
     let child = crate::modules::events::new_emitter_object(state)?;
     let child = execute::set_property(child, "pid", Value::Undefined);
     let child = execute::set_property(child, "\0childCommand", Value::String(command.clone()));
@@ -3750,6 +3787,55 @@ pub fn cp_spawn(
     Ok(child)
 }
 
+fn cp_stdio_target(options: &Value, index: usize) -> Option<Value> {
+    let Value::Array(stdio) = execute::get_property(options, "stdio") else {
+        return None;
+    };
+    let target = execute::get_property_result(&Value::Array(stdio), &index.to_string()).ok()?;
+    matches!(target, Value::Object(_) | Value::ObjectAlias(_)).then_some(target)
+}
+
+fn cp_pipe_write(
+    state: &Rc<RefCell<HostState>>,
+    source: &Value,
+    value: Value,
+) -> Result<(), VmError> {
+    let target = cp_pipe_target(state, source);
+    let write = execute::get_property(&target, "write");
+    if matches!(target, Value::Object(_) | Value::ObjectAlias(_))
+        && quench_runtime::is_callable(&write)
+    {
+        execute::call(&write, &target, &[value])?;
+    }
+    Ok(())
+}
+
+fn cp_pipe_end(
+    state: &Rc<RefCell<HostState>>,
+    source: &Value,
+) -> Result<(), VmError> {
+    let target = cp_pipe_target(state, source);
+    let end = execute::get_property(&target, "end");
+    if matches!(target, Value::Object(_) | Value::ObjectAlias(_))
+        && quench_runtime::is_callable(&end)
+    {
+        execute::call(&end, &target, &[])?;
+    }
+    Ok(())
+}
+
+fn cp_pipe_target(state: &Rc<RefCell<HostState>>, source: &Value) -> Value {
+    cp_pipe_key(source)
+        .and_then(|identity| state.borrow().child_pipes.get(&identity).cloned())
+        .unwrap_or_else(|| execute::get_property(source, "\0childPipeTarget"))
+}
+
+fn cp_pipe_key(source: &Value) -> Option<u64> {
+    crate::modules::emitter::emitter_id(source)
+        .map(|id| id.0)
+        .or_else(|| source.object_identity())
+}
+
 pub fn cp_spawn_output_emit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -3758,8 +3844,14 @@ pub fn cp_spawn_output_emit(
     let Some(child) = args.first() else {
         return Ok(Value::Undefined);
     };
-    let stdout = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let stderr = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let stdout = args
+        .get(1)
+        .map(execute::canonical_value)
+        .unwrap_or(Value::Undefined);
+    let stderr = args
+        .get(2)
+        .map(execute::canonical_value)
+        .unwrap_or(Value::Undefined);
     let emit = |target: &Value, event: &str, values: Vec<Value>| {
         let mut event_args = vec![Value::String(event.into())];
         event_args.extend(values);
@@ -3927,6 +4019,13 @@ pub fn cp_spawn_output_emit(
             .collect::<Vec<_>>()
             .join("\n")
             + "\n"
+    } else if matches!(command, Value::String(ref value) if value == "cat" || value.ends_with("/cat")) {
+        let path = execute::get_property_result(&child_args, "0")
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok());
+        path.and_then(|path| std::fs::read(path).ok())
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default()
     } else if matches!(command, Value::String(ref value) if value == "pwd") {
         let options = execute::get_property(child, "\0childOptions");
         let cwd = execute::get_property(&options, "cwd");
@@ -3958,6 +4057,16 @@ pub fn cp_spawn_output_emit(
                 .filter(|(stream, _)| *stream == "stdout")
                 .map(|(_, text)| text)
                 .unwrap_or_default()
+        } else if match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "-v" || value == "--version")
+            }),
+            _ => false,
+        } {
+            format!("{}\n", state.borrow().process.version)
         } else if let Some(output) = cp_spawn_script_stdout(&child_args) {
             output
         } else if match &child_args {
@@ -4014,6 +4123,8 @@ pub fn cp_spawn_output_emit(
                 || value.ends_with("/grep")
                 || value == "sed"
                 || value.ends_with("/sed")
+                || value == "wc"
+                || value.ends_with("/wc")
     );
     if filter_process {
         // Filter output is driven by stdin writes. Keep the process and its
@@ -4024,7 +4135,23 @@ pub fn cp_spawn_output_emit(
         command,
         Value::String(ref value) if value == "echo" || value.ends_with("/echo")
     );
-    if echo_process {
+    let pipe_target = cp_pipe_target(state, &stdout);
+    if matches!(pipe_target, Value::Object(_) | Value::ObjectAlias(_))
+        && !stdout_text.is_empty()
+    {
+        cp_pipe_write(state, &stdout, Value::String(stdout_text.clone()))?;
+        cp_pipe_end(state, &stdout)?;
+    }
+    let stdout_target = execute::get_property(&stdout, "\0childOutputTarget");
+    if matches!(stdout_target, Value::Object(_) | Value::ObjectAlias(_)) {
+        if !stdout_text.is_empty() {
+            crate::modules::net::socket_write(
+                state,
+                Some(&stdout_target),
+                &[Value::String(stdout_text.clone())],
+            )?;
+        }
+    } else if echo_process {
         let stdout_text = if matches!(
             execute::get_property(&child_options, "shell"),
             Value::Boolean(true)
@@ -4066,7 +4193,16 @@ pub fn cp_spawn_output_emit(
             vec![cp_stream_output_value(&stdout, &stdout_text)?],
         )?;
     }
-    if !stderr_text.is_empty() {
+    let stderr_target = execute::get_property(&stderr, "\0childOutputTarget");
+    if matches!(stderr_target, Value::Object(_) | Value::ObjectAlias(_)) {
+        if !stderr_text.is_empty() {
+            crate::modules::net::socket_write(
+                state,
+                Some(&stderr_target),
+                &[Value::String(stderr_text.clone())],
+            )?;
+        }
+    } else if !stderr_text.is_empty() {
         emit(
             &stderr,
             "data",
@@ -4278,6 +4414,25 @@ pub fn cp_stdin_write(
             .and_then(|to_string| execute::call(&to_string, chunk, &[]).ok())
             .and_then(|value| execute::to_js_string(&value).ok())
             .unwrap_or_else(|| execute::to_js_string(chunk).unwrap_or_default());
+        if filter == "grep" {
+            execute::set_property_in_place(
+                receiver,
+                "\0childFilterTrailingNewline",
+                Value::Boolean(text.ends_with('\n')),
+            );
+        }
+        if filter == "wc" {
+            let previous = match execute::get_property(receiver, "\0childFilterBytes") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                _ => 0,
+            };
+            execute::set_property_in_place(
+                receiver,
+                "\0childFilterBytes",
+                Value::Number((previous + text.len()) as f64),
+            );
+            return Ok(Value::Boolean(true));
+        }
         let output = if filter == "grep" {
             let matcher = execute::to_js_string(&execute::get_property(
                 receiver,
@@ -4307,6 +4462,12 @@ pub fn cp_stdin_write(
                 .unwrap_or(text)
         };
         if !output.is_empty() {
+            execute::set_property_in_place(
+                receiver,
+                "\0childFilterMatched",
+                Value::Boolean(true),
+            );
+            cp_pipe_write(state, &target, Value::String(output.clone()))?;
             crate::modules::events::method_emit(
                 state,
                 Some(&target),
@@ -4349,6 +4510,39 @@ pub fn cp_stdin_end(
     if matches!(child, Value::Object(_) | Value::ObjectAlias(_))
         && matches!(target, Value::Object(_) | Value::ObjectAlias(_))
     {
+        let filter = execute::get_property(receiver, "\0childFilter");
+        if matches!(filter, Value::String(ref value) if value == "wc") {
+            let bytes = match execute::get_property(receiver, "\0childFilterBytes") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+                _ => 0,
+            };
+            let output = Value::String(format!("{bytes}\n"));
+            cp_pipe_write(state, &target, output.clone())?;
+            crate::modules::events::method_emit(
+                state,
+                Some(&target),
+                &[Value::String("data".into()), output],
+            )?;
+        }
+        if matches!(filter, Value::String(ref value) if value == "grep")
+            && matches!(
+                execute::get_property(receiver, "\0childFilterMatched"),
+                Value::Boolean(true)
+            )
+            && !matches!(
+                execute::get_property(receiver, "\0childFilterTrailingNewline"),
+                Value::Boolean(true)
+            )
+        {
+            let newline = Value::String("\n".into());
+            cp_pipe_write(state, &target, newline.clone())?;
+            crate::modules::events::method_emit(
+                state,
+                Some(&target),
+                &[Value::String("data".into()), newline],
+            )?;
+        }
+        cp_pipe_end(state, &target)?;
         for event in ["end", "close"] {
             crate::modules::events::method_emit(
                 state,

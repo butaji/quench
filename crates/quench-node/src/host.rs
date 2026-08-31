@@ -94,6 +94,8 @@ pub struct HostState {
     pub identity_roots: Vec<Value>,
     /// Canonical child-process prototype kept out of the JavaScript global.
     pub child_process_prototype: Option<Value>,
+    /// One canonical source-to-stdin edge for in-process stdio pipelines.
+    pub child_pipes: std::collections::HashMap<u64, Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -142,6 +144,7 @@ impl NodeHost {
             abort_composites: std::collections::HashMap::new(),
             identity_roots: Vec::new(),
             child_process_prototype: None,
+            child_pipes: std::collections::HashMap::new(),
         };
         Self {
             state: Rc::new(RefCell::new(state)),
