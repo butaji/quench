@@ -2176,16 +2176,20 @@ pub fn server_listen(
         }
     }
     let (port, host) = listen_target(state, args)?;
+    let cluster_ephemeral_slot = (state.borrow().cluster.worker_context.is_some() && port == 0)
+        .then(|| crate::modules::cluster::next_worker_listen_slot(state))
+        .flatten();
     // Cluster workers ask the primary for the listener rather than binding a
     // fresh ephemeral port.  The host models workers in one VM, so preserve
     // that shared descriptor identity by cloning the first worker-owned
-    // listener for the same address family (and explicit port, when given).
-    // An ephemeral listen is a new logical endpoint for each call. Only
-    // explicit ports participate in the shared cluster descriptor.
-    let cluster_listener = (state.borrow().cluster.worker_context.is_some() && port != 0)
+    // listener for the same address family and construction-order slot. An
+    // explicit port matches by port; `listen(0)` matches by logical slot so
+    // separate server constructions remain distinct across workers.
+    let cluster_listener = (state.borrow().cluster.worker_context.is_some()
+        && (port != 0 || cluster_ephemeral_slot.is_some()))
         .then(|| {
             let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
-            state.borrow().net.servers.values().find_map(|server| {
+            let found = state.borrow().net.servers.values().find_map(|server| {
                 let server = server.borrow();
                 if server.owner_worker.is_none()
                     || !server.listening
@@ -2193,10 +2197,14 @@ pub fn server_listen(
                     || server
                         .bind_addr
                         .is_none_or(|address| address.is_ipv6() != requested_ipv6)
-                    || (port != 0
-                        && server
+                    || if port != 0 {
+                        server
                             .bind_addr
-                            .is_none_or(|address| address.port() != port))
+                            .is_none_or(|address| address.port() != port)
+                    } else {
+                        !cluster_ephemeral_slot
+                            .is_some_and(|slot| server.ephemeral_slot == Some(slot))
+                    }
                 {
                     return None;
                 }
@@ -2204,7 +2212,8 @@ pub fn server_listen(
                     .listener
                     .as_ref()
                     .and_then(|listener| listener.try_clone().ok())
-            })
+            });
+            found
         })
         .flatten();
     let reuse_port = args.first().is_some_and(|options| {
@@ -2241,6 +2250,13 @@ pub fn server_listen(
         }
     };
     register_server(state, &receiver, Some(listener))?;
+    if let Some(slot) = cluster_ephemeral_slot {
+        if let Some(id) = super::net_id(&receiver) {
+            if let Some(server) = state.borrow().net.servers.get(&id) {
+                server.borrow_mut().ephemeral_slot = Some(slot);
+            }
+        }
+    }
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening", true)?;
     configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
