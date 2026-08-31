@@ -3334,7 +3334,20 @@ pub fn cp_spawn(
             return Ok(child);
         }
     }
-    execute::set_property_in_place(&child, "pid", Value::Number(0.0));
+    // The host models ordinary children in-process, but their public pid must
+    // still be a distinct, positive identity.  Using zero would invoke
+    // POSIX process-group semantics when user code calls `process.kill(pid)`.
+    let simulated_pid = std::process::id() as u64 + 1;
+    execute::set_property_in_place(
+        &child,
+        "pid",
+        Value::Number(simulated_pid as f64),
+    );
+    state
+        .borrow_mut()
+        .process
+        .alive_pids
+        .insert(simulated_pid as i64);
     if command == "foo123"
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
@@ -3662,6 +3675,13 @@ pub fn cp_spawn_output_emit(
             })
             .unwrap_or(0.0)
     };
+    let child_pid = match execute::get_property(child, "pid") {
+        Value::Number(pid) if pid.is_finite() && pid > 0.0 => Some(pid as i64),
+        _ => None,
+    };
+    if let Some(pid) = child_pid {
+        state.borrow_mut().process.alive_pids.remove(&pid);
+    }
     let exit = if killed {
         vec![Value::Null, signal]
     } else if shell_missing {
@@ -3716,6 +3736,11 @@ pub fn cp_kill(
         _ => Value::String("SIGTERM".into()),
     };
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
+    if let Value::Number(pid) = execute::get_property(child, "pid") {
+        if pid.is_finite() && pid > 0.0 {
+            state.borrow_mut().process.alive_pids.remove(&(pid as i64));
+        }
+    }
     execute::set_property_in_place(child, "signalCode", signal);
     if let Value::Object(_) | Value::ObjectAlias(_) = execute::get_property(child, "\0forkProcess") {
         let process = execute::get_property(child, "\0forkProcess");
