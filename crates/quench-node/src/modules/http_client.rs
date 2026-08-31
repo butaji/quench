@@ -243,12 +243,18 @@ pub fn agent_get_name(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args.first().cloned().unwrap_or(Value::Undefined);
-    let host = match execute::get_property(&options, "host") {
-        Value::String(value) if !value.is_empty() => value,
-        _ => match execute::get_property(&options, "hostname") {
+    let host = if own_option(&options, "host") {
+        match execute::get_property(&options, "host") {
             Value::String(value) if !value.is_empty() => value,
             _ => "localhost".into(),
-        },
+        }
+    } else if own_option(&options, "hostname") {
+        match execute::get_property(&options, "hostname") {
+            Value::String(value) if !value.is_empty() => value,
+            _ => "localhost".into(),
+        }
+    } else {
+        "localhost".into()
     };
     let port = match execute::get_property(&options, "port") {
         Value::String(value) => value,
@@ -3788,7 +3794,10 @@ fn host_without_port(raw_host: &str) -> String {
 }
 
 fn opt_first(options: &Value, keys: &[&str]) -> Result<Option<String>, VmError> {
-    for key in keys {
+    // Prefer own options before consulting the prototype chain. This is
+    // observable for null-prototype option bags and avoids invoking an
+    // unrelated inherited accessor when `host` already supplies a value.
+    for key in keys.iter().copied().filter(|key| own_option(options, key)) {
         if let Some(value) = opt(options, key)? {
             if !value.is_empty() {
                 return Ok(Some(value));
@@ -3796,6 +3805,11 @@ fn opt_first(options: &Value, keys: &[&str]) -> Result<Option<String>, VmError> 
         }
     }
     Ok(None)
+}
+
+fn own_option(options: &Value, key: &str) -> bool {
+    execute::get_own_property_descriptor(options, key)
+        .is_ok_and(|descriptor| !matches!(descriptor, Value::Undefined))
 }
 
 fn http_url(value: &str) -> Result<RequestOptions, VmError> {
