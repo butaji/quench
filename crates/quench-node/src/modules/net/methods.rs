@@ -1861,9 +1861,38 @@ pub fn server_listen(
     // `internalBinding('pipe_wrap').Pipe` is itself a server-owned handle.
     // After `bind(path)`, adopting it through `server.listen(handle)` moves
     // the existing listener instead of treating the handle as connect opts.
-    if let Some(handle) = args.first().filter(|value| {
-        matches!(execute::get_property(value, PIPE_MARKER_PROP), Value::Boolean(true))
-    }) {
+    let pipe_handle = args.first().and_then(|value| {
+        if matches!(execute::get_property(value, PIPE_MARKER_PROP), Value::Boolean(true)) {
+            return Some(value.clone());
+        }
+        ["handle", "_handle"].into_iter().find_map(|key| {
+            let handle = execute::get_property(value, key);
+            matches!(execute::get_property(&handle, PIPE_MARKER_PROP), Value::Boolean(true))
+                .then_some(handle)
+        })
+        .or_else(|| {
+            let fd = match execute::get_property(value, "fd") {
+                Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 => fd as i64,
+                _ => return None,
+            };
+            state
+                .borrow()
+                .net
+                .servers
+                .values()
+                .find(|server| {
+                    let server = server.borrow();
+                    server.listening
+                        && matches!(
+                            execute::get_property(&server.js, PIPE_MARKER_PROP),
+                            Value::Boolean(true)
+                        )
+                        && matches!(execute::get_property(&server.js, "fd"), Value::Number(value) if value as i64 == fd)
+                })
+                .map(|server| server.borrow().js.clone())
+        })
+    });
+    if let Some(handle) = pipe_handle.as_ref() {
         if let Some(id) = super::net_id(handle) {
             let existing = { state.borrow().net.servers.get(&id).cloned() };
             if let Some(server) = existing {
@@ -1910,7 +1939,7 @@ pub fn server_listen(
         {
             let error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String("listen EINVAL".into())],
+                &[Value::String("listen EINVAL: invalid argument".into())],
             );
             let error = execute::set_property(error, "code", Value::String("EINVAL".into()));
             let error = execute::set_property(error, "syscall", Value::String("listen".into()));
