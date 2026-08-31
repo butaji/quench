@@ -18,7 +18,7 @@
         this._emitter.removeListener(name, wrapper);
         fn.call(this);
       }
-      if (name === "data" && this._readableState &&
+      if (name === "data" && !this.destroyed && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
         // The first data listener starts pulling before the next promise
@@ -212,6 +212,7 @@
       endEmitted: false,
       endScheduled: false,
       emittedReadable: false,
+      errorEmitted: false,
       errored: null,
       closeEmitted: false,
       encoding: options.encoding ? validateEncoding(options.encoding) : null,
@@ -245,6 +246,7 @@
   }
 
   function requestRead(stream) {
+    if (stream.destroyed) return;
     const state = stream._readableState;
     state.readRequests += 1;
     state.reading = true;
@@ -252,6 +254,7 @@
   }
 
   function flowReadable(stream) {
+    if (stream.destroyed) return;
     const st = stream._readableState;
     if (stream.listenerCount("readable") > 0 &&
         (st.buffer.length > 0 || st.ended)) {
@@ -460,6 +463,7 @@
 
     read(size) {
       const st = this._readableState;
+      if (this.destroyed) return null;
       if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
@@ -1019,6 +1023,7 @@
         const endError = destroy ? destroyError : error;
         if (endError) {
           stream._readableState.errored = endError;
+          stream._readableState.errorEmitted = true;
           stream._destroyError = endError;
           stream._destroyErrorEmitted = true;
           stream._emitter.emit("error", endError);
@@ -1028,7 +1033,11 @@
         if (callback) callback(endError);
     };
     if (destroy) {
-      destroy.call(stream, error ?? null, finish);
+      const complete = (destroyError) => {
+        if (destroyError) stream._readableState.errored = destroyError;
+        nextTick(() => finish(destroyError));
+      };
+      destroy.call(stream, error ?? null, complete);
     } else {
       nextTick(() => finish());
     }
