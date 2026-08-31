@@ -22,6 +22,7 @@ struct Worker {
     listeners: HashMap<String, Vec<Value>>,
     child_listeners: HashMap<String, Vec<Value>>,
     pending_messages: Vec<Value>,
+    pending_listening: Vec<Value>,
     pending_disconnect: bool,
     pending_exit: Option<(i32, Option<String>)>,
     pending_worker_exit: Option<(Option<f64>, Option<String>)>,
@@ -345,6 +346,7 @@ pub fn fork(
             listeners: HashMap::new(),
             child_listeners: HashMap::new(),
             pending_messages: Vec::new(),
+            pending_listening: Vec::new(),
             pending_disconnect: false,
             pending_exit: None,
             pending_worker_exit: None,
@@ -556,17 +558,13 @@ pub(crate) fn notify_listening(
     worker_id: u64,
     address: Value,
 ) {
-    let worker = {
-        let host = state.borrow();
-        host.cluster.worker_object(worker_id)
-    };
-    let module = { state.borrow().cluster.module.clone() };
-    if let (Some(worker), Some(module)) = (worker, module) {
-        state.borrow_mut().net.pending_events.push((
-            module,
-            "listening".into(),
-            vec![worker, address],
-        ));
+    if let Some(worker) = state
+        .borrow_mut()
+        .cluster
+        .workers
+        .get_mut(&worker_id)
+    {
+        worker.pending_listening.push(address);
     }
 }
 
@@ -876,44 +874,20 @@ pub fn on(
                     "state",
                     Value::String("listening".into()),
                 );
-                let address = state
-                    .borrow()
-                    .net
-                    .servers
-                    .values()
-                    .find_map(|server| {
-                        let server = server.borrow();
-                        (server.listening && server.bind_addr.is_some()).then(|| server.bind_addr)
-                    })
-                    .flatten();
-                let info = host_api::object(vec![
-                    (
-                        "address".into(),
-                        Value::String(
-                            address
-                                .map(|address| address.ip().to_string())
-                                .unwrap_or_else(|| "127.0.0.1".into()),
-                        ),
-                    ),
-                    (
-                        "addressType".into(),
-                        Value::Number(if address.is_some_and(|address| address.is_ipv6()) {
-                            6.0
-                        } else {
-                            4.0
-                        }),
-                    ),
-                    ("fd".into(), Value::Undefined),
-                    (
-                        "port".into(),
-                        Value::Number(address.map_or(1, |address| address.port()) as f64),
-                    ),
-                ]);
-                state.borrow_mut().event_loop.queue_microtask_with_receiver(
-                    cb.clone(),
-                    vec![info],
-                    obj.clone(),
-                );
+                let pending = state
+                    .borrow_mut()
+                    .cluster
+                    .workers
+                    .get_mut(&id)
+                    .map(|worker| std::mem::take(&mut worker.pending_listening))
+                    .unwrap_or_default();
+                for address in pending {
+                    state.borrow_mut().event_loop.queue_microtask_with_receiver(
+                        cb.clone(),
+                        vec![address],
+                        obj.clone(),
+                    );
+                }
                 let module = state.borrow().cluster.module.clone();
                 if let Some(module) = module {
                     let _ = crate::modules::events::method_emit(
