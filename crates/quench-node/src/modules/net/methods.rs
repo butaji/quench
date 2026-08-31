@@ -1249,10 +1249,11 @@ fn connect_with_receiver(
             (install_socket_counters(object)?, id)
         }
     };
-    let object = execute::canonical_value(&object);
     if let Some(prototype) = state.borrow().net.socket_prototype.clone() {
-        execute::set_prototype_of(&object, &prototype)?;
+        let updated = execute::set_prototype_of(&object, &prototype)?;
+        execute::replace_value(&object, &updated);
     }
+    let object = execute::canonical_value(&object);
     if let Some(options) = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
