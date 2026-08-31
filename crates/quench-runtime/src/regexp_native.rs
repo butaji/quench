@@ -657,6 +657,8 @@ mod tests {
         assert_eq!(test_str("^\\p{Assigned}+$", "u", "abc", 0), Some(true));
         assert_eq!(test_str("^\\p{Other}+$", "u", "\0", 0), Some(true));
         assert_eq!(test_str("^\\p{C}+$", "u", "\0", 0), Some(true));
+        assert_eq!(test_str("^\\p{ASCII}+$", "u", "abc", 0), Some(true));
+        assert_eq!(test_str("^\\p{ASCII}+$", "u", "é", 0), Some(false));
         assert_eq!(test_str("^\\P{Assigned}+$", "u", "\u{38b}", 0), Some(true));
         assert_eq!(
             test_str("^\\p{Script_Extensions=Latin}+$", "u", "Aª", 0),
