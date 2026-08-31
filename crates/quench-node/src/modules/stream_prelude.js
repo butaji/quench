@@ -616,6 +616,14 @@
       if (st.buffer.length > 0) {
         const requested = Number(size);
         const buffered = this.readableLength;
+        if (!st.objectMode && Number.isFinite(requested) && requested > buffered && !st.ended) {
+          if (!st.reading) {
+            st.reading = true;
+            requestRead(this);
+          }
+          releaseTransform(this);
+          return null;
+        }
         let chunk = takeReadableChunk(st, requested);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
@@ -652,6 +660,10 @@
       if (st.buffer.length > 0) {
         const requested = Number(size);
         const buffered = this.readableLength;
+        if (!st.objectMode && Number.isFinite(requested) && requested > buffered && !st.ended) {
+          releaseTransform(this);
+          return null;
+        }
         let chunk = takeReadableChunk(st, requested);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
