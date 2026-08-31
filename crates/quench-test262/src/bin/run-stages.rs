@@ -320,7 +320,10 @@ fn run_stage_files(
     files: Vec<PathBuf>,
     isolated: bool,
 ) -> Result<Vec<StageFileResult>, String> {
-    const WORK_BATCH: usize = 32;
+    // Generated RegExp property fixtures can retain large Unicode tables in
+    // the child allocator even after a fixture realm is reset. Keep child
+    // batches small so peak RSS stays proportional to one short fixture set.
+    const WORK_BATCH: usize = 4;
     // OXC and the reducer need more than the platform default for deeply
     // nested fixtures, but 256 MiB per worker makes a four-worker RegExp
     // stage reserve a gigabyte before the engine heap is counted.
