@@ -351,6 +351,7 @@ pub const SPEC_CP_SEND: NodeSpec = NodeSpec::new("child_process:send", 0x1E0E);
 pub const SPEC_CP_MESSAGE_EMIT: NodeSpec = NodeSpec::new("child_process:messageEmit", 0x1E0F);
 pub const SPEC_CP_DISCONNECT: NodeSpec = NodeSpec::new("child_process:disconnect", 0x1E10);
 pub const SPEC_CP_DISCONNECT_EMIT: NodeSpec = NodeSpec::new("child_process:disconnectEmit", 0x1E11);
+pub const SPEC_CP_SEND_ACK: NodeSpec = NodeSpec::new("child_process:sendAck", 0x1E16);
 pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
 pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
     NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
@@ -1091,6 +1092,7 @@ pub const CAP_CP_INSTANCE_SPAWN: CapId = SPEC_CP_INSTANCE_SPAWN.cap;
 pub const CAP_CP_KILL: CapId = SPEC_CP_KILL.cap;
 pub const CAP_CP_MESSAGE_EMIT: CapId = SPEC_CP_MESSAGE_EMIT.cap;
 pub const CAP_CP_SEND: CapId = SPEC_CP_SEND.cap;
+pub const CAP_CP_SEND_ACK: CapId = SPEC_CP_SEND_ACK.cap;
 pub const CAP_CP_SPAWN: CapId = SPEC_CP_SPAWN.cap;
 pub const CAP_CP_SPAWNSYNC: CapId = SPEC_CP_SPAWNSYNC.cap;
 pub const CAP_CP_SPAWN_ERROR_EMIT: CapId = SPEC_CP_SPAWN_ERROR_EMIT.cap;
