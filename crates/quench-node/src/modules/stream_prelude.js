@@ -1068,6 +1068,7 @@
 
   if (typeof Symbol === "function" && Symbol.asyncIterator) {
     ReadableClass.prototype[Symbol.asyncIterator] = function () {
+      if (this.__quenchIterator) return this.__quenchIterator;
       const stream = this;
       const queue = [];
       const waiters = [];
