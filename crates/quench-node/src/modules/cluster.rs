@@ -882,9 +882,10 @@ pub fn on(
                     .map(|worker| std::mem::take(&mut worker.pending_listening))
                     .unwrap_or_default();
                 for address in pending {
+                    let info = listening_info(&address);
                     state.borrow_mut().event_loop.queue_microtask_with_receiver(
                         cb.clone(),
-                        vec![address],
+                        vec![info],
                         obj.clone(),
                     );
                 }
@@ -1202,6 +1203,20 @@ pub fn disconnect_all(
     }
     Ok(Value::Undefined)
 }
+
+fn listening_info(address: &Value) -> Value {
+    let family = execute::get_property(address, "family");
+    let address_type = matches!(family, Value::String(ref family) if family == "IPv6")
+        .then_some(6.0)
+        .unwrap_or(4.0);
+    host_api::object(vec![
+        ("address".into(), execute::get_property(address, "address")),
+        ("addressType".into(), Value::Number(address_type)),
+        ("fd".into(), Value::Undefined),
+        ("port".into(), execute::get_property(address, "port")),
+    ])
+}
+
 fn err(name: &str) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
