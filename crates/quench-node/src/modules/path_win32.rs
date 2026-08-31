@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
@@ -279,13 +279,15 @@ pub fn to_namespaced_path(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = args.first().cloned().unwrap_or(Value::Undefined);
-    let Value::String(s) = &path else {
-        return Ok(path);
+    let s = match &path {
+        Value::String(s) => s.clone(),
+        Value::StringUnits(_) => execute::to_js_string(&path).unwrap_or_default(),
+        _ => return Ok(path),
     };
     if s.is_empty() {
         return Ok(path);
     }
-    let resolved = match resolve(state, None, &[Value::String(s.clone())])? {
+    let resolved = match resolve(state, None, &[Value::String(s)])? {
         Value::String(resolved) => resolved,
         _ => String::new(),
     };
