@@ -2203,7 +2203,7 @@ pub fn socket_write(
         execute::get_property(&guard.js, "readable"),
         Value::Boolean(false)
     );
-    if guard.read_eof && readable_ended && !allow_half_open {
+    if guard.read_eof && readable_ended && guard.finish_emitted && !allow_half_open {
         drop(guard);
         let error = super::handle_write_error(
             "EPIPE",
