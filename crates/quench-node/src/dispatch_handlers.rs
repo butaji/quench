@@ -4641,13 +4641,24 @@ pub fn cp_fork(
     let previous_scope = state.borrow().cluster.process_scope();
     let child_scope = child.object_identity().unwrap_or(previous_scope);
     execute::set_property_in_place(&child, "\0forkScope", Value::Number(child_scope as f64));
+    execute::set_property_in_place(
+        &child,
+        "\0forkParentScope",
+        Value::Number(previous_scope as f64),
+    );
     state
         .borrow_mut()
         .cluster
         .register_fork_process(child_scope, child.clone());
+    let previous_event_scope = state.borrow().event_loop.process_scope();
     state.borrow_mut().cluster.set_process_scope(child_scope);
+    state.borrow().event_loop.set_process_scope(child_scope);
     let fork_result = fork_child_start(state, &child, &script, &fork_args_for_events);
     state.borrow_mut().cluster.set_process_scope(previous_scope);
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(previous_event_scope);
     fork_result?;
     // An already-aborted signal can mark the child before its shared-realm
     // source executes.  Remove resources created by that source as part of
@@ -5124,10 +5135,15 @@ pub fn cp_send(
             process_args.push(handle.clone());
         }
         let previous_scope = state.borrow().cluster.process_scope();
+        let previous_event_scope = state.borrow().event_loop.process_scope();
         if let Value::Number(scope) = execute::get_property(receiver, "\0forkScope") {
             state
                 .borrow_mut()
                 .cluster
+                .set_process_scope(scope as u64);
+            state
+                .borrow()
+                .event_loop
                 .set_process_scope(scope as u64);
         }
         let result = crate::modules::process::emit(state, &process_args);
@@ -5135,6 +5151,10 @@ pub fn cp_send(
             .borrow_mut()
             .cluster
             .set_process_scope(previous_scope);
+        state
+            .borrow()
+            .event_loop
+            .set_process_scope(previous_event_scope);
         result?;
     } else if from_fork_process {
         let callback = host_api::bound_capability_with_arguments(
@@ -5150,7 +5170,14 @@ pub fn cp_send(
                 args.get(1).cloned().unwrap_or(Value::Undefined),
             ],
         );
-        state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+        let parent_scope = match execute::get_property(child, "\0forkParentScope") {
+            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => scope as u64,
+            _ => 0,
+        };
+        state
+            .borrow()
+            .event_loop
+            .queue_microtask_scope(callback, vec![], parent_scope);
     } else {
         crate::modules::events::method_emit(state, Some(child), &event_args)?;
     }

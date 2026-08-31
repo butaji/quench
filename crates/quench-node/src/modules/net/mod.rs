@@ -95,6 +95,8 @@ pub struct NetServer {
 
 pub struct NetSocket {
     pub id: u64,
+    /// Logical process scope that created or accepted this socket.
+    pub process_scope: u64,
     pub stream: Option<TcpStream>,
     pub js: Value,
     pub state: SocketState,

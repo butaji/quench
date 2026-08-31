@@ -571,6 +571,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         _id,
         Rc::new(RefCell::new(NetSocket {
             id: _id,
+            process_scope: state.borrow().cluster.process_scope(),
             stream: fd_stream,
             js: object.clone(),
             state: SocketState::Open,
@@ -1410,6 +1411,7 @@ fn connect_with_receiver(
     set_socket_state(&object, true, true, "opening");
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
+        process_scope: state.borrow().cluster.process_scope(),
         stream: Some(stream),
         js: object.clone(),
         state: SocketState::Open,
