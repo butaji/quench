@@ -1213,11 +1213,20 @@ impl ArrayData {
             return false;
         }
 
-        let source: Vec<Value> = (src..src_end)
-            .filter_map(|index| self.values.value_at(index))
-            .collect();
-        for (offset, value) in source.into_iter().enumerate() {
-            self.values.set(dst + offset, value);
+        if dst > src {
+            for offset in (0..len).rev() {
+                let Some(value) = self.values.value_at(src + offset) else {
+                    return false;
+                };
+                self.values.set(dst + offset, value);
+            }
+        } else {
+            for offset in 0..len {
+                let Some(value) = self.values.value_at(src + offset) else {
+                    return false;
+                };
+                self.values.set(dst + offset, value);
+            }
         }
         true
     }
@@ -1675,6 +1684,27 @@ mod array_data_tests {
         let arguments = ArrayData::new_arguments(vec![Value::Number(1.0)], false);
         assert!(arguments.argument_live_view().is_some());
     }
+
+    #[test]
+    fn dense_copy_handles_overlap_for_generic_values() {
+        let mut data = ArrayData::new(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+            Value::String("c".into()),
+            Value::String("d".into()),
+        ]);
+        assert!(data.copy_dense_within(0, 1, 3));
+        assert_eq!(
+            data.snapshot(),
+            vec![
+                Value::String("a".into()),
+                Value::String("a".into()),
+                Value::String("b".into()),
+                Value::String("c".into()),
+            ]
+        );
+    }
+
     #[test]
     fn sparse_transition_keeps_adjacent_writes_out_of_dense_storage() {
         let mut data = ArrayData::new(vec![Value::Number(1.0)]);
