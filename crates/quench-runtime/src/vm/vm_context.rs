@@ -122,6 +122,10 @@ pub struct VmContext {
     persistent_host_values: Vec<String>,
     can_block: bool,
     source_text: Option<Rc<str>>,
+    /// Optional cooperative execution budget for host re-entry. The normal
+    /// VM has no budget; shared-realm hosts can bound one logical process and
+    /// return control to their state machine instead of blocking forever.
+    execution_budget: Option<Rc<std::cell::Cell<usize>>>,
 }
 impl Default for VmContext {
     fn default() -> Self {
@@ -135,6 +139,7 @@ impl Default for VmContext {
             persistent_host_values: Vec::new(),
             can_block: false,
             source_text: None,
+            execution_budget: None,
         }
     }
 }
@@ -204,6 +209,26 @@ impl VmContext {
     pub fn with_source_text(mut self, source: impl Into<Rc<str>>) -> Self {
         self.source_text = Some(source.into());
         self
+    }
+
+    /// Bound one top-level execution without changing ordinary VM semantics.
+    /// The counter is shared by cloned contexts so nested calls consume the
+    /// same residual budget.
+    pub fn with_execution_budget(mut self, budget: usize) -> Self {
+        self.execution_budget = Some(Rc::new(std::cell::Cell::new(budget)));
+        self
+    }
+
+    pub(crate) fn consume_execution_budget(&self) -> bool {
+        let Some(budget) = &self.execution_budget else {
+            return true;
+        };
+        let remaining = budget.get();
+        if remaining == 0 {
+            return false;
+        }
+        budget.set(remaining - 1);
+        true
     }
 
     pub fn source_text(&self) -> Option<&str> {
@@ -333,4 +358,5 @@ pub enum VmError {
     EvalError(String),
     Thrown(Value),
     Suspended(Rc<crate::value::PromiseData>),
+    Interrupted,
 }
