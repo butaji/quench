@@ -2354,16 +2354,20 @@
     result.readable = composeReadable(last);
     if (firstSource) {
       result.writable = false;
-      const sourceStreamChain = first && typeof first.pipe === "function" &&
+      const sourceStream = first && typeof first.pipe === "function"
+        ? first
+        : iterable(first) ? Readable.from(first) : null;
+      const sourceStreamChain = sourceStream && stages.length > 1 &&
         stages.slice(1).every((stage) => stage && typeof stage.write === "function" &&
           typeof stage.on === "function");
       if (sourceStreamChain) {
-        for (let index = 0; index + 1 < stages.length; index++) {
+        sourceStream.pipe(stages[1]);
+        for (let index = 1; index + 1 < stages.length; index++) {
           stages[index].pipe(stages[index + 1]);
         }
         last.on("data", (chunk) => result.push(chunk));
         last.once("end", () => result.push(null));
-        for (const stage of stages) {
+        for (const stage of [sourceStream, ...stages.slice(1)]) {
           stage.on("error", (error) => result.destroy(error));
         }
         return result;
