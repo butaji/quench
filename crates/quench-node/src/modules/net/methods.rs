@@ -2131,6 +2131,24 @@ pub fn server_listen(
     Ok(receiver.clone())
 }
 
+/// Deprecated internal alias retained for Node's child-process consumers.
+pub fn server_listen2(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::emit_warning_with_detail(
+        state,
+        "DeprecationWarning",
+        "Server.prototype._listen2 is deprecated. Use Server.prototype.listen() instead.",
+        Some("DEP0208"),
+        None,
+        true,
+    );
+    let port = args.get(1).cloned().unwrap_or(Value::Number(0.0));
+    server_listen(state, receiver, &[port])
+}
+
 fn configure_server_signal(
     state: &Rc<RefCell<HostState>>,
     server: &Value,
