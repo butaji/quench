@@ -50,6 +50,9 @@ pub fn res_set_header(
     if values.is_empty() {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
+    for value in &values {
+        validate_header_value(&name, value)?;
+    }
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
         res.headers
@@ -142,6 +145,9 @@ pub fn res_write_head(
                 let Ok(values) = header_values(Some(&execute::get_property(&array, value))) else {
                     continue;
                 };
+                for value in &values {
+                    validate_header_value(&name, value)?;
+                }
                 res.headers
                     .extend(values.into_iter().map(|value| (name.clone(), value)));
             }
@@ -188,10 +194,31 @@ fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     for key in execute::own_enumerable_keys(object) {
         if let Ok(item) = execute::get_property_result(object, &key) {
             if let Ok(values) = header_values(Some(&item)) {
+                for value in &values {
+                    validate_header_value(&key, value)?;
+                }
                 res.headers
                     .extend(values.into_iter().map(|value| (key.clone(), value)));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_header_value(name: &str, value: &str) -> Result<(), VmError> {
+    if value
+        .chars()
+        .any(|character| character != '\t' && (character as u32) < 0x20 || character as u32 > 0xFF)
+    {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::TypeError,
+            &[Value::String(format!("Invalid character in header content [\"{name}\"]"))],
+        );
+        return Err(VmError::Thrown(execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_INVALID_CHAR".into()),
+        )));
     }
     Ok(())
 }
