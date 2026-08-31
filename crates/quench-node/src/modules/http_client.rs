@@ -812,6 +812,10 @@ pub fn req_destroy(
         .retain(|_, request_id| *request_id != id);
     set_request_property(receiver, "destroyed", Value::Boolean(true));
     if let Some(error) = args.first().cloned() {
+        // Preserve an explicit destroy error as the request's terminal
+        // failure. The socket close path must not replace it with its
+        // synthetic ECONNRESET.
+        set_request_property(receiver, "errored", error.clone());
         state
             .borrow_mut()
             .net
@@ -1920,10 +1924,14 @@ pub fn req_close(
         .retain(|_, request_id| *request_id != client_id);
     if response.is_none() && !parse_error {
         if let Some(request) = request.as_ref() {
+            let explicit_error = !matches!(
+                execute::get_property(request, "errored"),
+                Value::Null | Value::Undefined
+            );
             let has_error_listener = crate::modules::emitter::emitter_id(request)
                 .and_then(|id| state.borrow().emitters.get(id))
                 .is_some_and(|emitter| !emitter.borrow().listeners_of("error").is_empty());
-            if has_error_listener {
+            if has_error_listener && !explicit_error {
                 let error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::Error,
                     &[Value::String("socket hang up".into())],
