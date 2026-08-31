@@ -112,6 +112,17 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             return Ok(module);
         }
     }
+    if matches!(spec.as_str(), "internal/child_process" | "internal/child_process.js" | "node:internal/child_process") {
+        // Keep the channel key as a stable host-owned property name.  The
+        // channel object itself lives on process, so all internal consumers
+        // observe one identity without introducing a second IPC runtime.
+        return Ok(host_api::object(vec![
+            (
+                "kChannelHandle".into(),
+                Value::String("\0kChannelHandle".into()),
+            ),
+        ]));
+    }
     if let Some(mock) = crate::modules::test::mocked_module(&spec) {
         if crate::modules::test::mock_module_cache(&spec) {
             let key = format!("\0mock:{spec}");
