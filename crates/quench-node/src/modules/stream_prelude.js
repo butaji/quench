@@ -14,6 +14,9 @@
       const wrapper = (...args) => fn.apply(this, args);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.on(name, wrapper);
+      if (name === "readable" && this._readableState) {
+        this._readableState.readableListening = true;
+      }
       if (name === "close" && this.destroyed && this._destroyClosePending) {
         this._emitter.removeListener(name, wrapper);
         fn.call(this);
@@ -67,12 +70,18 @@
       };
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.once(name, wrapper);
+      if (name === "readable" && this._readableState) {
+        this._readableState.readableListening = true;
+      }
       return this;
     },
     prependListener(name, fn) {
       const wrapper = (...args) => fn.apply(this, args);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.prependListener(name, wrapper);
+      if (name === "readable" && this._readableState) {
+        this._readableState.readableListening = true;
+      }
       return this;
     },
     prependOnceListener(name, fn) {
@@ -83,6 +92,9 @@
       };
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.prependOnceListener(name, wrapper);
+      if (name === "readable" && this._readableState) {
+        this._readableState.readableListening = true;
+      }
       return this;
     },
     removeListener(name, fn) {
@@ -238,6 +250,7 @@
       flowing: null,
       flowScheduled: false,
       reading: false,
+      readableListening: false,
       needReadable: false,
       readingMore: true,
       resumeScheduled: false,
@@ -2469,6 +2482,32 @@
   }
   Readable.isDisturbed = isDisturbed;
   Readable.toWeb = readableToWeb;
+  const duplexToWeb = (stream) => {
+    const writable = new WritableStream({
+      write(chunk) {
+        return new Promise((resolve, reject) => {
+          try {
+            stream.write(chunk, (error) => error ? reject(error) : resolve());
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+      close() {
+        return new Promise((resolve, reject) => {
+          try {
+            stream.end((error) => error ? reject(error) : resolve());
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+      abort(reason) {
+        stream.destroy?.(reason);
+      }
+    });
+    return { readable: readableToWeb(stream), writable };
+  };
   Writable.destroy = destroy;
   // `Stream` is the legacy EventEmitter base, not a readable with the
   // auto-destroy lifecycle. Reuse the readable mechanics for pipe support,
@@ -2485,6 +2524,7 @@
     return Reflect.construct(Duplex, [options], new.target || DuplexCompat);
   };
   DuplexCompat.prototype = Duplex.prototype;
+  DuplexCompat.toWeb = duplexToWeb;
   Object.setPrototypeOf(DuplexCompat, Duplex);
   DuplexCompat.from = (source, options = {}) => {
     if (source && source._isDuplex) return source;
