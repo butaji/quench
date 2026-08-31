@@ -26,6 +26,7 @@ pub struct Microtask {
     pub resource: Option<Value>,
     pub domain: Option<Value>,
     pub domain_stack: Option<Vec<Value>>,
+    pub process_scope: u64,
 }
 
 impl Default for EventLoop {
@@ -59,6 +60,7 @@ impl EventLoop {
             resource,
             domain: None,
             domain_stack: None,
+            process_scope: 0,
         });
     }
 
@@ -66,6 +68,16 @@ impl EventLoop {
     /// the normal `undefined` receiver; host-originated events retain the
     /// emitter identity here instead of emulating it through another object.
     pub fn queue_microtask_with_receiver(&self, cb: Value, args: Vec<Value>, receiver: Value) {
+        self.queue_microtask_with_receiver_scope(cb, args, receiver, 0);
+    }
+
+    pub fn queue_microtask_with_receiver_scope(
+        &self,
+        cb: Value,
+        args: Vec<Value>,
+        receiver: Value,
+        process_scope: u64,
+    ) {
         self.microtasks.borrow_mut().push(Microtask {
             callback: cb,
             args,
@@ -73,6 +85,7 @@ impl EventLoop {
             resource: None,
             domain: None,
             domain_stack: None,
+            process_scope,
         });
     }
 
@@ -90,6 +103,7 @@ impl EventLoop {
             resource,
             domain,
             domain_stack: None,
+            process_scope: 0,
         });
     }
 
@@ -107,6 +121,26 @@ impl EventLoop {
             resource,
             domain: stack.last().cloned(),
             domain_stack: Some(stack),
+            process_scope: 0,
+        });
+    }
+
+    pub fn queue_microtask_with_domain_stack_scope(
+        &self,
+        cb: Value,
+        args: Vec<Value>,
+        resource: Option<Value>,
+        stack: Vec<Value>,
+        process_scope: u64,
+    ) {
+        self.microtasks.borrow_mut().push(Microtask {
+            callback: cb,
+            args,
+            receiver: None,
+            resource,
+            domain: stack.last().cloned(),
+            domain_stack: Some(stack),
+            process_scope,
         });
     }
 

@@ -41,6 +41,7 @@ pub struct ClusterState {
     script: Option<(String, String)>,
     pub(crate) worker_context: Option<u64>,
     process_scope: u64,
+    fork_processes: HashMap<u64, Value>,
     worker_listen_slots: HashMap<u64, usize>,
     pending_cluster_listening: Vec<(Value, Value)>,
 }
@@ -56,6 +57,7 @@ impl ClusterState {
             script: None,
             worker_context: None,
             process_scope: 0,
+            fork_processes: HashMap::new(),
             worker_listen_slots: HashMap::new(),
             pending_cluster_listening: Vec::new(),
         }
@@ -95,6 +97,14 @@ impl ClusterState {
 
     pub(crate) fn set_process_scope(&mut self, scope: u64) {
         self.process_scope = scope;
+    }
+
+    pub(crate) fn register_fork_process(&mut self, scope: u64, child: Value) {
+        self.fork_processes.insert(scope, child);
+    }
+
+    pub(crate) fn take_fork_process(&mut self, scope: u64) -> Option<Value> {
+        self.fork_processes.remove(&scope)
     }
 }
 
@@ -433,11 +443,13 @@ pub fn fork(
         );
     }
     if let Some(module) = module {
+        let process_scope = state.borrow().cluster.process_scope();
         for (worker, address) in pending_listening {
-            state.borrow().event_loop.queue_microtask_with_receiver(
+            state.borrow().event_loop.queue_microtask_with_receiver_scope(
                 crate::host::capability(SPEC_EVENTS_EMIT),
                 vec![Value::String("listening".into()), worker, address],
                 module.clone(),
+                process_scope,
             );
         }
     }
@@ -1144,6 +1156,48 @@ fn remove_worker(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let (workers, _) = execute::delete_property(workers, &id.to_string());
     let _ = execute::set_property_in_place(&module, "workers", workers);
     let _ = execute::set_property_in_place(worker, "state", Value::String("dead".into()));
+}
+
+/// Convert an uncaught exception in a forked logical process into that
+/// process's terminal exit instead of unwinding the embedding VM.
+pub(crate) fn fail_fork_process(
+    state: &Rc<RefCell<HostState>>,
+    scope: u64,
+    code: i32,
+) -> Result<bool, VmError> {
+    let child = state.borrow_mut().cluster.take_fork_process(scope);
+    let Some(child) = child else {
+        return Ok(false);
+    };
+    let ids = state
+        .borrow()
+        .cluster
+        .workers
+        .iter()
+        .filter_map(|(id, worker)| (worker.scope == scope).then_some(*id))
+        .collect::<Vec<_>>();
+    for id in ids {
+        close_worker_net(state, id);
+        if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            worker.connected = false;
+            worker.dead = true;
+        }
+    }
+    execute::set_property_in_place(&child, "connected", Value::Boolean(false));
+    execute::set_property_in_place(&child, "exitCode", Value::Number(code as f64));
+    execute::set_property_in_place(&child, "signalCode", Value::Null);
+    for event in ["exit", "close"] {
+        crate::modules::events::method_emit(
+            state,
+            Some(&child),
+            &[
+                Value::String(event.into()),
+                Value::Number(code as f64),
+                Value::Null,
+            ],
+        )?;
+    }
+    Ok(true)
 }
 
 pub fn kill(
