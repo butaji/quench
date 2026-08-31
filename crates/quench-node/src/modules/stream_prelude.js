@@ -416,7 +416,7 @@
     const callback = stream._transformBackpressure;
     if (!callback || stream.readableLength >= stream._readableState.highWaterMark) return;
     stream._transformBackpressure = null;
-    nextTick(callback);
+    callback();
   }
 
   function takeReadableChunk(state, size) {
