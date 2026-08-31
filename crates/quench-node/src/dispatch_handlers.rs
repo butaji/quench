@@ -1582,12 +1582,23 @@ pub fn internal_binding(
             "isTypedArray",
             "isUint8Array",
         ];
-        return Ok(crate::host::namespace_object_from_pairs(
-            names
-                .iter()
-                .map(|name| ((*name).to_string(), execute::get_property(&types, name)))
-                .collect(),
+        let mut binding = names
+            .iter()
+            .map(|name| ((*name).to_string(), execute::get_property(&types, name)))
+            .collect::<Vec<_>>();
+        // Node's util binding exposes this private slot key for syntax-error
+        // diagnostics.  It is a symbol-shaped runtime key and is hidden from
+        // ordinary own-key enumeration by the shared symbol policy.
+        binding.push((
+            "privateSymbols".to_string(),
+            host_api::object(vec![
+                (
+                    "arrow_message_private_symbol".to_string(),
+                    Value::String("Symbol.node:arrowMessage\0internal".into()),
+                ),
+            ]),
         ));
+        return Ok(crate::host::namespace_object_from_pairs(binding));
     }
     if name == "js_stream" {
         return Ok(crate::host::namespace_object_from_pairs(vec![(
