@@ -293,20 +293,13 @@ fn find_property_repeat_char_ranges(
 ) -> Option<NativeMatch> {
     let mut range_index = 0;
     let mut count = 0;
+    let mut previous_value = None;
     for character in input.chars() {
         let value = u32::from(character);
-        while ranges
-            .get(range_index)
-            .is_some_and(|range| *range.end() < value)
-        {
-            range_index += 1;
-        }
-        if !ranges
-            .get(range_index)
-            .is_some_and(|range| range.contains(&value))
-        {
+        if !range_contains(ranges, &mut range_index, value, previous_value) {
             return None;
         }
+        previous_value = Some(value);
         count += character.len_utf8();
     }
     (count > 0).then_some(NativeMatch { start: 0, end: count })
@@ -422,31 +415,47 @@ fn find_property_repeat_ranges(
     let unicode = flags.contains('u') || flags.contains('v');
     let mut index = 0;
     let mut range_index = 0;
+    let mut previous_value = None;
     while index < input.len() {
         let Some((character, width)) = next_code_point(input, index, unicode) else {
+            let unit = *input.get(index)?;
             let matched = surrogate_property_matches(name, value);
             if if negative { matched } else { !matched } {
                 return None;
             }
+            previous_value = Some(u32::from(unit));
             index += 1;
             continue;
         };
         let value = u32::from(character);
-        while ranges
-            .get(range_index)
-            .is_some_and(|range| *range.end() < value)
-        {
-            range_index += 1;
-        }
-        if !ranges
-            .get(range_index)
-            .is_some_and(|range| range.contains(&value))
-        {
+        if !range_contains(ranges, &mut range_index, value, previous_value) {
             return None;
         }
+        previous_value = Some(value);
         index += width;
     }
     (index > 0).then_some(NativeMatch { start: 0, end: index })
+}
+
+fn range_contains(
+    ranges: &[std::ops::RangeInclusive<u32>],
+    range_index: &mut usize,
+    value: u32,
+    previous_value: Option<u32>,
+) -> bool {
+    if previous_value.is_some_and(|previous| value < previous) {
+        *range_index = ranges.partition_point(|range| *range.end() < value);
+    } else {
+        while ranges
+            .get(*range_index)
+            .is_some_and(|range| *range.end() < value)
+        {
+            *range_index += 1;
+        }
+    }
+    ranges
+        .get(*range_index)
+        .is_some_and(|range| range.contains(&value))
 }
 
 fn next_code_point(input: &[u16], index: usize, unicode: bool) -> Option<(char, usize)> {
@@ -660,5 +669,15 @@ mod tests {
             test_units("^\\p{General_Category=Surrogate}+$", "u", &[0xD800], 0),
             Some(true)
         );
+    }
+
+    #[test]
+    fn property_ranges_allow_unsorted_input() {
+        let text = format!("{}{}", '\u{00AD}', "\0".repeat(300));
+        assert_eq!(test_str("^\\p{General_Category=Other}+$", "u", &text, 0), Some(true));
+
+        let mut units = vec![0x00AD];
+        units.extend(std::iter::repeat_n(0, 300));
+        assert_eq!(test_units("^\\p{General_Category=Other}+$", "u", &units, 0), Some(true));
     }
 }
