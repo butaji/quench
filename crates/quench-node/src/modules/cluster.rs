@@ -487,6 +487,21 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
         let _ = execute::delete_property(process.clone(), "disconnect");
         let _ = execute::delete_property(process, "connected");
     }
+    // Worker re-entry must not turn runner bookkeeping into enumerable
+    // process globals. The upstream leak check observes the global object
+    // after worker teardown, so restore the hidden descriptors explicitly.
+    for key in ["__nodeCurrentAsyncResource", "__nodeCallChecks"] {
+        let value = execute::get_property(&global, key);
+        if !matches!(value, Value::Undefined) {
+            let descriptor = host_api::object(vec![
+                ("value".into(), value),
+                ("writable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(false)),
+            ]);
+            let _ = execute::define_property(global.clone(), key, descriptor);
+        }
+    }
     if result.is_err() {
         state.borrow_mut().cluster.worker_context = None;
     }

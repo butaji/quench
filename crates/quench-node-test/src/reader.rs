@@ -232,6 +232,14 @@ impl NodeRunner {
                 "if (typeof globalThis.__quench_verify_calls === 'function') globalThis.__quench_verify_calls();",
             )
         });
+        // Host bookkeeping is complete before Node's exit observers run. Do
+        // not expose the runner's async-resource and call-check cells to the
+        // fixture's global-leak assertion.
+        let result = result.and_then(|_| {
+            self.drive(
+                "delete globalThis.__nodeCurrentAsyncResource; delete globalThis.__nodeCallChecks;",
+            )
+        });
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
             Err(error) => {
