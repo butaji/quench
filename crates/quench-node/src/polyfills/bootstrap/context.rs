@@ -347,6 +347,8 @@ const __quenchVmSnapshotGlobals = () =>
     ]),
   );
 const __quenchVmRunInNewContext = (code, sandbox, options) => {
+  if (typeof globalThis.__quench_vm_run_in_new_context === "function")
+    return globalThis.__quench_vm_run_in_new_context(code, sandbox, options);
   __quenchVmValidateContextOptions(options, true);
   if (!__quenchVmIsObject(sandbox)) {
     __quenchVmTypeError("The context argument must be an object");

@@ -32,6 +32,11 @@ const CAP_INTERNAL_UTIL_NORMALIZE_ENCODING: u16 =
 const CAP_INTERNAL_UTIL_GET_CIDR: u16 = crate::registry::SPEC_INTERNAL_UTIL_GET_CIDR.cap;
 const CAP_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER: u16 =
     crate::registry::SPEC_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER.cap;
+const CAP_INTERNAL_UTIL_DECORATE_ERROR_STACK: u16 =
+    crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK.cap;
+const CAP_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME: u16 =
+    crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME.cap;
+const CAP_INTERNAL_UTIL_IS_ERROR: u16 = crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR.cap;
 const CAP_OS_GET_PRIORITY: u16 = 0x0736;
 const CAP_OS_AVAILABLE_PARALLELISM: u16 = crate::registry::SPEC_OS_AVAILABLE_PARALLELISM.cap;
 const CAP_OS_SET_PRIORITY: u16 = 0x0737;
@@ -436,6 +441,9 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_UTIL_NORMALIZE_ENCODING => util_normalize_encoding,
         CAP_INTERNAL_UTIL_GET_CIDR => util_get_cidr,
         CAP_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER => util_construct_shared_array_buffer,
+        CAP_INTERNAL_UTIL_DECORATE_ERROR_STACK => internal_util_decorate_error_stack,
+        CAP_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME => internal_util_assign_function_name,
+        CAP_INTERNAL_UTIL_IS_ERROR => internal_util_is_error,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
         CAP_OS_AVAILABLE_PARALLELISM => crate::modules::os::available_parallelism,

@@ -366,6 +366,22 @@ pub fn install_with_argv_and_title(
             crate::host::capability(crate::registry::SPEC_CP_FORK),
         )
         .with_host_value(
+            "__quench_cp_spawn_sync".to_string(),
+            crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
+        )
+        .with_host_value(
+            "__nodeInternalUtil".to_string(),
+            crate::modules::require::internal_util_module(),
+        )
+        .with_host_value(
+            "__quench_vm_run_in_context".to_string(),
+            crate::host::capability(crate::registry::SPEC_VM_RUN_IN_CONTEXT),
+        )
+        .with_host_value(
+            "__quench_vm_run_in_new_context".to_string(),
+            crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT),
+        )
+        .with_host_value(
             "__quench_cluster_close_worker".to_string(),
             crate::host::capability(crate::registry::SPEC_CLUSTER_CLOSE_WORKER_NET),
         );
