@@ -26,7 +26,7 @@ pub(crate) fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> {
-    compiled_for(&Value::Undefined, pattern, flags)
+    compiled_for(pattern, flags)
         .map(|_| ())
         .map_err(|error| match error {
             VmError::EvalError(message) => message,
@@ -581,7 +581,6 @@ fn utf16_range_to_bytes(text: &str, range: &std::ops::Range<usize>) -> std::ops:
 }
 
 fn compile_and_find<'a>(
-    receiver: &Value,
     source: &str,
     flags: &str,
     text: &'a str,
@@ -590,7 +589,7 @@ fn compile_and_find<'a>(
 ) -> Result<Option<Match>, VmError> {
     #[cfg(feature = "execution-trace")]
     let compile_start = std::time::Instant::now();
-    let regex = compiled_for(receiver, source, flags)?;
+    let regex = compiled_for(source, flags)?;
     #[cfg(feature = "execution-trace")]
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
@@ -652,7 +651,7 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             return Ok(Value::Boolean(true));
         }
         let pattern = if source.is_empty() { "(?:)" } else { &source };
-        let regex = compiled_for(receiver, pattern, &flags)?;
+        let regex = compiled_for(pattern, &flags)?;
         let found = find_match_units(&regex, units, search_start, flags.contains('y'))?;
         if global_or_sticky {
             set_last_index(
@@ -696,7 +695,6 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let found = compile_and_find(
-        receiver,
         pattern,
         &flags,
         &s,
@@ -816,7 +814,6 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     if let Some(m) = compile_and_find(
-        receiver,
         pattern,
         &flags,
         &s,
@@ -848,7 +845,7 @@ fn exec_units(receiver: &Value, input: Value, units: &[u16]) -> Result<Value, Vm
         return build_units_native_match_result(receiver, input, units, matched, &flags);
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let regex = compiled_for(receiver, pattern, &flags)?;
+    let regex = compiled_for(pattern, &flags)?;
     let found = find_match_units(&regex, units, search_start, flags.contains('y'))?;
     if let Some(matched) = found {
         return build_units_match_result(receiver, input, units, matched, &flags);
@@ -1412,8 +1409,8 @@ mod tests {
     #[test]
     fn regexp_split_compilation_reuses_the_shared_cache() {
         super::reset_compiled_cache();
-        let first = compiled_for(&Value::Undefined, "a", "y").expect("compile");
-        let second = compiled_for(&Value::Undefined, "a", "y").expect("cache hit");
+        let first = compiled_for("a", "y").expect("compile");
+        let second = compiled_for("a", "y").expect("cache hit");
         assert!(std::rc::Rc::ptr_eq(&first, &second));
     }
 
