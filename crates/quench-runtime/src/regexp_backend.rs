@@ -126,6 +126,8 @@ struct ClassExpr {
     negative: bool,
     kind: ClassKind,
     items: Vec<ClassItem>,
+    single_width: bool,
+    max_width: usize,
 }
 #[derive(Clone, Copy)]
 enum ClassKind {
@@ -529,20 +531,20 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
         },
         ast::Term::Character(character) => Expr::Literal(character.value),
         ast::Term::Dot(_) => Expr::Dot,
-        ast::Term::CharacterClassEscape(escape) => Expr::Class(ClassExpr {
-            negative: false,
-            kind: ClassKind::Union,
-            items: vec![ClassItem::Escape(escape.kind)],
-        }),
-        ast::Term::UnicodePropertyEscape(property) => Expr::Class(ClassExpr {
-            negative: false,
-            kind: ClassKind::Union,
-            items: vec![property_item(
+        ast::Term::CharacterClassEscape(escape) => Expr::Class(make_class_expr(
+            false,
+            ClassKind::Union,
+            vec![ClassItem::Escape(escape.kind)],
+        )),
+        ast::Term::UnicodePropertyEscape(property) => Expr::Class(make_class_expr(
+            false,
+            ClassKind::Union,
+            vec![property_item(
                 property.negative,
                 property.name.to_string(),
                 property.value.as_ref().map(ToString::to_string),
             )],
-        }),
+        )),
         ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering)),
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
@@ -680,10 +682,10 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
                 ClassItem::Nested(lower_class(nested, lowering))
             }
             ast::CharacterClassContents::ClassStringDisjunction(strings) => {
-                ClassItem::Nested(ClassExpr {
-                    negative: false,
-                    kind: ClassKind::Union,
-                    items: strings
+                ClassItem::Nested(make_class_expr(
+                    false,
+                    ClassKind::Union,
+                    strings
                         .body
                         .iter()
                         .map(|string| {
@@ -696,18 +698,30 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
                             )
                         })
                         .collect(),
-                })
+                ))
             }
         });
     }
-    ClassExpr {
-        negative: class.negative,
-        kind: match class.kind {
+    make_class_expr(
+        class.negative,
+        match class.kind {
             ast::CharacterClassContentsKind::Union => ClassKind::Union,
             ast::CharacterClassContentsKind::Intersection => ClassKind::Intersection,
             ast::CharacterClassContentsKind::Subtraction => ClassKind::Subtraction,
         },
         items,
+    )
+}
+
+fn make_class_expr(negative: bool, kind: ClassKind, items: Vec<ClassItem>) -> ClassExpr {
+    let single_width = items.iter().all(class_item_is_single_width);
+    let max_width = items.iter().map(class_item_max_width).max().unwrap_or(1);
+    ClassExpr {
+        negative,
+        kind,
+        items,
+        single_width,
+        max_width,
     }
 }
 
@@ -1280,12 +1294,7 @@ fn reverse_class_options(
 }
 
 fn class_max_width(class: &ClassExpr) -> usize {
-    class
-        .items
-        .iter()
-        .map(class_item_max_width)
-        .max()
-        .unwrap_or(1)
+    class.max_width
 }
 
 fn class_item_max_width(item: &ClassItem) -> usize {
@@ -1294,7 +1303,7 @@ fn class_item_max_width(item: &ClassItem) -> usize {
         ClassItem::Property { name, .. } if is_string_property(name) => {
             string_property_max_width(name)
         }
-        ClassItem::Nested(nested) => class_max_width(nested),
+        ClassItem::Nested(nested) => nested.max_width,
         _ => 1,
     }
 }
@@ -1698,12 +1707,16 @@ fn class_match_widths(
 }
 
 fn class_is_single_width(class: &ClassExpr) -> bool {
-    class.items.iter().all(|item| match item {
+    class.single_width
+}
+
+fn class_item_is_single_width(item: &ClassItem) -> bool {
+    match item {
         ClassItem::String(_) => false,
         ClassItem::Property { name, .. } => !is_string_property(name),
-        ClassItem::Nested(nested) => class_is_single_width(nested),
+        ClassItem::Nested(nested) => nested.single_width,
         _ => true,
-    })
+    }
 }
 
 fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool) -> bool {
