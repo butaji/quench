@@ -540,6 +540,9 @@
         }
         return chunk;
       }
+      if (st.buffer.length === 0 && st.reading && st.readRequests === 0) {
+        st.reading = false;
+      }
       if (!st.ended && !st.reading) {
         requestRead(this);
       }
