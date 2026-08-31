@@ -22,6 +22,7 @@ pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
 pub(crate) const INCOMING_CLOSE_PENDING_PROP: &str = "\0quench:http:incoming:close-pending";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 const SERVER_RESPONSE_PROP: &str = "\0quench:http:server-response";
+const SERVER_REQUEST_PROP: &str = "\0quench:http:server-request";
 
 pub struct HttpState {
     next_res: u64,
@@ -29,6 +30,7 @@ pub struct HttpState {
     pub conns: HashMap<u64, Conn>,
     pub res: HashMap<u64, Res>,
     pub server_responses: HashMap<u64, Value>,
+    pub server_requests: HashMap<u64, Value>,
     pub clientreqs: HashMap<u64, crate::modules::http_client::ClientReq>,
     /// socket net id -> ClientRequest id.
     pub clients: HashMap<u64, u64>,
@@ -100,6 +102,7 @@ impl HttpState {
             conns: HashMap::new(),
             res: HashMap::new(),
             server_responses: HashMap::new(),
+            server_requests: HashMap::new(),
             clientreqs: HashMap::new(),
             clients: HashMap::new(),
             client_signals: HashMap::new(),
@@ -171,6 +174,24 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
                         .http
                         .server_responses
                         .insert(server_id, execute::get_property(options, "ServerResponse"));
+                }
+            }
+            let request_constructor = execute::get_property(options, "IncomingMessage");
+            if quench_runtime::is_callable(&request_constructor) {
+                execute::set_property_in_place(&object, SERVER_REQUEST_PROP, request_constructor);
+                let server_id = state
+                    .borrow()
+                    .net
+                    .servers
+                    .iter()
+                    .find(|(_, server)| execute::same_identity(&server.borrow().js, &object))
+                    .map(|(id, _)| *id);
+                if let Some(server_id) = server_id {
+                    state
+                        .borrow_mut()
+                        .http
+                        .server_requests
+                        .insert(server_id, execute::get_property(options, "IncomingMessage"));
                 }
             }
         }
@@ -732,7 +753,32 @@ fn build_req_res(
     socket_id: u64,
     head: &[u8],
 ) -> Result<(Value, Value), VmError> {
-    let (req, content_length, keep_alive, body_chunked) = build_req(state, head)?;
+    let (mut req, content_length, keep_alive, body_chunked) = build_req(state, head)?;
+    let server_request = {
+        let guard = state.borrow();
+        match guard.http.conns.get(&socket_id) {
+            Some(conn) => {
+                let direct = execute::get_property(&conn.server, SERVER_REQUEST_PROP);
+                if quench_runtime::is_callable(&direct) {
+                    Some(direct)
+                } else {
+                    guard
+                        .net
+                        .servers
+                        .iter()
+                        .find(|(_, server)| execute::same_identity(&server.borrow().js, &conn.server))
+                        .and_then(|(id, _)| guard.http.server_requests.get(id).cloned())
+                }
+            }
+            None => None,
+        }
+    };
+    if let Some(constructor) = server_request {
+        let prototype = execute::get_property(&constructor, "prototype");
+        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+            req = execute::set_prototype_of(&req, &prototype)?;
+        }
+    }
     // IncomingMessage.socket/connection are aliases of the accepted net
     // socket. Stamp both on the request before exposing it to user code.
     if let Some(socket) = state
@@ -1311,6 +1357,12 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             .clone()
             .unwrap_or_else(|| host_api::object(Vec::new())),
     );
+    let incoming = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_HTTP_INCOMING),
+        "prototype",
+        crate::modules::events::emitter_prototype()
+            .unwrap_or_else(|_| host_api::object(Vec::new())),
+    );
     let mut module = crate::host::namespace_object(vec![
         (
             "createServer",
@@ -1336,7 +1388,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ("globalAgent", global_agent),
         (
             "IncomingMessage",
-            crate::host::capability(crate::registry::SPEC_HTTP_INCOMING),
+            incoming,
         ),
         (
             "OutgoingMessage",
