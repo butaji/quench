@@ -171,7 +171,7 @@ fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
     }
     if source.is_empty()
         || !source.is_ascii()
-        || flags.contains(['i', 'm', 'u', 'v'])
+        || flags.contains(['i', 'm'])
         || source
             .bytes()
             .any(|byte| b"\\.^$*+?()[]{}|".contains(&byte))
@@ -462,6 +462,12 @@ mod tests {
         assert_eq!(test_str("abc", "", "zabc", 1), Some(true));
         assert_eq!(test_str("abc", "y", "zabc", 1), Some(true));
         assert_eq!(test_str("abc", "y", "zabc", 0), Some(false));
+        assert_eq!(test_str("abc", "u", "zabc", 1), Some(true));
+        assert_eq!(test_str("abc", "v", "zabc", 1), Some(true));
+        assert_eq!(
+            test_units("abc", "u", &[b'z' as u16, b'a' as u16, b'b' as u16, b'c' as u16], 1),
+            Some(true)
+        );
     }
 
     #[test]
