@@ -1912,6 +1912,21 @@ pub fn req_close(
         .http
         .client_signals
         .retain(|_, request_id| *request_id != client_id);
+    if response.is_none() {
+        if let Some(request) = request.as_ref() {
+            let has_error_listener = crate::modules::emitter::emitter_id(request)
+                .and_then(|id| state.borrow().emitters.get(id))
+                .is_some_and(|emitter| !emitter.borrow().listeners_of("error").is_empty());
+            if has_error_listener {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("socket hang up".into())],
+                );
+                let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+                net::emit(state, request, "error", vec![error])?;
+            }
+        }
+    }
     if let Some(request) = request {
         let close_already_emitted = matches!(
             execute::get_property(&request, CLIENT_CLOSE_PENDING_PROP),
