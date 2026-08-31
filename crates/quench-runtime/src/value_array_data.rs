@@ -61,19 +61,28 @@ enum DenseElements {
 }
 
 impl DenseElements {
-    fn from_values(values: Vec<Value>) -> Self {
-        if values.iter().all(|value| matches!(value, Value::Number(_))) {
-            return Self::Numbers(Rc::new(RefCell::new(
-                values
-                    .into_iter()
-                    .map(|value| match value {
-                        Value::Number(number) => std::cell::Cell::new(number),
-                        _ => unreachable!(),
-                    })
-                    .collect(),
-            )));
+    fn from_values(values: Vec<Value>) -> (Self, ArrayKind) {
+        let mut kind = ArrayKind::PackedLimb28;
+        for value in &values {
+            let Value::Number(number) = value else {
+                return (
+                    Self::Values(Rc::new(RefCell::new(values))),
+                    ArrayKind::PackedValue,
+                );
+            };
+            let candidate = number_kind(*number);
+            if kind_rank(candidate) > kind_rank(kind) {
+                kind = candidate;
+            }
         }
-        Self::Values(Rc::new(RefCell::new(values)))
+        let values = values
+            .into_iter()
+            .map(|value| match value {
+                Value::Number(number) => std::cell::Cell::new(number),
+                _ => unreachable!(),
+            })
+            .collect();
+        (Self::Numbers(Rc::new(RefCell::new(values))), kind)
     }
 
     fn len(&self) -> usize {
@@ -254,11 +263,11 @@ impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         crate::execution_trace::array_lifecycle(true);
         let length = values.len();
-        let kind = classify_kind(&values);
+        let (values, kind) = DenseElements::from_values(values);
         Self {
             identity: next_array_identity(),
             kind: std::cell::Cell::new(kind),
-            values: DenseElements::from_values(values),
+            values,
             length: std::cell::Cell::new(length),
             properties: Vec::new(),
             descriptors: Vec::new(),
@@ -1243,34 +1252,6 @@ fn next_array_identity() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
-fn classify_kind(values: &[Value]) -> ArrayKind {
-    classify_kind_with_holes(values, &[], values.len())
-}
-
-fn classify_kind_with_holes(values: &[Value], deleted: &[bool], length: usize) -> ArrayKind {
-    if length > values.len().saturating_mul(2).max(32) {
-        return ArrayKind::Sparse;
-    }
-    if deleted.iter().any(|deleted| *deleted) || length > values.len() {
-        return ArrayKind::Holey;
-    }
-    if values
-        .iter()
-        .all(|value| matches!(value, Value::Number(number) if is_limb28(*number)))
-    {
-        ArrayKind::PackedLimb28
-    } else if values
-        .iter()
-        .all(|value| matches!(value, Value::Number(number) if number.fract() == 0.0))
-    {
-        ArrayKind::PackedInt
-    } else if values.iter().all(|value| matches!(value, Value::Number(_))) {
-        ArrayKind::PackedDouble
-    } else {
-        ArrayKind::PackedValue
-    }
-}
-
 /// Element kinds only become less specialized as an array is mutated.
 fn monotonic_kind(previous: ArrayKind, candidate: ArrayKind) -> ArrayKind {
     if kind_rank(candidate) >= kind_rank(previous) {
