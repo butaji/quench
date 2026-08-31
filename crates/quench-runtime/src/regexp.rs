@@ -60,18 +60,17 @@ fn invalid_v_character_class(pattern: &str) -> bool {
         "[%%]", "[**]", "[++]", "[,,]", "[..]", "[::]", "[;;]", "[<<]", "[==]", "[>>]", "[??]",
         "[@@]", "[``]", "[~~]", "[^^^]", "[_^^]",
     ];
+    const INVALID_NEGATED_PROPERTIES: &[&str] = &[
+        r"[^\p{Basic_Emoji}]",
+        r"[^\p{Emoji_Keycap_Sequence}]",
+        r"[^\p{RGI_Emoji}]",
+        r"[^\p{RGI_Emoji_Flag_Sequence}]",
+        r"[^\p{RGI_Emoji_Modifier_Sequence}]",
+        r"[^\p{RGI_Emoji_Tag_Sequence}]",
+        r"[^\p{RGI_Emoji_ZWJ_Sequence}]",
+    ];
     INVALID.iter().any(|candidate| candidate.trim() == pattern)
-        || [
-            "Basic_Emoji",
-            "Emoji_Keycap_Sequence",
-            "RGI_Emoji",
-            "RGI_Emoji_Flag_Sequence",
-            "RGI_Emoji_Modifier_Sequence",
-            "RGI_Emoji_Tag_Sequence",
-            "RGI_Emoji_ZWJ_Sequence",
-        ]
-        .iter()
-        .any(|property| pattern == format!("[^\\p{{{property}}}]").as_str())
+        || INVALID_NEGATED_PROPERTIES.contains(&pattern)
 }
 
 fn normalize_named_group_escapes(pattern: &str) -> Cow<'_, str> {
@@ -507,26 +506,6 @@ fn escape_control(ch: char) -> Option<&'static str> {
         '\u{000C}' => Some("\\f"),
         _ => None,
     }
-}
-
-fn build_re_flags(flags: &str) -> String {
-    let mut f = String::new();
-    if flags.contains('i') {
-        f.push('i');
-    }
-    if flags.contains('m') {
-        f.push('m');
-    }
-    if flags.contains('s') {
-        f.push('s');
-    }
-    if flags.contains('u') {
-        f.push('u');
-    }
-    if flags.contains('v') {
-        f.push('v');
-    }
-    f
 }
 
 fn find_match<'a>(regex: &'a Regex, text: &'a str, sticky: bool) -> Result<Option<Match>, VmError> {
@@ -1277,7 +1256,8 @@ include!("regexp_tail.rs");
 #[cfg(test)]
 mod tests {
     use super::{
-        compile, has_regexp_internal_slot, normalize_legacy_identity_escapes,
+        compile, compiled_for, has_regexp_internal_slot, invalid_v_character_class,
+        normalize_legacy_identity_escapes,
         normalize_named_group_escapes, normalize_new_unicode_scripts, regexp_flags_key,
         replace_with_template,
     };
@@ -1307,11 +1287,26 @@ mod tests {
     }
 
     #[test]
+    fn unicode_sets_invalid_property_spellings_are_static_facts() {
+        assert!(invalid_v_character_class(r"[^\p{Basic_Emoji}]"));
+        assert!(invalid_v_character_class(r"[^\p{RGI_Emoji_ZWJ_Sequence}]"));
+        assert!(!invalid_v_character_class(r"[\p{Basic_Emoji}]"));
+    }
+
+    #[test]
     fn regexp_cache_key_uses_only_semantic_flags() {
         assert_eq!(regexp_flags_key(""), regexp_flags_key("gdy"));
         assert_eq!(regexp_flags_key("iu"), regexp_flags_key("ui"));
         assert_ne!(regexp_flags_key("i"), regexp_flags_key("ii"));
         assert_ne!(regexp_flags_key("u"), regexp_flags_key("uv"));
+    }
+
+    #[test]
+    fn regexp_split_compilation_reuses_the_shared_cache() {
+        super::reset_compiled_cache();
+        let first = compiled_for(&Value::Undefined, "a", "y").expect("compile");
+        let second = compiled_for(&Value::Undefined, "a", "y").expect("cache hit");
+        assert!(std::rc::Rc::ptr_eq(&first, &second));
     }
 
     #[test]
