@@ -2609,6 +2609,17 @@ fn finish_known_response(
         complete.then(|| req.socket.clone()).flatten()
     };
     if let Some(socket) = socket {
+        if let Some(error) = invalid_trailing_response_start(state, client_id) {
+            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                req.parse_error = true;
+                req.buffer.clear();
+            }
+            detach_parser_data_listener(state, &socket)?;
+            let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+            net::emit(state, &request, "error", vec![error])?;
+            net::socket_destroy(state, Some(&socket), &[])?;
+            return Ok(());
+        }
         res_end_handler(state, Some(&socket), &[])?;
     }
     Ok(())
@@ -2943,6 +2954,7 @@ pub fn res_end_handler(
         if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
             req.parse_error = true;
         }
+        detach_parser_data_listener(state, socket)?;
         let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
         net::emit(state, &request, "error", vec![error])?;
         // A parser error is terminal for this connection.  Let the normal
@@ -2967,14 +2979,32 @@ fn reject_trailing_response(
     if !trailing {
         return Ok(());
     }
+    // Bytes after a completed response are either a valid pipelined response
+    // (which Node drops with the connection) or an invalid response start,
+    // which is reported as a parser error on the request.
+    let error = invalid_response_start(state, client_id);
     if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
         req.parse_error = true;
         req.buffer.clear();
     }
-    // Bytes after a completed response are parser-owned trailing data. Node
-    // closes the connection without re-emitting a second request error once
-    // the response lifecycle has already completed.
+    detach_parser_data_listener(state, socket)?;
+    if let Some(error) = error {
+        let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+        net::emit(state, &request, "error", vec![error])?;
+    }
     net::socket_destroy(state, Some(socket), &[]).map(|_| ())
+}
+
+fn detach_parser_data_listener(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Value,
+) -> Result<(), VmError> {
+    crate::modules::events::method_remove_all_listeners(
+        state,
+        Some(socket),
+        &[Value::String("data".into())],
+    )
+    .map(|_| ())
 }
 
 fn invalid_response_start(state: &Rc<RefCell<HostState>>, client_id: u64) -> Option<Value> {
@@ -2987,6 +3017,26 @@ fn invalid_response_start(state: &Rc<RefCell<HostState>>, client_id: u64) -> Opt
     let error = invalid_response_constant();
     Some(execute::set_property(
         error,
+        "rawPacket",
+        crate::modules::buffer_proto::make_buffer(&raw),
+    ))
+}
+
+fn invalid_trailing_response_start(
+    state: &Rc<RefCell<HostState>>,
+    client_id: u64,
+) -> Option<Value> {
+    let raw = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| req.buffer.clone())?;
+    if raw.is_empty() || raw.starts_with(b"HTTP/") {
+        return None;
+    }
+    Some(execute::set_property(
+        invalid_response_constant(),
         "rawPacket",
         crate::modules::buffer_proto::make_buffer(&raw),
     ))
