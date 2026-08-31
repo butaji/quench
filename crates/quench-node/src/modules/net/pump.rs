@@ -17,7 +17,13 @@ use super::*;
 pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let events = std::mem::take(&mut state.borrow_mut().net.pending_events);
     for (receiver, event, args) in events {
-        emit_server_scoped(state, &receiver, &event, args)?;
+        let socket = super::net_id(&receiver)
+            .and_then(|id| state.borrow().net.sockets.get(&id).cloned());
+        if let Some(socket) = socket {
+            emit_socket_scoped(state, &socket, &receiver, &event, args)?;
+        } else {
+            emit_server_scoped(state, &receiver, &event, args)?;
+        }
     }
     let errors = std::mem::take(&mut state.borrow_mut().net.pending_errors);
     for (receiver, error) in errors {

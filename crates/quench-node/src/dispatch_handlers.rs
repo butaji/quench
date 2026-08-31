@@ -5176,14 +5176,20 @@ pub fn cp_send(
     }
     if to_fork_process {
         let mut process_args = vec![Value::String("message".into()), delivered.clone()];
+        let keep_open = args
+            .get(2)
+            .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+            .is_some_and(|options| execute::is_truthy(&execute::get_property(options, "keepOpen")));
         if let Some(handle) = args
             .get(1)
             .filter(|value| !matches!(value, Value::Undefined | Value::Null))
         {
             process_args.push(handle.clone());
-            if let Value::Number(scope) = execute::get_property(&child, "\0forkScope") {
-                if scope.is_finite() && scope >= 0.0 {
-                    crate::modules::net::transfer_handle_scope(state, handle, scope as u64);
+            if !keep_open {
+                if let Value::Number(scope) = execute::get_property(&child, "\0forkScope") {
+                    if scope.is_finite() && scope >= 0.0 {
+                        crate::modules::net::transfer_handle_scope(state, handle, scope as u64);
+                    }
                 }
             }
         }
@@ -5209,6 +5215,16 @@ pub fn cp_send(
             .event_loop
             .set_process_scope(previous_event_scope);
         result?;
+        if let Some(callback) = args
+            .get(3)
+            .filter(|value| quench_runtime::is_callable(value))
+            .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)))
+        {
+            state
+                .borrow()
+                .event_loop
+                .queue_microtask(callback.clone(), vec![Value::Null]);
+        }
     } else if from_fork_process {
         let parent_scope = match execute::get_property(child, "\0forkParentScope") {
             Value::Number(scope) if scope.is_finite() && scope >= 0.0 => scope as u64,
