@@ -2476,6 +2476,28 @@ pub fn process_constrained_memory(
     Ok(Value::Number(f64::MAX))
 }
 
+pub fn process_memory_usage(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    // Keep the observable shape stable even though the Rust host does not
+    // expose V8 heap counters. Resident memory is measured where procfs is
+    // available; unsupported hosts use zero while preserving Node's fields.
+    let rss = std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map(|pages| pages.saturating_mul(4096) as f64)
+        .unwrap_or(0.0);
+    Ok(host_api::object(vec![
+        ("rss".into(), Value::Number(rss)),
+        ("heapTotal".into(), Value::Number(0.0)),
+        ("heapUsed".into(), Value::Number(0.0)),
+        ("external".into(), Value::Number(0.0)),
+        ("arrayBuffers".into(), Value::Number(0.0)),
+    ]))
+}
+
 // ---- os ----
 pub fn os_platform(
     _state: &Rc<RefCell<HostState>>,

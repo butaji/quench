@@ -496,6 +496,7 @@ pub const SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: NodeSpec =
     NodeSpec::new("process:setUncaughtExceptionCaptureCallback", 0x0A2A);
 pub const SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: NodeSpec =
     NodeSpec::new("process:hasUncaughtExceptionCaptureCallback", 0x0A2B);
+pub const SPEC_PROCESS_MEMORY_USAGE: NodeSpec = NodeSpec::new("process:memoryUsage", 0x0A2C);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -553,6 +554,7 @@ pub const SPEC_HTTP_REQ_SET_HEADER: NodeSpec = NodeSpec::new("http:req:setHeader
 pub const SPEC_HTTP_AGENT: NodeSpec = NodeSpec::new("http:Agent", 0x0F0E);
 pub const SPEC_HTTP_REQ_RESUME: NodeSpec = NodeSpec::new("http:req:resume", 0x0F0F);
 pub const SPEC_HTTP_RES_SET_ENCODING: NodeSpec = NodeSpec::new("http:res:setEncoding", 0x0F10);
+pub const SPEC_HTTP_RES_READ: NodeSpec = NodeSpec::new("http:res:read", 0x0F33);
 pub const SPEC_HTTP_REQ_DESTROY: NodeSpec = NodeSpec::new("http:req:destroy", 0x0F16);
 pub const SPEC_HTTP_REQ_ABORT: NodeSpec = NodeSpec::new("http:req:abort", 0x0F17);
 pub const SPEC_HTTP_REQ_CLIENT_DESTROY: NodeSpec = NodeSpec::new("http:req:clientDestroy", 0x0F18);
@@ -1184,6 +1186,7 @@ pub const CAP_HTTP_RESDATA: CapId = SPEC_HTTP_RESDATA.cap;
 pub const CAP_HTTP_RESEND: CapId = SPEC_HTTP_RESEND.cap;
 pub const CAP_HTTP_RES_END: CapId = SPEC_HTTP_RES_END.cap;
 pub const CAP_HTTP_RES_SET_ENCODING: CapId = SPEC_HTTP_RES_SET_ENCODING.cap;
+pub const CAP_HTTP_RES_READ: CapId = SPEC_HTTP_RES_READ.cap;
 pub const CAP_HTTP_RES_SET_HEADER: CapId = SPEC_HTTP_RES_SET_HEADER.cap;
 pub const CAP_HTTP_RES_WRITE: CapId = SPEC_HTTP_RES_WRITE.cap;
 pub const CAP_HTTP_RES_WRITE_HEAD: CapId = SPEC_HTTP_RES_WRITE_HEAD.cap;
@@ -1300,6 +1303,7 @@ pub const CAP_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: CapId =
     SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK.cap;
 pub const CAP_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: CapId =
     SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK.cap;
+pub const CAP_PROCESS_MEMORY_USAGE: CapId = SPEC_PROCESS_MEMORY_USAGE.cap;
 pub const CAP_PROCESS_NEXT_TICK: CapId = SPEC_PROCESS_NEXT_TICK.cap;
 pub const CAP_PROCESS_ON: CapId = SPEC_PROCESS_ON.cap;
 pub const CAP_PROCESS_ONCE: CapId = SPEC_PROCESS_ONCE.cap;

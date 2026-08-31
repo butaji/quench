@@ -321,6 +321,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ("cpuUsage", crate::host::process_cpu_usage_capability()),
         ("threadCpuUsage", crate::host::process_cpu_usage_capability()),
         (
+            "memoryUsage",
+            crate::host::capability(crate::registry::SPEC_PROCESS_MEMORY_USAGE),
+        ),
+        (
             "initgroups",
             crate::host::capability(crate::registry::SPEC_PROCESS_INITGROUPS),
         ),
