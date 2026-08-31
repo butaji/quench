@@ -41,16 +41,33 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
     }
 }
 
+fn string_value_argument(arguments: &[Value]) -> Result<Value, VmError> {
+    match arguments.first() {
+        Some(value @ (Value::String(_) | Value::StringUnits(_))) => Ok(value.clone()),
+        Some(value) => crate::conversion::to_string(value).map(Value::String),
+        None => Ok(Value::String("undefined".to_string())),
+    }
+}
+
 // RegExp.prototype[Symbol.match]
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
-    let input = to_string_argument(arguments)?;
+    let input = string_value_argument(arguments)?;
     let flags = observable_flags(&receiver)?;
     let global = observable_bool(&receiver, "global")?;
     if !global {
-        return regexp_exec(&receiver, &input);
+        return regexp_exec_value(&receiver, input);
     }
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
+    if let Value::StringUnits(units) = &input {
+        return symbol_match_global_units(
+            &receiver,
+            input.clone(),
+            units,
+            unicode,
+        );
+    }
+    let input = crate::strings::materialize(&input).unwrap_or_default();
     if !unicode
         && extract_source(&receiver) == "."
         && builtin_regexp_exec_property(&receiver)
@@ -93,6 +110,45 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
     Ok(Value::array(matched))
 }
 
+fn symbol_match_global_units(
+    receiver: &Value,
+    input: Value,
+    units: &[u16],
+    unicode: bool,
+) -> Result<Value, VmError> {
+    set_last_index(receiver, 0.0)?;
+    let mut matched = Vec::new();
+    loop {
+        let previous = match crate::execute::get_property_result(receiver, "lastIndex")? {
+            Value::Number(value) => Some(to_length(value)),
+            _ => None,
+        };
+        let result = regexp_exec_value(receiver, input.clone())?;
+        if matches!(result, Value::Null) {
+            break;
+        }
+        let full = crate::execute::get_property_result(&result, "0")?;
+        let empty = match crate::strings::view_of(&full) {
+            Some(crate::strings::StringView::Utf8(value)) => value.is_empty(),
+            Some(crate::strings::StringView::Utf16(value)) => value.is_empty(),
+            None => false,
+        };
+        matched.push(full);
+        if empty {
+            let current = extract_last_index(receiver)?;
+            if previous.is_some_and(|previous| current > previous) {
+                continue;
+            }
+            let next = advance_string_index_units(units, current, unicode);
+            set_last_index(receiver, next as f64)?;
+        }
+    }
+    if matched.is_empty() {
+        return Ok(Value::Null);
+    }
+    Ok(Value::array(matched))
+}
+
 fn builtin_regexp_exec_property(receiver: &Value) -> bool {
     let property = crate::execute::get_property(receiver, "exec");
     match property {
@@ -114,18 +170,31 @@ fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
     index + if pair { 2 } else { 1 }
 }
 
+fn advance_string_index_units(text: &[u16], index: usize, unicode: bool) -> usize {
+    let pair = unicode
+        && text.get(index).is_some_and(|unit| (0xD800..=0xDBFF).contains(unit))
+        && text
+            .get(index + 1)
+            .is_some_and(|unit| (0xDC00..=0xDFFF).contains(unit));
+    index + if pair { 2 } else { 1 }
+}
+
 fn unicode_mode(flags: &str) -> bool {
     flags.contains('u') || flags.contains('v')
 }
 
 pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
+    regexp_exec_value(receiver, Value::String(input.to_string()))
+}
+
+pub(crate) fn regexp_exec_value(receiver: &Value, input: Value) -> Result<Value, VmError> {
     let resolved = crate::locals::resolved_replacement(receiver.clone());
     let receiver = &resolved;
     let method = crate::execute::get_property_result(receiver, "exec")?;
     if !crate::conversion::is_callable(&method) {
-        return exec(Some(receiver), &[Value::String(input.to_string())]);
+        return exec(Some(receiver), &[input]);
     }
-    let result = crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
+    let result = crate::functions::execute_target(&method, receiver, &[input])?;
     let symbol_primitive = matches!(&result, Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some());
     if matches!(result, Value::Null) || (!symbol_primitive && crate::value::is_object(&result)) {
         return Ok(result);
@@ -138,13 +207,13 @@ pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmErro
 // RegExp.prototype[Symbol.search]
 fn symbol_search(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@search")?;
-    let input = to_string_argument(arguments)?;
+    let input = string_value_argument(arguments)?;
     let previous = crate::execute::get_property_result(&receiver, "lastIndex")?;
     if !crate::builtins::same_value(Some(&previous), Some(&Value::Number(0.0))) {
         set_last_index(&receiver, 0.0)?;
     }
     let receiver = crate::locals::resolved_replacement(receiver);
-    let result = regexp_exec(&receiver, &input)?;
+    let result = regexp_exec_value(&receiver, input)?;
     restore_search_last_index(&receiver, &previous)?;
     if matches!(result, Value::Null) {
         return Ok(Value::Number(-1.0));
