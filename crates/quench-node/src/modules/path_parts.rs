@@ -229,8 +229,13 @@ pub fn format_object(object: &Value, sep: &str) -> Result<Value, VmError> {
         return Err(crate::modules::path::invalid_arg_type_object(object));
     }
     let truthy = |key: &str| -> Option<String> {
-        match quench_runtime::execute::get_property(object, key) {
+        let value = quench_runtime::execute::get_property(object, key);
+        match value {
             Value::String(s) if !s.is_empty() => Some(s),
+            Value::StringUnits(_) => {
+                let text = quench_runtime::execute::to_js_string(&value).ok()?;
+                (!text.is_empty()).then_some(text)
+            }
             Value::Undefined | Value::Null | Value::Boolean(false) => None,
             Value::Number(0.0) => None,
             other => Some(value_to_string(&other)),
