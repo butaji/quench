@@ -31,6 +31,17 @@ pub fn res_set_header(
     let Some(id) = res_state(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    let headers_sent = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .is_some_and(|res| res.headers_sent)
+        || matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "headersSent"), Value::Boolean(true));
+    if headers_sent
+    {
+        return Err(headers_sent_error("Cannot set headers after they are sent to the client"));
+    }
     let name = args.first().map(execute::to_js_string).transpose()?;
     let value = args.get(1).map(execute::to_js_string).transpose()?;
     let Some((name, value)) = name.zip(value) else {
@@ -59,6 +70,7 @@ pub fn res_write_head(
     };
     if let Some(receiver) = receiver {
         execute::set_property_in_place(receiver, "statusCode", Value::Number(status as f64));
+        execute::set_property_in_place(receiver, "headersSent", Value::Boolean(true));
     }
     if let Some(Value::Array(_)) = args.get(1) {
         let array = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -103,6 +115,18 @@ pub fn res_write_head(
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn headers_sent_error(message: &str) -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_HTTP_HEADERS_SENT".into()),
+    ))
 }
 
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
