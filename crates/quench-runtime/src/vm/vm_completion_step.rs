@@ -11,9 +11,9 @@ pub(crate) fn execute_code_completion_step_in_place(
     if crate::locals::is_installed() {
         return run_code_completion_step_from(code, 0, registers, &context);
     }
-    let environment = crate::environment::Environment::child(
+    let environment = crate::environment::Environment::child_registers(
         &crate::environment::Environment::new(),
-        registers.to_values(),
+        registers.clone(),
     );
     let _context_guard = ContextGuard::install(&context);
     let _global_guard = GlobalObjectGuard::install();
