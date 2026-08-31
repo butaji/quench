@@ -3,6 +3,8 @@ include!("regexp_named_groups.rs");
 include!("regexp_surrogates.rs");
 include!("regexp_cache.rs");
 
+use std::borrow::Cow;
+
 pub(crate) fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
     if flags.contains('u') || flags.contains('v') {
@@ -11,10 +13,9 @@ pub(crate) fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
-    let normalized = normalize_legacy_identity_escapes(
-        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
-        flags,
-    );
+    let named = normalize_named_group_escapes(pattern);
+    let scripts = normalize_new_unicode_scripts(&named);
+    let normalized = normalize_legacy_identity_escapes(&scripts, flags);
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
@@ -42,10 +43,9 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
     let reg_flags: Flags = flags.into();
-    let normalized = normalize_legacy_identity_escapes(
-        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
-        flags,
-    );
+    let named = normalize_named_group_escapes(pattern);
+    let scripts = normalize_new_unicode_scripts(&named);
+    let normalized = normalize_legacy_identity_escapes(&scripts, flags);
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&normalized, reg_flags)
     }))
@@ -60,21 +60,23 @@ fn invalid_v_character_class(pattern: &str) -> bool {
         "[%%]", "[**]", "[++]", "[,,]", "[..]", "[::]", "[;;]", "[<<]", "[==]", "[>>]", "[??]",
         "[@@]", "[``]", "[~~]", "[^^^]", "[_^^]",
     ];
+    const INVALID_NEGATED_PROPERTIES: &[&str] = &[
+        r"[^\p{Basic_Emoji}]",
+        r"[^\p{Emoji_Keycap_Sequence}]",
+        r"[^\p{RGI_Emoji}]",
+        r"[^\p{RGI_Emoji_Flag_Sequence}]",
+        r"[^\p{RGI_Emoji_Modifier_Sequence}]",
+        r"[^\p{RGI_Emoji_Tag_Sequence}]",
+        r"[^\p{RGI_Emoji_ZWJ_Sequence}]",
+    ];
     INVALID.iter().any(|candidate| candidate.trim() == pattern)
-        || [
-            "Basic_Emoji",
-            "Emoji_Keycap_Sequence",
-            "RGI_Emoji",
-            "RGI_Emoji_Flag_Sequence",
-            "RGI_Emoji_Modifier_Sequence",
-            "RGI_Emoji_Tag_Sequence",
-            "RGI_Emoji_ZWJ_Sequence",
-        ]
-        .iter()
-        .any(|property| pattern == format!("[^\\p{{{property}}}]").as_str())
+        || INVALID_NEGATED_PROPERTIES.contains(&pattern)
 }
 
-fn normalize_named_group_escapes(pattern: &str) -> String {
+fn normalize_named_group_escapes(pattern: &str) -> Cow<'_, str> {
+    if !pattern.contains("(?<") && !pattern.contains(r"\k<") {
+        return Cow::Borrowed(pattern);
+    }
     let chars: Vec<char> = pattern.chars().collect();
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0;
@@ -122,12 +124,15 @@ fn normalize_named_group_escapes(pattern: &str) -> String {
         output.push(chars[index]);
         index += 1;
     }
-    output
+    Cow::Owned(output)
 }
 
-fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
+fn normalize_legacy_identity_escapes<'a>(pattern: &'a str, flags: &str) -> Cow<'a, str> {
     if flags.contains('u') || flags.contains('v') {
-        return pattern.to_string();
+        return Cow::Borrowed(pattern);
+    }
+    if !pattern.as_bytes().contains(&b'\\') {
+        return Cow::Borrowed(pattern);
     }
     let chars: Vec<char> = pattern.chars().collect();
     let has_named_group = pattern.as_bytes().windows(3).any(|window| window == b"(?<");
@@ -192,7 +197,7 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
         }
         index += 2;
     }
-    output
+    Cow::Owned(output)
 }
 
 fn pattern_capture_count(chars: &[char]) -> usize {
@@ -253,7 +258,13 @@ const NEW_UNICODE_SCRIPTS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn normalize_new_unicode_scripts(pattern: &str) -> String {
+fn normalize_new_unicode_scripts(pattern: &str) -> Cow<'_, str> {
+    if !NEW_UNICODE_SCRIPTS
+        .iter()
+        .any(|(name, alias, _)| pattern.contains(name) || pattern.contains(alias))
+    {
+        return Cow::Borrowed(pattern);
+    }
     let mut normalized = pattern.to_string();
     for (name, alias, ranges) in NEW_UNICODE_SCRIPTS {
         for value in [*name, *alias] {
@@ -270,7 +281,7 @@ fn normalize_new_unicode_scripts(pattern: &str) -> String {
             }
         }
     }
-    normalized
+    Cow::Owned(normalized)
 }
 
 pub fn execute_builtin(
@@ -495,26 +506,6 @@ fn escape_control(ch: char) -> Option<&'static str> {
         '\u{000C}' => Some("\\f"),
         _ => None,
     }
-}
-
-fn build_re_flags(flags: &str) -> String {
-    let mut f = String::new();
-    if flags.contains('i') {
-        f.push('i');
-    }
-    if flags.contains('m') {
-        f.push('m');
-    }
-    if flags.contains('s') {
-        f.push('s');
-    }
-    if flags.contains('u') {
-        f.push('u');
-    }
-    if flags.contains('v') {
-        f.push('v');
-    }
-    f
 }
 
 fn find_match<'a>(regex: &'a Regex, text: &'a str, sticky: bool) -> Result<Option<Match>, VmError> {
@@ -1264,7 +1255,12 @@ include!("regexp_tail.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, has_regexp_internal_slot, regexp_flags_key, replace_with_template};
+    use super::{
+        compile, compiled_for, has_regexp_internal_slot, invalid_v_character_class,
+        normalize_legacy_identity_escapes,
+        normalize_named_group_escapes, normalize_new_unicode_scripts, regexp_flags_key,
+        replace_with_template,
+    };
     use crate::value::{ObjectData, Value};
 
     #[test]
@@ -1283,11 +1279,34 @@ mod tests {
     }
 
     #[test]
+    fn regexp_normalizers_leave_plain_patterns_unchanged() {
+        let pattern = "plain-literal";
+        assert_eq!(normalize_named_group_escapes(pattern), pattern);
+        assert_eq!(normalize_new_unicode_scripts(pattern), pattern);
+        assert_eq!(normalize_legacy_identity_escapes(pattern, ""), pattern);
+    }
+
+    #[test]
+    fn unicode_sets_invalid_property_spellings_are_static_facts() {
+        assert!(invalid_v_character_class(r"[^\p{Basic_Emoji}]"));
+        assert!(invalid_v_character_class(r"[^\p{RGI_Emoji_ZWJ_Sequence}]"));
+        assert!(!invalid_v_character_class(r"[\p{Basic_Emoji}]"));
+    }
+
+    #[test]
     fn regexp_cache_key_uses_only_semantic_flags() {
         assert_eq!(regexp_flags_key(""), regexp_flags_key("gdy"));
         assert_eq!(regexp_flags_key("iu"), regexp_flags_key("ui"));
         assert_ne!(regexp_flags_key("i"), regexp_flags_key("ii"));
         assert_ne!(regexp_flags_key("u"), regexp_flags_key("uv"));
+    }
+
+    #[test]
+    fn regexp_split_compilation_reuses_the_shared_cache() {
+        super::reset_compiled_cache();
+        let first = compiled_for(&Value::Undefined, "a", "y").expect("compile");
+        let second = compiled_for(&Value::Undefined, "a", "y").expect("cache hit");
+        assert!(std::rc::Rc::ptr_eq(&first, &second));
     }
 
     #[test]
