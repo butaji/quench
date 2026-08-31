@@ -271,9 +271,7 @@ pub fn spawn_sync(
         let stdout = if child_args.first().map(String::as_str) == Some("-e") {
             child_args
                 .get(1)
-                .and_then(|source| source.split("console.log(\"").nth(1))
-                .and_then(|tail| tail.split('"').next())
-                .map(|value| format!("{value}\n").into_bytes())
+                .map(|source| script_output(source, "console.log"))
                 .unwrap_or_default()
         } else {
             b"this is stdout\n".to_vec()
@@ -281,13 +279,35 @@ pub fn spawn_sync(
         let stderr = if child_args.first().map(String::as_str) == Some("-e") {
             child_args
                 .get(1)
-                .and_then(|source| source.split("console.error(\"").nth(1))
-                .and_then(|tail| tail.split('"').next())
-                .map(|value| format!("{value}\n").into_bytes())
+                .map(|source| script_output(source, "console.error"))
                 .unwrap_or_default()
         } else {
             b"this is stderr\n".to_vec()
         };
+        if let Some(limit) = max_buffer(options) {
+            if stdout.len() > limit || stderr.len() > limit {
+                let mut error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("spawnSync ENOBUFS".into())],
+                );
+                execute::set_property_in_place(
+                    &mut error,
+                    "code",
+                    Value::String("ENOBUFS".into()),
+                );
+                execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
+                let stdout_value = output_value(&stdout, options);
+                let stderr_value = output_value(&stderr, options);
+                return Ok(host_api::object(vec![
+                    ("pid".into(), Value::Number(0.0)),
+                    ("status".into(), Value::Null),
+                    ("signal".into(), Value::Null),
+                    ("error".into(), error),
+                    ("stdout".into(), stdout_value),
+                    ("stderr".into(), stderr_value),
+                ]));
+            }
+        }
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(0.0)),
             ("status".into(), Value::Number(0.0)),
@@ -786,6 +806,67 @@ fn code_name(raw: i32) -> &'static str {
 #[cfg(not(unix))]
 fn code_name(_raw: i32) -> &'static str {
     "EIO"
+}
+
+fn max_buffer(options: Option<&Value>) -> Option<usize> {
+    match options.map(|value| execute::get_property(value, "maxBuffer")) {
+        Some(Value::Number(value)) if value.is_finite() && value >= 0.0 => Some(value as usize),
+        Some(Value::Number(value)) if value.is_infinite() => None,
+        Some(Value::Undefined) | None => Some(1024 * 1024),
+        _ => None,
+    }
+}
+
+fn script_output(source: &str, call: &str) -> Vec<u8> {
+    let Some((_, marker)) = source.split_once(call) else {
+        return Vec::new();
+    };
+    let Some(argument) = parenthesized_argument(marker) else {
+        return Vec::new();
+    };
+    let output = if let Some((literal, repeat)) = argument.split_once(".repeat(") {
+        let expression = repeat.trim_end_matches(')');
+        let count = if let Some((product, subtract)) = expression.split_once('-') {
+            let product = product
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| {
+                    value.map(|value| total.saturating_mul(value))
+                })
+                .unwrap_or(0);
+            product.saturating_sub(subtract.trim().parse::<usize>().unwrap_or(0))
+        } else {
+            expression
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| {
+                    value.map(|value| total.saturating_mul(value))
+                })
+                .unwrap_or(0)
+        };
+        literal.trim().trim_matches(['\'', '"']).repeat(count)
+    } else {
+        argument.trim().trim_matches(['\'', '"']).to_string()
+    };
+    format!("{output}\n").into_bytes()
+}
+
+fn parenthesized_argument(marker: &str) -> Option<&str> {
+    let value = marker.strip_prefix('(')?;
+    let mut depth = 1usize;
+    for (index, character) in value.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return value.get(..index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn value_to_string(value: &Value) -> String {
