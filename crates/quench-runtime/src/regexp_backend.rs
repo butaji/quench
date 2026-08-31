@@ -3,7 +3,7 @@
 //! OXC supplies syntax facts; the VM owns the executable representation and
 //! matching algorithm. No third-party regular-expression engine is involved.
 
-use std::{collections::VecDeque, ops::Range, rc::Rc};
+use std::{cell::Cell, collections::VecDeque, ops::Range, rc::Rc};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -166,6 +166,30 @@ struct State {
 
 const MAX_BACKTRACK_STATES: usize = 4096;
 
+thread_local! {
+    static BACKTRACK_OVERFLOW: Cell<bool> = const { Cell::new(false) };
+    static UNBOUNDED_BACKTRACK: Cell<bool> = const { Cell::new(false) };
+}
+
+fn backtrack_reached(limit: usize) -> bool {
+    if UNBOUNDED_BACKTRACK.with(Cell::get) || limit < MAX_BACKTRACK_STATES {
+        return false;
+    }
+    BACKTRACK_OVERFLOW.with(|overflow| overflow.set(true));
+    true
+}
+
+fn capped_options<T>(options: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
+    options.enumerate().map_while(|(index, option)| {
+        if UNBOUNDED_BACKTRACK.with(Cell::get) || index < MAX_BACKTRACK_STATES {
+            Some(option)
+        } else {
+            BACKTRACK_OVERFLOW.with(|overflow| overflow.set(true));
+            None
+        }
+    })
+}
+
 pub(crate) struct Regex {
     program: Expr,
     flags: Flags,
@@ -246,7 +270,7 @@ impl Regex {
                 position,
                 captures: vec![None; self.capture_names.len()],
             };
-            if let Some(mut found) = match_expr(&self.program, input, state, self.flags) {
+            if let Some(mut found) = match_with_retry(&self.program, input, state, self.flags) {
                 let start = input.get(position).map_or_else(
                     || input.last().map_or(0, |unit| unit.offset_end),
                     |unit| unit.offset_start,
@@ -291,6 +315,26 @@ impl Regex {
         }
         None
     }
+}
+
+fn match_with_retry(
+    program: &Expr,
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+) -> Option<State> {
+    BACKTRACK_OVERFLOW.with(|overflow| overflow.set(false));
+    UNBOUNDED_BACKTRACK.with(|unbounded| unbounded.set(false));
+    let result = match_expr(program, input, state.clone(), flags);
+    let overflowed = BACKTRACK_OVERFLOW.with(Cell::get);
+    if !overflowed {
+        return result;
+    }
+    UNBOUNDED_BACKTRACK.with(|unbounded| unbounded.set(true));
+    let result = match_expr(program, input, state, flags);
+    UNBOUNDED_BACKTRACK.with(|unbounded| unbounded.set(false));
+    BACKTRACK_OVERFLOW.with(|overflow| overflow.set(false));
+    result
 }
 
 fn leading_literal(expr: &Expr) -> Option<u32> {
@@ -795,7 +839,7 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         flags: Flags,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if backtrack_reached(output.len()) {
             return;
         }
         let Some(part) = parts.get(index) else {
@@ -804,7 +848,7 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         };
         for candidate in match_options(part, input, state.clone(), flags) {
             visit(parts, index + 1, input, candidate, flags, output);
-            if output.len() >= MAX_BACKTRACK_STATES {
+            if backtrack_reached(output.len()) {
                 return;
             }
         }
@@ -823,25 +867,25 @@ fn match_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec
             max,
             greedy,
         } => repeat_options(body, input, state, flags, *min, *max, *greedy),
-        Expr::Alternation(alternatives) => alternatives
-            .iter()
-            .flat_map(|alternative| match_options(alternative, input, state.clone(), flags))
-            .take(MAX_BACKTRACK_STATES)
-            .collect(),
+        Expr::Alternation(alternatives) => capped_options(
+            alternatives
+                .iter()
+                .flat_map(|alternative| match_options(alternative, input, state.clone(), flags)),
+        )
+        .collect(),
         Expr::Capture { index, body } => {
             let start = state.position;
-            match_options(body, input, state, flags)
-                .into_iter()
-                .map(|mut result| {
+            capped_options(match_options(body, input, state, flags).into_iter().map(
+                |mut result| {
                     if let Some(capture) = result.captures.get_mut(*index) {
                         if !flags.reverse || capture.is_none() {
                             *capture = Some(start..result.position);
                         }
                     }
                     result
-                })
-                .take(MAX_BACKTRACK_STATES)
-                .collect()
+                },
+            ))
+            .collect()
         }
         Expr::Mode { body, flags: local } => {
             match_options(body, input, state, merge_flags(flags, *local))
@@ -874,12 +918,12 @@ fn repeat_options(
         greedy: bool,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if backtrack_reached(output.len()) {
             return;
         }
         if !greedy && count >= min {
             output.push(state.clone());
-            if output.len() >= MAX_BACKTRACK_STATES {
+            if backtrack_reached(output.len()) {
                 return;
             }
         }
@@ -905,13 +949,13 @@ fn repeat_options(
                         greedy,
                         output,
                     );
-                    if output.len() >= MAX_BACKTRACK_STATES {
+                    if backtrack_reached(output.len()) {
                         return;
                     }
                 }
             }
         }
-        if greedy && count >= min && output.len() < MAX_BACKTRACK_STATES {
+        if greedy && count >= min && !backtrack_reached(output.len()) {
             output.push(state);
         }
     }
@@ -953,15 +997,17 @@ fn repeat_simple_options(
         count += 1;
         current = next;
         if count >= min {
-            if states.len() == MAX_BACKTRACK_STATES {
-                states.pop_front();
+            if backtrack_reached(states.len()) {
+                break;
             }
             states.push_back(current.clone());
         }
     }
     if !greedy && min == 0 {
         states.push_front(state.clone());
-        states.truncate(MAX_BACKTRACK_STATES);
+        if backtrack_reached(states.len()) {
+            states.pop_back();
+        }
     }
     let mut result: Vec<State> = states.into_iter().collect();
     if greedy {
@@ -1054,11 +1100,12 @@ fn lookaround_match(
 fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec<State> {
     match expr {
         Expr::Sequence(parts) => reverse_sequence_options(parts, input, state, flags),
-        Expr::Alternation(alternatives) => alternatives
-            .iter()
-            .flat_map(|alternative| reverse_options(alternative, input, state.clone(), flags))
-            .take(MAX_BACKTRACK_STATES)
-            .collect(),
+        Expr::Alternation(alternatives) => capped_options(
+            alternatives
+                .iter()
+                .flat_map(|alternative| reverse_options(alternative, input, state.clone(), flags)),
+        )
+        .collect(),
         Expr::Literal(value) => {
             let Some(previous) = state
                 .position
@@ -1096,16 +1143,15 @@ fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> V
         }
         Expr::Capture { index, body } => {
             let end = state.position;
-            reverse_options(body, input, state, flags)
-                .into_iter()
-                .map(|mut result| {
+            capped_options(reverse_options(body, input, state, flags).into_iter().map(
+                |mut result| {
                     if let Some(capture) = result.captures.get_mut(*index) {
                         *capture = Some(result.position..end);
                     }
                     result
-                })
-                .take(MAX_BACKTRACK_STATES)
-                .collect()
+                },
+            ))
+            .collect()
         }
         Expr::Repeat {
             body,
@@ -1175,7 +1221,7 @@ fn reverse_sequence_options(
         flags: Flags,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if backtrack_reached(output.len()) {
             return;
         }
         if index == 0 {
@@ -1233,12 +1279,12 @@ fn reverse_repeat_options(
         greedy: bool,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if backtrack_reached(output.len()) {
             return;
         }
         if !greedy && count >= min {
             output.push(state.clone());
-            if output.len() >= MAX_BACKTRACK_STATES {
+            if backtrack_reached(output.len()) {
                 return;
             }
         }
@@ -1256,13 +1302,13 @@ fn reverse_repeat_options(
                         greedy,
                         output,
                     );
-                    if output.len() >= MAX_BACKTRACK_STATES {
+                    if backtrack_reached(output.len()) {
                         return;
                     }
                 }
             }
         }
-        if greedy && count >= min && output.len() < MAX_BACKTRACK_STATES {
+        if greedy && count >= min && !backtrack_reached(output.len()) {
             output.push(state);
         }
     }
@@ -1879,7 +1925,7 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expr, Flags, Regex};
+    use super::{Expr, Flags, Regex, MAX_BACKTRACK_STATES};
 
     #[test]
     fn captures_partition_a_greedy_run() {
@@ -1887,6 +1933,20 @@ mod tests {
         let matched = regex.find_from("abbbbbbbc", 0).next().unwrap();
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
+    }
+
+    #[test]
+    fn backtracking_overflow_retries_complete_search() {
+        let mut source = String::from("^(");
+        for index in 0..MAX_BACKTRACK_STATES {
+            if index != 0 {
+                source.push('|');
+            }
+            source.push('a');
+        }
+        source.push_str("|ab)$");
+        let regex = Regex::with_flags(&source, Flags::default()).unwrap();
+        assert_eq!(regex.find_from("ab", 0).next().unwrap().range, 0..2);
     }
 
 
