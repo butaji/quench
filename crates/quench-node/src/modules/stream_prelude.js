@@ -1770,6 +1770,70 @@
     return last;
   }
 
+  const composeWritable = (stage) => stage && typeof stage === "object"
+    ? composeWeb(stage) || stage.writable !== false && typeof stage.write === "function"
+    : typeof stage === "function" && stage.length > 0;
+  const composeReadable = (stage) => stage && typeof stage.pipe === "function"
+    ? stage.readable !== false
+    : composeWeb(stage)
+    : typeof stage === "function"
+      ? String(stage.constructor?.name).includes("GeneratorFunction")
+      : Boolean(stage?.[Symbol.iterator] || stage?.[Symbol.asyncIterator]);
+  const composeWeb = (stage) => Boolean(
+    stage?.readable?.getReader && stage?.writable?.getWriter
+  );
+  const composeValues = async (stages, initial) => {
+    let values = initial;
+    for (const stage of stages) {
+      if (composeWeb(stage)) {
+        const writer = stage.writable.getWriter();
+        for (const value of values) await writer.write(value);
+        await writer.close();
+        const reader = stage.readable.getReader();
+        const next = [];
+        while (true) {
+          const step = await reader.read();
+          if (step.done) break;
+          next.push(step.value);
+        }
+        values = next;
+        continue;
+      }
+      if (typeof stage === "function") {
+        const output = stage((async function* () {
+          for (const value of values) yield value;
+        })());
+        const next = [];
+        if (output && typeof output.next === "function") {
+          for await (const value of output) next.push(value);
+        } else if (output?.then) {
+          const value = await output;
+          if (value !== undefined) {
+            const error = new TypeError("terminal stream function must return undefined");
+            error.code = "ERR_INVALID_RETURN_VALUE";
+            throw error;
+          }
+        }
+        values = next;
+        continue;
+      }
+      const output = [];
+      const onData = (value) => output.push(value);
+      stage.on?.("data", onData);
+      try {
+        for (const value of values) {
+          await new Promise((resolve, reject) => {
+            try { stage.write(value, resolve); } catch (error) { reject(error); }
+          });
+        }
+      } finally {
+        stage.removeListener?.("data", onData);
+      }
+      values = output;
+    }
+    return values;
+  };
+
   function compose(...stages) {
     if (stages.length === 0) {
       const error = new TypeError("The streams argument must be an array or at least two streams");
@@ -1777,13 +1841,13 @@
       throw error;
     }
     const asyncIterable = (stage) => stage && typeof stage[Symbol.asyncIterator] === "function";
-    const validStage = (stage) => typeof stage === "function" ||
+    const validStage = (stage) => typeof stage === "function" || composeWeb(stage) ||
       (stage && typeof stage === "object" &&
         (typeof stage.on === "function" || asyncIterable(stage)));
-    const readableStage = (stage) => typeof stage === "function" ||
+    const readableStage = (stage) => typeof stage === "function" || composeWeb(stage) ||
       (stage && ((typeof stage.pipe === "function" && typeof stage.on === "function") ||
         asyncIterable(stage)));
-    const writableStage = (stage) => typeof stage === "function" ||
+    const writableStage = (stage) => typeof stage === "function" || composeWeb(stage) ||
       (stage && typeof stage.write === "function" && typeof stage.on === "function");
     if (stages.some((stage) => !validStage(stage)) ||
         stages.some((stage, index) => index > 0 &&
@@ -1794,41 +1858,53 @@
     }
     const first = stages[0];
     const last = stages[stages.length - 1];
-    const streamStages = stages.every((stage) => stage && typeof stage.write === "function" &&
+    const allStreams = stages.every((stage) => stage && typeof stage.write === "function" &&
       typeof stage.on === "function");
-    if (streamStages) {
+    if (allStreams) {
       const composed = new Duplex({
         read() {},
-        write(chunk, encoding, callback) {
-          first.write(chunk, encoding, callback);
-        },
-        final(callback) {
-          first.end(callback);
-        },
+        write(chunk, encoding, callback) { first.write(chunk, encoding, callback); },
+        final(callback) { first.end(callback); },
         destroy(error, callback) {
-          for (const stage of stages) {
-            if (!stage.destroyed && typeof stage.destroy === "function") stage.destroy(error);
-          }
+          for (const stage of stages) if (!stage.destroyed) stage.destroy?.(error);
           callback(error);
-        },
+        }
       });
-      for (let index = 0; index + 1 < stages.length; index += 1) {
-        stages[index].pipe(stages[index + 1]);
-      }
+      for (let index = 0; index + 1 < stages.length; index++) stages[index].pipe(stages[index + 1]);
       last.on("data", (chunk) => composed.push(chunk));
       last.once("end", () => composed.push(null));
       for (const stage of stages) stage.on("error", (error) => composed.destroy(error));
       return composed;
     }
-    const firstIsSource = asyncIterable(first) ||
-      (typeof first === "function" && first.constructor?.name === "AsyncGeneratorFunction");
-    const singleSink = typeof first === "function" && first.constructor?.name === "AsyncFunction";
-    const result = new Duplex({ read() {}, write(_chunk, _encoding, callback) { callback(); } });
-    result.readable = stages.length === 1 && !singleSink || stages.length > 1 && !(
-      (last && typeof last.write === "function" && typeof last.read !== "function") ||
-      (typeof last === "function" && last.constructor?.name === "AsyncFunction"));
-    result.writable = stages.length === 1 || stages.length > 1 && !firstIsSource && !(first &&
-      typeof first.read === "function" && typeof first.write !== "function");
+    const firstSource = !composeWritable(first);
+    const inputMode = first.writableObjectMode === true;
+    const outputMode = last.readableObjectMode === true;
+    const result = new Transform({
+      objectMode: inputMode,
+      transform(chunk, encoding, callback) {
+        composeValues(stages, [chunk]).then((values) => {
+          for (const value of values) this.push(value);
+          callback();
+        }, callback);
+      }
+    });
+    result._readableState.objectMode = outputMode;
+    result.writable = !firstSource;
+    result.readable = composeReadable(last);
+    if (firstSource) {
+      result.writable = false;
+      queueMicrotask(async () => {
+        try {
+          const source = typeof first === "function" ? first() : first;
+          const values = [];
+          for await (const value of source) values.push(value);
+          const output = await composeValues(stages.slice(1), values);
+          for (const value of output) result.push(value);
+          if (result.readable) result.push(null);
+          else result.emit("finish");
+        } catch (error) { result.destroy(error); }
+      });
+    }
     return result;
   }
 
