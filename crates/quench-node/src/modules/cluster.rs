@@ -1315,6 +1315,10 @@ pub fn send(
         return Ok(Value::Boolean(false));
     }
     let message = args.first().cloned().unwrap_or(Value::Undefined);
+    let handle = args
+        .get(1)
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .cloned();
     let child_context = state.borrow().cluster.worker_context == Some(id);
     if child_context {
         if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
@@ -1323,10 +1327,19 @@ pub fn send(
         return Ok(Value::Boolean(true));
     }
     let previous_context = state.borrow().cluster.worker_context;
+    if let (Some(handle), Some(scope)) = (
+        handle.as_ref(),
+        state.borrow().cluster.worker_scope(id),
+    ) {
+        crate::modules::net::transfer_handle_scope(state, handle, scope);
+    }
     set_worker_mode(state, id, &obj, true);
     state.borrow_mut().cluster.worker_context = Some(id);
-    let process_result =
-        crate::modules::process::emit(state, &[Value::String("message".into()), message]);
+    let mut process_args = vec![Value::String("message".into()), message];
+    if let Some(handle) = handle {
+        process_args.push(handle);
+    }
+    let process_result = crate::modules::process::emit(state, &process_args);
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
     let child_exit = state.borrow_mut().process.exit_code.take();
@@ -1366,6 +1379,9 @@ pub fn send(
                 Value::Null,
             ],
         );
+    }
+    if let Some(callback) = args.iter().find(|value| quench_runtime::is_callable(value)) {
+        execute::call(callback, &Value::Undefined, &[Value::Null])?;
     }
     Ok(Value::Boolean(true))
 }
