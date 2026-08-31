@@ -151,6 +151,21 @@ fn accept_one(
     } else {
         install_methods(object, net_info_props(peer, local))?
     };
+    let client_handle = host_api::object(vec![
+        (
+            "setNoDelay".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "setKeepAlive".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "close".into(),
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET_HANDLE_CLOSE),
+        ),
+    ]);
+    execute::set_property_in_place(&object, "_handle", client_handle.clone());
     let object = state
         .borrow()
         .net
@@ -191,6 +206,20 @@ fn accept_one(
         .get(&server_id)
         .map(|server| server.borrow().js.clone());
     if let Some(js) = server_js {
+        let server_handle = execute::get_property(&js, "_handle");
+        let onconnection = execute::get_property(&server_handle, "onconnection");
+        if quench_runtime::is_callable(&onconnection) {
+            execute::call(
+                &onconnection,
+                &server_handle,
+                &[Value::Null, client_handle.clone()],
+            )?;
+        }
+        if matches!(execute::get_property(&js, "noDelay"), Value::Boolean(true)) {
+            let setter = execute::get_property(&client_handle, "setNoDelay");
+            execute::call(&setter, &client_handle, &[Value::Boolean(true)])?;
+            execute::set_property_in_place(&object, NO_DELAY_PROP, Value::Boolean(true));
+        }
         super::queue_async_value(state, server_id, object.clone());
         let owner = state
             .borrow()
