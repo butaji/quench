@@ -50,6 +50,14 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         }
     }
     let (object, _id) = new_net_object(state, server_props())?;
+    execute::set_property_in_place(
+        &object,
+        "_handle",
+        host_api::object(vec![(
+            "onconnection".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        )]),
+    );
     if let Some(options) = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -59,6 +67,15 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         }
         if let Value::Boolean(value) = execute::get_property(options, "pauseOnConnect") {
             execute::set_property_in_place(&object, "pauseOnConnect", Value::Boolean(value));
+        }
+        if let Value::Boolean(value) = execute::get_property(options, "noDelay") {
+            execute::set_property_in_place(&object, "noDelay", Value::Boolean(value));
+        }
+        if let Value::Boolean(value) = execute::get_property(options, "keepAlive") {
+            execute::set_property_in_place(&object, "keepAlive", Value::Boolean(value));
+        }
+        if let Value::Number(value) = execute::get_property(options, "keepAliveInitialDelay") {
+            execute::set_property_in_place(&object, "keepAliveInitialDelay", Value::Number(value));
         }
         let block_list = execute::get_property(options, "blockList");
         if matches!(block_list, Value::Object(_) | Value::ObjectAlias(_)) {
