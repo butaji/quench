@@ -3,7 +3,7 @@
 //! OXC supplies syntax facts; the VM owns the executable representation and
 //! matching algorithm. No third-party regular-expression engine is involved.
 
-use std::{collections::VecDeque, ops::Range};
+use std::{collections::VecDeque, ops::Range, rc::Rc};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -34,7 +34,7 @@ impl From<&str> for Flags {
 pub(crate) struct Match {
     pub(crate) range: Range<usize>,
     pub(crate) captures: Vec<Option<Range<usize>>>,
-    named: Vec<String>,
+    named: Rc<[String]>,
 }
 
 impl Match {
@@ -142,6 +142,7 @@ enum ClassItem {
         negative: bool,
         name: String,
         value: Option<String>,
+        matcher: Option<PropertyMatcher>,
     },
     Nested(ClassExpr),
     String(Vec<u32>),
@@ -168,7 +169,9 @@ const MAX_BACKTRACK_STATES: usize = 4096;
 pub(crate) struct Regex {
     program: Expr,
     flags: Flags,
-    capture_names: Vec<String>,
+    capture_names: Rc<[String]>,
+    start_literal: Option<u32>,
+    anchored_start: bool,
 }
 
 impl Regex {
@@ -187,9 +190,11 @@ impl Regex {
         };
         let program = lower_disjunction(&parsed.body, &mut lowering);
         Ok(Self {
+            start_literal: leading_literal(&program),
+            anchored_start: !flags.multiline && starts_with_start_assertion(&program),
             program,
             flags,
-            capture_names: lowering.names,
+            capture_names: Rc::from(lowering.names),
         })
     }
 
@@ -216,7 +221,25 @@ impl Regex {
     }
 
     fn find_units(&self, input: &[Unit], first: usize) -> Option<Match> {
-        for position in first..=input.len() {
+        let end = if self.anchored_start {
+            first
+        } else {
+            input.len()
+        };
+        for position in first..=end {
+            if let Some(value) = self.start_literal {
+                let Some(unit) = input.get(position) else {
+                    break;
+                };
+                if !equal(
+                    value,
+                    unit.value,
+                    self.flags.ignore_case,
+                    self.flags.unicode,
+                ) {
+                    continue;
+                }
+            }
             let state = State {
                 position,
                 captures: vec![None; self.capture_names.len()],
@@ -268,6 +291,45 @@ impl Regex {
     }
 }
 
+fn leading_literal(expr: &Expr) -> Option<u32> {
+    match expr {
+        Expr::Literal(value) => Some(*value),
+        Expr::Capture { body, .. } => leading_literal(body),
+        Expr::Sequence(parts) => parts
+            .iter()
+            .find(|part| !is_zero_width(part))
+            .and_then(leading_literal),
+        Expr::Alternation(alternatives) => {
+            let mut literals = alternatives.iter().map(leading_literal);
+            let first = literals.next().flatten()?;
+            literals
+                .all(|literal| literal == Some(first))
+                .then_some(first)
+        }
+        Expr::Repeat { body, min, .. } if *min > 0 && !is_zero_width(body) => leading_literal(body),
+        _ => None,
+    }
+}
+
+fn is_zero_width(expr: &Expr) -> bool {
+    match expr {
+        Expr::Assertion(_) | Expr::Lookaround { .. } => true,
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => is_zero_width(body),
+        Expr::Sequence(parts) => parts.iter().all(is_zero_width),
+        Expr::Alternation(alternatives) => alternatives.iter().all(is_zero_width),
+        Expr::Repeat { body, .. } => is_zero_width(body),
+        _ => false,
+    }
+}
+
+fn starts_with_start_assertion(expr: &Expr) -> bool {
+    match expr {
+        Expr::Assertion(Assertion::Start) => true,
+        Expr::Sequence(parts) => matches!(parts.first(), Some(Expr::Assertion(Assertion::Start))),
+        _ => false,
+    }
+}
+
 fn flag_text(flags: Flags) -> String {
     let mut text = String::new();
     if flags.ignore_case {
@@ -290,30 +352,29 @@ fn flag_text(flags: Flags) -> String {
 
 fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
     if unicode {
-        return text
-            .char_indices()
-            .map(|(offset_start, character)| Unit {
+        let mut units = Vec::with_capacity(text.len());
+        for (offset_start, character) in text.char_indices() {
+            units.push(Unit {
                 value: u32::from(character),
                 offset_start,
                 offset_end: offset_start + character.len_utf8(),
-            })
-            .collect();
+            });
+        }
+        return units;
     }
-    text.char_indices()
-        .flat_map(|(offset_start, character)| {
-            let offset_end = offset_start + character.len_utf8();
-            let mut buffer = [0; 2];
-            character
-                .encode_utf16(&mut buffer)
-                .iter()
-                .map(move |value| Unit {
-                    value: u32::from(*value),
-                    offset_start,
-                    offset_end,
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    let mut units = Vec::with_capacity(text.len());
+    for (offset_start, character) in text.char_indices() {
+        let offset_end = offset_start + character.len_utf8();
+        let mut buffer = [0; 2];
+        for value in character.encode_utf16(&mut buffer) {
+            units.push(Unit {
+                value: u32::from(*value),
+                offset_start,
+                offset_end,
+            });
+        }
+    }
+    units
 }
 
 fn units_from_utf16(input: &[u16], unicode: bool) -> Vec<Unit> {
@@ -405,11 +466,11 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
         ast::Term::UnicodePropertyEscape(property) => Expr::Class(ClassExpr {
             negative: false,
             kind: ClassKind::Union,
-            items: vec![ClassItem::Property {
-                negative: property.negative,
-                name: property.name.to_string(),
-                value: property.value.as_ref().map(ToString::to_string),
-            }],
+            items: vec![property_item(
+                property.negative,
+                property.name.to_string(),
+                property.value.as_ref().map(ToString::to_string),
+            )],
         }),
         ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering)),
         ast::Term::CapturingGroup(group) => {
@@ -516,32 +577,39 @@ fn modifier_mode(
     }
 }
 
+fn property_item(negative: bool, name: String, value: Option<String>) -> ClassItem {
+    let matcher = compile_property_matcher(&name, value.as_deref());
+    ClassItem::Property {
+        negative,
+        name,
+        value,
+        matcher,
+    }
+}
+
 fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> ClassExpr {
-    let items = class
-        .body
-        .iter()
-        .flat_map(|item| match item {
+    let mut items = Vec::with_capacity(class.body.len());
+    for item in &class.body {
+        items.push(match item {
             ast::CharacterClassContents::CharacterClassRange(range) => {
-                vec![ClassItem::Range(range.min.value, range.max.value)]
+                ClassItem::Range(range.min.value, range.max.value)
             }
             ast::CharacterClassContents::CharacterClassEscape(escape) => {
-                vec![ClassItem::Escape(escape.kind)]
+                ClassItem::Escape(escape.kind)
             }
-            ast::CharacterClassContents::UnicodePropertyEscape(property) => {
-                vec![ClassItem::Property {
-                    negative: property.negative,
-                    name: property.name.to_string(),
-                    value: property.value.as_ref().map(ToString::to_string),
-                }]
-            }
+            ast::CharacterClassContents::UnicodePropertyEscape(property) => property_item(
+                property.negative,
+                property.name.to_string(),
+                property.value.as_ref().map(ToString::to_string),
+            ),
             ast::CharacterClassContents::Character(character) => {
-                vec![ClassItem::Character(character.value)]
+                ClassItem::Character(character.value)
             }
             ast::CharacterClassContents::NestedCharacterClass(nested) => {
-                vec![ClassItem::Nested(lower_class(nested, lowering))]
+                ClassItem::Nested(lower_class(nested, lowering))
             }
             ast::CharacterClassContents::ClassStringDisjunction(strings) => {
-                vec![ClassItem::Nested(ClassExpr {
+                ClassItem::Nested(ClassExpr {
                     negative: false,
                     kind: ClassKind::Union,
                     items: strings
@@ -557,10 +625,10 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
                             )
                         })
                         .collect(),
-                })]
+                })
             }
-        })
-        .collect();
+        });
+    }
     ClassExpr {
         negative: class.negative,
         kind: match class.kind {
@@ -588,6 +656,13 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
         Expr::Dot => input
             .get(state.position)
             .filter(|unit| flags.dot_all || !is_line_terminator(unit.value))
+            .map(|_| State {
+                position: state.position + 1,
+                ..state
+            }),
+        Expr::Class(class) if class_is_single_width(class) => input
+            .get(state.position)
+            .filter(|unit| class_matches(class, unit.value, flags.ignore_case, flags.unicode))
             .map(|_| State {
                 position: state.position + 1,
                 ..state
@@ -1209,6 +1284,7 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             negative,
             name,
             value: property,
+            matcher,
         } => {
             if ignore_case
                 && *negative
@@ -1222,20 +1298,34 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             {
                 return true;
             }
-            let matches = property_matches(name, property.as_deref(), value)
+            let matches = property_item_matches(*matcher, name, property.as_deref(), value)
                 || (ignore_case
                     && char::from_u32(value).is_some_and(|character| {
                         character
                             .to_uppercase()
                             .chain(character.to_lowercase())
                             .map(u32::from)
-                            .any(|variant| property_matches(name, property.as_deref(), variant))
+                            .any(|variant| {
+                                property_item_matches(*matcher, name, property.as_deref(), variant)
+                            })
                     }));
             matches != *negative
         }
         ClassItem::Nested(nested) => class_matches(nested, value, ignore_case, unicode),
         ClassItem::String(_) => false,
     }
+}
+
+fn property_item_matches(
+    matcher: Option<PropertyMatcher>,
+    name: &str,
+    value: Option<&str>,
+    character: u32,
+) -> bool {
+    matcher.map_or_else(
+        || property_matches(name, value, character),
+        |matcher| char::from_u32(character).is_some_and(|character| matcher.matches(character)),
+    )
 }
 
 fn class_item_widths(
@@ -1290,6 +1380,7 @@ fn is_string_property(name: &str) -> bool {
     matches!(
         name,
         "Basic_Emoji"
+            | "Emoji_Keycap_Sequence"
             | "RGI_Emoji"
             | "RGI_Emoji_Flag_Sequence"
             | "RGI_Emoji_Modifier_Sequence"
@@ -1447,6 +1538,15 @@ fn class_match_widths(
         }
     }
     widths
+}
+
+fn class_is_single_width(class: &ClassExpr) -> bool {
+    class.items.iter().all(|item| match item {
+        ClassItem::String(_) => false,
+        ClassItem::Property { name, .. } => !is_string_property(name),
+        ClassItem::Nested(nested) => class_is_single_width(nested),
+        _ => true,
+    })
 }
 
 fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool) -> bool {
