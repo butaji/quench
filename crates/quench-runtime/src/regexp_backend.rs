@@ -1370,12 +1370,17 @@ fn reverse_repeat_options(
         limit: usize,
         greedy: bool,
         output: &mut Vec<State>,
+        seen: &mut Option<HashSet<State>>,
+        visited: &mut HashSet<(usize, State)>,
     ) {
+        if !visited.insert((count, state.clone())) {
+            return;
+        }
         if backtrack_reached(output.len()) {
             return;
         }
         if !greedy && count >= min {
-            output.push(state.clone());
+            push_unique(output, seen, state.clone());
             if backtrack_reached(output.len()) {
                 return;
             }
@@ -1393,6 +1398,8 @@ fn reverse_repeat_options(
                         limit,
                         greedy,
                         output,
+                        seen,
+                        visited,
                     );
                     if backtrack_reached(output.len()) {
                         return;
@@ -1401,10 +1408,12 @@ fn reverse_repeat_options(
             }
         }
         if greedy && count >= min && !backtrack_reached(output.len()) {
-            output.push(state);
+            push_unique(output, seen, state);
         }
     }
     let mut output = Vec::new();
+    let mut seen = None;
+    let mut visited = HashSet::new();
     visit(
         body,
         input,
@@ -1415,6 +1424,8 @@ fn reverse_repeat_options(
         limit,
         greedy,
         &mut output,
+        &mut seen,
+        &mut visited,
     );
     output
 }
