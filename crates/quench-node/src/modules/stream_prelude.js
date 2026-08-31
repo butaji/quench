@@ -225,6 +225,7 @@
       decoder: options.encoding ? new StringDecoder(options.encoding) : null,
       awaitDrainWriters: null,
       pipeCount: 0,
+      pipes: [],
       autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
@@ -245,9 +246,11 @@
       else options.signal.addEventListener("abort", abort, { once: true });
     }
     if (options.autoDestroy !== false) {
-      stream._emitter.on("error", () => {
+      const autoDestroy = () => {
         if (!stream.destroyed) stream.destroy();
-      });
+      };
+      autoDestroy.__quenchInternal = true;
+      stream._emitter.on("error", autoDestroy);
     }
   }
 
@@ -588,10 +591,11 @@
       const source = this;
       const sourceState = source._readableState;
       sourceState.pipeCount += 1;
+      sourceState.pipes.push(dest);
       if (sourceState.pipeCount > 1 && !sourceState.awaitDrainWriters) {
         sourceState.awaitDrainWriters = new Set();
       }
-      source.on("data", (chunk) => {
+      const ondata = (chunk) => {
         if (dest.write(chunk) === false) {
           const state = source._readableState;
           if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
@@ -612,18 +616,40 @@
             }
           });
         }
-      });
-      if (!options || options.end !== false) {
-        source.on("end", () => dest.end());
-      }
-      dest.once("end", () => source.pause());
+      };
+      const cleanup = () => {
+        source.unpipe(dest);
+        source.removeListener("data", ondata);
+        source.removeListener("end", onend);
+        source.removeListener("end", cleanup);
+        source.removeListener("close", onclose);
+        source.removeListener("close", cleanup);
+        dest.removeListener("close", cleanup);
+      };
+      const onend = () => {
+        if (!options || options.end !== false) dest.end();
+      };
+      const onclose = () => dest.destroy?.();
+      source.on("data", ondata);
+      source.on("end", onend);
+      source.on("end", cleanup);
+      source.on("close", onclose);
+      source.on("close", cleanup);
+      dest.on("close", cleanup);
       dest.emit("pipe", source);
       return dest;
     }
 
     unpipe(dest) {
       this.removeAllListeners("data");
-      if (dest) dest.emit("unpipe", this);
+      const pipes = this._readableState.pipes;
+      const index = dest ? pipes.indexOf(dest) : -1;
+      if (dest && index >= 0) {
+        pipes.splice(index, 1);
+        dest.emit("unpipe", this);
+      } else if (!dest) {
+        pipes.length = 0;
+      }
       return this;
     }
   }
