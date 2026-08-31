@@ -178,4 +178,46 @@ if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "functio
     value: File
   });
 }
+if (typeof globalThis.Headers !== "function") {
+  const HeadersClass = class Headers {
+    constructor(init) {
+      this._entries = [];
+      if (init instanceof globalThis.Headers) {
+        for (const [key, value] of init.entries()) this.append(key, value);
+      } else if (init instanceof Map) {
+        for (const [key, value] of init.entries()) this.set(key, value);
+      } else if (Array.isArray(init)) {
+        for (const pair of init) if (Array.isArray(pair) && pair.length >= 2) this.append(pair[0], pair[1]);
+      } else if (init && typeof init === "object") {
+        for (const key of Object.keys(init)) this.set(key, init[key]);
+      }
+    }
+    _key(key) { return String(key).toLowerCase(); }
+    append(key, value) { this._entries.push([this._key(key), String(value)]); }
+    set(key, value) {
+      const normalized = this._key(key);
+      this._entries = this._entries.filter(([name]) => name !== normalized);
+      if (Array.isArray(value)) {
+        for (const item of value) this.append(normalized, item);
+      } else {
+        this.append(normalized, value);
+      }
+    }
+    get(key) {
+      const normalized = this._key(key);
+      const values = this._entries.filter(([name]) => name === normalized).map(([, value]) => value);
+      return values.length ? values.join(", ") : null;
+    }
+    *entries() { yield* this._entries; }
+    keys() { return this._entries.map(([name]) => name)[Symbol.iterator](); }
+    values() { return this._entries.map(([, value]) => value)[Symbol.iterator](); }
+    [Symbol.iterator]() { return this.entries(); }
+  };
+  Object.defineProperty(globalThis, 'Headers', {
+    value: HeadersClass,
+    writable: true,
+    configurable: true
+  });
+}
+const Headers = globalThis.Headers;
 "#);

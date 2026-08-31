@@ -112,6 +112,7 @@ const CAP_HTTP_RES_SET_HEADER: u16 = 0x0F03;
 const CAP_HTTP_RES_REMOVE_HEADER: u16 = crate::registry::SPEC_HTTP_RES_REMOVE_HEADER.cap;
 const CAP_HTTP_RES_CORK: u16 = crate::registry::SPEC_HTTP_RES_CORK.cap;
 const CAP_HTTP_RES_UNCORK: u16 = crate::registry::SPEC_HTTP_RES_UNCORK.cap;
+const CAP_HTTP_RES_SET_HEADERS: u16 = crate::registry::SPEC_HTTP_RES_SET_HEADERS.cap;
 const CAP_HTTP_RES_WRITE_HEAD: u16 = 0x0F04;
 const CAP_HTTP_RES_WRITE: u16 = 0x0F05;
 const CAP_HTTP_RES_END: u16 = 0x0F06;
@@ -754,6 +755,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_RES_REMOVE_HEADER => crate::modules::http::res_remove_header,
         CAP_HTTP_RES_CORK => crate::modules::http::res_cork,
         CAP_HTTP_RES_UNCORK => crate::modules::http::res_uncork,
+        CAP_HTTP_RES_SET_HEADERS => crate::modules::http::res_set_headers,
         CAP_HTTP_RES_WRITE_HEAD => crate::modules::http::res_write_head,
         CAP_HTTP_RES_WRITE => crate::modules::http::res_write,
         CAP_HTTP_RES_END => crate::modules::http::res_end,
