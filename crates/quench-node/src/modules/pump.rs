@@ -443,12 +443,17 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         return Ok(false);
     };
     let previous_scope = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
     if task.process_scope != 0 {
         state
             .borrow_mut()
             .cluster
             .set_process_scope(task.process_scope);
     }
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(task.process_scope);
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
@@ -491,6 +496,10 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         .borrow_mut()
         .cluster
         .set_process_scope(previous_scope);
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(previous_event_scope);
     result.map(|()| true)
 }
 

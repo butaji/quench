@@ -64,12 +64,33 @@ fn emit_server_scoped(
             .map(|server| server.borrow().process_scope)
     });
     let previous = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
     if let Some(scope) = scope {
         state.borrow_mut().cluster.set_process_scope(scope);
+        state.borrow().event_loop.set_process_scope(scope);
     }
     let result = emit(state, receiver, event, args);
     state.borrow_mut().cluster.set_process_scope(previous);
+    state.borrow().event_loop.set_process_scope(previous_event_scope);
     result
+}
+
+fn emit_socket_scoped(
+    state: &Rc<RefCell<HostState>>,
+    socket: &Rc<RefCell<NetSocket>>,
+    receiver: &Value,
+    event: &str,
+    args: Vec<Value>,
+) -> Result<Value, VmError> {
+    let scope = socket.borrow().process_scope;
+    let previous = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
+    state.borrow_mut().cluster.set_process_scope(scope);
+    state.borrow().event_loop.set_process_scope(scope);
+    let result = emit(state, receiver, event, args);
+    state.borrow_mut().cluster.set_process_scope(previous);
+    state.borrow().event_loop.set_process_scope(previous_event_scope);
+    result.map(|_| Value::Undefined)
 }
 
 fn poll_accept(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -229,6 +250,13 @@ fn accept_one(
     set_socket_state(&object, false, false, "open");
     let socket = Rc::new(RefCell::new(NetSocket {
         id,
+        process_scope: state
+            .borrow()
+            .net
+            .servers
+            .get(&server_id)
+            .map(|server| server.borrow().process_scope)
+            .unwrap_or_else(|| state.borrow().cluster.process_scope()),
         stream: Some(stream),
         js: object.clone(),
         state: SocketState::Open,
@@ -259,6 +287,7 @@ fn accept_one(
         .map(|server| server.borrow().js.clone());
     if let Some(js) = server_js {
         let previous_scope = state.borrow().cluster.process_scope();
+        let previous_event_scope = state.borrow().event_loop.process_scope();
         let server_scope = state
             .borrow()
             .net
@@ -270,6 +299,7 @@ fn accept_one(
             .borrow_mut()
             .cluster
             .set_process_scope(server_scope);
+        state.borrow().event_loop.set_process_scope(server_scope);
         // Accepted sockets expose the exact JS Server instance that owns the
         // transport.  Install this before emitting `connection` so listeners
         // observe stable identity during construction.
@@ -322,6 +352,7 @@ fn accept_one(
             .borrow_mut()
             .cluster
             .set_process_scope(previous_scope);
+        state.borrow().event_loop.set_process_scope(previous_event_scope);
         connection_result?;
     }
     Ok(())
@@ -372,7 +403,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             super::socket_set_no_delay(state, Some(&js), &[Value::Boolean(true)])?;
         }
         crate::modules::http_client::apply_deferred_request_timeout(state, &js)?;
-        emit(state, &js, "connect", Vec::new())?;
+        emit_socket_scoped(state, &sock, &js, "connect", Vec::new())?;
     }
     for (sock, bytes) in events.datas {
         let js = sock.borrow().js.clone();
@@ -418,12 +449,12 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                     .extend_from_slice(&bytes[consumed..]);
             }
         } else {
-            emit(state, &js, "data", vec![arg])?;
+            emit_socket_scoped(state, &sock, &js, "data", vec![arg])?;
         }
     }
     for sock in events.drains {
         let js = sock.borrow().js.clone();
-        emit(state, &js, "drain", Vec::new())?;
+        emit_socket_scoped(state, &sock, &js, "drain", Vec::new())?;
     }
     for sock in events.eofs {
         let js = sock.borrow().js.clone();
@@ -445,7 +476,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         let js = execute::canonical_value(&js);
         execute::set_property_in_place(&js, "readable", Value::Boolean(false));
         super::end_async_stream(state, sock.borrow().id);
-        emit(state, &js, "end", Vec::new())?;
+        emit_socket_scoped(state, &sock, &js, "end", Vec::new())?;
     }
     for sock in events.write_failures {
         let js = sock.borrow().js.clone();
@@ -455,7 +486,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
                 Value::Boolean(true)
             );
         if !http_owned {
-            emit(state, &js, "error", vec![super::peer_write_error()])?;
+            emit_socket_scoped(state, &sock, &js, "error", vec![super::peer_write_error()])?;
         }
         super::socket_destroy(state, Some(&js), &[])?;
     }
