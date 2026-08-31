@@ -21,6 +21,11 @@ use crate::host::HostState;
 
 /// Canonical internal/util namespace owned by the Rust host.
 pub fn internal_util_module() -> Value {
+    let enumerable = frozen_null_object(vec![(
+        "enumerable".into(),
+        Value::Boolean(true),
+    )]);
+    let empty = frozen_null_object(Vec::new());
     crate::host::namespace_object_from_pairs(vec![
         ("customInspectSymbol".into(), Value::String("Symbol.for.nodejs.util.inspect.custom\0".into())),
         ("pendingDeprecate".into(), crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE)),
@@ -34,7 +39,26 @@ pub fn internal_util_module() -> Value {
         ("decorateErrorStack".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK)),
         ("assignFunctionName".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME)),
         ("isError".into(), crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR)),
+        ("kEnumerableProperty".into(), enumerable),
+        ("kEmptyObject".into(), empty),
     ])
+}
+
+fn frozen_null_object(properties: Vec<(String, Value)>) -> Value {
+    let mut value = Value::object(properties);
+    value = quench_runtime::execute::set_prototype_of(&value, &Value::Null).unwrap_or(value);
+    for key in quench_runtime::execute::own_enumerable_keys(&value) {
+        let current = quench_runtime::execute::get_property(&value, &key);
+        let descriptor = host_api::object(vec![
+            ("value".into(), current),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(false)),
+        ]);
+        value = quench_runtime::execute::define_property(value, &key, descriptor)
+            .unwrap_or_else(|_| Value::Undefined);
+    }
+    quench_runtime::execute::prevent_extensions(&value).unwrap_or(value)
 }
 
 fn placeholder_constructor(parent: Option<&Value>) -> Value {
@@ -506,6 +530,14 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             (
                 "isError".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR),
+            ),
+            (
+                "kEnumerableProperty".to_string(),
+                frozen_null_object(vec![("enumerable".into(), Value::Boolean(true))]),
+            ),
+            (
+                "kEmptyObject".to_string(),
+                frozen_null_object(Vec::new()),
             ),
         ])),
         "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(
