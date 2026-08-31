@@ -1435,6 +1435,16 @@ fn connect_with_receiver(
         socket.write_buf = queued_write;
     }
     state.borrow_mut().net.sockets.insert(id, socket);
+    // Node publishes every client socket at connection creation; retain the
+    // same socket identity that the net registry returns (TLS aliases this
+    // object through its TLSSocket prototype).
+    let channel = crate::modules::diagnostics_channel::channel(
+        state,
+        None,
+        &[Value::String("net.client.socket".into())],
+    )?;
+    let message = host_api::object(vec![("socket".into(), object.clone())]);
+    crate::modules::diagnostics_channel::publish(state, Some(&channel), &[message])?;
     add_listener_cb(state, &object, args.last(), "connect", true)?;
     if let Some(options) = args
         .first()
