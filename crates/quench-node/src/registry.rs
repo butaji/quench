@@ -600,7 +600,7 @@ pub const SPEC_NET_SERVER_ADDRESS: NodeSpec = NodeSpec::new("net:server:address"
 pub const SPEC_NET_SERVER_UNREF: NodeSpec = NodeSpec::new("net:server:unref", 0x1014);
 pub const SPEC_NET_SERVER_REF: NodeSpec = NodeSpec::new("net:server:ref", 0x1015);
 pub const SPEC_NET_SERVER_GET_CONNECTIONS: NodeSpec =
-    NodeSpec::new("net:server:getConnections", 0x1028);
+    NodeSpec::new("net:server:getConnections", 0x1030);
 pub const SPEC_NET_SOCKET_WRITE: NodeSpec = NodeSpec::new("net:socket:write", 0x100A);
 pub const SPEC_NET_SOCKET_END: NodeSpec = NodeSpec::new("net:socket:end", 0x100B);
 pub const SPEC_NET_SOCKET_DESTROY: NodeSpec = NodeSpec::new("net:socket:destroy", 0x100C);
