@@ -365,6 +365,8 @@ pub const SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING: NodeSpec =
     NodeSpec::new("internal/util:normalizeEncoding", 0x0739);
 pub const SPEC_INTERNAL_UTIL_GET_CIDR: NodeSpec =
     NodeSpec::new("internal/util:getCIDR", 0x073A);
+pub const SPEC_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER: NodeSpec =
+    NodeSpec::new("internal/util:constructSharedArrayBuffer", 0x073B);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
 pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
