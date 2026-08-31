@@ -731,10 +731,9 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             return Ok(Value::Boolean(true));
         }
         let pattern = if source.is_empty() { "(?:)" } else { &source };
-        let re_flags = build_re_flags(&flags);
         let found = anchored_match_units(&source, &flags, last_index, units)
             .then(|| {
-                let regex = compiled_for(receiver, pattern, &re_flags)?;
+                let regex = compiled_for(receiver, pattern, &flags)?;
                 find_match_units(&regex, units, search_start, flags.contains('y'))
             })
             .transpose()?
@@ -766,13 +765,12 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(true));
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let re_flags = build_re_flags(&flags);
     let found = anchored_match(&source, &flags, last_index, &s)
         .then(|| {
             compile_and_find(
                 receiver,
                 pattern,
-                &re_flags,
+                &flags,
                 &s,
                 search_start,
                 flags.contains('y'),
@@ -880,13 +878,12 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return build_native_match_result(receiver, &s, matched, &flags);
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let re_flags = build_re_flags(&flags);
     if let Some(m) = anchored_match(&source, &flags, last_index, &s)
         .then(|| {
             compile_and_find(
                 receiver,
                 pattern,
-                &re_flags,
+                &flags,
                 &s,
                 search_start,
                 flags.contains('y'),
@@ -1267,7 +1264,7 @@ include!("regexp_tail.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, has_regexp_internal_slot, replace_with_template};
+    use super::{compile, has_regexp_internal_slot, regexp_flags_key, replace_with_template};
     use crate::value::{ObjectData, Value};
 
     #[test]
@@ -1283,6 +1280,14 @@ mod tests {
     #[test]
     fn unicode_ranges_are_checked_by_the_regex_parser() {
         compile(r"^[\w\u0128-\uffff*_-]+$", "").expect("valid Unicode range");
+    }
+
+    #[test]
+    fn regexp_cache_key_uses_only_semantic_flags() {
+        assert_eq!(regexp_flags_key(""), regexp_flags_key("gdy"));
+        assert_eq!(regexp_flags_key("iu"), regexp_flags_key("ui"));
+        assert_ne!(regexp_flags_key("i"), regexp_flags_key("ii"));
+        assert_ne!(regexp_flags_key("u"), regexp_flags_key("uv"));
     }
 
     #[test]
