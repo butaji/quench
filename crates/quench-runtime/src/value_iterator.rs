@@ -96,7 +96,7 @@ pub enum IteratorState {
     },
     RegExpString {
         regexp: Value,
-        input: String,
+        input: Value,
         global: bool,
         unicode: bool,
         done: bool,
