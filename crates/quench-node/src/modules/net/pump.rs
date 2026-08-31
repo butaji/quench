@@ -360,12 +360,17 @@ fn emit_onread(socket: &Value, bytes: &[u8], callback: &Value) -> Result<usize, 
         }
         let result = execute::call(callback, socket, &[Value::Number(count as f64), buffer])?;
         offset += count;
-        if matches!(result, Value::Boolean(false))
-            || matches!(
-                execute::get_property(socket, ONREAD_PAUSED_PROP),
-                Value::Boolean(true)
-            )
-        {
+        if matches!(result, Value::Boolean(false)) {
+            // Returning false is the onread backpressure signal. Persist the
+            // implicit pause on the same socket so the next pump turn cannot
+            // re-enter the callback until resume() clears it.
+            super::replace_socket_property(socket, ONREAD_PAUSED_PROP, Value::Boolean(true));
+            break;
+        }
+        if matches!(
+            execute::get_property(socket, ONREAD_PAUSED_PROP),
+            Value::Boolean(true)
+        ) {
             break;
         }
     }
