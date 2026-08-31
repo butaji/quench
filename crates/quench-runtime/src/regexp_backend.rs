@@ -1240,7 +1240,7 @@ fn reverse_class_options(
     unicode: bool,
 ) -> Vec<State> {
     let mut output = Vec::new();
-    for width in 1..=state.position.min(32) {
+    for width in 1..=state.position.min(class_max_width(class)) {
         let start = state.position - width;
         if class_match_widths(class, input, start, ignore_case, unicode).contains(&width) {
             output.push(State {
@@ -1251,6 +1251,35 @@ fn reverse_class_options(
     }
     output.reverse();
     output
+}
+
+fn class_max_width(class: &ClassExpr) -> usize {
+    class
+        .items
+        .iter()
+        .map(class_item_max_width)
+        .max()
+        .unwrap_or(1)
+}
+
+fn class_item_max_width(item: &ClassItem) -> usize {
+    match item {
+        ClassItem::String(expected) => expected.len(),
+        ClassItem::Property { name, .. } if is_string_property(name) => {
+            string_property_max_width(name)
+        }
+        ClassItem::Nested(nested) => class_max_width(nested),
+        _ => 1,
+    }
+}
+
+fn string_property_max_width(name: &str) -> usize {
+    match name {
+        "Basic_Emoji" => 2,
+        "RGI_Emoji_Flag_Sequence" | "RGI_Emoji_Modifier_Sequence" => 3,
+        "RGI_Emoji_Tag_Sequence" => 8,
+        _ => 16,
+    }
 }
 
 fn reverse_repeat_options(
@@ -1464,12 +1493,7 @@ fn is_string_property(name: &str) -> bool {
 
 fn string_property_widths(name: &str, input: &[Unit], position: usize) -> Vec<usize> {
     let mut widths = Vec::new();
-    let limit = match name {
-        "Basic_Emoji" => 2,
-        "RGI_Emoji_Flag_Sequence" | "RGI_Emoji_Modifier_Sequence" => 3,
-        "RGI_Emoji_Tag_Sequence" => 8,
-        _ => 16,
-    };
+    let limit = string_property_max_width(name);
     for width in 1..=input.len().saturating_sub(position).min(limit) {
         if string_property_matches_units(name, &input[position..position + width]) {
             widths.push(width);
@@ -1956,6 +1980,14 @@ mod tests {
         source.push_str("|ab)$)ab$");
         let regex = Regex::with_flags(&source, Flags::default()).unwrap();
         assert!(regex.find_from("ab", 0).next().is_none());
+    }
+
+    #[test]
+    fn lookbehind_class_strings_use_their_declared_width() {
+        let text = "a".repeat(40) + "b";
+        let source = format!(r"(?<=[\q{{{}}}])b", "a".repeat(40));
+        let regex = Regex::with_flags(&source, Flags::from("v")).unwrap();
+        assert_eq!(regex.find_from(&text, 0).next().unwrap().range, 40..41);
     }
 
     #[test]
