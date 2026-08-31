@@ -651,11 +651,28 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             if !matches!(tls, Value::Undefined | Value::Null) {
                 Some(tls)
             } else {
+                let net = crate::modules::net::build_with_state(Some(state));
+                let net_socket = quench_runtime::execute::get_property(&net, "Socket");
+                let net_socket_prototype =
+                    quench_runtime::execute::get_property(&net_socket, "prototype");
+                let tls_socket = quench_runtime::execute::set_property(
+                    placeholder_constructor(None),
+                    "prototype",
+                    net_socket_prototype,
+                );
                 let base = placeholder_constructor(None);
                 Some(crate::host::namespace_object_from_pairs(vec![
-                    ("TLSSocket".into(), placeholder_constructor(Some(&base))),
+                    ("TLSSocket".into(), tls_socket),
                     ("Server".into(), placeholder_constructor(Some(&base))),
                     ("SecureContext".into(), placeholder_constructor(Some(&base))),
+                    (
+                        "connect".into(),
+                        crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+                    ),
+                    (
+                        "createServer".into(),
+                        crate::host::capability(crate::registry::SPEC_NET_SERVER),
+                    ),
                 ]))
             }
         }
