@@ -28,6 +28,8 @@ enum NativePattern<'a> {
     },
 }
 
+const PROPERTY_RANGE_THRESHOLD: usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeMatch {
     pub(crate) start: usize,
@@ -222,7 +224,7 @@ fn property_matches(
 fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
     matches!(
         (name, value),
-        ("Any", _)
+        ("Any" | "Assigned", _)
             | ("Other", None)
             | ("C", None)
             | ("General_Category" | "gc", Some("Other" | "C" | "Surrogate" | "Cs"))
@@ -249,8 +251,10 @@ fn find_property_repeat_str(
             end: input.len(),
         });
     }
-    if let Some(ranges) = property_ranges(name, value, negative) {
-        return find_property_repeat_char_ranges(input, &ranges);
+    if input.len() >= PROPERTY_RANGE_THRESHOLD {
+        if let Some(ranges) = property_ranges(name, value, negative) {
+            return find_property_repeat_char_ranges(input, &ranges);
+        }
     }
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
     let mut count = 0;
@@ -305,8 +309,10 @@ fn find_property_repeat_units(
             end: input.len(),
         });
     }
-    if let Some(ranges) = property_ranges(name, value, negative) {
-        return find_property_repeat_ranges(input, flags, &ranges);
+    if input.len() >= PROPERTY_RANGE_THRESHOLD {
+        if let Some(ranges) = property_ranges(name, value, negative) {
+            return find_property_repeat_ranges(name, value, negative, input, flags, &ranges);
+        }
     }
     let unicode = flags.contains('u') || flags.contains('v');
     let matcher = crate::regexp_backend::compile_property_matcher(name, value)?;
@@ -396,6 +402,9 @@ fn complement_ranges(ranges: Vec<std::ops::RangeInclusive<u32>>) -> Vec<std::ops
 }
 
 fn find_property_repeat_ranges(
+    name: &str,
+    value: Option<&str>,
+    negative: bool,
     input: &[u16],
     flags: &str,
     ranges: &[std::ops::RangeInclusive<u32>],
@@ -404,9 +413,15 @@ fn find_property_repeat_ranges(
     let mut index = 0;
     let mut range_index = 0;
     while index < input.len() {
-        let (value, width) = next_code_point(input, index, unicode)
-            .map(|(character, width)| (u32::from(character), width))
-            .unwrap_or_else(|| (u32::from(input[index]), 1));
+        let Some((character, width)) = next_code_point(input, index, unicode) else {
+            let matched = surrogate_property_matches(name, value);
+            if if negative { matched } else { !matched } {
+                return None;
+            }
+            index += 1;
+            continue;
+        };
+        let value = u32::from(character);
         while ranges
             .get(range_index)
             .is_some_and(|range| *range.end() < value)
@@ -579,7 +594,7 @@ fn unit_matches(class: CharacterClass, unit: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_str, find_units, test_str, test_units};
+    use super::{find_str, find_units, surrogate_property_matches, test_str, test_units};
 
     #[test]
     fn literal_scan_respects_sticky_start() {
@@ -651,6 +666,10 @@ mod tests {
 
     #[test]
     fn property_repetition_reuses_compiled_unicode_data() {
+        assert!(surrogate_property_matches(
+            "General_Category",
+            Some("Surrogate")
+        ));
         assert_eq!(test_str("^\\p{Assigned}+$", "u", "abc", 0), Some(true));
         assert_eq!(test_str("^\\P{Assigned}+$", "u", "\u{38b}", 0), Some(true));
         assert_eq!(
