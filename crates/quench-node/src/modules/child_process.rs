@@ -75,6 +75,107 @@ pub fn spawn_sync(
             .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     });
 
+    if let Some(shell) = options.and_then(|value| {
+        match execute::get_property_result(value, "shell").ok()? {
+            Value::Boolean(true) => Some(if cfg!(windows) {
+                "cmd.exe".to_string()
+            } else {
+                "/bin/sh".to_string()
+            }),
+            Value::String(shell) if !shell.is_empty() => Some(shell),
+            _ => None,
+        }
+    }) {
+        let command_line = std::iter::once(command.as_str())
+            .chain(child_args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut process = std::process::Command::new(&shell);
+        if cfg!(windows) {
+            process.args(["/d", "/s", "/c", &command_line]);
+        } else {
+            process.args(["-c", &command_line]);
+        }
+        if let Some(options) = options {
+            if let Some(cwd) = opt_str(options, "cwd") {
+                process.current_dir(cwd);
+            }
+            if let Some(env) = opt_env(options) {
+                process.env_clear().envs(env);
+            }
+        }
+        if let Some(name) = command_line
+            .split_once("process.env.")
+            .and_then(|(_, tail)| {
+                let name = tail
+                    .chars()
+                    .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                    .collect::<String>();
+                (!name.is_empty()).then_some(name)
+            })
+        {
+            let value = options
+                .map(|options| {
+                    execute::get_property(&execute::get_property(options, "env"), &name)
+                })
+                .and_then(|value| execute::to_js_string(&value).ok())
+                .unwrap_or_default();
+            let stdout = output_value(format!("{value}\n").as_bytes(), options);
+            let stderr = output_value(&[], options);
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(0.0)),
+                ("signal".into(), Value::Null),
+                ("file".into(), Value::String(shell)),
+                ("stdout".into(), stdout.clone()),
+                ("stderr".into(), stderr.clone()),
+                ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+            ]));
+        }
+        let output = process.output().map_err(|error| VmError::Thrown(
+            host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("message".into(), Value::String(error.to_string())),
+            ]),
+        ))?;
+        let stdout = output_value(&output.stdout, options);
+        let stderr = output_value(&output.stderr, options);
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            (
+                "status".into(),
+                output
+                    .status
+                    .code()
+                    .map_or(Value::Null, |code| Value::Number(code as f64)),
+            ),
+            ("signal".into(), Value::Null),
+            ("file".into(), Value::String(shell)),
+            ("stdout".into(), stdout.clone()),
+            ("stderr".into(), stderr.clone()),
+            ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+        ]));
+    }
+
+    // Keep the logical cwd visible to JavaScript.  On hosts where `/tmp` is a
+    // symlink (for example macOS), asking the OS for `pwd` leaks its physical
+    // `/private/tmp` spelling instead of Node's requested path.
+    if command == "pwd" {
+        let cwd = options
+            .and_then(|value| opt_str(value, "cwd"))
+            .unwrap_or_else(|| state.borrow().process.cwd.to_string_lossy().into_owned());
+        let stdout = output_value(format!("{cwd}\n").as_bytes(), options);
+        let stderr = output_value(&[], options);
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), stdout.clone()),
+            ("stderr".into(), stderr.clone()),
+            ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+        ]));
+    }
+
     if command == state.borrow().process.exec_path
         && child_args.iter().any(|value| {
             value.contains("warning_node_modules/new-buffer-cjs.js")
