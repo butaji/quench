@@ -44,6 +44,16 @@ pub fn set_property(
     crate::builtins::set_property(target, key, value)
 }
 
+/// Set the observable function name through the runtime's canonical
+/// function-name machinery. Hosts may request this semantic operation without
+/// reaching into VM internals.
+pub fn set_dynamic_function_name(
+    value: &crate::value::Value,
+    key: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    crate::builtins::set_dynamic_function_name(value, key, None)
+}
+
 /// Mutate one existing ordinary-object slot while preserving object identity.
 /// Host state machines use this only where JavaScript observes identity.
 pub fn set_property_in_place(

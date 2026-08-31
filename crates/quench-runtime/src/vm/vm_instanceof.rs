@@ -28,6 +28,13 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if let Some(result) = builtin_instanceof(&value, &constructor) {
         return Ok(result);
     }
+    // A foreign realm's plain Error must not satisfy the root Error
+    // constructor even though both values carry the same builtin tag.
+    if intrinsic_builtin(&constructor) == Some(Builtin::Error)
+        && error_constructor_builtin(&value) == Some(Builtin::Error)
+    {
+        return Ok(builtin_error_instance(&value, &constructor));
+    }
     if let Some(handler) = has_instance_handler(&constructor)? {
         return call_has_instance(&handler, &constructor, &value);
     }
@@ -53,7 +60,7 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
     let Some(constructor) = intrinsic_builtin(constructor) else {
         return false;
     };
-    matches!(
+    if !matches!(
         constructor,
         Builtin::Error
             | Builtin::DOMException
@@ -64,7 +71,16 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && error_constructor_builtin(value) == Some(constructor)
+    ) || error_constructor_builtin(value) != Some(constructor)
+    {
+        return false;
+    }
+    // Error objects carry the prototype of the realm that created them.
+    // Matching only the builtin tag would make a foreign-realm Error pass
+    // an instanceof check against the root realm constructor.
+    let expected = crate::execute::get_property(&Value::Builtin(constructor), "prototype");
+    let actual = crate::execute::get_property(value, "\0prototype");
+    crate::builtins::same_value(Some(&expected), Some(&actual))
 }
 
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {

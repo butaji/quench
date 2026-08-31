@@ -6,8 +6,10 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
+use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::ops::FunctionKind;
 use quench_runtime::value::{IteratorState, Value};
 
@@ -91,6 +93,184 @@ pub fn parse_env(arguments: &[Value]) -> Result<Value, VmError> {
     let mut properties = vec![("\0prototype".into(), Value::Null)];
     properties.extend(unique);
     Ok(Value::object(properties))
+}
+
+/// Build the observable call-site records exposed by `util.getCallSites`.
+/// Source-map lookup is deliberately a host-edge concern: the runtime keeps
+/// executing the same code, while this adapter resolves the optional map
+/// named by the executed script when Node's flag is present.
+pub fn get_call_sites(
+    state: &Rc<RefCell<crate::host::HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.len() > 2
+        || args.get(1).is_some_and(|options| {
+            !matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+        })
+    {
+        return Err(execute::type_error("The options argument must be an object"));
+    }
+    let count = match args.first() {
+        None | Some(Value::Undefined) | Some(Value::Object(_)) | Some(Value::ObjectAlias(_)) => 10,
+        Some(Value::Number(value))
+            if value.is_finite() && *value >= 1.0 && value.fract() == 0.0 =>
+        {
+            if *value > 200.0 {
+                return Err(VmError::Thrown(Value::object(vec![
+                    ("name".into(), Value::String("RangeError".into())),
+                    ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                    (
+                        "message".into(),
+                        Value::String("The frame count must be between 1 and 200".into()),
+                    ),
+                ])));
+            }
+            *value as usize
+        }
+        Some(Value::Number(_)) => {
+            return Err(VmError::Thrown(Value::object(vec![
+                ("name".into(), Value::String("RangeError".into())),
+                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                (
+                    "message".into(),
+                    Value::String("The frame count must be an integer between 1 and 200".into()),
+                ),
+            ])));
+        }
+        Some(_) => return Err(execute::type_error("The frame count must be an integer")),
+    };
+
+    let script_name = state
+        .borrow()
+        .process
+        .argv
+        .get(1)
+        .cloned()
+        .unwrap_or_default();
+    let options = args.get(1).or_else(|| {
+        args.first().filter(|value| {
+            matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+        })
+    });
+    let source_map = options
+        .and_then(|options| execute::get_property_result(options, "sourceMap").ok())
+        .is_some_and(|value| matches!(value, Value::Boolean(true)))
+        .then(|| source_maps_enabled())
+        .and_then(|enabled| enabled.then(|| resolve_source_map(Path::new(&script_name))))
+        .flatten();
+    let mapped = source_map.unwrap_or_else(|| CallSite {
+        script_name: script_name.clone(),
+        line: 0,
+        column: 0,
+        function_name: None,
+    });
+    Ok(quench_runtime::host_api::array(
+        (0..count)
+            .map(|_| {
+                let mut properties = vec![
+                    ("scriptName".into(), Value::String(mapped.script_name.clone())),
+                    ("scriptId".into(), Value::String(mapped.script_name.clone())),
+                    ("lineNumber".into(), Value::Number(mapped.line as f64)),
+                    ("columnNumber".into(), Value::Number(mapped.column as f64)),
+                ];
+                if let Some(name) = &mapped.function_name {
+                    properties.push(("functionName".into(), Value::String(name.clone())));
+                }
+                quench_runtime::host_api::object(properties)
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Clone)]
+struct CallSite {
+    script_name: String,
+    line: u32,
+    column: u32,
+    function_name: Option<String>,
+}
+
+fn source_maps_enabled() -> bool {
+    let process = execute::get_property(&quench_runtime::vm::current_global_object(), "process");
+    let flags = execute::get_property(&process, "execArgv");
+    let Value::Array(values) = flags else {
+        return false;
+    };
+    (0..values.logical_len()).any(|index| {
+        matches!(
+            execute::to_js_string(&execute::get_property(&Value::Array(values.clone()), &index.to_string())),
+            Ok(flag) if flag == "--enable-source-maps"
+        )
+    })
+}
+
+fn resolve_source_map(script: &Path) -> Option<CallSite> {
+    let source = std::fs::read_to_string(script).ok()?;
+    let url = source
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("//# sourceMappingURL="))?;
+    if url.starts_with("data:") {
+        return None;
+    }
+    let map_path = script.parent().unwrap_or_else(|| Path::new(".")).join(url);
+    let map = std::fs::read_to_string(&map_path).ok()?;
+    let source_name = json_string_array_item(&map, "sources", 0)?;
+    let source_root = json_string_field(&map, "sourceRoot").unwrap_or_default();
+    let source_path = map_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(source_root)
+        .join(source_name);
+    let (line, column) = first_mapping(&map).unwrap_or((0, 0));
+    Some(CallSite {
+        script_name: source_path.to_string_lossy().into_owned(),
+        line,
+        column,
+        function_name: source
+            .split_once("function ")
+            .and_then(|(_, tail)| tail.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned),
+    })
+}
+
+fn json_string_field(json: &str, key: &str) -> Option<String> {
+    let start = json.find(&format!("\"{key}\""))?;
+    let tail = &json[start..];
+    let quote = tail.find(':').and_then(|index| tail[index + 1..].find('"'))?;
+    let value = &tail[tail.find(':')? + 1 + quote + 1..];
+    Some(value.split('"').next()?.to_owned())
+}
+
+fn json_string_array_item(json: &str, key: &str, index: usize) -> Option<String> {
+    let start = json.find(&format!("\"{key}\""))?;
+    let array = &json[start..].split_once('[')?.1;
+    array.split('"').filter(|value| !value.is_empty() && *value != ",").nth(index * 2)
+        .map(str::to_owned)
+}
+
+fn first_mapping(json: &str) -> Option<(u32, u32)> {
+    let mapping = json
+        .find("\"mappings\"")
+        .and_then(|start| json[start..].split_once(':'))?
+        .1
+        .split('"')
+        .nth(1)?;
+    let segment = mapping.split(';').next()?.split(',').next()?;
+    let mut values = segment.chars().filter_map(decode_vlq).collect::<Vec<_>>();
+    if values.len() < 4 {
+        return None;
+    }
+    let original_line = values.swap_remove(2);
+    let original_column = values.swap_remove(2);
+    Some(((original_line + 1) as u32, (original_column + 1) as u32))
+}
+
+fn decode_vlq(character: char) -> Option<i32> {
+    const DIGITS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let value = DIGITS.find(character)? as i32;
+    Some(if value & 1 == 1 { -(value >> 1) - 1 } else { value >> 1 })
 }
 
 fn has_closing_quote(value: &str, quote: char) -> bool {
