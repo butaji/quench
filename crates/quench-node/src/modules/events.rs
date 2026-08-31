@@ -472,18 +472,13 @@ pub fn method_emit(
         // Internal lifecycle listeners (for example stream auto-destroy) do
         // not consume Node's observable error channel. Run them for cleanup,
         // then preserve the ordinary unhandled-error throw.
-        let owner = execute::get_property(receiver, "__quenchOwner");
-        let initially_destroyed = matches!(
-            execute::get_property(receiver, "destroyed"),
-            Value::Boolean(true)
-        ) || matches!(execute::get_property(&owner, "destroyed"), Value::Boolean(true));
         for listener in &snapshot {
             let _ = execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]));
         }
-        if initially_destroyed {
-            return Err(unhandled_error(args.get(1)));
-        }
-        return Ok(Value::Boolean(true));
+        // Internal lifecycle listeners (such as autoDestroy) never count as
+        // an observable error handler; an `error` event still throws when no
+        // user listener is present.
+        return Err(unhandled_error(args.get(1)));
     }
     let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
     for listener in &snapshot {
