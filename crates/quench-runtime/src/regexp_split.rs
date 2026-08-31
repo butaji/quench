@@ -14,6 +14,19 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
                 unicode_mode(&flags),
             );
         }
+        if let Some(units) = crate::regexp::legacy_string_units(
+            &input,
+            &extract_source(&matcher),
+            &flags,
+        ) {
+            return split_with_exec_units(
+                matcher,
+                input.clone(),
+                &units,
+                limit,
+                unicode_mode(&flags),
+            );
+        }
         let input = crate::strings::materialize(&input).unwrap_or_default();
         return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
@@ -22,6 +35,21 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             return split_units_compiled(
                 input.clone(),
                 units,
+                &matcher,
+                limit,
+                unicode_mode(&flags),
+            );
+        }
+    }
+    if let Some(units) = crate::regexp::legacy_string_units(
+        &input,
+        &extract_source(&matcher),
+        &flags,
+    ) {
+        if !extract_source(&matcher).starts_with('^') {
+            return split_units_compiled(
+                input.clone(),
+                &units,
                 &matcher,
                 limit,
                 unicode_mode(&flags),
