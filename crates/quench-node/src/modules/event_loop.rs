@@ -3,7 +3,7 @@
 //! The pump drains these between timer phases; `process.nextTick`
 //! and timer callbacks enqueue into them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
@@ -11,6 +11,7 @@ use quench_runtime::value::Value;
 pub struct EventLoop {
     pub microtasks: RefCell<Vec<Microtask>>,
     pub immediates: RefCell<Vec<Immediate>>,
+    process_scope: Cell<u64>,
 }
 
 pub struct Immediate {
@@ -40,7 +41,16 @@ impl EventLoop {
         Self {
             microtasks: RefCell::new(Vec::new()),
             immediates: RefCell::new(Vec::new()),
+            process_scope: Cell::new(0),
         }
+    }
+
+    pub fn process_scope(&self) -> u64 {
+        self.process_scope.get()
+    }
+
+    pub fn set_process_scope(&self, scope: u64) {
+        self.process_scope.set(scope);
     }
 
     pub fn queue_microtask(&self, cb: Value, args: Vec<Value>) {
@@ -72,7 +82,7 @@ impl EventLoop {
             resource,
             domain: None,
             domain_stack: None,
-            process_scope: 0,
+            process_scope: self.process_scope.get(),
         });
     }
 
@@ -80,7 +90,7 @@ impl EventLoop {
     /// the normal `undefined` receiver; host-originated events retain the
     /// emitter identity here instead of emulating it through another object.
     pub fn queue_microtask_with_receiver(&self, cb: Value, args: Vec<Value>, receiver: Value) {
-        self.queue_microtask_with_receiver_scope(cb, args, receiver, 0);
+        self.queue_microtask_with_receiver_scope(cb, args, receiver, self.process_scope.get());
     }
 
     pub fn queue_microtask_with_receiver_scope(
@@ -115,7 +125,7 @@ impl EventLoop {
             resource,
             domain,
             domain_stack: None,
-            process_scope: 0,
+            process_scope: self.process_scope.get(),
         });
     }
 
@@ -133,7 +143,7 @@ impl EventLoop {
             resource,
             domain: stack.last().cloned(),
             domain_stack: Some(stack),
-            process_scope: 0,
+            process_scope: self.process_scope.get(),
         });
     }
 
