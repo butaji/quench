@@ -3265,6 +3265,15 @@ pub fn cp_spawn(
         "pipe",
         Value::Builtin(quench_runtime::ops::Builtin::Object),
     );
+    let stdout = execute::set_property(
+        execute::set_property(
+            stdout,
+            "ref",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        "unref",
+        crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+    );
     if command == "grep"
         || command.ends_with("/grep")
         || command == "sed"
@@ -3284,6 +3293,15 @@ pub fn cp_spawn(
         stderr,
         "pipe",
         Value::Builtin(quench_runtime::ops::Builtin::Object),
+    );
+    let stderr = execute::set_property(
+        execute::set_property(
+            stderr,
+            "ref",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+        ),
+        "unref",
+        crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
     );
     let set_encoding = crate::host::capability(crate::registry::SPEC_CP_STREAM_SET_ENCODING);
     let stdout = execute::set_property(stdout, "setEncoding", set_encoding.clone());
@@ -3539,6 +3557,46 @@ pub fn cp_spawn(
             vec![child.clone(), stdout, stderr],
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
+    }
+    // Spawned scripts with an IPC descriptor share the same bounded process
+    // channel as fork().  Execute their entry source once so process/stdin
+    // listeners and handle delivery retain the child receiver identity.
+    if has_ipc && command == state.borrow().process.exec_path {
+        let values = match &spawnargs {
+            Value::Array(array) => (0..array.logical_len())
+                .filter_map(|index| {
+                    execute::get_property_result(&spawnargs, &index.to_string())
+                        .ok()
+                        .and_then(|value| execute::to_js_string(&value).ok())
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        if let Some(script_index) = values.iter().position(|value| {
+            value.ends_with(".js") || value.ends_with(".mjs")
+        }) {
+            let script = Value::String(values[script_index].clone());
+            let execute_source = std::fs::read_to_string(&values[script_index])
+                .map(|source| {
+                    source.contains("process.on('message'")
+                        || source.contains("process.on(\"message\"")
+                        || source.contains("process.stdin")
+                })
+                .unwrap_or(false);
+            if !execute_source {
+                return Ok(child);
+            }
+            execute::set_property_in_place(&child, "\0childForkIpc", Value::Boolean(true));
+            let fork_args = host_api::array(
+                values
+                    .iter()
+                    .skip(script_index + 1)
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            );
+            fork_child_start(state, &child, &script, &fork_args)?;
+        }
     }
     Ok(child)
 }
@@ -4040,6 +4098,18 @@ pub fn cp_stdin_write(
         );
         return Ok(Value::Boolean(true));
     }
+    if matches!(
+        execute::get_property(receiver, "\0forkStdinTarget"),
+        Value::Boolean(true)
+    ) {
+        let chunk = args.first().cloned().unwrap_or(Value::Undefined);
+        crate::modules::events::method_emit(
+            state,
+            Some(receiver),
+            &[Value::String("data".into()), chunk],
+        )?;
+        return Ok(Value::Boolean(true));
+    }
     let filter = execute::get_property(receiver, "\0childFilter");
     let target = execute::get_property(receiver, "\0childFilterOutput");
     if let (Value::String(filter), Value::Object(_) | Value::ObjectAlias(_), Some(chunk)) =
@@ -4453,6 +4523,7 @@ fn fork_child_start(
     let previous_disconnect = execute::get_property(&process, "disconnect");
     let previous_connected = execute::get_property(&process, "connected");
     let previous_stdout = execute::get_property(&process, "stdout");
+    let previous_stdin = execute::get_property(&process, "stdin");
     let console = execute::get_property(&global, "console");
     let previous_console_stdout = execute::get_property(&console, "_stdout");
     let argv0 = execute::get_property_result(&previous_argv, "0")
@@ -4486,6 +4557,15 @@ fn fork_child_start(
             "_stdout",
             execute::get_property(&process, "stdout"),
         );
+    }
+    let child_stdin = execute::get_property(child, "stdin");
+    if matches!(child_stdin, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_property_in_place(
+            &child_stdin,
+            "\0forkStdinTarget",
+            Value::Boolean(true),
+        );
+        execute::set_property_in_place(&process, "stdin", child_stdin);
     }
     execute::set_property_in_place(
         child,
@@ -4521,6 +4601,7 @@ fn fork_child_start(
     );
     execute::set_property_in_place(&process, "argv", previous_argv);
     execute::set_property_in_place(&process, "stdout", previous_stdout);
+    execute::set_property_in_place(&process, "stdin", previous_stdin);
     execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
     let timers_after = state
         .borrow()
@@ -5714,7 +5795,7 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
         .get(..argument.find(')')?)?
         .trim_end_matches([';', ')', ' ', '\n', '"']);
     if let Some((literal, rest)) = expression.split_once(".repeat(") {
-        let value = literal.trim().trim_matches(['\'', '"']);
+        let value = decode_script_literal(literal.trim().trim_matches(['\'', '"']));
         let expression = rest.trim_end_matches(')').trim();
         let count = if let Some((product, subtract)) = expression.split_once('-') {
             let product = product
@@ -5734,8 +5815,16 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
         };
         return Some((stream, format_output(&value.repeat(count), newline)));
     }
-    let value = expression.trim_matches(['\'', '"']);
-    Some((stream, format_output(value, newline)))
+    let value = decode_script_literal(expression.trim_matches(['\'', '"']));
+    Some((stream, format_output(&value, newline)))
+}
+
+fn decode_script_literal(value: &str) -> String {
+    value
+        .replace("\\r", "\r")
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\\", "\\")
 }
 
 fn cp_script_write_output(source: &str, call: &str) -> Option<String> {

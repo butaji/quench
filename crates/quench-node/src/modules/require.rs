@@ -119,7 +119,7 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         return Ok(host_api::object(vec![
             (
                 "kChannelHandle".into(),
-                Value::String("\0kChannelHandle".into()),
+                Value::String("Symbol.kChannelHandle\0".into()),
             ),
         ]));
     }
