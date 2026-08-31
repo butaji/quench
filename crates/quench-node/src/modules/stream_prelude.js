@@ -1750,7 +1750,10 @@
           this._write(chunk, encoding, done);
         }
       } catch (error) {
-        if (this._write === WritableClass.prototype._write) throw error;
+        if (this._write === WritableClass.prototype._write ||
+            (this._isTransform && this._transform === TransformClass.prototype._transform)) {
+          throw error;
+        }
         done(error);
       }
       return !failed && st.buffered < st.highWaterMark;
@@ -1969,6 +1972,7 @@
       this._transformBackpressure = null;
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
+      if (options && options.final) this._final = options.final;
       // When the writable side finishes, flush then end the readable side.
       // Node flushes and closes the readable side during prefinish, before
       // the writable side emits finish.  Keeping this on the shared lifecycle
@@ -1984,10 +1988,15 @@
     }
 
     _transform(chunk, encoding, callback) {
-      callback(new Error("The _transform() method is not implemented"));
+      throw Object.assign(new Error("The _transform() method is not implemented"), {
+        code: "ERR_METHOD_NOT_IMPLEMENTED"
+      });
     }
 
     _write(chunk, encoding, callback) {
+      if (this._transform === TransformClass.prototype._transform) {
+        return this._transform(chunk, encoding, callback);
+      }
       this._transform(chunk, encoding, (error, data) => {
         if (!error && data != null) this.push(data);
         if (error) return callback(error);
