@@ -235,9 +235,14 @@ impl DenseElements {
     }
 
     fn snapshot(&self) -> Vec<Value> {
-        (0..self.len())
-            .filter_map(|index| self.value_at(index))
-            .collect()
+        match self {
+            Self::Numbers(values) => values
+                .borrow()
+                .iter()
+                .map(|value| Value::Number(value.get()))
+                .collect(),
+            Self::Values(values) => values.borrow().clone(),
+        }
     }
 }
 
@@ -1105,11 +1110,14 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        if self.deleted.iter().all(|deleted| !*deleted) && self.properties.is_empty() {
-            if let DenseElements::Numbers(values) = &self.values {
-                let values = values.borrow();
-                return values.iter().map(|number| Value::Number(number.get())).collect();
-            }
+        let dense = self.deleted.iter().all(|deleted| !*deleted)
+            && self.properties.is_empty()
+            && self.mapped.is_empty()
+            && self.argument_live.is_none()
+            && self.values.len() == self.logical_len()
+            && self.indexed_descriptors_plain();
+        if dense {
+            return self.values.snapshot();
         }
         (0..self.logical_len())
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
@@ -1458,6 +1466,20 @@ mod array_data_tests {
         data.set_index(0, Value::Boolean(true));
         assert_eq!(data.dense_number_at(0), None);
         assert_eq!(data.get_index(0), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn snapshot_includes_holes_after_numeric_length_growth() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0)]);
+        data.set_length(3);
+        assert_eq!(
+            data.snapshot(),
+            vec![
+                Value::Number(1.0),
+                Value::Undefined,
+                Value::Undefined,
+            ]
+        );
     }
 
     #[test]
