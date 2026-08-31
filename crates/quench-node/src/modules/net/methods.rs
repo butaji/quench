@@ -1770,6 +1770,23 @@ pub fn server_listen(
             ])));
         }
     }
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if matches!(execute::get_property(options, "fd"), Value::Number(_))
+            && matches!(execute::get_property(options, "handle"), Value::Undefined)
+        {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("listen EINVAL".into())],
+            );
+            let error = execute::set_property(error, "code", Value::String("EINVAL".into()));
+            let error = execute::set_property(error, "syscall", Value::String("listen".into()));
+            state.borrow_mut().net.pending_errors.push((receiver.clone(), error));
+            return Ok(receiver);
+        }
+    }
     if let Some(id) = super::net_id(&receiver) {
         let already_listening = state
             .borrow()
