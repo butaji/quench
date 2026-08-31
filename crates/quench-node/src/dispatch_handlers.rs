@@ -3629,7 +3629,7 @@ pub fn cp_spawn_output_emit(
 }
 
 pub fn cp_kill(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -3672,6 +3672,21 @@ pub fn cp_kill(
     };
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
     execute::set_property_in_place(child, "signalCode", signal);
+    if let Value::Object(_) | Value::ObjectAlias(_) = execute::get_property(child, "\0forkProcess") {
+        let process = execute::get_property(child, "\0forkProcess");
+        let previous_send = execute::get_property(child, "\0forkPreviousSend");
+        let previous_disconnect = execute::get_property(child, "\0forkPreviousDisconnect");
+        let previous_connected = execute::get_property(child, "\0forkPreviousConnected");
+        let _ = execute::set_property_in_place(&process, "send", previous_send);
+        let _ = execute::set_property_in_place(&process, "disconnect", previous_disconnect);
+        let _ = execute::set_property_in_place(&process, "connected", previous_connected);
+        let _ = execute::set_property_in_place(&process, "\0forkChild", Value::Undefined);
+        let _ = crate::modules::process::emit(
+            state,
+            &[Value::String("disconnect".into())],
+        );
+        execute::set_property_in_place(child, "\0forkProcess", Value::Undefined);
+    }
     Ok(Value::Boolean(true))
 }
 
@@ -3811,16 +3826,6 @@ pub fn cp_fork(
             ])));
         }
     }
-    let has_child_marker = matches!(&fork_args, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
-    let child_messages = fork_child_messages(&script);
-    let child_what_messages = fork_child_what_messages(&script);
-    if has_child_marker || !child_messages.is_empty() || !child_what_messages.is_empty() {
-        execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
-        let stderr = fork_child_stream_output(&script, "process.stderr.write");
-        if !stderr.is_empty() {
-            execute::set_property_in_place(&options, "\0quench:forkStderr", Value::String(stderr));
-        }
-    }
     let fork_args_for_events = fork_args.clone();
     let child = cp_spawn(state, None, &[script.clone(), fork_args, options.clone()])?;
     // `fork()` exposes the child stdio slots according to the caller's
@@ -3877,154 +3882,79 @@ pub fn cp_fork(
         "disconnect",
         crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
     );
-    let has_child_marker = matches!(&fork_args_for_events, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args_for_events, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
-    if has_child_marker || !child_messages.is_empty() || !child_what_messages.is_empty() {
-        execute::set_property_in_place(&child, "\0childForkIpc", Value::Boolean(true));
-        for what in child_what_messages.iter().take(1) {
-            let callback = host_api::bound_capability_with_arguments(
-                quench_runtime::ops::HostCapabilityRef {
-                    realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
-                        crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
-                    ),
-                },
-                vec![
-                    child.clone(),
-                    host_api::object(vec![("what".into(), Value::String(what.clone()))]),
-                ],
-            );
-            state
-                .borrow_mut()
-                .event_loop
-                .queue_microtask(callback, vec![]);
-        }
-        let messages = if child_messages.is_empty() && child_what_messages.is_empty() {
-            vec!["1".into(), "2".into()]
-        } else {
-            child_messages
-        };
-        for message in messages {
-            let callback = host_api::bound_capability_with_arguments(
-                quench_runtime::ops::HostCapabilityRef {
-                    realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
-                        crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
-                    ),
-                },
-                vec![child.clone(), Value::String(message.into())],
-            );
-            state
-                .borrow_mut()
-                .event_loop
-                .queue_microtask(callback, vec![]);
-        }
-        if fork_child_disconnects(&script) {
-            let callback = host_api::bound_capability_with_arguments(
-                quench_runtime::ops::HostCapabilityRef {
-                    realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
-                        crate::registry::SPEC_CP_DISCONNECT_EMIT.cap,
-                    ),
-                },
-                vec![child.clone(), Value::String("disconnect".into())],
-            );
-            state
-                .borrow_mut()
-                .event_loop
-                .queue_microtask(callback, vec![]);
-        }
-    }
+    // Run the forked fixture with child argv and a real bidirectional IPC
+    // channel. This is source-driven process semantics, not a fixture-name
+    // table: the child sends whatever its `process.send` call supplies.
+    fork_child_start(state, &child, &script, &fork_args_for_events)?;
     Ok(child)
 }
 
-fn fork_child_disconnects(script: &Value) -> bool {
-    let Value::String(path) = script else {
-        return false;
+/// Execute the current fixture once in forked-process mode. The host keeps a
+/// single VM realm, so process identity is scoped by the saved process fields
+/// while the IPC channel remains attached to the original child object.
+fn fork_child_start(
+    state: &Rc<RefCell<HostState>>,
+    child: &Value,
+    script: &Value,
+    fork_args: &Value,
+) -> Result<(), VmError> {
+    let Value::String(filename) = script else {
+        return Ok(());
     };
-    std::fs::read_to_string(path)
-        .map(|source| source.contains("process.disconnect("))
-        .unwrap_or(false)
-}
-
-fn fork_child_messages(script: &Value) -> Vec<String> {
-    let Value::String(path) = script else {
-        return Vec::new();
+    let Ok(source) = std::fs::read_to_string(filename) else {
+        return Ok(());
     };
-    let Ok(source) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    source
-        .split("process.send(")
-        .skip(1)
-        .filter_map(|tail| {
-            let value = tail.split_once(')')?.0.trim();
-            let value = value
-                .strip_prefix('\'')
-                .or_else(|| value.strip_prefix('"'))?;
-            Some(
-                value
-                    .strip_suffix('\'')
-                    .or_else(|| value.strip_suffix('"'))?
-                    .to_string(),
-            )
-        })
-        .collect()
-}
-
-fn fork_child_what_messages(script: &Value) -> Vec<String> {
-    let Value::String(path) = script else {
-        return Vec::new();
-    };
-    let Ok(source) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    source
-        .split("process.send(")
-        .skip(1)
-        .filter_map(|tail| {
-            let value = tail.split_once(')')?.0;
-            let value = value.split_once("what:")?.1.trim();
-            let value = value
-                .strip_prefix("'")
-                .or_else(|| value.strip_prefix('"'))?;
-            Some(
-                value
-                    .strip_suffix("'")
-                    .or_else(|| value.strip_suffix('"'))?
-                    .to_string(),
-            )
-        })
-        .collect()
-}
-
-fn fork_child_stream_output(script: &Value, marker: &str) -> String {
-    let Value::String(path) = script else {
-        return String::new();
-    };
-    let Ok(source) = std::fs::read_to_string(path) else {
-        return String::new();
-    };
-    source
-        .split(marker)
-        .skip(1)
-        .find_map(|tail| {
-            let value = tail
-                .split_once(')')?
-                .0
-                .trim()
-                .trim_start_matches('(')
-                .trim();
-            let value = value
-                .strip_prefix("'")
-                .or_else(|| value.strip_prefix('"'))?;
-            Some(
-                value
-                    .strip_suffix("'")
-                    .or_else(|| value.strip_suffix('"'))?
-                    .to_string(),
-            )
-        })
-        .unwrap_or_default()
+    let global = quench_runtime::vm::current_global_object();
+    let process = execute::get_property(&global, "process");
+    let previous_argv = execute::get_property(&process, "argv");
+    let previous_send = execute::get_property(&process, "send");
+    let previous_disconnect = execute::get_property(&process, "disconnect");
+    let previous_connected = execute::get_property(&process, "connected");
+    let argv0 = execute::get_property_result(&previous_argv, "0")
+        .unwrap_or_else(|_| Value::String("quench-node".into()));
+    let mut child_argv = vec![argv0, Value::String(filename.clone())];
+    if let Value::Array(values) = fork_args {
+        for index in 0..values.logical_len() {
+            child_argv.push(
+                execute::get_property_result(fork_args, &index.to_string())
+                    .unwrap_or(Value::Undefined),
+            );
+        }
+    }
+    execute::set_property_in_place(&process, "argv", host_api::array(child_argv));
+    execute::set_property_in_place(&process, "connected", Value::Boolean(true));
+    execute::set_property_in_place(
+        child,
+        "\0forkProcess",
+        process.clone(),
+    );
+    execute::set_property_in_place(child, "\0forkPreviousSend", previous_send.clone());
+    execute::set_property_in_place(child, "\0forkPreviousDisconnect", previous_disconnect.clone());
+    execute::set_property_in_place(child, "\0forkPreviousConnected", previous_connected.clone());
+    execute::set_property_in_place(
+        &process,
+        "send",
+        crate::host::capability(crate::registry::SPEC_CP_SEND),
+    );
+    execute::set_property_in_place(&process, "\0forkChild", child.clone());
+    let wrapped = crate::modules::require::wrap_cjs(state, filename, &source);
+    let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    let result = quench_runtime::vm::execute_code_in_place_context(
+        program.code(),
+        &mut registers,
+        &context,
+    );
+    execute::set_property_in_place(&process, "argv", previous_argv);
+    if result.is_err() {
+        execute::set_property_in_place(&process, "send", previous_send);
+        execute::set_property_in_place(&process, "disconnect", previous_disconnect);
+        execute::set_property_in_place(&process, "connected", previous_connected);
+        return result.map(|_| ());
+    }
+    Ok(())
 }
 
 pub fn cp_message_emit(
@@ -4077,7 +4007,16 @@ pub fn cp_send(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let child = receiver.ok_or(VmError::NotCallable)?;
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fork_child = execute::get_property(receiver, "\0forkChild");
+    let from_fork_process = matches!(fork_child, Value::Object(_) | Value::ObjectAlias(_));
+    let child_process = execute::get_property(receiver, "\0forkProcess");
+    let to_fork_process = matches!(child_process, Value::Object(_) | Value::ObjectAlias(_));
+    let child = if from_fork_process {
+        &fork_child
+    } else {
+        receiver
+    };
     let message = args
         .first()
         .filter(|value| !matches!(value, Value::Undefined))
@@ -4098,7 +4037,9 @@ pub fn cp_send(
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
         ])));
     }
-    let delivered = if args
+    let delivered = if from_fork_process || to_fork_process {
+        message.clone()
+    } else if args
         .get(1)
         .is_some_and(|value| !matches!(value, Value::Undefined | Value::Null))
     {
@@ -4106,14 +4047,25 @@ pub fn cp_send(
     } else {
         host_api::object(vec![("foo".into(), Value::Boolean(true))])
     };
-    let mut event_args = vec![Value::String("message".into()), delivered];
+    let mut event_args = vec![Value::String("message".into()), delivered.clone()];
     if let Some(handle) = args
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined | Value::Null))
     {
         event_args.push(handle.clone());
     }
-    crate::modules::events::method_emit(state, Some(child), &event_args)?;
+    if to_fork_process {
+        let mut process_args = vec![Value::String("message".into()), delivered.clone()];
+        if let Some(handle) = args
+            .get(1)
+            .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+        {
+            process_args.push(handle.clone());
+        }
+        crate::modules::process::emit(state, &process_args)?;
+    } else {
+        crate::modules::events::method_emit(state, Some(child), &event_args)?;
+    }
     if let Value::Object(_) | Value::ObjectAlias(_) = message {
         let what = execute::get_property(message, "what");
         if let Value::String(what) = what {
