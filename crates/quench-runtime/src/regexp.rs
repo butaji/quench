@@ -657,32 +657,6 @@ fn source_contains_surrogate_escape(source: &str) -> bool {
     })
 }
 
-fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> bool {
-    if last_index == 0 || !source.starts_with('^') {
-        return true;
-    }
-    if !flags.contains('m') {
-        return false;
-    }
-    [last_index.saturating_sub(1), last_index]
-        .into_iter()
-        .filter_map(|index| crate::strings::utf16_code_unit(input, index))
-        .any(|unit| unit == b'\n' as u16 || unit == b'\r' as u16)
-}
-
-fn anchored_match_units(source: &str, flags: &str, last_index: usize, input: &[u16]) -> bool {
-    if last_index == 0 || !source.starts_with('^') {
-        return true;
-    }
-    if !flags.contains('m') {
-        return false;
-    }
-    [last_index.saturating_sub(1), last_index]
-        .into_iter()
-        .filter_map(|index| input.get(index))
-        .any(|unit| *unit == b'\n' as u16 || *unit == b'\r' as u16)
-}
-
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -721,13 +695,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             return Ok(Value::Boolean(true));
         }
         let pattern = if source.is_empty() { "(?:)" } else { &source };
-        let found = anchored_match_units(&source, &flags, last_index, units)
-            .then(|| {
-                let regex = compiled_for(receiver, pattern, &flags)?;
-                find_match_units(&regex, units, search_start, flags.contains('y'))
-            })
-            .transpose()?
-            .flatten();
+        let regex = compiled_for(receiver, pattern, &flags)?;
+        let found = find_match_units(&regex, units, search_start, flags.contains('y'))?;
         if global_or_sticky {
             set_last_index(
                 receiver,
@@ -738,9 +707,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     if !flags.contains(['u', 'v'])
-        && nonunicode_code_unit_pattern(&source)
         && builtin_regexp_exec_property(receiver)
-        && s.chars().any(|character| character.len_utf16() == 2)
+        && contains_astral(&s)
     {
         let units = s.encode_utf16().collect::<Vec<_>>();
         return test(
@@ -768,19 +736,14 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(true));
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let found = anchored_match(&source, &flags, last_index, &s)
-        .then(|| {
-            compile_and_find(
-                receiver,
-                pattern,
-                &flags,
-                &s,
-                search_start,
-                flags.contains('y'),
-            )
-        })
-        .transpose()?
-        .flatten();
+    let found = compile_and_find(
+        receiver,
+        pattern,
+        &flags,
+        &s,
+        search_start,
+        flags.contains('y'),
+    )?;
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
         // `compile_and_find` returns ranges in absolute input coordinates;
@@ -880,10 +843,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
-    if !flags.contains(['u', 'v'])
-        && nonunicode_code_unit_pattern(&source)
-        && s.chars().any(|character| character.len_utf16() == 2)
-    {
+    if !flags.contains(['u', 'v']) && contains_astral(&s) {
         let units = s.encode_utf16().collect::<Vec<_>>();
         return exec_units(receiver, Value::String(s), &units);
     }
@@ -896,20 +856,14 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return build_native_match_result(receiver, &s, matched, &flags);
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    if let Some(m) = anchored_match(&source, &flags, last_index, &s)
-        .then(|| {
-            compile_and_find(
-                receiver,
-                pattern,
-                &flags,
-                &s,
-                search_start,
-                flags.contains('y'),
-            )
-        })
-        .transpose()?
-        .flatten()
-    {
+    if let Some(m) = compile_and_find(
+        receiver,
+        pattern,
+        &flags,
+        &s,
+        search_start,
+        flags.contains('y'),
+    )? {
         build_match_result(receiver, &s, m, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
@@ -935,13 +889,8 @@ fn exec_units(receiver: &Value, input: Value, units: &[u16]) -> Result<Value, Vm
         return build_units_native_match_result(receiver, input, units, matched, &flags);
     }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let found = anchored_match_units(&source, &flags, last_index, units)
-        .then(|| {
-            let regex = compiled_for(receiver, pattern, &flags)?;
-            find_match_units(&regex, units, search_start, flags.contains('y'))
-        })
-        .transpose()?
-        .flatten();
+    let regex = compiled_for(receiver, pattern, &flags)?;
+    let found = find_match_units(&regex, units, search_start, flags.contains('y'))?;
     if let Some(matched) = found {
         return build_units_match_result(receiver, input, units, matched, &flags);
     }
@@ -981,16 +930,15 @@ fn build_match_result(
         set_last_index(receiver, new_index as f64)?;
     }
     let unicode = flags.contains('u') || flags.contains('v');
-    let split_astral = !unicode && nonunicode_code_unit_pattern(&extract_source(receiver));
-    let values = match_values(s, &m, !split_astral);
+    let values = match_values(s, &m, unicode);
     let index = Value::Number(crate::strings::byte_to_utf16(s, m.start()) as f64);
-    let groups = named_groups(s, &m, !split_astral);
+    let groups = named_groups(s, &m, unicode);
     let mut result = match_result(values, index, s, groups);
     if flags.contains('d') {
         result = crate::builtins::set_property(
             result,
             "indices",
-            match_indices(s, &m, !split_astral),
+            match_indices(s, &m, unicode),
         );
     }
     Ok(result)
@@ -1085,23 +1033,18 @@ fn build_units_match_result(
     Ok(result)
 }
 
-fn nonunicode_code_unit_pattern(source: &str) -> bool {
-    source == "."
-        || source.contains(".") && source.contains("(?<")
-        || source_contains_surrogate_escape(source)
-}
-
-fn legacy_string_units(input: &Value, source: &str, flags: &str) -> Option<Vec<u16>> {
-    if flags.contains(['u', 'v']) || !nonunicode_code_unit_pattern(source) {
+fn legacy_string_units(input: &Value, flags: &str) -> Option<Vec<u16>> {
+    if flags.contains(['u', 'v']) {
         return None;
     }
     let Value::String(input) = input else {
         return None;
     };
-    input
-        .chars()
-        .any(|character| character.len_utf16() == 2)
-        .then(|| input.encode_utf16().collect())
+    contains_astral(input).then(|| input.encode_utf16().collect())
+}
+
+fn contains_astral(input: &str) -> bool {
+    !input.is_ascii() && input.bytes().any(|byte| byte >= 0xF0)
 }
 
 fn match_indices(text: &str, m: &Match, unicode: bool) -> Value {
@@ -2140,5 +2083,46 @@ mod tests {
         assert_eq!(parts.get_index(0), Some(Value::String(String::new())));
         assert_eq!(parts.get_index(1), Some(Value::String(String::new())));
         assert_eq!(parts.get_index(2), Some(Value::String(String::new())));
+    }
+
+    #[test]
+    fn legacy_astral_literal_matches_astral_string() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("😀".to_string())),
+                ("\0regexp_flags".to_string(), Value::String(String::new())),
+            ])
+            .into(),
+        );
+        let result = super::exec(Some(&regexp), &[Value::String("😀".to_string())])
+            .expect("exec");
+        assert!(!matches!(result, Value::Null));
+    }
+
+    #[test]
+    fn legacy_negated_class_advances_one_utf16_unit_for_astral_input() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("[^]".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = Value::String("😀".to_string());
+        let first = super::exec(Some(&regexp), std::slice::from_ref(&input)).expect("exec");
+        assert_eq!(
+            crate::execute::get_property_result(&first, "0").expect("match"),
+            crate::strings::from_units(vec![0xD83D])
+        );
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
+            Value::Number(1.0)
+        );
     }
 }
