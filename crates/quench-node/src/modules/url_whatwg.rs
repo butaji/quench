@@ -163,6 +163,11 @@ fn build_class() -> (Value, Value) {
     let _ = execute::set_callable_property(&constructor, "prototype", prototype.clone());
     let _ = execute::set_callable_property(
         &constructor,
+        "createObjectURL",
+        crate::host::capability(specs::SPEC_URL_CREATE_OBJECT_URL),
+    );
+    let _ = execute::set_callable_property(
+        &constructor,
         "revokeObjectURL",
         crate::host::capability(specs::SPEC_URL_REVOKE_OBJECT_URL),
     );
@@ -266,15 +271,59 @@ fn missing_args() -> VmError {
     ]))
 }
 
-/// `URL.revokeObjectURL(url)` — object URLs are not supported; the argument
-/// must still be present.
+fn blob_instance(value: &Value) -> bool {
+    let global = quench_runtime::vm::current_global_object();
+    let constructor = execute::get_property(&global, "Blob");
+    let expected = execute::get_property(&constructor, "prototype");
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(candidate) = current {
+        if candidate == expected {
+            return true;
+        }
+        current = execute::get_prototype_of(&candidate).ok();
+    }
+    false
+}
+
+/// `URL.createObjectURL(blob)` stores one strong host root and returns its id.
+pub fn create_object_url(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(blob) = args.first() else {
+        return Err(execute::type_error(
+            "The \"obj\" argument must be an instance of Blob",
+        ));
+    };
+    if !blob_instance(blob) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"obj\" argument must be an instance of Blob".into()),
+            ),
+        ])));
+    }
+    let mut guard = state.borrow_mut();
+    let id = format!("blob:nodedata:quench-{}", guard.next_blob_url);
+    guard.next_blob_url += 1;
+    guard.blob_urls.insert(id.clone(), blob.clone());
+    Ok(Value::String(id))
+}
+
+/// `URL.revokeObjectURL(url)` removes the host root when one is registered.
 pub fn revoke_object_url(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(missing_args());
+    }
+    if let Some(Value::String(id)) = args.first() {
+        state.borrow_mut().blob_urls.remove(id);
     }
     Ok(Value::Undefined)
 }
