@@ -74,6 +74,9 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         if let Value::Boolean(value) = execute::get_property(options, "keepAlive") {
             execute::set_property_in_place(&object, "keepAlive", Value::Boolean(value));
         }
+        if let Value::Boolean(value) = execute::get_property(options, "ipv6Only") {
+            execute::set_property_in_place(&object, "ipv6Only", Value::Boolean(value));
+        }
         if let Value::Number(value) = execute::get_property(options, "keepAliveInitialDelay") {
             execute::set_property_in_place(&object, "keepAliveInitialDelay", Value::Number(value));
         }
@@ -1223,6 +1226,22 @@ fn connect_with_receiver(
             .push((object.clone(), error));
         return Ok(object);
     };
+    let ipv6_only_reject = first_addr.is_ipv4()
+        && state.borrow().net.servers.values().any(|server| {
+            let server = server.borrow();
+            server.bind_addr.is_some_and(|address| {
+                address.port() == port
+                    && address.is_ipv6()
+                    && matches!(execute::get_property(&server.js, "ipv6Only"), Value::Boolean(true))
+            })
+        });
+    if ipv6_only_reject {
+        return connect_refused(
+            state,
+            receiver.or(lookup_socket_for_result.as_ref()),
+            &first_addr,
+        );
+    }
     let mut selected = None;
     for addr in candidate_addrs {
         if let Ok(stream) = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
@@ -1768,6 +1787,14 @@ pub fn server_listen(
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
+        }
+    }
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if let Value::Boolean(value) = execute::get_property(options, "ipv6Only") {
+            execute::set_property_in_place(&receiver, "ipv6Only", Value::Boolean(value));
         }
     }
     if let Some(options) = args
