@@ -2545,9 +2545,21 @@ fn ensure_http_handle(socket: &Value) {
 
 fn response_allows_reuse(response: &Value) -> bool {
     let headers = execute::get_property(response, "headers");
-    !execute::to_js_string(&execute::get_property(&headers, "connection"))
+    if execute::to_js_string(&execute::get_property(&headers, "connection"))
         .ok()
         .is_some_and(|value| value.eq_ignore_ascii_case("close"))
+    {
+        return false;
+    }
+    let has_length = !matches!(
+        execute::get_property(&headers, "content-length"),
+        Value::Undefined
+    );
+    let has_encoding = !matches!(
+        execute::get_property(&headers, "transfer-encoding"),
+        Value::Undefined
+    );
+    has_length || has_encoding
 }
 
 fn response_status(head: &[u8]) -> Option<u16> {
