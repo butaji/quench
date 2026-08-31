@@ -5345,48 +5345,21 @@ pub fn cp_exec_sync(
         Value::Array(entries) => entries.first(),
         _ => None,
     });
+    let shell_options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let Some(source) = command
+        .map(String::as_str)
+        .and_then(|command| cp_shell_script(command, &shell_options))
+    {
+        if let Some((stream, output)) = cp_script_output(&source) {
+            return cp_sync_script_result(&stream, &output, &shell_options);
+        }
+    }
     if command == Some(&state.borrow().process.exec_path) {
         if let Some(Value::Array(values)) = args.get(1) {
             if let Some(Value::String(source)) = values.get(1) {
                 if let Some((stream, output)) = cp_script_output(&source) {
                     let options = args.get(2).cloned().unwrap_or(Value::Undefined);
-                    let limit = match execute::get_property(&options, "maxBuffer") {
-                        Value::Number(value) if value.is_finite() && value >= 0.0 => {
-                            Some(value as usize)
-                        }
-                        Value::Undefined => Some(1024 * 1024),
-                        _ => None,
-                    };
-                    if limit.is_some_and(|limit| output.len() > limit) {
-                        let mut error = quench_runtime::builtins::error(
-                            quench_runtime::ops::Builtin::Error,
-                            &[Value::String("spawnSync ENOBUFS".into())],
-                        );
-                        execute::set_property_in_place(
-                            &mut error,
-                            "code",
-                            Value::String("ENOBUFS".into()),
-                        );
-                        execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
-                        execute::set_property_in_place(
-                            &mut error,
-                            "stdout",
-                            cp_buffer_value(if stream == "stdout" { &output } else { "" })?,
-                        );
-                        execute::set_property_in_place(
-                            &mut error,
-                            "stderr",
-                            cp_buffer_value(if stream == "stderr" { &output } else { "" })?,
-                        );
-                        return Err(VmError::Thrown(error));
-                    }
-                    if matches!(
-                        execute::get_property(&options, "encoding"),
-                        Value::String(_)
-                    ) {
-                        return Ok(Value::String(output));
-                    }
-                    return Ok(cp_buffer_value(&output)?);
+                    return cp_sync_script_result(&stream, &output, &options);
                 }
             }
         }
@@ -5427,6 +5400,62 @@ pub fn cp_exec_sync(
         return Err(VmError::Thrown(error));
     }
     Ok(Value::String(String::new()))
+}
+
+fn cp_shell_script(command: &str, options: &Value) -> Option<String> {
+    let (marker, width) = command
+        .find(" -e ")
+        .map(|marker| (marker, 4))
+        .or_else(|| command.find(" --eval ").map(|marker| (marker, 8)))?;
+    let script = command.get(marker + width..)?.trim();
+    let mut script = script
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| script.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')))
+            .unwrap_or(script)
+            .replace("\\\"", "\"");
+    let env = execute::get_property(options, "env");
+    for index in 0..8 {
+        let key = format!("ESCAPED_{index}");
+        let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+        script = script.replace(&format!("${{{key}}}"), &value);
+    }
+    Some(script)
+}
+
+fn cp_sync_script_result(
+    stream: &str,
+    output: &str,
+    options: &Value,
+) -> Result<Value, VmError> {
+    let limit = match execute::get_property(options, "maxBuffer") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+        Value::Undefined => Some(1024 * 1024),
+        _ => None,
+    };
+    if limit.is_some_and(|limit| output.len() > limit) {
+        let mut error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("spawnSync ENOBUFS".into())],
+        );
+        execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
+        execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
+        execute::set_property_in_place(
+            &mut error,
+            "stdout",
+            cp_buffer_value(if stream == "stdout" { output } else { "" })?,
+        );
+        execute::set_property_in_place(
+            &mut error,
+            "stderr",
+            cp_buffer_value(if stream == "stderr" { output } else { "" })?,
+        );
+        return Err(VmError::Thrown(error));
+    }
+    if matches!(execute::get_property(options, "encoding"), Value::String(_)) {
+        return Ok(Value::String(output.to_string()));
+    }
+    cp_buffer_value(output)
 }
 
 fn cp_stream_output_value(stream: &Value, text: &str) -> Result<Value, VmError> {
@@ -5613,7 +5642,8 @@ pub fn cp_async(
     // exec()/execFile() expose text streams by default; only an explicit
     // `encoding: null` (or another non-utf8 encoding) keeps Buffer chunks.
     let encoding = execute::get_property(&options, "encoding");
-    if matches!(encoding, Value::Undefined)
+    let encoding_default = !execute::has_own_property(&options, "encoding");
+    if encoding_default
         || matches!(encoding, Value::String(ref value) if value == "utf8" || value == "utf-8")
     {
         let utf8 = Value::String("utf8".into());
