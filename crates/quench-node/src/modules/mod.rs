@@ -68,6 +68,6 @@ pub mod util;
 pub mod util_inherits;
 pub mod util_strip;
 pub mod util_style_text;
-pub mod vm;
+pub mod vm_api;
 pub mod wasi;
 pub mod zlib;
