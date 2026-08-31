@@ -716,7 +716,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "fs" => Some(crate::modules::fs::build()),
         "http" => Some(crate::modules::http::build(state)),
         "readline" => Some(crate::modules::readline::build()),
-        "vm" => Some(crate::modules::vm::build()),
+        "vm" => Some(crate::modules::vm_api::build()),
         "dgram" | "node:dgram" => {
             let global = quench_runtime::vm::current_global_object();
             let module = quench_runtime::execute::get_property(&global, "\0quench:dgram_module");
