@@ -19,6 +19,7 @@ pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 pub(crate) const REQ_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
+pub(crate) const HTTP_SERVER_SOCKET_PROP: &str = "\0quench:http:server-socket";
 pub(crate) const INCOMING_CLOSE_PENDING_PROP: &str = "\0quench:http:incoming:close-pending";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 const SERVER_RESPONSE_PROP: &str = "\0quench:http:server-response";
@@ -232,6 +233,7 @@ pub fn connection_handler(
     let Some(socket_id) = net::net_id(&socket) else {
         return Ok(Value::Undefined);
     };
+    execute::set_property_in_place(&socket, HTTP_SERVER_SOCKET_PROP, Value::Boolean(true));
     let require_host_header = receiver
         .map(|server| {
             matches!(
@@ -788,6 +790,7 @@ fn build_req_res(
         .get(&socket_id)
         .map(|socket| socket.borrow().js.clone())
     {
+        execute::set_property_in_place(&socket, HTTP_SERVER_SOCKET_PROP, Value::Boolean(true));
         execute::set_property_in_place(&req, "socket", socket.clone());
         execute::set_property_in_place(&req, "connection", socket);
     }
