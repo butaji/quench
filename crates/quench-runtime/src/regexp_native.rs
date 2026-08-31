@@ -404,10 +404,9 @@ fn find_property_repeat_ranges(
     let mut index = 0;
     let mut range_index = 0;
     while index < input.len() {
-        let Some((character, width)) = next_code_point(input, index, unicode) else {
-            return None;
-        };
-        let value = u32::from(character);
+        let (value, width) = next_code_point(input, index, unicode)
+            .map(|(character, width)| (u32::from(character), width))
+            .unwrap_or_else(|| (u32::from(input[index]), 1));
         while ranges
             .get(range_index)
             .is_some_and(|range| *range.end() < value)
@@ -660,6 +659,11 @@ mod tests {
         );
         assert_eq!(
             test_units("^\\p{Assigned}+$", "u", &[b'a' as u16, b'b' as u16], 0),
+            Some(true)
+        );
+        assert_eq!(test_units("^\\p{Assigned}+$", "u", &[0xD800], 0), Some(true));
+        assert_eq!(
+            test_units("^\\p{General_Category=Surrogate}+$", "u", &[0xD800], 0),
             Some(true)
         );
     }
