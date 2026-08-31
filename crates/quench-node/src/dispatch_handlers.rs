@@ -3685,7 +3685,17 @@ pub fn cp_spawn_output_emit(
             Value::String(value) => value,
             _ => String::new(),
         };
-        if args.iter().any(|arg| arg == "--no-warnings") {
+        let source_warns = args.iter().any(|arg| {
+            (!arg.starts_with('-') && (arg.ends_with(".js") || arg.ends_with(".mjs")))
+                && std::fs::read_to_string(arg)
+                    .map(|source| {
+                        source.contains("emitWarning")
+                            || source.contains("ExperimentalWarning")
+                    })
+                    .unwrap_or(false)
+        });
+        let should_warn = args.iter().any(|arg| arg == "--pending-deprecation") || source_warns;
+        if !should_warn || args.iter().any(|arg| arg == "--no-warnings") {
             String::new()
         } else {
             let mut lines = Vec::new();
@@ -5265,6 +5275,18 @@ pub fn cp_async(
         None,
         &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
+    // exec()/execFile() expose text streams by default; only an explicit
+    // `encoding: null` (or another non-utf8 encoding) keeps Buffer chunks.
+    let encoding = execute::get_property(&options, "encoding");
+    if matches!(encoding, Value::Undefined)
+        || matches!(encoding, Value::String(ref value) if value == "utf8" || value == "utf-8")
+    {
+        let utf8 = Value::String("utf8".into());
+        let stdout = execute::get_property(&child, "stdout");
+        let stderr = execute::get_property(&child, "stderr");
+        cp_stream_set_encoding(state, Some(&stdout), std::slice::from_ref(&utf8))?;
+        cp_stream_set_encoding(state, Some(&stderr), std::slice::from_ref(&utf8))?;
+    }
     if let Some(callback) = callback {
         let timeout = match execute::get_property(&options, "timeout") {
             Value::Number(value) => Some(value),
