@@ -21,12 +21,14 @@ pub(crate) const REQ_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resour
 pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
 pub(crate) const INCOMING_CLOSE_PENDING_PROP: &str = "\0quench:http:incoming:close-pending";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
+const SERVER_RESPONSE_PROP: &str = "\0quench:http:server-response";
 
 pub struct HttpState {
     next_res: u64,
     pub next_client: u64,
     pub conns: HashMap<u64, Conn>,
     pub res: HashMap<u64, Res>,
+    pub server_responses: HashMap<u64, Value>,
     pub clientreqs: HashMap<u64, crate::modules::http_client::ClientReq>,
     /// socket net id -> ClientRequest id.
     pub clients: HashMap<u64, u64>,
@@ -97,6 +99,7 @@ impl HttpState {
             next_client: 1,
             conns: HashMap::new(),
             res: HashMap::new(),
+            server_responses: HashMap::new(),
             clientreqs: HashMap::new(),
             clients: HashMap::new(),
             client_signals: HashMap::new(),
@@ -150,6 +153,28 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
             )
         })
         .unwrap_or(true);
+    if let Some(options) = options {
+        if let Value::Object(_) | Value::ObjectAlias(_) = options {
+            let constructor = execute::get_property(options, "ServerResponse");
+            if quench_runtime::is_callable(&constructor) {
+                execute::set_property_in_place(&object, SERVER_RESPONSE_PROP, constructor);
+                let server_id = state
+                    .borrow()
+                    .net
+                    .servers
+                    .iter()
+                    .find(|(_, server)| execute::same_identity(&server.borrow().js, &object))
+                    .map(|(id, _)| *id);
+                if let Some(server_id) = server_id {
+                    state
+                        .borrow_mut()
+                        .http
+                        .server_responses
+                        .insert(server_id, execute::get_property(options, "ServerResponse"));
+                }
+            }
+        }
+    }
     // This is host-owned metadata on the same server identity. Mutate the
     // existing object so method receivers and the net registry stay aligned.
     execute::set_property_in_place(
@@ -720,7 +745,7 @@ fn build_req_res(
         execute::set_property_in_place(&req, "socket", socket.clone());
         execute::set_property_in_place(&req, "connection", socket);
     }
-    let (res, id) = build_res_object(state)?;
+    let (mut res, id) = build_res_object(state)?;
     if let Some(socket) = state
         .borrow()
         .net
@@ -730,6 +755,31 @@ fn build_req_res(
     {
         execute::set_property_in_place(&res, "socket", socket.clone());
         execute::set_property_in_place(&res, "connection", socket);
+    }
+    let server_response = {
+        let guard = state.borrow();
+        match guard.http.conns.get(&socket_id) {
+            Some(conn) => {
+                let direct = execute::get_property(&conn.server, SERVER_RESPONSE_PROP);
+                if quench_runtime::is_callable(&direct) {
+                    Some(direct)
+                } else {
+                    guard
+                        .net
+                        .servers
+                        .iter()
+                        .find(|(_, server)| execute::same_identity(&server.borrow().js, &conn.server))
+                        .and_then(|(id, _)| guard.http.server_responses.get(id).cloned())
+                }
+            }
+            None => None,
+        }
+    };
+    if let Some(constructor) = server_response {
+        let prototype = execute::get_property(&constructor, "prototype");
+        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+            res = execute::set_prototype_of(&res, &prototype)?;
+        }
     }
     // Node exposes the incoming message on the response as `res.req`; keep
     // the exact request identity that is emitted to user listeners.
@@ -1307,7 +1357,8 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         "prototype",
         outgoing_prototype,
     );
-    module = quench_runtime::execute::set_property(module, "OutgoingMessage", outgoing);
+    module = quench_runtime::execute::set_property(module, "OutgoingMessage", outgoing.clone());
+    module = quench_runtime::execute::set_property(module, "ServerResponse", outgoing.clone());
     let methods = [
         "ACL",
         "BIND",
