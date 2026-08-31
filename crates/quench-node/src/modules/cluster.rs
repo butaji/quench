@@ -538,6 +538,12 @@ pub fn on(
                     .get_mut(&id)
                     .unwrap()
                     .pending_disconnect = false;
+                let terminal = state.borrow().cluster.workers.get(&id).is_some_and(|worker| {
+                    worker.dead || worker.pending_exit.is_some()
+                });
+                if terminal {
+                    remove_worker(state, id, &obj);
+                }
                 let _ = execute::call(cb, &obj, &[]);
                 if let Some(module) = state.borrow().cluster.module.clone() {
                     let _ = crate::modules::events::method_emit(
@@ -758,9 +764,6 @@ pub fn disconnect(
                 ],
             );
         }
-        if !child_call {
-            remove_worker(state, id, &obj);
-        }
     }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
         execute::call(cb, &Value::Undefined, &[])?;
@@ -959,6 +962,7 @@ pub fn disconnect_all(
             .object
             .clone();
         let _ = disconnect(state, Some(&obj), &[])?;
+        remove_worker(state, id, &obj);
     }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
         execute::call(cb, &Value::Undefined, &[])?;
