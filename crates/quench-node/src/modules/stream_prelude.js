@@ -385,7 +385,12 @@
 
   function scheduleFlow(stream) {
     const st = stream._readableState;
-    if (st.flowScheduled) return;
+    if (st.flowScheduled) {
+      // EOF may arrive while an earlier data flush is already queued. Keep a
+      // terminal pass so the end event cannot be stranded behind that turn.
+      if (st.ended) nextTick(() => flowReadable(stream));
+      return;
+    }
     st.flowScheduled = true;
     nextTick(() => {
       st.flowScheduled = false;
@@ -1484,7 +1489,7 @@
     // readable side has emitted end.  In particular, Transform.end() may
     // queue readable completion and resume() in the same turn.
     if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted &&
-        !stream._finishedWantsWritableOnly) {
+        !stream._finishedWantsWritableOnly && !stream._isTransform) {
       if (!st.finishScheduled) {
         st.finishScheduled = true;
         stream.once("end", emitFinish);
@@ -1590,7 +1595,7 @@
       return this;
     }
 
-    write(chunk, encoding, callback) {
+    write(chunk, encoding, callback, internalAccounted = false) {
       if (typeof encoding === "function") {
         callback = encoding;
         encoding = undefined;
@@ -1653,8 +1658,10 @@
       }
       if (!st.objectMode && isByteView && !encodingProvided) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
-      st.buffered += chunkLength;
-      updateNeedDrain(st);
+      if (!internalAccounted) {
+        st.buffered += chunkLength;
+        updateNeedDrain(st);
+      }
       if (st.corked) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
         updateBufferedRequestCount(st);
@@ -1736,7 +1743,8 @@
           st.writing = false;
           const wasEnded = st.ended;
           st.ended = false;
-          this.write(next.chunk, next.encoding === "buffer" ? undefined : next.encoding, next.callback);
+          this.write(next.chunk, next.encoding === "buffer" ? undefined : next.encoding,
+            next.callback, true);
           st.ended = wasEnded;
           return;
         }
