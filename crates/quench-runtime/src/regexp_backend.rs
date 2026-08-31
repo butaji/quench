@@ -973,7 +973,11 @@ fn repeat_options(
         greedy: bool,
         output: &mut Vec<State>,
         seen: &mut Option<HashSet<State>>,
+        visited: &mut HashSet<(usize, State)>,
     ) {
+        if !visited.insert((count, state.clone())) {
+            return;
+        }
         if backtrack_reached(output.len()) {
             return;
         }
@@ -1006,6 +1010,7 @@ fn repeat_options(
                         greedy,
                         output,
                         seen,
+                        visited,
                     );
                     if backtrack_reached(output.len()) {
                         return;
@@ -1019,6 +1024,7 @@ fn repeat_options(
     }
     let mut output = Vec::new();
     let mut seen = None;
+    let mut visited = HashSet::new();
     visit(
         body,
         input,
@@ -1031,6 +1037,7 @@ fn repeat_options(
         greedy,
         &mut output,
         &mut seen,
+        &mut visited,
     );
     output
 }
