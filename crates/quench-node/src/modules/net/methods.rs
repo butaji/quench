@@ -2561,16 +2561,32 @@ pub fn socket_write(
     );
     let handle_missing = !server_owned && matches!(handle, Value::Undefined | Value::Null);
     if handle_closed || handle_missing {
-        let error = if handle_missing {
+        let destroyed = matches!(
+            execute::get_property(&receiver, "destroyed"),
+            Value::Boolean(true)
+        );
+        let error = if destroyed {
+            super::handle_write_error(
+                "ERR_STREAM_DESTROYED",
+                "Cannot call write after a stream was destroyed",
+            )
+        } else if handle_missing {
             super::handle_write_error("ERR_SOCKET_CLOSED", "Socket is closed")
         } else {
             super::handle_write_error("EBADF", "write EBADF")
         };
-        state
-            .borrow_mut()
-            .net
-            .pending_events
-            .push((receiver.clone(), "error".into(), vec![error]));
+        if let Some(callback) = callback {
+            state
+                .borrow_mut()
+                .event_loop
+                .queue_microtask(callback, vec![error]);
+        } else {
+            state
+                .borrow_mut()
+                .net
+                .pending_events
+                .push((receiver.clone(), "error".into(), vec![error]));
+        }
         socket_destroy(state, Some(&receiver), &[])?;
         return Ok(Value::Boolean(false));
     }
