@@ -705,6 +705,7 @@ pub fn disconnect(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let (id, obj) = worker(state, r)?;
+    let child_call = state.borrow().cluster.worker_context == Some(id);
     if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
         w.connected = false;
         let _ = execute::set_property_in_place(&obj, "exitedAfterDisconnect", Value::Boolean(true));
@@ -729,8 +730,13 @@ pub fn disconnect(
     state.borrow_mut().process.exit_code = None;
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
-    if child_result.is_err() || child_exit.is_some() {
+    if child_call || child_result.is_err() || child_exit.is_some() {
         let code = child_exit.unwrap_or(1);
+        let code = if child_call && child_exit.is_none() && child_result.is_ok() {
+            0
+        } else {
+            code
+        };
         close_worker_net(state, id);
         if let Some(w) = state.borrow_mut().cluster.workers.get_mut(&id) {
             w.dead = true;
