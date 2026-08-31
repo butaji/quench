@@ -64,6 +64,7 @@ fn invalid_arg_type(name: &str, value: &Value) -> VmError {
 pub fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
+        Value::StringUnits(_) => quench_runtime::execute::to_js_string(value).unwrap_or_default(),
         Value::Number(n) => n.to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
