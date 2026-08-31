@@ -3,6 +3,26 @@
 //! programs keep literal/class scans allocation-free and form the first slice
 //! of the VM-owned parser → IR → interpreter pipeline.
 
+use std::{cell::RefCell, collections::HashMap, ops::RangeInclusive, rc::Rc};
+
+const PROPERTY_RANGE_CACHE_LIMIT: usize = 32;
+
+#[derive(Hash, PartialEq, Eq)]
+struct PropertyRangeKey {
+    name: String,
+    value: Option<String>,
+    negative: bool,
+}
+
+thread_local! {
+    static PROPERTY_RANGE_CACHE: RefCell<HashMap<PropertyRangeKey, Rc<[RangeInclusive<u32>]>>> =
+        RefCell::new(HashMap::new());
+}
+
+pub(crate) fn reset_property_range_cache() {
+    PROPERTY_RANGE_CACHE.with(|cache| cache.replace(HashMap::new()));
+}
+
 #[derive(Clone, Copy)]
 enum CharacterClass {
     Digit,
@@ -345,17 +365,34 @@ fn property_ranges(
     name: &str,
     value: Option<&str>,
     negative: bool,
-) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
+) -> Option<Rc<[RangeInclusive<u32>]>> {
+    let key = PropertyRangeKey {
+        name: name.to_string(),
+        value: value.map(str::to_string),
+        negative,
+    };
+    if let Some(ranges) = PROPERTY_RANGE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return Some(ranges);
+    }
     let ranges = if name == "ASCII" {
         vec![0..=0x7F]
     } else {
         crate::regexp_backend::compile_property_matcher(name, value)?.ranges()
     };
-    Some(if negative {
+    let ranges = if negative {
         complement_ranges(ranges)
     } else {
         ranges
-    })
+    };
+    let ranges = Rc::from(ranges);
+    PROPERTY_RANGE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= PROPERTY_RANGE_CACHE_LIMIT && !cache.contains_key(&key) {
+            cache.clear();
+        }
+        cache.insert(key, Rc::clone(&ranges));
+    });
+    Some(ranges)
 }
 
 fn complement_ranges(ranges: Vec<std::ops::RangeInclusive<u32>>) -> Vec<std::ops::RangeInclusive<u32>> {
