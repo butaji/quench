@@ -1932,8 +1932,10 @@
     }
     options = options || {};
     callback = callback || (() => {});
-    const wantReadable = options.readable !== false;
-    const wantWritable = options.writable !== false;
+    const noStreamSides = stream.readable === false && stream.writable === false;
+    const wantReadable = options.readable !== false && stream.readable !== false;
+    const wantWritable = options.writable !== false &&
+      (stream.writable !== false || noStreamSides);
     stream._finishedWantsWritableOnly = wantWritable && !wantReadable;
     let done = false;
     let readableDone = !wantReadable;
@@ -2088,7 +2090,11 @@
       try {
         for (const value of values) {
           await new Promise((resolve, reject) => {
-            try { stage.write(value, resolve); } catch (error) { reject(error); }
+            try {
+              stage.write(value, (error) => error ? reject(error) : resolve());
+            } catch (error) {
+              reject(error);
+            }
           });
         }
       } finally {
