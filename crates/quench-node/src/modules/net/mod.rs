@@ -76,6 +76,8 @@ pub enum SocketState {
 pub struct NetServer {
     pub id: u64,
     pub owner_worker: Option<u64>,
+    /// Cluster construction-order slot for `listen(0)` sharing.
+    pub ephemeral_slot: Option<usize>,
     pub listener: Option<TcpListener>,
     pub path: Option<String>,
     pub bind_addr: Option<SocketAddr>,
@@ -552,6 +554,7 @@ fn register_server_path(
         Rc::new(RefCell::new(NetServer {
             id,
             owner_worker,
+            ephemeral_slot: None,
             listener,
             path,
             bind_addr,

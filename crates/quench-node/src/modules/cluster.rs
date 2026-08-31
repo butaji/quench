@@ -36,6 +36,7 @@ pub struct ClusterState {
     stdio: Option<Value>,
     script: Option<(String, String)>,
     pub(crate) worker_context: Option<u64>,
+    worker_listen_slots: HashMap<u64, usize>,
 }
 impl ClusterState {
     pub fn new() -> Self {
@@ -48,6 +49,7 @@ impl ClusterState {
             stdio: None,
             script: None,
             worker_context: None,
+            worker_listen_slots: HashMap::new(),
         }
     }
 
@@ -452,6 +454,11 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let parent_exit_code = state.borrow().process.exit_code;
     state.borrow_mut().process.exit_code = None;
     state.borrow_mut().cluster.worker_context = Some(id);
+    state
+        .borrow_mut()
+        .cluster
+        .worker_listen_slots
+        .insert(id, 0);
     let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
     let result =
         quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
@@ -595,6 +602,18 @@ pub(crate) fn notify_listening(
     {
         worker.pending_listening.push(address);
     }
+}
+
+/// Reserve the next construction-order slot for a worker's ephemeral server.
+/// Cluster's `listen(0)` shares one descriptor per logical creation slot
+/// across workers; the slot is reset for each worker script re-entry.
+pub(crate) fn next_worker_listen_slot(state: &Rc<RefCell<HostState>>) -> Option<usize> {
+    let worker_id = state.borrow().cluster.worker_context?;
+    let mut guard = state.borrow_mut();
+    let slot = guard.cluster.worker_listen_slots.entry(worker_id).or_default();
+    let current = *slot;
+    *slot = slot.saturating_add(1);
+    Some(current)
 }
 
 fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
@@ -1039,7 +1058,10 @@ pub fn disconnect(
 }
 
 fn remove_worker(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
-    state.borrow_mut().cluster.workers.remove(&id);
+    let mut host = state.borrow_mut();
+    host.cluster.workers.remove(&id);
+    host.cluster.worker_listen_slots.remove(&id);
+    drop(host);
     let Some(module) = state.borrow().cluster.module.clone() else {
         return;
     };
