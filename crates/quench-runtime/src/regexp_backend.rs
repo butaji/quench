@@ -841,16 +841,34 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
             output.push(state);
             return;
         };
-        for candidate in match_options(part, input, state.clone(), flags) {
-            visit(parts, index + 1, input, candidate, flags, output);
-            if backtrack_reached(output.len()) {
-                return;
+        if is_single_option_expr(part) {
+            if let Some(candidate) = match_expr(part, input, state, flags) {
+                visit(parts, index + 1, input, candidate, flags, output);
+                if backtrack_reached(output.len()) {
+                    return;
+                }
+            }
+        } else {
+            for candidate in match_options(part, input, state, flags) {
+                visit(parts, index + 1, input, candidate, flags, output);
+                if backtrack_reached(output.len()) {
+                    return;
+                }
             }
         }
     }
     let mut output = Vec::new();
     visit(parts, 0, input, state, flags, &mut output);
     output
+}
+
+fn is_single_option_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Dot | Expr::Assertion(_) | Expr::Backreference(_) => true,
+        Expr::Class(class) => class_is_single_width(class),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => is_single_option_expr(body),
+        _ => false,
+    }
 }
 
 fn match_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec<State> {
