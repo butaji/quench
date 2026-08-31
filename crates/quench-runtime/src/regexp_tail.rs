@@ -34,13 +34,6 @@ fn group_ranges(m: &Match, passes: &mut Vec<Option<(usize, usize)>>) {
     );
 }
 
-fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
-    match arguments.first() {
-        Some(value) => crate::conversion::to_string(value),
-        None => Ok("undefined".to_string()),
-    }
-}
-
 fn string_value_argument(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
         Some(value @ (Value::String(_) | Value::StringUnits(_))) => Ok(value.clone()),
@@ -862,7 +855,7 @@ fn groups_at<'a>(m: &'a Match) -> impl Iterator<Item = Option<(usize, usize)>> +
 // RegExp.prototype[Symbol.matchAll]
 fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@matchAll")?;
-    let input = to_string_argument(arguments)?;
+    let input = string_value_argument(arguments)?;
     let flags = match_all_flags(&receiver)?;
     let last_index = match_all_start(&receiver, &input)?;
     let matcher = match_all_matcher(&receiver, &flags)?;
@@ -881,21 +874,26 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
 
 pub(crate) fn iterator_step(
     regexp: &mut Value,
-    input: &str,
+    input: &Value,
     global: bool,
     unicode: bool,
     done: &mut bool,
 ) -> Result<Option<Value>, VmError> {
-    let result = regexp_exec(regexp, input)?;
+    let result = regexp_exec_value(regexp, input.clone())?;
     if matches!(result, Value::Null) {
         *done = true;
         return Ok(None);
     }
     if global {
-        let matched = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
-        if matched.is_empty() {
+        let matched = match_result_text(crate::execute::get_property_result(&result, "0")?)?;
+        let empty = match crate::strings::view_of(&matched) {
+            Some(crate::strings::StringView::Utf8(value)) => value.is_empty(),
+            Some(crate::strings::StringView::Utf16(value)) => value.is_empty(),
+            None => false,
+        };
+        if empty {
             let index = extract_last_index(regexp)?;
-            set_last_index(regexp, advance_string_index(input, index, unicode) as f64)?;
+            set_last_index(regexp, advance_string_index_value(input, index, unicode) as f64)?;
         }
     } else {
         *done = true;
@@ -943,11 +941,13 @@ pub(crate) fn is_regexp(value: &Value) -> Result<bool, VmError> {
     Ok(crate::execute::is_truthy(&matcher))
 }
 
-fn match_all_start(receiver: &Value, input: &str) -> Result<usize, VmError> {
+fn match_all_start(receiver: &Value, input: &Value) -> Result<usize, VmError> {
     let value = crate::execute::get_property_result(receiver, "lastIndex")?;
     let index = crate::conversion::to_number(&value)?;
-    let index = to_length(index).min(crate::strings::utf16_len(input));
-    Ok(crate::strings::utf16_byte_index(input, index))
+    let length = crate::strings::view_of(input)
+        .map(crate::strings::view_len_units)
+        .unwrap_or_default();
+    Ok(to_length(index).min(length))
 }
 
 pub(crate) fn canonical_flags(flags: &str) -> String {
