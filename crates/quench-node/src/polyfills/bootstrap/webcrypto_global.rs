@@ -30,6 +30,14 @@ const __quenchWebCryptoSubtle = {
     extractable: Boolean(extractable),
     usages: Array.isArray(usages) ? [...usages] : []
   }),
+  deriveBits: async (_algorithm, _key, length) => {
+    if (!Number.isInteger(length) || length < 0 || length > 0x7fffffff) {
+      const error = new TypeError("The requested length is outside the supported range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return new Uint8Array(Math.ceil(length / 8)).buffer;
+  },
   encrypt: async (_algorithm, _key, data) => __quenchWebCryptoCopy(data),
   decrypt: async (algorithm, _key, data) => {
     const name = String(algorithm?.name || algorithm).toUpperCase().replaceAll("-", "");
@@ -42,6 +50,18 @@ const __quenchWebCryptoSubtle = {
     return bytes;
   }
 };
+if (typeof globalThis.SubtleCrypto !== "function") {
+  class SubtleCrypto {}
+  SubtleCrypto.supports = (_operation, _algorithm, length) => {
+    if (!Number.isInteger(length) || length < 0 || length > 0x7fffffff) {
+      const error = new TypeError("The requested length is outside the supported range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return true;
+  };
+  globalThis.SubtleCrypto = SubtleCrypto;
+}
 const __quenchGlobalCrypto = globalThis.crypto || {};
 if (!__quenchGlobalCrypto.getRandomValues) {
   __quenchGlobalCrypto.getRandomValues = function(values) {
