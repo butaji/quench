@@ -16,11 +16,11 @@ fn regex_receiver(receiver: Option<&Value>, method: &str) -> Result<Value, VmErr
     }
 }
 
-/// Extract the owned source/flags and compile the backend regex for `receiver`.
-fn compiled_regex(receiver: &Value) -> Result<(Regex, String), VmError> {
+/// Extract the source/flags and reuse the canonical compiled backend cache.
+fn compiled_regex(receiver: &Value) -> Result<(std::rc::Rc<Regex>, String), VmError> {
     let (source, flags, _) = extract_regex_parts(receiver)?;
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let re = compile(pattern, &build_re_flags(&flags)).map_err(VmError::EvalError)?;
+    let re = crate::regexp::compiled_for(receiver, pattern, &flags)?;
     Ok((re, flags))
 }
 
