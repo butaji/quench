@@ -62,9 +62,9 @@ pub fn execute_code_with_context(
     let result = crate::vm::with_current_context(context, || {
         let mut registers = crate::register_file::RegisterFile::new();
         prepare_register_stack(&mut registers);
-        let environment = crate::environment::Environment::child(
+        let environment = crate::environment::Environment::child_registers(
             &crate::environment::Environment::new(),
-            registers.to_values(),
+            registers.clone(),
         );
         execute_code_in_environment(code, &mut registers, context, environment)
     });
@@ -98,9 +98,9 @@ pub fn execute_with_registers_context(
     crate::vm::with_current_context(context, || {
         let mut registers = crate::register_file::RegisterFile::from_values(registers);
         prepare_register_stack(&mut registers);
-        let environment = crate::environment::Environment::child(
+        let environment = crate::environment::Environment::child_registers(
             &crate::environment::Environment::new(),
-            registers.to_values(),
+            registers.clone(),
         );
         execute_in_environment(ops, &mut registers, context, environment)
     })
@@ -135,7 +135,7 @@ pub fn execute_in_place_context(
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment = crate::environment::Environment::in_place_child(&parent, registers.to_values());
+    let environment = crate::environment::Environment::child_registers(&parent, registers.clone());
     execute_in_environment(ops, registers, context, environment)
 }
 
@@ -146,7 +146,7 @@ pub fn execute_code_in_place_context(
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment = crate::environment::Environment::in_place_child(&parent, registers.to_values());
+    let environment = crate::environment::Environment::child_registers(&parent, registers.clone());
     execute_code_in_environment(code, registers, context, environment)
 }
 

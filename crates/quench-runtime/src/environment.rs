@@ -673,9 +673,6 @@ impl Environment {
         environment
     }
 
-    pub(crate) fn in_place_child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
-        Self::child(captures, values)
-    }
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
     }
