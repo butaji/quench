@@ -262,6 +262,57 @@ pub fn util_normalize_encoding(
         .map(|name| Value::String(name.into()))
         .unwrap_or(Value::Undefined))
 }
+
+pub fn util_get_cidr(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let address = match args.first() {
+        Some(Value::String(value)) => value,
+        _ => return Ok(Value::Null),
+    };
+    let netmask = match args.get(1) {
+        Some(Value::String(value)) => value,
+        _ => return Ok(Value::Null),
+    };
+    let family = match args.get(2) {
+        Some(Value::String(value)) => value,
+        _ => return Ok(Value::Null),
+    };
+    let prefix = match (family.as_str(), address.parse::<std::net::IpAddr>(), netmask.parse::<std::net::IpAddr>()) {
+        ("IPv4", Ok(std::net::IpAddr::V4(_)), Ok(std::net::IpAddr::V4(mask))) => {
+            prefix_length(&mask.octets())
+        }
+        ("IPv6", Ok(std::net::IpAddr::V6(_)), Ok(std::net::IpAddr::V6(mask))) => {
+            let segments = mask.segments();
+            let bytes = segments.iter().flat_map(|segment| segment.to_be_bytes()).collect::<Vec<_>>();
+            prefix_length(&bytes)
+        }
+        _ => None,
+    };
+    Ok(prefix
+        .map(|length| Value::String(format!("{address}/{length}")))
+        .unwrap_or(Value::Null))
+}
+
+fn prefix_length(mask: &[u8]) -> Option<u32> {
+    let mut length = 0;
+    let mut saw_zero = false;
+    for byte in mask {
+        for bit in (0..8).rev() {
+            if byte & (1 << bit) != 0 {
+                if saw_zero {
+                    return None;
+                }
+                length += 1;
+            } else {
+                saw_zero = true;
+            }
+        }
+    }
+    Some(length)
+}
 pub fn util_inspect(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
