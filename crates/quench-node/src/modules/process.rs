@@ -381,10 +381,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "emit",
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
         ),
-        (
-            "send",
-            crate::host::capability(crate::registry::SPEC_CLUSTER_WORKER_PROCESS_SEND),
-        ),
+        // `process.send` exists only inside a cluster/child-process IPC
+        // context. The host installs the appropriate scoped capability when
+        // entering one; the base process surface must remain undefined.
+        ("send", Value::Undefined),
         (
             "removeListener",
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
