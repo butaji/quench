@@ -841,16 +841,34 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
             output.push(state);
             return;
         };
-        for candidate in match_options(part, input, state.clone(), flags) {
-            visit(parts, index + 1, input, candidate, flags, output);
-            if backtrack_reached(output.len()) {
-                return;
+        if is_single_option_expr(part) {
+            if let Some(candidate) = match_expr(part, input, state, flags) {
+                visit(parts, index + 1, input, candidate, flags, output);
+                if backtrack_reached(output.len()) {
+                    return;
+                }
+            }
+        } else {
+            for candidate in match_options(part, input, state, flags) {
+                visit(parts, index + 1, input, candidate, flags, output);
+                if backtrack_reached(output.len()) {
+                    return;
+                }
             }
         }
     }
     let mut output = Vec::new();
     visit(parts, 0, input, state, flags, &mut output);
     output
+}
+
+fn is_single_option_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Dot | Expr::Assertion(_) | Expr::Backreference(_) => true,
+        Expr::Class(class) => class_is_single_width(class),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => is_single_option_expr(body),
+        _ => false,
+    }
 }
 
 fn match_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec<State> {
@@ -902,11 +920,17 @@ fn repeat_options(
         return repeat_simple_options(body, input, state, flags, min, max, greedy);
     }
     let limit = max.unwrap_or(input.len().saturating_add(1));
+    let capture_indices = if flags.reverse {
+        Vec::new()
+    } else {
+        capture_indices(body)
+    };
     fn visit(
         body: &Expr,
         input: &[Unit],
         state: State,
         flags: Flags,
+        capture_indices: &[usize],
         count: usize,
         min: usize,
         limit: usize,
@@ -925,8 +949,8 @@ fn repeat_options(
         if count < limit {
             let mut iteration_state = state.clone();
             if !flags.reverse {
-                for index in capture_indices(body) {
-                    if let Some(capture) = iteration_state.captures.get_mut(index) {
+                for index in capture_indices {
+                    if let Some(capture) = iteration_state.captures.get_mut(*index) {
                         *capture = None;
                     }
                 }
@@ -938,6 +962,7 @@ fn repeat_options(
                         input,
                         next,
                         flags,
+                        capture_indices,
                         count + 1,
                         min,
                         limit,
@@ -960,6 +985,7 @@ fn repeat_options(
         input,
         state,
         flags,
+        &capture_indices,
         0,
         min,
         limit,
@@ -1561,20 +1587,49 @@ fn is_tag_units(units: &[Unit]) -> bool {
 
 fn is_zwj_units(units: &[Unit]) -> bool {
     units.iter().any(|unit| unit.value == 0x200D)
-        && units.split(|unit| unit.value == 0x200D).all(|part| {
-            !part.is_empty()
-                && part.iter().all(|unit| {
-                    unit.value == 0xFE0F
-                        || (0x1F3FB..=0x1F3FF).contains(&unit.value)
-                        || is_basic_emoji_code_point(unit.value)
-                })
-        })
+        && units
+            .split(|unit| unit.value == 0x200D)
+            .all(is_zwj_component)
+}
+
+fn is_zwj_component(component: &[Unit]) -> bool {
+    if component.is_empty() {
+        return false;
+    }
+    let mut base = component;
+    let modified = base
+        .last()
+        .is_some_and(|unit| (0x1F3FB..=0x1F3FF).contains(&unit.value));
+    if modified {
+        base = &base[..base.len() - 1];
+        if base.last().is_some_and(|unit| unit.value == 0xFE0F) {
+            base = &base[..base.len() - 1];
+        }
+    }
+    if modified {
+        base.len() == 1 && is_emoji_modifier_base_code_point(base[0].value)
+    } else {
+        is_basic_emoji_units(base)
+    }
 }
 
 fn is_basic_emoji_units(units: &[Unit]) -> bool {
     match units {
         [unit] => is_basic_emoji_code_point(unit.value),
-        [base, variation] => variation.value == 0xFE0F && is_basic_emoji_code_point(base.value),
+        [base, variation] if variation.value == 0xFE0F => {
+            let (Some(base), Some(variation)) =
+                (char::from_u32(base.value), char::from_u32(variation.value))
+            else {
+                return false;
+            };
+            let mut bytes = [0; 8];
+            let base_len = base.encode_utf8(&mut bytes).len();
+            let variation_len = variation.encode_utf8(&mut bytes[base_len..]).len();
+            std::str::from_utf8(&bytes[..base_len + variation_len]).is_ok_and(|text| {
+                icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>()
+                    .contains_str(text)
+            })
+        }
         _ => false,
     }
 }
@@ -2013,6 +2068,7 @@ mod tests {
     fn emoji_string_properties_use_canonical_scalar_sets() {
         let basic = Regex::with_flags(r"^\p{Basic_Emoji}$", Flags::from("v")).unwrap();
         assert!(basic.find_from("😀", 0).next().is_some());
+        assert!(basic.find_from("©️", 0).next().is_some());
         assert!(basic.find_from("0", 0).next().is_none());
 
         let modifier =
@@ -2020,6 +2076,10 @@ mod tests {
                 .unwrap();
         assert!(modifier.find_from("👩🏽", 0).next().is_some());
         assert!(modifier.find_from("0🏽", 0).next().is_none());
+
+        let zwj = Regex::with_flags(r"^\p{RGI_Emoji_ZWJ_Sequence}$", Flags::from("v")).unwrap();
+        assert!(zwj.find_from("⛓️‍💥", 0).next().is_some());
+        assert!(zwj.find_from("⛹🏻‍♀️", 0).next().is_some());
     }
 
     #[test]
