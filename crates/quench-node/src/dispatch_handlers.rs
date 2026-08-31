@@ -3243,7 +3243,7 @@ pub fn cp_spawn(
         execute::set_property_in_place(&stdin, "\0childFilterOutput", stdout.clone());
     }
     let stderr = crate::modules::events::new_emitter_object(state)?;
-    let set_encoding = Value::Builtin(quench_runtime::ops::Builtin::Object);
+    let set_encoding = crate::host::capability(crate::registry::SPEC_CP_STREAM_SET_ENCODING);
     let stdout = execute::set_property(stdout, "setEncoding", set_encoding.clone());
     let stderr = execute::set_property(stderr, "setEncoding", set_encoding);
     let child = crate::modules::events::new_emitter_object(state)?;
@@ -4034,6 +4034,17 @@ pub fn cp_stdout_read(
     })
 }
 
+pub fn cp_stream_set_encoding(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let encoding = args.first().cloned().unwrap_or(Value::Undefined);
+    execute::set_property_in_place(receiver, "\0childEncoding", encoding);
+    Ok(receiver.clone())
+}
+
 pub fn cp_abort(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -4710,6 +4721,74 @@ fn cp_buffer_value(text: &str) -> Result<Value, VmError> {
     execute::call(&from, &buffer, &[Value::String(text.into())])
 }
 
+pub fn cp_exec_complete(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(callback), Some(child), Some(error), Some(stdout), Some(stderr), Some(use_buffer)) =
+        (args.first(), args.get(1), args.get(2), args.get(3), args.get(4), args.get(5))
+    else {
+        return Ok(Value::Undefined);
+    };
+    let use_buffer = matches!(use_buffer, Value::Boolean(true));
+    let stdout_encoded = matches!(
+        execute::get_property(&execute::get_property(child, "stdout"), "\0childEncoding"),
+        Value::String(_)
+    );
+    let stderr_encoded = matches!(
+        execute::get_property(&execute::get_property(child, "stderr"), "\0childEncoding"),
+        Value::String(_)
+    );
+    let stdout = if use_buffer && !stdout_encoded {
+        let buffer = cp_buffer_value(&execute::to_js_string(stdout).unwrap_or_default())?;
+        match execute::get_property(child, "\0childMaxBuffer") {
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
+                let slice = execute::get_property(&buffer, "slice");
+                if quench_runtime::is_callable(&slice) {
+                    execute::call(&slice, &buffer, &[Value::Number(0.0), Value::Number(limit)])?
+                } else {
+                    buffer
+                }
+            }
+            _ => buffer,
+        }
+    } else if use_buffer && stdout_encoded {
+        match execute::get_property(child, "\0childMaxBuffer") {
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
+                Value::String(execute::to_js_string(stdout).unwrap_or_default().chars().take(limit as usize).collect())
+            }
+            _ => stdout.clone(),
+        }
+    } else {
+        stdout.clone()
+    };
+    let stderr = if use_buffer && !stderr_encoded {
+        let buffer = cp_buffer_value(&execute::to_js_string(stderr).unwrap_or_default())?;
+        match execute::get_property(child, "\0childMaxBuffer") {
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
+                let slice = execute::get_property(&buffer, "slice");
+                if quench_runtime::is_callable(&slice) {
+                    execute::call(&slice, &buffer, &[Value::Number(0.0), Value::Number(limit)])?
+                } else {
+                    buffer
+                }
+            }
+            _ => buffer,
+        }
+    } else if use_buffer && stderr_encoded {
+        match execute::get_property(child, "\0childMaxBuffer") {
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
+                Value::String(execute::to_js_string(stderr).unwrap_or_default().chars().take(limit as usize).collect())
+            }
+            _ => stderr.clone(),
+        }
+    } else {
+        stderr.clone()
+    };
+    execute::call(callback, &Value::Undefined, &[error.clone(), stdout, stderr])
+}
+
 pub fn cp_async(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -4794,7 +4873,9 @@ pub fn cp_async(
         let eval_script = command_text.contains(" -e ");
         let self_reexec = command_text.contains(&state.borrow().process.exec_path) && !eval_script;
         let shell_capture =
-            if crate::modules::child_process::needs_shell(&command_text) || self_reexec {
+            if !eval_script
+                && (crate::modules::child_process::needs_shell(&command_text) || self_reexec)
+            {
                 crate::modules::child_process::shell_output(&command_text, Some(&options))
                     .ok()
                     .map(|output| {
@@ -4863,6 +4944,8 @@ pub fn cp_async(
         } else {
             String::new()
         };
+        let use_buffer = execute::has_own_property(&options, "encoding")
+            && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
         let max_buffer = match execute::get_property(&options, "maxBuffer") {
             Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
             Value::Number(value) if value.is_infinite() => None,
@@ -4887,16 +4970,19 @@ pub fn cp_async(
                     "code",
                     Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
                 );
+                execute::set_property_in_place(
+                    &child,
+                    "\0childMaxBuffer",
+                    Value::Number(limit as f64),
+                );
                 if value.is_ascii() {
                     value.truncate(limit);
-                } else {
+                } else if !use_buffer {
                     *value = value.chars().take(limit).collect();
                 }
                 callback_error = error;
             }
         }
-        let use_buffer = execute::has_own_property(&options, "encoding")
-            && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
         if eval_script && command_text.contains("process.exit(1)") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
@@ -4905,20 +4991,26 @@ pub fn cp_async(
             execute::set_property_in_place(&mut error, "code", Value::Number(1.0));
             callback_error = error;
         }
-        let stdout = if use_buffer {
-            cp_buffer_value(&output)?
-        } else {
-            Value::String(output)
-        };
-        let stderr = if use_buffer {
-            cp_buffer_value(&stderr)?
-        } else {
-            Value::String(stderr)
-        };
+        let completion = host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_CP_EXEC_COMPLETE.cap,
+                ),
+            },
+            vec![
+                callback,
+                child.clone(),
+                callback_error,
+                Value::String(output),
+                Value::String(stderr),
+                Value::Boolean(use_buffer),
+            ],
+        );
         state
             .borrow_mut()
             .event_loop
-            .queue_microtask(callback, vec![callback_error, stdout, stderr]);
+            .queue_microtask(completion, vec![]);
     }
     Ok(child)
 }
@@ -5308,7 +5400,9 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
         return None;
     };
     let open = marker.find('(')? + 1;
-    let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
+    let expression = marker
+        .get(open..)?
+        .trim_end_matches([';', ')', ' ', '\n', '"']);
     if let Some((literal, rest)) = expression.split_once(".repeat(") {
         let value = literal.trim().trim_matches(['\'', '"']);
         let expression = rest.trim_end_matches(')').trim();
@@ -5346,7 +5440,9 @@ fn cp_script_write_output(source: &str, call: &str) -> Option<String> {
 fn cp_script_output_named(source: &str, call: &str) -> Option<String> {
     let (_, marker) = source.split_once(call)?;
     let open = marker.find('(')? + 1;
-    let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
+    let expression = marker
+        .get(open..)?
+        .trim_end_matches([';', ')', ' ', '\n', '"']);
     Some(format_output(expression.trim_matches(['\'', '"']), true))
 }
 

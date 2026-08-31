@@ -271,6 +271,8 @@ const CAP_CP_KILL: u16 = crate::registry::SPEC_CP_KILL.cap;
 const CAP_CP_STDIN_WRITE: u16 = 0x1E09;
 const CAP_CP_STDIN_END: u16 = 0x1E0A;
 const CAP_CP_STDOUT_READ: u16 = crate::registry::SPEC_CP_STDOUT_READ.cap;
+const CAP_CP_STREAM_SET_ENCODING: u16 = crate::registry::SPEC_CP_STREAM_SET_ENCODING.cap;
+const CAP_CP_EXEC_COMPLETE: u16 = crate::registry::SPEC_CP_EXEC_COMPLETE.cap;
 const CAP_CP_ABORT: u16 = 0x1E0B;
 const CAP_CP_ABORT_EMIT: u16 = 0x1E0C;
 const CAP_CP_FORK: u16 = 0x1E0D;
@@ -860,6 +862,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_STDIN_WRITE => cp_stdin_write,
         CAP_CP_STDIN_END => cp_stdin_end,
         CAP_CP_STDOUT_READ => cp_stdout_read,
+        CAP_CP_STREAM_SET_ENCODING => cp_stream_set_encoding,
+        CAP_CP_EXEC_COMPLETE => cp_exec_complete,
         CAP_CP_ABORT => cp_abort,
         CAP_CP_ABORT_EMIT => cp_abort_emit,
         CAP_CP_FORK => cp_fork,

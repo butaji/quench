@@ -340,6 +340,10 @@ pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kil
 pub const SPEC_CP_STDIN_WRITE: NodeSpec = NodeSpec::new("child_process:stdin:write", 0x1E09);
 pub const SPEC_CP_STDIN_END: NodeSpec = NodeSpec::new("child_process:stdin:end", 0x1E0A);
 pub const SPEC_CP_STDOUT_READ: NodeSpec = NodeSpec::new("child_process:stdout:read", 0x1E12);
+pub const SPEC_CP_STREAM_SET_ENCODING: NodeSpec =
+    NodeSpec::new("child_process:stream:setEncoding", 0x1E13);
+pub const SPEC_CP_EXEC_COMPLETE: NodeSpec =
+    NodeSpec::new("child_process:exec:complete", 0x1E14);
 pub const SPEC_CP_ABORT: NodeSpec = NodeSpec::new("child_process:abort", 0x1E0B);
 pub const SPEC_CP_ABORT_EMIT: NodeSpec = NodeSpec::new("child_process:abortEmit", 0x1E0C);
 pub const SPEC_CP_FORK: NodeSpec = NodeSpec::new("child_process:fork", 0x1E0D);
@@ -1094,6 +1098,8 @@ pub const CAP_CP_SPAWN_OUTPUT_EMIT: CapId = SPEC_CP_SPAWN_OUTPUT_EMIT.cap;
 pub const CAP_CP_STDIN_END: CapId = SPEC_CP_STDIN_END.cap;
 pub const CAP_CP_STDIN_WRITE: CapId = SPEC_CP_STDIN_WRITE.cap;
 pub const CAP_CP_STDOUT_READ: CapId = SPEC_CP_STDOUT_READ.cap;
+pub const CAP_CP_STREAM_SET_ENCODING: CapId = SPEC_CP_STREAM_SET_ENCODING.cap;
+pub const CAP_CP_EXEC_COMPLETE: CapId = SPEC_CP_EXEC_COMPLETE.cap;
 pub const CAP_DIAGNOSTICS_BOUNDED_CHANNEL: CapId = SPEC_DIAGNOSTICS_BOUNDED_CHANNEL.cap;
 pub const CAP_DIAGNOSTICS_BOUNDED_RUN: CapId = SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
 pub const CAP_DIAGNOSTICS_BOUNDED_SCOPE: CapId = SPEC_DIAGNOSTICS_BOUNDED_SCOPE.cap;
