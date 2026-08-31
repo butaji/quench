@@ -595,66 +595,17 @@ fn compile_and_find<'a>(
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
     let match_start = std::time::Instant::now();
-    let mut result = if flags.contains('u') || flags.contains('v') {
+    let result = if flags.contains('u') || flags.contains('v') {
         find_match_utf16(&regex, text, start, sticky)
     } else {
         find_match_from_sticky(&regex, text, start, sticky)
     };
-    if !flags.contains('u')
-        && !flags.contains('v')
-        && start == 0
-        && single_dot_anchor(source)
-        && text.chars().any(|character| character.len_utf16() == 2)
-    {
-        result = Ok(None);
-    }
-    if matches!(&result, Ok(None))
-        && !flags.contains('u')
-        && !flags.contains('v')
-        && source_contains_surrogate_escape(source)
-        && text.chars().any(|character| character.len_utf16() == 2)
-    {
-        if let Ok(fallback) = compile(".", flags) {
-            result = find_match_from_sticky(&fallback, text, start, sticky);
-        }
-    }
     #[cfg(feature = "execution-trace")]
     {
         let match_ns = match_start.elapsed().as_nanos();
         crate::execution_trace::regexp(source, compile_ns, match_ns);
     }
     result
-}
-
-fn single_dot_anchor(source: &str) -> bool {
-    matches!(
-        source,
-        "^.$"
-            | "(?s:^.$)"
-            | "(?s-:^.$)"
-            | "(?-s:^.$)"
-            | "(?s:(?-s:^.$))"
-            | "(?s-:(?-s:^.$))"
-            | "(?-s:(?s:^.$))"
-            | "(?-s:(?s-:^.$))"
-    )
-}
-
-fn source_contains_surrogate_escape(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    bytes.windows(4).any(|window| {
-        window[0] == b'\\'
-            && window[1] == b'u'
-            && (window[2] == b'd' || window[2] == b'D')
-            && (window[3] == b'c'
-                || window[3] == b'C'
-                || window[3] == b'd'
-                || window[3] == b'D'
-                || window[3] == b'e'
-                || window[3] == b'E'
-                || window[3] == b'f'
-                || window[3] == b'F')
-    })
 }
 
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -2132,6 +2083,21 @@ mod tests {
             crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
             Value::Number(1.0)
         );
+    }
+
+    #[test]
+    fn legacy_surrogate_escape_does_not_match_astral_code_point() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("\\udc00".to_string())),
+                ("\0regexp_flags".to_string(), Value::String(String::new())),
+            ])
+            .into(),
+        );
+        let result = super::exec(Some(&regexp), &[Value::String("😀".to_string())])
+            .expect("exec");
+        assert!(matches!(result, Value::Null));
     }
 
     #[test]
