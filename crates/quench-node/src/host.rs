@@ -367,8 +367,8 @@ pub fn install_with_argv_and_title(
         .module_cache
         .insert("path".into(), path_module.clone());
     context = context
-        .with_persistent_host_value("__nodePath", path_module)
-        .with_persistent_host_value(
+        .with_host_value("__nodePath", path_module)
+        .with_host_value(
             "__quench_fs_mkdir",
             crate::host::capability(crate::registry::SPEC_FS_MKDIRSYNC),
         );
