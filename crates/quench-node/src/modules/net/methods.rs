@@ -2189,11 +2189,18 @@ pub fn server_listen(
         && (port != 0 || cluster_ephemeral_slot.is_some()))
         .then(|| {
             let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
+            let (process_scope, worker_scopes) = {
+                let host = state.borrow();
+                (host.cluster.process_scope(), host.cluster.worker_scopes())
+            };
             let found = state.borrow().net.servers.values().find_map(|server| {
                 let server = server.borrow();
                 if server.owner_worker.is_none()
                     || !server.listening
                     || server.closed
+                    || server.owner_worker
+                        .and_then(|worker| worker_scopes.get(&worker).copied())
+                        != Some(process_scope)
                     || server
                         .bind_addr
                         .is_none_or(|address| address.is_ipv6() != requested_ipv6)
@@ -2241,7 +2248,7 @@ pub fn server_listen(
         match bind_listener(port, host.as_deref()) {
             Ok(listener) => listener,
             Err(error) => {
-            state.borrow_mut().net.pending_errors.push((
+                state.borrow_mut().net.pending_errors.push((
                 receiver.clone(),
                 server_bind_error(&error, host.as_deref(), port),
             ));
