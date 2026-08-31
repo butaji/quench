@@ -4194,15 +4194,28 @@ pub fn cp_kill(
         let process = execute::get_property(child, "\0forkProcess");
         let previous_send = execute::get_property(child, "\0forkPreviousSend");
         let previous_disconnect = execute::get_property(child, "\0forkPreviousDisconnect");
-        let previous_connected = execute::get_property(child, "\0forkPreviousConnected");
         let _ = execute::set_property_in_place(&process, "send", previous_send);
         let _ = execute::set_property_in_place(&process, "disconnect", previous_disconnect);
-        let _ = execute::set_property_in_place(&process, "connected", previous_connected);
+        let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
         let _ = execute::set_property_in_place(&process, "\0forkChild", Value::Undefined);
-        let _ = crate::modules::process::emit(
+        let previous_scope = state.borrow().cluster.process_scope();
+        let previous_event_scope = state.borrow().event_loop.process_scope();
+        let child_scope = match execute::get_property(child, "\0forkScope") {
+            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => scope as u64,
+            _ => previous_scope,
+        };
+        state.borrow_mut().cluster.set_process_scope(child_scope);
+        state.borrow().event_loop.set_process_scope(child_scope);
+        let disconnect_result = crate::modules::process::emit(
             state,
             &[Value::String("disconnect".into())],
         );
+        state.borrow_mut().cluster.set_process_scope(previous_scope);
+        state
+            .borrow()
+            .event_loop
+            .set_process_scope(previous_event_scope);
+        disconnect_result?;
         execute::set_property_in_place(child, "\0forkProcess", Value::Undefined);
         clear_fork_timers(state, child);
         let signal = execute::get_property(child, "signalCode");
@@ -5156,6 +5169,11 @@ pub fn cp_send(
             .filter(|value| !matches!(value, Value::Undefined | Value::Null))
         {
             process_args.push(handle.clone());
+            if let Value::Number(scope) = execute::get_property(&child, "\0forkScope") {
+                if scope.is_finite() && scope >= 0.0 {
+                    crate::modules::net::transfer_handle_scope(state, handle, scope as u64);
+                }
+            }
         }
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
@@ -5180,6 +5198,16 @@ pub fn cp_send(
             .set_process_scope(previous_event_scope);
         result?;
     } else if from_fork_process {
+        let parent_scope = match execute::get_property(child, "\0forkParentScope") {
+            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => scope as u64,
+            _ => 0,
+        };
+        if let Some(handle) = args
+            .get(1)
+            .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+        {
+            crate::modules::net::transfer_handle_scope(state, handle, parent_scope);
+        }
         let callback = host_api::bound_capability_with_arguments(
             quench_runtime::ops::HostCapabilityRef {
                 realm: quench_runtime::ops::RealmId::ROOT,
@@ -5193,10 +5221,6 @@ pub fn cp_send(
                 args.get(1).cloned().unwrap_or(Value::Undefined),
             ],
         );
-        let parent_scope = match execute::get_property(child, "\0forkParentScope") {
-            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => scope as u64,
-            _ => 0,
-        };
         state
             .borrow()
             .event_loop
