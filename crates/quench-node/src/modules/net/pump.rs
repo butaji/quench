@@ -711,6 +711,25 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         host.net.sockets.remove(&sock.borrow().id);
     }
     drop(host);
+    // Finalization is the other terminal path besides `socket.destroy()`.
+    // Clear the socket's host timer before dropping the registry entry;
+    // otherwise a long idle timeout (for example 120s on a server peer)
+    // remains referenced and prevents process exit after `server.close()`.
+    for sock in &to_close {
+        let (id, js) = {
+            let guard = sock.borrow();
+            (guard.id, guard.js.clone())
+        };
+        let timer = { state.borrow_mut().net.timeout_timers.remove(&id) };
+        if let Some(timer) = timer {
+            crate::modules::timers::clear_timeout(state, &[timer])?;
+        }
+        execute::set_property_in_place(
+            &js,
+            super::methods::SOCKET_TIMEOUT_PROP,
+            Value::Undefined,
+        );
+    }
     for js in to_finish {
         emit(state, &js, "finish", Vec::new())?;
     }

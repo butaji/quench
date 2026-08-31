@@ -13,7 +13,7 @@ use crate::host::HostState;
 
 use super::*;
 
-const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
+pub(crate) const SOCKET_TIMEOUT_PROP: &str = "\0quench:net:timeout";
 
 fn write_chunk_type_error(value: &Value) -> VmError {
     let detail = match value {
