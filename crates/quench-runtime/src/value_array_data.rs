@@ -204,6 +204,9 @@ impl DenseElements {
         let Self::Numbers(values) = self else {
             return false;
         };
+        if Rc::strong_count(values) == 1 {
+            return true;
+        }
         let detached = values
             .borrow()
             .iter()
@@ -1330,8 +1333,9 @@ fn live_index(live: &ArgumentLive, index: usize) -> Option<Value> {
 
 #[cfg(test)]
 mod array_data_tests {
-    use super::{ArrayData, ArrayKind};
+    use super::{ArrayData, ArrayKind, DenseElements};
     use crate::value::Value;
+    use std::rc::Rc;
 
     #[test]
     fn classifies_numeric_and_holey_storage() {
@@ -1420,6 +1424,25 @@ mod array_data_tests {
             original.numeric_kernel_range(0, 64)
         );
         assert!(original.is_sparse());
+    }
+
+    #[test]
+    fn unique_sparse_promotion_reuses_numeric_storage() {
+        let mut sparse = ArrayData::new(Vec::new());
+        sparse.set_length(64);
+        for index in 0..64 {
+            sparse.set_index(index, Value::Number(index as f64));
+        }
+        let before = match &sparse.values {
+            DenseElements::Numbers(values) => Rc::as_ptr(values),
+            DenseElements::Values(_) => panic!("sparse numeric storage widened"),
+        };
+        assert!(sparse.promote_sparse_numeric());
+        let after = match &sparse.values {
+            DenseElements::Numbers(values) => Rc::as_ptr(values),
+            DenseElements::Values(_) => panic!("sparse numeric storage widened"),
+        };
+        assert_eq!(before, after);
     }
 
     #[test]
