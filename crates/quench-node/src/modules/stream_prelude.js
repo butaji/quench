@@ -1825,17 +1825,25 @@
         callback();
       }
     };
-    if (wantReadable) stream.once("end", () => finish(undefined, "readable"));
-    if (wantWritable) stream.once("finish", () => finish(undefined, "writable"));
-    stream.once("error", (error) => finish(error));
-    stream.once("close", () => {
+    const onEnd = () => finish(undefined, "readable");
+    const onFinish = () => finish(undefined, "writable");
+    const onError = (error) => finish(error);
+    const onClose = () => {
       if (done || (readableDone && writableDone)) return;
       const error = new Error("Premature close");
       error.code = "ERR_STREAM_PREMATURE_CLOSE";
       finish(error);
-    });
+    };
+    if (wantReadable) stream.once("end", onEnd);
+    if (wantWritable) stream.once("finish", onFinish);
+    stream.once("error", onError);
+    stream.once("close", onClose);
     return () => {
       done = true;
+      if (wantReadable) stream.removeListener("end", onEnd);
+      if (wantWritable) stream.removeListener("finish", onFinish);
+      stream.removeListener("error", onError);
+      stream.removeListener("close", onClose);
     };
   }
 
@@ -1843,7 +1851,8 @@
     const suppliedArgs = args.length;
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
-    const streams = args;
+    const streams = args.map((stage) =>
+      typeof stage === "function" ? compose(stage) : stage);
     if (streams.length === 0) {
       const error = new TypeError(
         suppliedArgs === 0
@@ -1868,24 +1877,29 @@
         throw new TypeError("The \"streams\" argument must contain stream instances");
       }
     }
-    let callbackCalled = false;
-    const done = (error) => {
-      if (callback && !callbackCalled) {
-        callbackCalled = true;
-        callback(error);
+    let remaining = streams.length;
+    let pipelineError;
+    const cleanups = [];
+    const lastReadable = streams[streams.length - 1].readable === true;
+    const complete = (error) => {
+      if (error && !pipelineError) pipelineError = error;
+      remaining -= 1;
+      if (remaining === 0) {
+        if (lastReadable) cleanups[cleanups.length - 1]?.();
+        if (callback) callback(pipelineError);
       }
     };
     for (let i = 0; i + 1 < streams.length; i += 1) {
       streams[i].pipe(streams[i + 1]);
     }
-    for (const stream of streams) {
-      stream.once("error", done);
+    for (let index = 0; index < streams.length; index += 1) {
+      const stream = streams[index];
+      cleanups.push(finished(stream, {
+        readable: index < streams.length - 1,
+        writable: index > 0,
+      }, complete));
     }
     const last = streams[streams.length - 1];
-    if (callback) {
-      last.once("finish", () => done());
-      last.once("end", () => done());
-    }
     return last;
   }
 
