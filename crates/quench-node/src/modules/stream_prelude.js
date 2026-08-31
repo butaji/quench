@@ -33,10 +33,14 @@
           flowReadable(this);
         }
       }
-      if (name === "readable" && this._readableState &&
-          !this._readableState.reading && !this._readableState.ended) {
+      if (name === "readable" && this._readableState && !this._readableState.ended) {
         this._readableState.flowing = false;
-        requestRead(this);
+        if (!this._readableState.reading &&
+            (this.readableLength < this._readableState.highWaterMark ||
+             this._readableState.highWaterMark === 0)) {
+          this._readableState.needReadable = true;
+          requestRead(this);
+        }
       }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
@@ -86,6 +90,11 @@
       const entry = [...wrappers].reverse().find((item) => item.name === name && item.fn === fn);
       this._emitter.removeListener(name, entry?.wrapper || fn);
       if (entry) this._listenerWrappers = wrappers.filter((item) => item !== entry);
+      if (name === "data" && this._readableState &&
+          this.listenerCount("data") === 0 && this.listenerCount("readable") === 0) {
+        this._readableState.flowing = false;
+        this._readableState.readingMore = false;
+      }
       return this;
     },
     off(name, fn) {
@@ -97,6 +106,11 @@
         this._listenerWrappers = name === undefined
           ? []
           : this._listenerWrappers.filter((entry) => entry.name !== name);
+      }
+      if ((name === undefined || name === "data") && this._readableState &&
+          this.listenerCount("data") === 0 && this.listenerCount("readable") === 0) {
+        this._readableState.flowing = false;
+        this._readableState.readingMore = false;
       }
       return this;
     },
@@ -155,6 +169,13 @@
       ? options.objectMode || options.readableObjectMode
       : options.objectMode || options.writableObjectMode;
     return objectMode ? 16 : 16384;
+  }
+
+  function growReadableHwm(state, size) {
+    if (state.objectMode || !Number.isFinite(size) || size <= state.highWaterMark) return;
+    let next = 1;
+    while (next < size) next *= 2;
+    state.highWaterMark = next;
   }
 
   function validateEncoding(encoding) {
@@ -217,6 +238,7 @@
       flowing: null,
       flowScheduled: false,
       reading: false,
+      needReadable: false,
       readingMore: false,
       resumeScheduled: false,
       resumeEventPending: false,
@@ -286,6 +308,7 @@
     }
     if (stream.listenerCount("readable") > 0 &&
         (st.buffer.length > 0 || st.ended)) {
+      if (st.buffer.length > 0) st.needReadable = false;
       st.emittedReadable = true;
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
@@ -300,7 +323,10 @@
       while (st.flowing && st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         if (st.decoder && typeof chunk !== "string") chunk = st.decoder.write(chunk);
-        if (chunk !== "") stream._emitter.emit("data", chunk);
+        if (chunk !== "") {
+          st.needReadable = false;
+          stream._emitter.emit("data", chunk);
+        }
         if (st.awaitDrainWriters &&
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
@@ -340,6 +366,7 @@
             (st.flowing ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
+          st.needReadable = false;
           st.readingMore = false;
           st.reading = false;
           stream.readable = false;
@@ -433,6 +460,7 @@
     pause() {
       this._readableState.paused = true;
       this._readableState.flowing = false;
+      this._readableState.reading = false;
       return this;
     }
 
@@ -465,6 +493,7 @@
       }
       if (chunk === null) {
         st.ended = true;
+        st.needReadable = false;
         if (this._isDuplex && !this.allowHalfOpen &&
             !this._writableState.ended && !this._writableState.finished) {
           setImmediate(() => {
@@ -480,7 +509,23 @@
         if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
           chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
         }
+        if (!st.objectMode && chunk && typeof chunk.byteLength === "number" &&
+            chunk.byteLength === 0) {
+          scheduleFlow(this);
+          if (st.flowing && !st.reading && !st.ended) requestRead(this);
+          return true;
+        }
         st.buffer.push(normalizeReadableChunk(this, chunk));
+        const buffered = st.objectMode
+          ? st.buffer.length
+          : st.buffer.reduce((total, value) =>
+              total + (typeof value === "string" ? value.length : value?.byteLength ?? 1), 0);
+        if (!this.__quenchIterator && !st.ended && !st.reading &&
+            buffered < st.highWaterMark) {
+          nextTick(() => {
+            if (!this.destroyed && !st.ended && !st.reading) requestRead(this);
+          });
+        }
       }
       scheduleFlow(this);
       if (st.ended) return false;
@@ -512,6 +557,7 @@
     read(size) {
       const st = this._readableState;
       if (this.destroyed) return null;
+      growReadableHwm(st, Number(size));
       if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
       if (size === 0) {
@@ -523,6 +569,7 @@
           nextTick(() => {
             if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
+              st.needReadable = false;
               st.readingMore = false;
               st.reading = false;
               this.readable = false;
@@ -532,7 +579,12 @@
         }
       };
       if (st.buffer.length > 0) {
-        let chunk = st.buffer.shift();
+        const requested = Number(size);
+        const buffered = this.readableLength;
+        let chunk = !st.objectMode && Number.isFinite(requested) &&
+          requested >= buffered && st.buffer.length > 1 && typeof Buffer !== "undefined"
+          ? Buffer.concat(st.buffer.splice(0))
+          : st.buffer.shift();
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
@@ -544,11 +596,15 @@
           this._emitter.emit("data", chunk);
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.needReadable = Number.isFinite(requested) && requested <= buffered;
           st.reading = true;
           requestRead(this);
           if (st.decoder && !st.objectMode) {
             while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
           }
+        }
+        if (st.buffer.length === 0 && !st.ended) {
+          st.needReadable = Number.isFinite(requested) && requested <= buffered;
         }
         return chunk;
       }
@@ -556,10 +612,17 @@
         st.reading = false;
       }
       if (!st.ended && !st.reading) {
+        st.needReadable = false;
         requestRead(this);
       }
+      if (st.buffer.length === 0 && !st.ended) st.needReadable = true;
       if (st.buffer.length > 0) {
-        let chunk = st.buffer.shift();
+        const requested = Number(size);
+        const buffered = this.readableLength;
+        let chunk = !st.objectMode && Number.isFinite(requested) &&
+          requested >= buffered && st.buffer.length > 1 && typeof Buffer !== "undefined"
+          ? Buffer.concat(st.buffer.splice(0))
+          : st.buffer.shift();
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
@@ -571,15 +634,22 @@
           this._emitter.emit("data", chunk);
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.needReadable = Number.isFinite(requested) && requested <= buffered;
           st.reading = true;
           requestRead(this);
           if (st.decoder && !st.objectMode) {
             while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
           }
         }
+        if (st.buffer.length === 0 && !st.ended) {
+          st.needReadable = Number.isFinite(requested) && requested <= buffered;
+        }
         return chunk;
       }
       finishIfEnded();
+      if (st.ended && st.buffer.length === 0 && this.listenerCount("readable") > 0) {
+        st.needReadable = true;
+      }
       if (this._passThrough) finishWritable(this);
       return null;
     }
@@ -1404,7 +1474,7 @@
     updateBufferedRequestCount(st);
     st.buffered -= item.chunkLength;
     updateNeedDrain(st);
-    stream.write(item.chunk, item.encoding, item.callback);
+    stream.write(item.chunk, item.encoding === "buffer" ? undefined : item.encoding, item.callback);
   }
 
   class WritableClass {
@@ -1609,7 +1679,7 @@
           st.writing = false;
           const wasEnded = st.ended;
           st.ended = false;
-          this.write(next.chunk, next.encoding, next.callback);
+          this.write(next.chunk, next.encoding === "buffer" ? undefined : next.encoding, next.callback);
           st.ended = wasEnded;
           return;
         }
@@ -1882,13 +1952,19 @@
   function duplexPair(options = {}) {
     const left = new Duplex(options);
     const right = new Duplex(options);
+    // Writable byte streams use the internal "buffer" encoding marker after
+    // decoding strings.  It is metadata for _write, not a public readable
+    // encoding; forwarding it to push() would make a valid Buffer pair fail
+    // validation as an unknown encoding.
+    const pairPush = (destination, chunk, encoding) =>
+      encoding === "buffer" ? destination.push(chunk) : destination.push(chunk, encoding);
     const connect = (source, destination) => {
       source.__pairPending = [];
       source._write = (chunk, encoding, callback) => {
         if (source.writableCorked > 0) {
           source.__pairPending.push([chunk, encoding, callback]);
         } else {
-          destination.push(chunk, encoding);
+          pairPush(destination, chunk, encoding);
           callback?.();
         }
       };
@@ -1897,7 +1973,7 @@
         if (source.writableCorked !== 0) return;
         const pending = source.__pairPending.splice(0);
         for (const [chunk, encoding, callback] of pending) {
-          destination.push(chunk, encoding);
+          pairPush(destination, chunk, encoding);
           callback?.();
         }
         return source;
@@ -1906,7 +1982,7 @@
         const flush = () => {
           const pending = source.__pairPending.splice(0);
           for (const [chunk, encoding, writeCallback] of pending) {
-            destination.push(chunk, encoding);
+            pairPush(destination, chunk, encoding);
             writeCallback?.();
           }
           destination.push(null);
