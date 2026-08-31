@@ -34,7 +34,7 @@ pub(crate) fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool
 
 pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
     if parsed.panicked {
-        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
+        return Err(vec!["SyntaxError: OXC parser panicked".to_string()]);
     }
     if !parsed.errors.is_empty() {
         return Err(parsed

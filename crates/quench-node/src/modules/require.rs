@@ -338,7 +338,7 @@ fn execute_module(
         .as_ref()
         .map(|pending| pending.module.clone());
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+        .map_err(|errors| VmError::EvalError(format!("{filename}: {}", errors.join("; "))))?;
     let context = quench_runtime::vm::current_context()
         .as_ref()
         .clone()

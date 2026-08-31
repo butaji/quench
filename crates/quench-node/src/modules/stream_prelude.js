@@ -20,6 +20,7 @@
       }
       if (name === "data" && !this.destroyed && this._readableState &&
                  this.listenerCount("readable") === 0) {
+        this._readableState.readingMore = true;
         this.resume();
         // The first data listener starts pulling before the next promise
         // checkpoint, matching Node's lazy activation contract.
@@ -131,6 +132,8 @@
       return this._emitter.getMaxListeners();
     }
   };
+  // Node exposes `off` as the exact alias of `removeListener`.
+  emitterMethods.off = emitterMethods.removeListener;
 
   function mixEmitter(proto) {
     for (const key of Object.getOwnPropertyNames(emitterMethods)) {
@@ -207,6 +210,7 @@
       flowing: null,
       flowScheduled: false,
       reading: false,
+      readingMore: false,
       readRequests: 0,
       ended: false,
       endEmitted: false,
@@ -303,6 +307,9 @@
             (st.flowing ||
               (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
           st.endEmitted = true;
+          st.readingMore = false;
+          st.reading = false;
+          stream.readable = false;
           stream._emitter.emit("end");
           if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
             nextTick(() => stream.destroy());
@@ -471,6 +478,9 @@
           nextTick(() => {
             if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
               st.endEmitted = true;
+              st.readingMore = false;
+              st.reading = false;
+              this.readable = false;
               this._emitter.emit("end");
             }
           });
@@ -484,7 +494,10 @@
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
-        if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (this.listenerCount("data") > 0) {
+          if (!st.ended && this.listenerCount("readable") > 0) st.reading = true;
+          this._emitter.emit("data", chunk);
+        }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
           requestRead(this);
@@ -505,7 +518,10 @@
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
-        if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (this.listenerCount("data") > 0) {
+          if (!st.ended && this.listenerCount("readable") > 0) st.reading = true;
+          this._emitter.emit("data", chunk);
+        }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
           requestRead(this);
@@ -1775,10 +1791,9 @@
     : typeof stage === "function" && stage.length > 0;
   const composeReadable = (stage) => stage && typeof stage.pipe === "function"
     ? stage.readable !== false
-    : composeWeb(stage)
-    : typeof stage === "function"
+    : composeWeb(stage) || (typeof stage === "function"
       ? String(stage.constructor?.name).includes("GeneratorFunction")
-      : Boolean(stage?.[Symbol.iterator] || stage?.[Symbol.asyncIterator]);
+      : Boolean(stage?.[Symbol.iterator] || stage?.[Symbol.asyncIterator]));
   const composeWeb = (stage) => Boolean(
     stage?.readable?.getReader && stage?.writable?.getWriter
   );
@@ -1960,6 +1975,24 @@
       (stream._readableState?.dataEmitted ?? stream.readableDidRead ?? stream.readableAborted)
     );
   }
+  // The public constructors share the WHATWG bridge at the stream boundary.
+  // Keep conversion as one adapter so callers observe the same source stream
+  // identity and lifecycle events as Node's Readable.toWeb.
+  const readableToWeb = (stream) => new ReadableStream({
+    start(controller) {
+      if (!stream || typeof stream.on !== "function") {
+        controller.error(new TypeError("The argument must be a readable stream"));
+        return;
+      }
+      stream.on("data", (chunk) => controller.enqueue(chunk));
+      stream.once("end", () => controller.close());
+      stream.once("error", (error) => controller.error(error));
+      stream.resume?.();
+    },
+    cancel(reason) {
+      stream.destroy?.(reason);
+    }
+  });
   function destroy(stream, error) {
     if (error === undefined) {
       error = {
@@ -1971,6 +2004,7 @@
     return stream.destroy(error);
   }
   Readable.isDisturbed = isDisturbed;
+  Readable.toWeb = readableToWeb;
   Writable.destroy = destroy;
   // Keep the public stream module's Duplex family connected to the canonical
   // NodeDuplex adapters installed by the bootstrap layer.
