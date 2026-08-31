@@ -160,7 +160,7 @@
   function validateEncoding(encoding) {
     const name = String(encoding).toLowerCase();
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
-      "binary", "ascii", "base64", "base64url", "hex", "buffer"];
+      "binary", "ascii", "base64", "base64url", "hex"];
     if (!valid.includes(name)) {
       const shown = encoding && typeof encoding === "object" && !Array.isArray(encoding)
         ? "{}" : encoding;
@@ -1653,8 +1653,9 @@
       if (state.ended && chunk != null) {
         const error = new Error("write after end");
         error.code = "ERR_STREAM_WRITE_AFTER_END";
+        state.errored = error;
+        this.destroy(error);
         if (callback) nextTick(() => callback(error));
-        nextTick(() => this._emitter.emit("error", error));
         return this;
       }
       if (this._writableState.finished) {
