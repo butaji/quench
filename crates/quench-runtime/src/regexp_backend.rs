@@ -2074,6 +2074,17 @@ mod tests {
     }
 
     #[test]
+    fn nested_repeat_frontier_preserves_captures() {
+        let regex = Regex::with_flags(r"<body.*>((.*\n?)*?)</body>", Flags::from("i"))
+            .unwrap();
+        let input = "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>";
+        let matched = regex.find_from(input, 0).next().unwrap();
+        assert_eq!(&input[matched.range], "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>");
+        assert_eq!(&input[matched.captures[0].clone().unwrap()], "\n<p>one</p>\n<p>two</p>\n");
+        assert_eq!(&input[matched.captures[1].clone().unwrap()], "<p>two</p>\n");
+    }
+
+    #[test]
     fn backtracking_overflow_retries_complete_search() {
         let mut source = String::from("^(");
         for index in 0..MAX_BACKTRACK_STATES {
