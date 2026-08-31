@@ -701,6 +701,15 @@ fn start_request_socket(
         crate::modules::http::clear_idle_socket(state, &socket);
         net::socket_ref(state, Some(&socket), &[])?;
         net::socket_set_timeout(state, Some(&socket), &[Value::Number(0.0)])?;
+        // Timeout listeners are request-scoped.  Pool checkout happens
+        // before `req.end()`, so clear the prior request's listeners here;
+        // the existing-socket path below cannot otherwise distinguish this
+        // reuse from a socket supplied by a custom connector.
+        crate::modules::events::method_remove_all_listeners(
+            state,
+            Some(&socket),
+            &[Value::String("timeout".into())],
+        )?;
         if let Some(value) = high_water_mark {
             execute::set_property_in_place(
                 &socket,
@@ -1229,6 +1238,17 @@ pub fn req_set_timeout(
         .clientreqs
         .get(&id)
         .and_then(|req| req.socket.clone());
+    // `http.request({ timeout })` is applied while the request is still
+    // acquiring its socket.  Keep the fact on ClientReq and let `req.end()`
+    // install the single socket timer; starting a request timer here would
+    // race that transition and emit `timeout` twice.
+    let defer_until_socket = socket.is_none()
+        && state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&id)
+            .is_some_and(|req| req.initial_timeout.is_some());
     if let Some(socket) = socket {
         if timeout > 0.0 {
             // Node keeps the Agent/request timeout installed while a socket
@@ -1271,6 +1291,9 @@ pub fn req_set_timeout(
             subscribe_event(state, &socket, "timeout", timeout_cb)?;
             net::socket_set_timeout(state, Some(&socket), &[Value::Number(timeout)])?;
         }
+    } else if timeout > 0.0 && defer_until_socket {
+        // `start_request_socket()` will attach the socket before the request
+        // is observable by user code; `req.end()` owns timer installation.
     } else if timeout > 0.0 {
         let timer = crate::modules::timers::set_timeout(
             state,
