@@ -4766,6 +4766,7 @@ fn fork_child_start(
         .map(|id| Value::Number(*id as f64))
         .collect::<Vec<_>>();
     execute::set_property_in_place(child, "\0childTimerIds", host_api::array(timers_after));
+    rehide_runtime_globals(&global);
     if result.is_err() {
         execute::set_property_in_place(&process, "send", previous_send);
         execute::set_property_in_place(&process, "disconnect", previous_disconnect);
@@ -4773,6 +4774,22 @@ fn fork_child_start(
         return result.map(|_| ());
     }
     Ok(())
+}
+
+fn rehide_runtime_globals(global: &Value) {
+    for key in ["__nodeCurrentAsyncResource", "__nodeCallChecks"] {
+        let value = execute::get_property(global, key);
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        let descriptor = host_api::object(vec![
+            ("value".into(), value),
+            ("writable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+        ]);
+        let _ = execute::define_property(global.clone(), key, descriptor);
+    }
 }
 
 pub fn cp_message_emit(
