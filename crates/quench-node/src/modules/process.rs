@@ -1,6 +1,7 @@
 //! `process` module — pure Rust process info.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -39,6 +40,8 @@ pub struct ProcessState {
     pub cwd: std::path::PathBuf,
     pub umask: u32,
     pub title: String,
+    /// Host-simulated child identities visible to `process.kill`.
+    pub alive_pids: HashSet<i64>,
 }
 
 impl Default for ProcessState {
@@ -78,6 +81,7 @@ impl ProcessState {
             cwd,
             umask: 0o022,
             title: "quench-node".into(),
+            alive_pids: HashSet::from([std::process::id() as i64]),
         }
     }
 }
@@ -486,7 +490,7 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     ))))
 }
 
-pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn kill(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let value = args.first().unwrap_or(&Value::Undefined);
     let pid = match value {
         Value::Number(number) if number.is_finite() => *number as i64,
@@ -517,6 +521,23 @@ pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             &process,
             &[Value::Number(pid as f64), Value::Number(signal as f64)],
         )?;
+    } else if pid > 0
+        && !state
+            .borrow()
+            .process
+            .alive_pids
+            .contains(&pid)
+    {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("kill ESRCH".into())],
+        );
+        let error = quench_runtime::execute::set_property(
+            error,
+            "code",
+            Value::String("ESRCH".into()),
+        );
+        return Err(VmError::Thrown(error));
     }
     Ok(Value::Boolean(true))
 }
