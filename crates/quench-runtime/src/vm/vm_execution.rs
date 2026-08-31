@@ -102,6 +102,111 @@ pub fn current_context() -> Rc<VmContext> {
     current_context_or_default()
 }
 
+/// Execute a classic script with the current host bindings and an optional
+/// sandbox overlay.  Node-facing adapters use this entry point for
+/// `vm.runInNewContext`/`runInContext`; realm and value identity mechanics stay
+/// in the runtime rather than being duplicated by a host module.
+pub fn execute_script_in_sandbox(
+    source: &str,
+    sandbox: Option<&Value>,
+    filename: Option<&str>,
+) -> Result<Value, VmError> {
+    let program = crate::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let mut context = current_context();
+    if let Some(sandbox @ Value::Object(_)) = sandbox {
+        for key in crate::execute::own_enumerable_keys(sandbox) {
+            let value = crate::execute::get_property_result(sandbox, &key)?;
+            context = Rc::new((*context).clone().with_host_value(key, value));
+        }
+    }
+    let global = current_global_object();
+    if let Some(filename) = filename {
+        let updated = crate::execute::set_property(
+            global.clone(),
+            "\0quench_vm_filename",
+            Value::String(filename.to_owned()),
+        );
+        crate::execute::replace_value(&global, &updated);
+    }
+    let mut registers = crate::register_file::RegisterFile::new();
+    let result = with_current_context(&context, || {
+        execute_code_in_place_context(program.code(), &mut registers, &context)
+    });
+    if filename.is_some() {
+        let updated = crate::execute::delete_property(global.clone(), "\0quench_vm_filename").0;
+        crate::execute::replace_value(&global, &updated);
+    }
+    let result = result?;
+    let marker_name = |value: &Value| match value {
+        Value::ArrayBuffer(buffer) if buffer.shared => "\0vmSharedArrayBufferPrototype",
+        _ => "\0vmArrayBufferPrototype",
+    };
+    let apply_realm_marker = |target: &Value, marker: Value| {
+        if !matches!(marker, Value::Object(_)) {
+            return;
+        }
+        let original = crate::execute::get_prototype_of(target).unwrap_or(Value::Null);
+        let _ = crate::execute::set_prototype_of(&marker, &original);
+        let _ = crate::execute::set_prototype_of(target, &marker);
+    };
+    let apply_to_buffer = |target: &Value| {
+        let buffer = crate::execute::get_property(target, "buffer");
+        if matches!(buffer, Value::ArrayBuffer(_)) {
+            let marker = sandbox
+                .map(|sandbox| crate::execute::get_property(sandbox, marker_name(&buffer)))
+                .unwrap_or(Value::Undefined);
+            apply_realm_marker(&buffer, marker);
+        }
+    };
+    match &result {
+        Value::ArrayBuffer(_) => {
+            let marker = sandbox
+                .map(|sandbox| crate::execute::get_property(sandbox, marker_name(&result)))
+                .unwrap_or(Value::Undefined);
+            apply_realm_marker(&result, marker);
+        }
+        Value::Float64Array(_)
+        | Value::Float32Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Uint32Array(_)
+        | Value::Uint8Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_)
+        | Value::DataView(_) => apply_to_buffer(&result),
+        _ => {}
+    }
+    Ok(result)
+}
+
+/// Mark a JavaScript object as a script context while preserving its identity.
+pub fn create_script_context(context: Value) -> Result<Value, VmError> {
+    if !matches!(context, Value::Object(_) | Value::Array(_)) {
+        return Err(crate::execute::type_error("context must be an object"));
+    }
+    let updated = crate::execute::set_property(context.clone(), "\0vmContext", Value::Boolean(true));
+    let updated = crate::execute::set_property(
+        updated,
+        "\0vmArrayBufferPrototype",
+        crate::host_api::object(Vec::new()),
+    );
+    let updated = crate::execute::set_property(
+        updated,
+        "\0vmSharedArrayBufferPrototype",
+        crate::host_api::object(Vec::new()),
+    );
+    crate::execute::replace_value(&context, &updated);
+    Ok(context)
+}
+
+pub fn is_script_context(value: &Value) -> bool {
+    matches!(crate::execute::get_property(value, "\0vmContext"), Value::Boolean(true))
+}
+
 /// Call a function value from host code through the current context.
 pub fn call_value(target: &Value, receiver: &Value, arguments: &[Value]) -> Result<Value, VmError> {
     crate::functions::execute_target(target, receiver, arguments)
