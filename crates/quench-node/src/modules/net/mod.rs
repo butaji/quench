@@ -443,6 +443,10 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
         ("writableCorked", Value::Number(0.0)),
+        (
+            "_writableState",
+            host_api::object(vec![("highWaterMark".into(), Value::Number(16_384.0))]),
+        ),
         ("allowHalfOpen", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
         ("connecting", Value::Boolean(false)),
