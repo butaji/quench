@@ -951,10 +951,10 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STRUCTURED_CLONE => structured_clone,
         CAP_FETCH => fetch,
         CAP_GC => gc,
-        CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::run_in_new_context,
-        CAP_VM_CREATE_CONTEXT => crate::modules::vm::create_context,
-        CAP_VM_RUN_IN_CONTEXT => crate::modules::vm::run_in_context,
-        CAP_VM_IS_CONTEXT => crate::modules::vm::is_context,
+        CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm_api::run_in_new_context,
+        CAP_VM_CREATE_CONTEXT => crate::modules::vm_api::create_context,
+        CAP_VM_RUN_IN_CONTEXT => crate::modules::vm_api::run_in_context,
+        CAP_VM_IS_CONTEXT => crate::modules::vm_api::is_context,
         CAP_READLINE => crate::modules::readline::create_interface,
         CAP_READLINE_DRIVER => crate::modules::readline::driver_handler,
         CAP_READLINE_DONE => crate::modules::readline::done_handler,
@@ -1032,7 +1032,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
 pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
     use handlers::*;
     Some(match cap {
-        CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::construct_run_in_new_context,
+        CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm_api::construct_run_in_new_context,
         CAP_INTERNAL_JS_STREAM => internal_js_stream_construct,
         CAP_VM_SOURCE_TEXT_MODULE => vm_source_text_module_construct,
         CAP_EVENTS_NEW => events_new,

@@ -1,5 +1,9 @@
-//! `vm` module — minimal `runInNewContext`/`runInContext` that evaluate
-//! source text as a classic script through the runtime's reducer.
+//! Node's `vm` API adapters.
+//!
+//! This module owns only Node-facing validation and capability wiring. The
+//! JavaScript evaluator, realms, and execution state are exclusively owned by
+//! `quench-runtime::vm`; keeping that distinction visible prevents a second
+//! VM from growing in the host crate.
 
 use std::cell::RefCell;
 use std::rc::Rc;
