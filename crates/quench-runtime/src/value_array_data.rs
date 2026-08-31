@@ -146,18 +146,10 @@ impl DenseElements {
             return ArrayKind::Holey;
         }
         match self {
-            Self::Numbers(values) if values.borrow().iter().all(|value| is_limb28(value.get())) => {
-                ArrayKind::PackedLimb28
-            }
-            Self::Numbers(values)
-                if values
-                    .borrow()
-                    .iter()
-                    .all(|value| value.get().fract() == 0.0) =>
-            {
-                ArrayKind::PackedInt
-            }
-            Self::Numbers(_) => ArrayKind::PackedDouble,
+            Self::Numbers(values) => values.borrow().iter().fold(
+                ArrayKind::PackedLimb28,
+                |kind, value| monotonic_kind(kind, number_kind(value.get())),
+            ),
             Self::Values(_) => ArrayKind::PackedValue,
         }
     }
