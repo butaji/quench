@@ -4808,7 +4808,7 @@ pub fn cp_async(
                 None
             };
         let mut callback_error = callback_error;
-        let output = if let Some((stdout, _, success)) = &shell_capture {
+        let mut output = if let Some((stdout, _, success)) = &shell_capture {
             if !success {
                 let mut error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::Error,
@@ -4818,8 +4818,15 @@ pub fn cp_async(
                 callback_error = error;
             }
             stdout.clone()
-        } else if eval_script && command_text.contains("console.log(42)") {
-            "42\n".into()
+        } else if eval_script {
+            let source = command_text
+                .split_once(" -e ")
+                .map(|(_, source)| source.trim().trim_matches(['"', '\'']))
+                .unwrap_or_default();
+            cp_script_output(source)
+                .filter(|(stream, _)| *stream == "stdout")
+                .map(|(_, output)| output)
+                .unwrap_or_default()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stdout\n".into()
         } else if timeout.is_some() {
@@ -4833,13 +4840,22 @@ pub fn cp_async(
                 Value::String(path) => format!("{path}\n"),
                 _ => format!("{}\n", state.borrow().process.cwd.display()),
             }
+        } else if let Some(value) = command_text.strip_prefix("echo ") {
+            format!("{value}\n")
         } else {
             "child output\n".into()
         };
-        let stderr = if let Some((_, stderr, _)) = shell_capture {
+        let mut stderr = if let Some((_, stderr, _)) = shell_capture {
             stderr
-        } else if eval_script && command_text.contains("console.error(43)") {
-            "43\n".into()
+        } else if eval_script {
+            let source = command_text
+                .split_once(" -e ")
+                .map(|(_, source)| source.trim().trim_matches(['"', '\'']))
+                .unwrap_or_default();
+            cp_script_output(source)
+                .filter(|(stream, _)| *stream == "stderr")
+                .map(|(_, output)| output)
+                .unwrap_or_default()
         } else if output == "foo\n" {
             "bar\n".into()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
@@ -4847,6 +4863,38 @@ pub fn cp_async(
         } else {
             String::new()
         };
+        let max_buffer = match execute::get_property(&options, "maxBuffer") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+            Value::Number(value) if value.is_infinite() => None,
+            Value::Undefined => Some(1024 * 1024),
+            _ => None,
+        };
+        if let Some(limit) = max_buffer {
+            let overflow = if output.len() > limit {
+                Some(("stdout", &mut output))
+            } else if stderr.len() > limit {
+                Some(("stderr", &mut stderr))
+            } else {
+                None
+            };
+            if let Some((stream, value)) = overflow {
+                let mut error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    &[Value::String(format!("{stream} maxBuffer length exceeded"))],
+                );
+                execute::set_property_in_place(
+                    &mut error,
+                    "code",
+                    Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
+                );
+                if value.is_ascii() {
+                    value.truncate(limit);
+                } else {
+                    *value = value.chars().take(limit).collect();
+                }
+                callback_error = error;
+            }
+        }
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
         if eval_script && command_text.contains("process.exit(1)") {
