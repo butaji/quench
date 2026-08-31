@@ -248,6 +248,7 @@ fn node_register(
     let target = node_target(state, receiver)?;
     let event = type_arg(args)?;
     let callback = callback_arg(args)?;
+    let process_scope = state.borrow().cluster.process_scope();
     if matches!(callback, Value::Null | Value::Undefined) {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
@@ -268,6 +269,7 @@ fn node_register(
             target.entry(&event).push(Listener {
                 callback,
                 once,
+                process_scope,
                 capture: false,
                 node_event,
                 weak: false,
@@ -831,6 +833,7 @@ pub fn add_event_listener(
         return Err(invalid_this());
     };
     let weak = weak_option(args, receiver.expect("validated receiver"));
+    let process_scope = state.borrow().cluster.process_scope();
     let (count, limit, should_warn, inserted) = {
         let mut guard = target.borrow_mut();
         let existing = guard.listeners_of(&event);
@@ -849,6 +852,7 @@ pub fn add_event_listener(
             guard.entry(&event).push(Listener {
                 callback,
                 once: once_option(args),
+                process_scope,
                 capture,
                 node_event: false,
                 weak,
