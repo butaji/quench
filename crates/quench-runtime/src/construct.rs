@@ -401,7 +401,7 @@ fn drop_shadowed_error_constructor(mut value: Value) -> Value {
         .any(|(key, _)| key == crate::builtins::ERROR_SLOT);
     if is_error {
         data.invalidate_layout();
-        data.properties.retain(|(key, _)| key != "constructor");
+        data.properties.retain_names(|key| key != "constructor");
     }
     value
 }
