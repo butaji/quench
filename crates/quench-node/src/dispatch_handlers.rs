@@ -3945,6 +3945,19 @@ pub fn cp_kill(
             &[Value::String("disconnect".into())],
         );
         execute::set_property_in_place(child, "\0forkProcess", Value::Undefined);
+        clear_fork_timers(state, child);
+        let signal = execute::get_property(child, "signalCode");
+        for event in ["exit", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(child),
+                &[
+                    Value::String(event.into()),
+                    Value::Null,
+                    signal.clone(),
+                ],
+            )?;
+        }
     }
     Ok(Value::Boolean(true))
 }
@@ -4133,10 +4146,12 @@ pub fn cp_abort(
     let signal_object = args.get(1).cloned().unwrap_or(Value::Undefined);
     let signal = args
         .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
         .cloned()
         .unwrap_or_else(|| Value::String("SIGTERM".into()));
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
     execute::set_property_in_place(child, "signalCode", signal.clone());
+    clear_fork_timers(state, child);
     let error = host_api::object(vec![
         ("name".into(), Value::String("AbortError".into())),
         (
@@ -4162,6 +4177,25 @@ pub fn cp_abort(
     Ok(Value::Undefined)
 }
 
+fn clear_fork_timers(state: &Rc<RefCell<HostState>>, child: &Value) {
+    let timer_ids = execute::get_property(child, "\0childTimerIds");
+    let Value::Array(timer_ids) = timer_ids else {
+        return;
+    };
+    let mut timers = state.borrow_mut();
+    for index in 0..timer_ids.logical_len() {
+        let Ok(value) = execute::get_property_result(
+            &Value::Array(timer_ids.clone()),
+            &index.to_string(),
+        ) else {
+            continue;
+        };
+        if let Value::Number(id) = value {
+            timers.timers.timers.remove(&(id as u64));
+        }
+    }
+}
+
 pub fn cp_abort_emit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -4173,6 +4207,27 @@ pub fn cp_abort_emit(
             Some(child),
             &[Value::String("error".into()), error.clone()],
         )?;
+        // Forked children defer their ordinary completion because the IPC
+        // channel normally owns their lifetime.  Abort is the terminal
+        // transition, so publish the same exit/close pair here after the
+        // AbortError while preserving the child receiver identity.
+        if matches!(
+            execute::get_property(child, "\0childForkIpc"),
+            Value::Boolean(true)
+        ) {
+            let signal = execute::get_property(child, "signalCode");
+            for event in ["exit", "close"] {
+                crate::modules::events::method_emit(
+                    state,
+                    Some(child),
+                    &[
+                        Value::String(event.into()),
+                        Value::Null,
+                        signal.clone(),
+                    ],
+                )?;
+            }
+        }
     }
     Ok(Value::Undefined)
 }
@@ -4295,13 +4350,16 @@ pub fn cp_fork(
             );
         }
     }
-    let child = execute::set_property(
-        child,
+    // The abort listener installed by cp_spawn already owns this exact child
+    // identity.  Mutate the host-owned slots in place so fork() does not
+    // publish a COW replacement that would strand the lifecycle listener.
+    execute::set_property_in_place(
+        &child,
         "send",
         crate::host::capability(crate::registry::SPEC_CP_SEND),
     );
-    let child = execute::set_property(
-        child,
+    execute::set_property_in_place(
+        &child,
         "disconnect",
         crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
     );
@@ -4310,6 +4368,13 @@ pub fn cp_fork(
     // channel. This is source-driven process semantics, not a fixture-name
     // table: the child sends whatever its `process.send` call supplies.
     fork_child_start(state, &child, &script, &fork_args_for_events)?;
+    // An already-aborted signal can mark the child before its shared-realm
+    // source executes.  Remove resources created by that source as part of
+    // the same terminal transition rather than leaking them into the parent
+    // event loop.
+    if matches!(execute::get_property(&child, "killed"), Value::Boolean(true)) {
+        clear_fork_timers(state, &child);
+    }
     Ok(child)
 }
 
