@@ -1144,9 +1144,18 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             "flushHeaders".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_FLUSH_HEADERS),
         ),
-        ("cork".to_string(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-        ("uncork".to_string(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        (
+            "cork".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_CORK),
+        ),
+        (
+            "uncork".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_UNCORK),
+        ),
         ("writableCorked".to_string(), Value::Number(0.0)),
+        ("writableLength".to_string(), Value::Number(0.0)),
+        ("writableNeedDrain".to_string(), Value::Boolean(false)),
+        ("writableHighWaterMark".to_string(), Value::Number(16_384.0)),
         ("sendDate".to_string(), Value::Boolean(true)),
         ("statusCode".to_string(), Value::Number(200.0)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
@@ -1163,7 +1172,8 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 // Response methods live in `http_res`; re-exported here for dispatch.
 pub use crate::modules::http_res::{res_destroy, res_flush_headers};
 pub use crate::modules::http_res::{
-    res_end, res_remove_header, res_set_header, res_write, res_write_continue, res_write_head,
+    res_cork, res_end, res_remove_header, res_set_header, res_uncork, res_write,
+    res_write_continue, res_write_head,
 };
 
 /// Construct an IncomingMessage with the same signal/destroy state used by
