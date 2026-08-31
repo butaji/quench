@@ -353,15 +353,20 @@ fn run_stage_files(
                             break;
                         }
                         let stop = (start + WORK_BATCH).min(files.len());
-                        for index in start..stop {
-                            let path = &files[index];
-                            let outcome = if isolated {
-                                run_file_in_process(&root, path)
-                            } else {
-                                runner.run_file_with_cache(path, &mut harness)
-                            };
-                            if sender.send((index, outcome)).is_err() {
-                                return;
+                        if isolated {
+                            let outcomes = run_files_in_process(&root, &files[start..stop]);
+                            for (offset, outcome) in batch_outcomes(outcomes, stop - start) {
+                                if sender.send((start + offset, outcome)).is_err() {
+                                    return;
+                                }
+                            }
+                        } else {
+                            for index in start..stop {
+                                let path = &files[index];
+                                let outcome = runner.run_file_with_cache(path, &mut harness);
+                                if sender.send((index, outcome)).is_err() {
+                                    return;
+                                }
                             }
                         }
                     }
@@ -386,8 +391,8 @@ fn run_stage_files(
 }
 
 /// Long in-process sweeps retain unreachable `Rc` cycles until the worker
-/// exits. Recycle each fixture in a child process for large stages so the
-/// runner's memory bound is independent of fixture graph shape.
+/// exits. Recycle bounded fixture batches in child processes for large stages
+/// so the runner's memory bound is independent of fixture graph shape.
 fn stage_process_isolation(file_count: usize) -> bool {
     const MAX_IN_PROCESS_FILES: usize = 64;
     env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some()
@@ -401,26 +406,57 @@ fn run_test_executable() -> Option<std::path::PathBuf> {
         .filter(|executable| executable.is_file())
 }
 
-fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
+fn run_files_in_process(root: &Path, paths: &[PathBuf]) -> Result<Vec<TestOutcome>, String> {
     let executable = run_test_executable()
         .ok_or_else(|| "stage run-test executable is unavailable".to_string())?;
     let output = Command::new(executable)
         .env("TEST262_DIR", root)
-        .arg(path)
-        .stdout(std::process::Stdio::null())
+        .arg("--batch")
+        .args(paths)
+        .stdout(std::process::Stdio::piped())
         .output()
         .map_err(|error| format!("stage test process failed: {error}"))?;
-    if output.status.success() {
-        return Ok(TestOutcome::Pass);
-    }
-    let reason = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Ok(TestOutcome::Fail {
-        reason: if reason.is_empty() {
+    if !output.status.success() {
+        let reason = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if reason.is_empty() {
             format!("test process exited with {}", output.status)
         } else {
             reason
-        },
-    })
+        });
+    }
+    let encoded = String::from_utf8_lossy(&output.stdout);
+    let reasons = serde_json::from_str::<Vec<Option<String>>>(&encoded)
+        .map_err(|error| format!("invalid batch result: {error}"))?;
+    if reasons.len() != paths.len() {
+        return Err(format!(
+            "batch result count {} does not match path count {}",
+            reasons.len(),
+            paths.len()
+        ));
+    }
+    Ok(reasons
+        .into_iter()
+        .map(|reason| match reason {
+            Some(reason) => TestOutcome::Fail { reason },
+            None => TestOutcome::Pass,
+        })
+        .collect())
+}
+
+fn batch_outcomes(
+    outcomes: Result<Vec<TestOutcome>, String>,
+    count: usize,
+) -> Vec<(usize, Result<TestOutcome, String>)> {
+    match outcomes {
+        Ok(outcomes) => outcomes
+            .into_iter()
+            .enumerate()
+            .map(|(offset, outcome)| (offset, Ok(outcome)))
+            .collect(),
+        Err(error) => (0..count)
+            .map(|offset| (offset, Err(error.clone())))
+            .collect(),
+    }
 }
 
 fn parse_stage_index(value: &str) -> Result<u32, String> {
