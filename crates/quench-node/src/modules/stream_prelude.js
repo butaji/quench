@@ -2514,6 +2514,11 @@
   // but keep its base-stream error behavior by disabling that lifecycle.
   function Stream(options) {
     const baseOptions = Object.assign({}, options || {}, { autoDestroy: false });
+    if (this instanceof ReadableClass) {
+      initReadable(this, baseOptions);
+      initConstruct(this, baseOptions);
+      return this;
+    }
     return new ReadableClass(baseOptions);
   }
   Stream.prototype = ReadableClass.prototype;
