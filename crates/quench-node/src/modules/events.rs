@@ -197,16 +197,17 @@ fn add_listener(
         )?;
     }
     let already_warned = receiver.is_some_and(|value| event_is_warned(value, &event));
+    let process_scope = state.borrow().cluster.process_scope();
     let (count, max) = {
         let mut guard = emitter.borrow_mut();
-        let count = guard.add(&event, callback.clone(), once, prepend);
+        let count = guard.add(&event, callback.clone(), once, prepend, process_scope);
         (count, guard.max)
     };
     if let Some(receiver) = receiver {
         if let Ok(events) = execute::get_property_result(receiver, "_events") {
             let callbacks = emitter
                 .borrow()
-                .listeners_of(&event)
+                .listeners_for_scope(&event, process_scope)
                 .iter()
                 .map(|listener| listener.callback.clone())
                 .collect::<Vec<_>>();
@@ -417,11 +418,11 @@ pub fn method_emit(
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Ok(Value::Boolean(false));
     };
+    let process_scope = state.borrow().cluster.process_scope();
     if event == "error" {
         let monitor = emitter
             .borrow()
-            .listeners_of("Symbol.for.events.errorMonitor\0")
-            .to_vec();
+            .listeners_for_scope("Symbol.for.events.errorMonitor\0", process_scope);
         for listener in monitor {
             execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]))?;
         }
@@ -432,7 +433,7 @@ pub fn method_emit(
             Value::Boolean(true)
         );
     let capture_rejections = emitter.borrow().capture_rejections && !capture_suppressed;
-    let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
+    let snapshot = emitter.borrow().listeners_for_scope(&event, process_scope);
     if snapshot.is_empty() {
         if event == "error" {
             if CAPTURE_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
@@ -496,7 +497,9 @@ pub fn method_emit(
             continue;
         }
         if listener.once {
-            let removed = emitter.borrow_mut().remove(&event, &listener.callback);
+            let removed = emitter
+                .borrow_mut()
+                .remove_for_scope(&event, &listener.callback, process_scope);
             if removed && event != "removeListener" {
                 let _ = method_emit(
                     state,
