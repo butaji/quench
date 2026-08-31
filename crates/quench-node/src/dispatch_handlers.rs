@@ -4932,7 +4932,30 @@ pub fn cp_disconnect_emit(
         )?;
     }
     if matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_))) {
+        let process = args.get(1).expect("checked process object");
+        let previous_scope = state.borrow().cluster.process_scope();
+        let previous_event_scope = state.borrow().event_loop.process_scope();
+        let child_scope = args.first().and_then(|child| match execute::get_property(
+            child,
+            "\0forkScope",
+        ) {
+            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => Some(scope as u64),
+            _ => None,
+        });
+        if let Some(scope) = child_scope {
+            state.borrow_mut().cluster.set_process_scope(scope);
+            state.borrow().event_loop.set_process_scope(scope);
+        }
+        execute::set_property_in_place(process, "connected", Value::Boolean(false));
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
+        state
+            .borrow_mut()
+            .cluster
+            .set_process_scope(previous_scope);
+        state
+            .borrow()
+            .event_loop
+            .set_process_scope(previous_event_scope);
     }
     if let Some(child) = args.first() {
         for event in ["exit", "close"] {
