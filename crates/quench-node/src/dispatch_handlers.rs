@@ -3545,10 +3545,14 @@ pub fn cp_spawn(
     };
     state.borrow_mut().identity_roots.push(child.clone());
     if let Ok(signal) = execute::get_property_result(&options, "signal") {
-        if matches!(
+        let abort_like = matches!(
+            signal,
+            Value::Object(_) | Value::ObjectAlias(_)
+        ) && (matches!(
             execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
             Value::Boolean(true)
-        ) {
+        ) || matches!(execute::get_property(&signal, "aborted"), Value::Boolean(_)));
+        if abort_like {
             execute::set_property_in_place(
                 &child,
                 "\0childAbortReason",
