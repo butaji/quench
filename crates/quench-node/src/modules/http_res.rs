@@ -43,16 +43,37 @@ pub fn res_set_header(
         return Err(headers_sent_error("Cannot set headers after they are sent to the client"));
     }
     let name = args.first().map(execute::to_js_string).transpose()?;
-    let value = args.get(1).map(execute::to_js_string).transpose()?;
-    let Some((name, value)) = name.zip(value) else {
+    let Some(name) = name else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    let values = header_values(args.get(1))?;
+    if values.is_empty() {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
-        res.headers.retain(|(key, _)| key != &name);
-        res.headers.push((name, value));
+        res.headers
+            .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+        res.headers
+            .extend(values.into_iter().map(|value| (name.clone(), value)));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn header_values(value: Option<&Value>) -> Result<Vec<String>, VmError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    if let Value::Array(_) = value {
+        let length = match execute::get_property(value, "length") {
+            Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+            _ => 0,
+        };
+        return (0..length)
+            .map(|index| execute::to_js_string(&execute::get_property(value, &index.to_string())))
+            .collect();
+    }
+    Ok(vec![execute::to_js_string(value)?])
 }
 
 pub fn res_remove_header(
@@ -118,10 +139,11 @@ pub fn res_write_head(
                 let Ok(name) = execute::to_js_string(&execute::get_property(&array, name)) else {
                     continue;
                 };
-                let Ok(value) = execute::to_js_string(&execute::get_property(&array, value)) else {
+                let Ok(values) = header_values(Some(&execute::get_property(&array, value))) else {
                     continue;
                 };
-                res.headers.push((name, value));
+                res.headers
+                    .extend(values.into_iter().map(|value| (name.clone(), value)));
             }
         }
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -165,8 +187,9 @@ fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     res.headers.clear();
     for key in execute::own_enumerable_keys(object) {
         if let Ok(item) = execute::get_property_result(object, &key) {
-            if let Ok(value) = execute::to_js_string(&item) {
-                res.headers.push((key, value));
+            if let Ok(values) = header_values(Some(&item)) {
+                res.headers
+                    .extend(values.into_iter().map(|value| (key.clone(), value)));
             }
         }
     }

@@ -1895,6 +1895,12 @@ pub fn req_close(
         .clientreqs
         .get(&client_id)
         .and_then(|req| req.res.clone());
+    let parse_error = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .is_some_and(|req| req.parse_error);
     let agent = state
         .borrow()
         .http
@@ -1912,7 +1918,7 @@ pub fn req_close(
         .http
         .client_signals
         .retain(|_, request_id| *request_id != client_id);
-    if response.is_none() {
+    if response.is_none() && !parse_error {
         if let Some(request) = request.as_ref() {
             let has_error_listener = crate::modules::emitter::emitter_id(request)
                 .and_then(|id| state.borrow().emitters.get(id))
@@ -2385,6 +2391,15 @@ pub fn data_handler(
                 net::socket_destroy(state, Some(socket), &[])?;
                 return Ok(Value::Undefined);
             }
+            if let Some(error) = duplicate_content_length(&head) {
+                if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                    req.parse_error = true;
+                }
+                let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+                net::emit(state, &request, "error", vec![error])?;
+                net::socket_destroy(state, Some(socket), &[])?;
+                return Ok(Value::Undefined);
+            }
             let res = build_incoming(state, client_id, &head)?;
             if let Some(socket) = state
                 .borrow()
@@ -2611,6 +2626,28 @@ fn invalid_response_framing(head: &[u8], body: &[u8]) -> Option<Value> {
     let error = execute::set_property(error, "reason", Value::String(reason.into()));
     let error = execute::set_property(error, "bytesParsed", Value::Number((head.len() + 4) as f64));
     Some(execute::set_property(error, "rawPacket", crate::modules::buffer_proto::make_buffer(&raw)))
+}
+
+fn duplicate_content_length(head: &[u8]) -> Option<Value> {
+    let count = String::from_utf8_lossy(head)
+        .lines()
+        .filter(|line| {
+            line.split_once(':')
+                .is_some_and(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+        })
+        .count();
+    if count < 2 {
+        return None;
+    }
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("Parse Error: Duplicate Content-Length".into())],
+    );
+    Some(execute::set_property(
+        error,
+        "code",
+        Value::String("HPE_UNEXPECTED_CONTENT_LENGTH".into()),
+    ))
 }
 
 fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
