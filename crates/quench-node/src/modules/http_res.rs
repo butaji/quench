@@ -46,7 +46,7 @@ pub fn res_set_header(
     let Some(name) = name else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    let values = header_values(args.get(1))?;
+    let values = header_values_for(&name, args.get(1))?;
     if values.is_empty() {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
@@ -78,6 +78,24 @@ fn header_values(value: Option<&Value>) -> Result<Vec<String>, VmError> {
     }
     Ok(vec![execute::to_js_string(value)?])
 }
+
+fn header_values_for(name: &str, value: Option<&Value>) -> Result<Vec<String>, VmError> {
+    let mut values = header_values(value)?;
+    if NON_REPEATABLE_HEADERS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    {
+        values.truncate(1);
+    }
+    Ok(values)
+}
+
+pub(crate) const NON_REPEATABLE_HEADERS: &[&str] = &[
+    "content-type", "user-agent", "referer", "host", "authorization",
+    "proxy-authorization", "if-modified-since", "if-unmodified-since", "from",
+    "location", "max-forwards", "retry-after", "etag", "last-modified", "server",
+    "age", "expires",
+];
 
 pub fn res_remove_header(
     state: &Rc<RefCell<HostState>>,
@@ -142,7 +160,7 @@ pub fn res_write_head(
                 let Ok(name) = execute::to_js_string(&execute::get_property(&array, name)) else {
                     continue;
                 };
-                let Ok(values) = header_values(Some(&execute::get_property(&array, value))) else {
+                let Ok(values) = header_values_for(&name, Some(&execute::get_property(&array, value))) else {
                     continue;
                 };
                 for value in &values {
@@ -253,7 +271,7 @@ fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     res.headers.clear();
     for key in execute::own_enumerable_keys(object) {
         if let Ok(item) = execute::get_property_result(object, &key) {
-            if let Ok(values) = header_values(Some(&item)) {
+            if let Ok(values) = header_values_for(&key, Some(&item)) {
                 for value in &values {
                     validate_header_value(&key, value)?;
                 }
