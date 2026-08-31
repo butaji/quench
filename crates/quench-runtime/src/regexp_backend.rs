@@ -1944,19 +1944,36 @@ pub(crate) fn compile_property_matcher(
                 PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?,
             )
         }
-    } else {
-        macro_rules! binary_property {
-            ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
-                match name {
-                    $( $( $property => PropertyMatcherKind::Binary {
-                        matcher: binary_property_matches::<props::$kind>,
-                        ranges: binary_property_ranges::<props::$kind>,
-                    }, )+ )*
-                    _ => return None,
-                }
-            };
+    } else if value.is_none() {
+        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(name) {
+            PropertyMatcherKind::GeneralCategory(target)
+        } else if let Some(target) =
+            PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(name)
+        {
+            PropertyMatcherKind::GeneralCategoryGroup(target)
+        } else {
+            binary_property_kind(name)?
         }
-        binary_property!(
+    } else {
+        binary_property_kind(name)?
+    };
+    Some(PropertyMatcher { kind })
+}
+
+fn binary_property_kind(name: &str) -> Option<PropertyMatcherKind> {
+    use icu_properties::props;
+    macro_rules! binary_property {
+        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
+            match name {
+                $( $( $property => Some(PropertyMatcherKind::Binary {
+                    matcher: binary_property_matches::<props::$kind>,
+                    ranges: binary_property_ranges::<props::$kind>,
+                }), )+ )*
+                _ => None,
+            }
+        };
+    }
+    binary_property!(
         "ASCII_Hex_Digit" => AsciiHexDigit,
         "AHex" => AsciiHexDigit,
         "Alphabetic" => Alphabetic,
@@ -2012,9 +2029,7 @@ pub(crate) fn compile_property_matcher(
         "White_Space" | "space" | "WSpace" => WhiteSpace,
         "XID_Continue" | "XIDC" => XidContinue,
         "XID_Start" | "XIDS" => XidStart,
-        )
-    };
-    Some(PropertyMatcher { kind })
+    )
 }
 
 fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {

@@ -655,6 +655,8 @@ mod tests {
             Some("Surrogate")
         ));
         assert_eq!(test_str("^\\p{Assigned}+$", "u", "abc", 0), Some(true));
+        assert_eq!(test_str("^\\p{Other}+$", "u", "\0", 0), Some(true));
+        assert_eq!(test_str("^\\p{C}+$", "u", "\0", 0), Some(true));
         assert_eq!(test_str("^\\P{Assigned}+$", "u", "\u{38b}", 0), Some(true));
         assert_eq!(
             test_str("^\\p{Script_Extensions=Latin}+$", "u", "Aª", 0),
@@ -679,5 +681,7 @@ mod tests {
         let mut units = vec![0x00AD];
         units.extend(std::iter::repeat_n(0, 300));
         assert_eq!(test_units("^\\p{General_Category=Other}+$", "u", &units, 0), Some(true));
+        assert_eq!(test_str("^\\p{Other}+$", "u", &text, 0), Some(true));
+        assert_eq!(test_str("^\\p{C}+$", "u", &text, 0), Some(true));
     }
 }
