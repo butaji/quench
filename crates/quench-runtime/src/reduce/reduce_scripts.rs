@@ -115,8 +115,15 @@ fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
 }
 
 fn reject_parse_errors(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
-    if parsed.panicked || !parsed.errors.is_empty() {
-        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
+    if parsed.panicked {
+        return Err(vec!["SyntaxError: OXC parser panicked".to_string()]);
+    }
+    if !parsed.errors.is_empty() {
+        return Err(parsed
+            .errors
+            .iter()
+            .map(|error| format!("SyntaxError: {error}"))
+            .collect());
     }
     Ok(())
 }

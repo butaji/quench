@@ -22,6 +22,7 @@ const CLIENT_CLOSE_PENDING_PROP: &str = "\0quench:http:req:close-pending";
 const CLIENT_EXPECT_CONTINUE_PROP: &str = "\0quench:http:req:expect-continue";
 const CLIENT_TIMEOUT_PROP: &str = "\0quench:http:req:timeout";
 const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
+const RESPONSE_READ_BUFFER_PROP: &str = "\0quench:http:res:read-buffer";
 const CLIENT_SOCKET_SUBSCRIBED_PROP: &str = "\0quench:http:req:socket-subscribed";
 const CLIENT_SOCKET_EVENT_QUEUED_PROP: &str = "\0quench:http:req:socket-event-queued";
 const CLIENT_PATH_PROP: &str = "\0quench:http:req:path";
@@ -382,6 +383,32 @@ pub fn res_set_encoding(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+/// Consume one body chunk for the IncomingMessage `read()` contract. The
+/// parser queues the same value it emits as `data`, so readable listeners see
+/// one identity-preserving stream of chunks regardless of consumption mode.
+pub fn res_read(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(response) = receiver else {
+        return Ok(Value::Null);
+    };
+    let queue = execute::get_property(response, RESPONSE_READ_BUFFER_PROP);
+    let Value::Array(array) = queue else {
+        return Ok(Value::Null);
+    };
+    if array.logical_len() == 0 {
+        return Ok(Value::Null);
+    }
+    let value = array.index_value(0);
+    let remaining = (1..array.logical_len())
+        .map(|index| array.index_value(index))
+        .collect();
+    set_response_property(response, RESPONSE_READ_BUFFER_PROP, host_api::array(remaining));
+    Ok(value)
+}
+
 pub fn res_pipe(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -503,6 +530,21 @@ fn response_data(response: &Value, bytes: &[u8]) -> Value {
         }
         _ => crate::modules::buffer_proto::make_buffer(bytes),
     }
+}
+
+fn queue_response_data(response: &Value, data: Value) {
+    let queue = execute::get_property(response, RESPONSE_READ_BUFFER_PROP);
+    let values = match queue {
+        Value::Array(array) => {
+            let mut values = (0..array.logical_len())
+                .map(|index| array.index_value(index))
+                .collect::<Vec<_>>();
+            values.push(data);
+            values
+        }
+        _ => vec![data],
+    };
+    set_response_property(response, RESPONSE_READ_BUFFER_PROP, host_api::array(values));
 }
 
 /// `http.request(options[, cb])` — an outbound ClientRequest.
@@ -2643,10 +2685,10 @@ pub fn data_handler(
             }
             let req_value = client_value(state, client_id, true).unwrap_or(Value::Undefined);
             net::emit(state, &req_value, "response", vec![res])?;
+            flush_body(state, client_id)?;
             if let Some(response) = client_value(state, client_id, false) {
                 net::emit(state, &response, "readable", Vec::new())?;
             }
-            flush_body(state, client_id)?;
             finish_known_response(state, client_id)
         }
         None if head_parsed => {
@@ -2660,7 +2702,9 @@ pub fn data_handler(
                 net::emit(state, &res, "readable", Vec::new())?;
                 let body = response_body_bytes(&res, &bytes);
                 if !body.is_empty() {
-                    net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
+                    let data = response_data(&res, &body);
+                    queue_response_data(&res, data.clone());
+                    net::emit(state, &res, "data", vec![data])?;
                 }
             }
             finish_known_response(state, client_id)?;
@@ -2741,7 +2785,9 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
         if consumed > 0 {
             let body = response_body_bytes(&res, &rest[..consumed]);
             if !body.is_empty() {
-                net::emit(state, &res, "data", vec![response_data(&res, &body)])?;
+                let data = response_data(&res, &body);
+                queue_response_data(&res, data.clone());
+                net::emit(state, &res, "data", vec![data])?;
             }
         }
     }
@@ -3646,8 +3692,16 @@ fn build_incoming(
         ("headers".to_string(), host_api::object(headers)),
         ("req".to_string(), request_alias),
         (
+            RESPONSE_READ_BUFFER_PROP.to_string(),
+            host_api::array(Vec::new()),
+        ),
+        (
             "setEncoding".to_string(),
             crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
+        ),
+        (
+            "read".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_RES_READ),
         ),
         (
             "pipe".to_string(),
