@@ -162,7 +162,11 @@ fn parse<'a>(source: &'a str, flags: &str) -> Option<NativePattern<'a>> {
         .or_else(|| source.strip_prefix('\\'))
         .and_then(parse_class)
     {
-        return Some(NativePattern::CharacterClass(class));
+        if !matches!(class, CharacterClass::Word | CharacterClass::NotWord)
+            || !(flags.contains('i') && flags.contains(['u', 'v']))
+        {
+            return Some(NativePattern::CharacterClass(class));
+        }
     }
     if !flags.contains(['i', 'm', 'u', 'v']) {
         if let Some(repeat) = parse_repeat(source) {
@@ -478,6 +482,12 @@ mod tests {
         assert_eq!(test_units("\\D", "", &[0xD800], 0), Some(true));
         assert_eq!(test_units("\\S", "", &[0xD800], 0), Some(true));
         assert_eq!(test_units("\\W", "", &[0xD800], 0), Some(true));
+    }
+
+    #[test]
+    fn unicode_casefold_word_classes_defer_to_the_engine() {
+        assert_eq!(find_str("\\W", "ui", "K", 0), None);
+        assert_eq!(find_str("\\w", "ui", "K", 0), None);
     }
 
     #[test]
