@@ -119,9 +119,7 @@ impl DenseElements {
 
     fn resize_numeric(&mut self, length: usize) {
         match self {
-            Self::Numbers(values) => values
-                .borrow_mut()
-                .resize_with(length, || std::cell::Cell::new(0.0)),
+            Self::Numbers(values) => values.borrow_mut().resize_with(length, || std::cell::Cell::new(0.0)),
             Self::Values(values) => values.borrow_mut().resize(length, Value::Number(0.0)),
         }
     }
@@ -227,23 +225,24 @@ impl DenseElements {
                 .collect();
             *self = Self::Values(Rc::new(RefCell::new(values)));
         }
-        let Self::Values(values) = self else {
-            unreachable!()
-        };
+        let Self::Values(values) = self else { unreachable!() };
         if Rc::strong_count(values) > 1 {
             let cloned = values.borrow().clone();
             *self = Self::Values(Rc::new(RefCell::new(cloned)));
         }
-        let Self::Values(values) = self else {
-            unreachable!()
-        };
+        let Self::Values(values) = self else { unreachable!() };
         Rc::get_mut(values).expect("detached values").get_mut()
     }
 
     fn snapshot(&self) -> Vec<Value> {
-        (0..self.len())
-            .filter_map(|index| self.value_at(index))
-            .collect()
+        match self {
+            Self::Numbers(values) => values
+                .borrow()
+                .iter()
+                .map(|value| Value::Number(value.get()))
+                .collect(),
+            Self::Values(values) => values.borrow().clone(),
+        }
     }
 }
 
@@ -298,16 +297,13 @@ impl ArrayData {
         })));
         data
     }
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> ArrayKind {
         self.kind.get()
     }
 
     pub(crate) fn is_arguments(&self) -> bool {
         self.arguments
-    }
-
-    pub(crate) fn has_argument_live(&self) -> bool {
-        self.argument_live.is_some()
     }
 
     pub(crate) fn is_strict_arguments(&self) -> bool {
@@ -324,13 +320,6 @@ impl ArrayData {
     #[inline]
     pub(crate) fn is_packed(&self) -> bool {
         self.kind.get().is_packed()
-    }
-
-    /// Snapshot packed dense storage for capability adapters that can prove
-    /// ordinary indexed access without invoking user-visible lookup.
-    #[inline]
-    pub fn packed_values(&self) -> Option<Vec<Value>> {
-        self.is_packed().then(|| self.snapshot())
     }
 
     pub fn logical_len(&self) -> usize {
@@ -352,11 +341,11 @@ impl ArrayData {
                 }
             },
             |live| {
-                let live = live.borrow();
-                live.length_override
-                    .as_ref()
-                    .and_then(argument_length)
-                    .unwrap_or(live.length)
+            let live = live.borrow();
+            live.length_override
+                .as_ref()
+                .and_then(argument_length)
+                .unwrap_or(live.length)
             },
         )
     }
@@ -430,6 +419,7 @@ impl ArrayData {
     pub(crate) fn is_sparse(&self) -> bool {
         matches!(self.kind.get(), ArrayKind::Sparse)
     }
+    #[cfg(test)]
     pub(crate) fn is_dense(&self) -> bool {
         !matches!(self.kind.get(), ArrayKind::Sparse)
     }
@@ -464,19 +454,6 @@ impl ArrayData {
             && self.logical_len() == self.physical_len()
             && self.properties.is_empty()
             && self.indexed_descriptors_plain()
-            && !self.arguments
-            && self.argument_live.is_none()
-    }
-
-    /// Prove that indexed reads/writes have no prototype, descriptor, or
-    /// side-property interception. Unlike `is_packed_data`, this also admits
-    /// a holey dense store: a missing dense slot simply observes `undefined`.
-    #[inline]
-    pub(crate) fn is_plain_dense_access(&self) -> bool {
-        !self.is_sparse()
-            && self.properties.is_empty()
-            && self.indexed_descriptors_plain()
-            && self.has_default_array_prototype()
             && !self.arguments
             && self.argument_live.is_none()
     }
@@ -519,6 +496,7 @@ impl ArrayData {
     /// `argument_live` field is shared between the original and any
     /// `Rc::make_mut` clones of this data, so overrides stored via
     /// `set_arguments_length_override` are visible to all references.
+    #[cfg(test)]
     pub(crate) fn argument_live_view(&self) -> Option<std::cell::Ref<'_, ArgumentLive>> {
         self.argument_live.as_ref().map(|live| live.borrow())
     }
@@ -605,10 +583,10 @@ impl ArrayData {
                     .kind_with_holes(&self.deleted, self.length.get())
             })
         } else {
-            self.values
-                .kind_with_holes(&self.deleted, self.length.get())
+            self.values.kind_with_holes(&self.deleted, self.length.get())
         };
-        self.kind.set(monotonic_kind(self.kind.get(), candidate));
+        self.kind
+            .set(monotonic_kind(self.kind.get(), candidate));
     }
 
     /// Grow dense storage geometrically so sequential appends do not
@@ -643,40 +621,6 @@ impl ArrayData {
         self.length.set(self.length.get().max(length));
         self.kind.set(ArrayKind::Sparse);
     }
-    pub(crate) fn append_live(&self, values: &[Value]) {
-        let Some(live) = &self.argument_live else {
-            return;
-        };
-        let mut live = live.borrow_mut();
-        for value in values {
-            let index = live.length;
-            set_live_index(&mut live, index, value.clone());
-        }
-    }
-
-    pub(crate) fn append_physical(&mut self, values: &[Value]) {
-        match &mut self.values {
-            DenseElements::Numbers(numbers)
-                if values.iter().all(|value| matches!(value, Value::Number(_))) =>
-            {
-                numbers.borrow_mut().extend(values.iter().map(|value| {
-                    let Value::Number(number) = value else {
-                        unreachable!()
-                    };
-                    std::cell::Cell::new(*number)
-                }));
-            }
-            DenseElements::Numbers(_) => {
-                let mut current = self.values.materialize_values().to_vec();
-                current.extend_from_slice(values);
-                self.values = DenseElements::Values(Rc::new(RefCell::new(current)));
-            }
-            DenseElements::Values(current) => current.borrow_mut().extend_from_slice(values),
-        }
-        self.length
-            .set(self.length.get().saturating_add(values.len()));
-    }
-
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
         self.kind
             .set(monotonic_kind(self.kind.get(), ArrayKind::PackedValue));
@@ -840,10 +784,10 @@ impl ArrayData {
             }
         }
         self.properties.clear();
-        self.kind.set(
-            self.values
-                .kind_with_holes(&self.deleted, self.length.get()),
-        );
+        self.kind
+            .set(self
+                .values
+                .kind_with_holes(&self.deleted, self.length.get()));
         self.is_packed_ordinary()
     }
 
@@ -863,63 +807,10 @@ impl ArrayData {
 
     /// Store an unboxed numeric slot while retaining canonical `Value`
     /// semantics at the storage boundary.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn set_numeric_index(&mut self, index: usize, number: f64) {
         self.set_index(index, Value::Number(number));
-    }
-
-    pub(crate) fn fill_numeric_constant(&mut self, start: usize, end: usize, number: f64) {
-        debug_assert_eq!(start, 0);
-        self.values.resize_numeric(end);
-        if let DenseElements::Numbers(values) = &self.values {
-            for slot in values.borrow()[start..end].iter() {
-                slot.set(number);
-            }
-        } else {
-            for index in start..end {
-                self.values.set(index, Value::Number(number));
-            }
-        }
-        if let DenseElements::Values(values) = &self.values {
-            let numeric = values
-                .borrow()
-                .iter()
-                .map(|value| match value {
-                    Value::Number(number) => Some(std::cell::Cell::new(*number)),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>();
-            if let Some(numeric) = numeric {
-                self.values = DenseElements::Numbers(Rc::new(RefCell::new(numeric)));
-            }
-        }
-        self.deleted.clear();
-        self.length.set(end);
-        self.kind
-            .set(self.values.kind_with_holes(&self.deleted, end));
-    }
-
-    pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
-        if self.values.len() < end {
-            self.values.resize_numeric(end);
-        }
-        if let DenseElements::Numbers(values) = &self.values {
-            let values = values.borrow();
-            for (offset, slot) in values[start..end].iter().enumerate() {
-                slot.set(first + offset as f64);
-            }
-            self.deleted.resize(end, false);
-            self.deleted[start..end].fill(false);
-            self.length.set(self.length.get().max(end));
-            self.kind.set(
-                self.values
-                    .kind_with_holes(&self.deleted, self.length.get()),
-            );
-            return;
-        }
-        for index in start..end {
-            self.set_numeric_index(index, first + (index - start) as f64);
-        }
     }
 
     pub(crate) fn fill_numeric_constant_range(&mut self, start: usize, end: usize, number: f64) {
@@ -954,10 +845,8 @@ impl ArrayData {
         self.deleted.resize(end, false);
         self.deleted[start..end].fill(false);
         self.length.set(self.length.get().max(end));
-        self.kind.set(
-            self.values
-                .kind_with_holes(&self.deleted, self.length.get()),
-        );
+        self.kind
+            .set(self.values.kind_with_holes(&self.deleted, self.length.get()));
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
@@ -976,19 +865,6 @@ impl ArrayData {
         let stored = self.is_packed_data()
             && self.has_default_array_prototype()
             && index < self.logical_len()
-            && self.values.set_existing_number(index, number);
-        if stored {
-            self.kind
-                .set(monotonic_kind(self.kind.get(), number_kind(number)));
-        }
-        stored
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_plain_existing_f64(&self, index: usize, number: f64) -> bool {
-        let stored = self.is_plain_dense_access()
-            && index < self.logical_len()
-            && self.deleted.get(index) != Some(&true)
             && self.values.set_existing_number(index, number);
         if stored {
             self.kind
@@ -1028,7 +904,9 @@ impl ArrayData {
                 .set(monotonic_kind(self.kind.get(), number_kind(number)));
             return true;
         }
-        let rejected = index != self.physical_len() || index >= self.logical_len() || !plain;
+        let rejected = index != self.physical_len()
+            || index >= self.logical_len()
+            || !plain;
         if rejected {
             return false;
         }
@@ -1044,13 +922,12 @@ impl ArrayData {
 
     #[inline]
     fn has_default_array_prototype(&self) -> bool {
-        crate::builtins::array_prototype_is_clean()
-            && self.prototype.borrow().as_ref().is_none_or(|prototype| {
-                matches!(
-                    prototype,
-                    Value::Builtin(crate::ops::Builtin::ArrayPrototype)
-                )
-            })
+        self.prototype.borrow().as_ref().is_none_or(|prototype| {
+            matches!(
+                prototype,
+                Value::Builtin(crate::ops::Builtin::ArrayPrototype)
+            )
+        })
     }
 
     /// Array length is a mandatory non-enumerable descriptor. It must not
@@ -1076,31 +953,24 @@ impl ArrayData {
     /// this state, so the dense store remains the single source of truth.
     #[inline(always)]
     pub(crate) fn append_shared_numbers(&self, values: &[Value]) -> bool {
-        if !self.is_packed_ordinary()
-            || !values.iter().all(|value| matches!(value, Value::Number(_)))
-        {
+        if !self.is_packed_ordinary() || !values.iter().all(|value| matches!(value, Value::Number(_))) {
             return false;
         }
         let DenseElements::Numbers(numbers) = &self.values else {
             return false;
         };
         numbers.borrow_mut().extend(values.iter().map(|value| {
-            let Value::Number(number) = value else {
-                unreachable!()
-            };
+            let Value::Number(number) = value else { unreachable!() };
             std::cell::Cell::new(*number)
         }));
-        self.length
-            .set(self.length.get().saturating_add(values.len()));
-        self.kind.set(monotonic_kind(
-            self.kind.get(),
-            values.iter().fold(self.kind.get(), |kind, value| {
-                let Value::Number(number) = value else {
-                    unreachable!()
-                };
-                monotonic_kind(kind, number_kind(*number))
-            }),
-        ));
+        self.kind
+            .set(monotonic_kind(
+                self.kind.get(),
+                values.iter().fold(self.kind.get(), |kind, value| {
+                    let Value::Number(number) = value else { unreachable!() };
+                    monotonic_kind(kind, number_kind(*number))
+                }),
+            ));
         true
     }
 
@@ -1113,8 +983,6 @@ impl ArrayData {
             return false;
         };
         current.borrow_mut().extend_from_slice(values);
-        self.length
-            .set(self.length.get().saturating_add(values.len()));
         true
     }
 
@@ -1130,6 +998,7 @@ impl ArrayData {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn last_dense_value(&self) -> Option<Value> {
         self.values
             .len()
@@ -1137,6 +1006,7 @@ impl ArrayData {
             .and_then(|index| self.dense_value_at(index))
     }
 
+    #[cfg(test)]
     pub(crate) fn dense_value_at_mut(&mut self, index: usize) -> Option<&mut Value> {
         if index >= self.logical_len()
             || index >= self.values.len()
@@ -1171,10 +1041,7 @@ impl ArrayData {
     pub(crate) fn has_plain_dense_index(&self, index: usize) -> bool {
         !self.arguments
             && self.argument_live.is_none()
-            // The standard writable `length` descriptor is harmless for an
-            // indexed data write. Only indexed/accessor descriptors make the
-            // direct dense-store path unsafe.
-            && self.indexed_descriptors_plain()
+            && self.descriptors.is_empty()
             && index < self.logical_len()
             && index < self.values.len()
             && self.deleted.get(index) != Some(&true)
@@ -1226,6 +1093,7 @@ impl ArrayData {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn next_index(&self, start: usize, length: usize) -> Option<usize> {
         let dense_end = self.values.len().min(length);
         (start..dense_end)
@@ -1242,14 +1110,14 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        if self.deleted.iter().all(|deleted| !*deleted) && self.properties.is_empty() {
-            if let DenseElements::Numbers(values) = &self.values {
-                let values = values.borrow();
-                return values
-                    .iter()
-                    .map(|number| Value::Number(number.get()))
-                    .collect();
-            }
+        let dense = self.deleted.iter().all(|deleted| !*deleted)
+            && self.properties.is_empty()
+            && self.mapped.is_empty()
+            && self.argument_live.is_none()
+            && self.values.len() == self.logical_len()
+            && self.indexed_descriptors_plain();
+        if dense {
+            return self.values.snapshot();
         }
         (0..self.logical_len())
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
@@ -1598,6 +1466,20 @@ mod array_data_tests {
         data.set_index(0, Value::Boolean(true));
         assert_eq!(data.dense_number_at(0), None);
         assert_eq!(data.get_index(0), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn snapshot_includes_holes_after_numeric_length_growth() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0)]);
+        data.set_length(3);
+        assert_eq!(
+            data.snapshot(),
+            vec![
+                Value::Number(1.0),
+                Value::Undefined,
+                Value::Undefined,
+            ]
+        );
     }
 
     #[test]
