@@ -561,7 +561,8 @@
           });
         }
       }
-      scheduleFlow(this);
+      if (this._isTransform && st.flowing && this.listenerCount("data") > 0) flowReadable(this);
+      else scheduleFlow(this);
       if (st.ended) return false;
       const buffered = st.objectMode
         ? st.buffer.length
@@ -1943,6 +1944,7 @@
   class TransformClass extends Duplex {
     constructor(options) {
       super(options || {});
+      this._isTransform = true;
       this._transformBackpressure = null;
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
