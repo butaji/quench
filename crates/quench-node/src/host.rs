@@ -350,6 +350,12 @@ pub fn install_with_argv_and_title(
         .with_host_value(
             "__quench_exec_path".to_string(),
             Value::String(exec_path.clone()),
+        )
+        // Keep fork's observable process/channel state in the Rust host. The
+        // bootstrap module only forwards the public call to this capability.
+        .with_host_value(
+            "__quench_cp_fork".to_string(),
+            crate::host::capability(crate::registry::SPEC_CP_FORK),
         );
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
