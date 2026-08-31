@@ -658,16 +658,29 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             }
             None
         }
-        "https" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "request".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTPS_REQUEST),
-            ),
-            (
-                "get".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTPS_GET),
-            ),
-        ])),
+        "https" => {
+            let http = crate::modules::http::build(state);
+            let http_agent = quench_runtime::execute::get_property(&http, "Agent");
+            let http_agent_prototype = quench_runtime::execute::get_property(&http_agent, "prototype");
+            let agent = quench_runtime::execute::set_property(
+                crate::host::capability(crate::registry::SPEC_HTTPS_AGENT),
+                "prototype",
+                http_agent_prototype,
+            );
+            let global_agent = quench_runtime::execute::get_property(&http, "globalAgent");
+            Some(crate::host::namespace_object_from_pairs(vec![
+                (
+                    "request".to_string(),
+                    crate::host::capability(crate::registry::SPEC_HTTPS_REQUEST),
+                ),
+                (
+                    "get".to_string(),
+                    crate::host::capability(crate::registry::SPEC_HTTPS_GET),
+                ),
+                ("Agent".to_string(), agent),
+                ("globalAgent".to_string(), global_agent),
+            ]))
+        }
         "zlib" => Some(crate::modules::zlib::build()),
         "perf_hooks" => {
             let hooks = quench_runtime::execute::get_property(
