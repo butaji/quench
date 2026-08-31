@@ -14,11 +14,7 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
                 unicode_mode(&flags),
             );
         }
-        if let Some(units) = crate::regexp::legacy_string_units(
-            &input,
-            &extract_source(&matcher),
-            &flags,
-        ) {
+        if let Some(units) = crate::regexp::legacy_string_units(&input, &flags) {
             return split_with_exec_units(
                 matcher,
                 input.clone(),
@@ -31,30 +27,10 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
     if let Value::StringUnits(units) = &input {
-        if !extract_source(&matcher).starts_with('^') {
-            return split_units_compiled(
-                input.clone(),
-                units,
-                &matcher,
-                limit,
-                unicode_mode(&flags),
-            );
-        }
+        return split_units_compiled(input.clone(), units, &matcher, limit, unicode_mode(&flags));
     }
-    if let Some(units) = crate::regexp::legacy_string_units(
-        &input,
-        &extract_source(&matcher),
-        &flags,
-    ) {
-        if !extract_source(&matcher).starts_with('^') {
-            return split_units_compiled(
-                input.clone(),
-                &units,
-                &matcher,
-                limit,
-                unicode_mode(&flags),
-            );
-        }
+    if let Some(units) = crate::regexp::legacy_string_units(&input, &flags) {
+        return split_units_compiled(input.clone(), &units, &matcher, limit, unicode_mode(&flags));
     }
     let mut input = crate::strings::materialize(&input).unwrap_or_default();
     split_compiled(&mut input, &matcher, limit)
