@@ -200,10 +200,15 @@ impl Regex {
 
     pub(crate) fn find_from(&self, text: &str, start: usize) -> Matches {
         let units = units_from_str(text, self.flags.unicode || self.flags.unicode_sets);
-        let first = units
-            .iter()
-            .position(|unit| unit.offset_start >= start)
-            .unwrap_or(units.len());
+        let first = first_unit_at_or_after(&units, start);
+        Matches {
+            item: self.find_units(&units, first),
+        }
+    }
+
+    pub(crate) fn find_from_utf16_str(&self, text: &str, start: usize) -> Matches {
+        let units = units_from_str_utf16(text, self.flags.unicode || self.flags.unicode_sets);
+        let first = first_unit_at_or_after(&units, start);
         Matches {
             item: self.find_units(&units, first),
         }
@@ -211,10 +216,7 @@ impl Regex {
 
     pub(crate) fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
         let units = units_from_utf16(input, self.flags.unicode || self.flags.unicode_sets);
-        let first = units
-            .iter()
-            .position(|unit| unit.offset_start >= start)
-            .unwrap_or(units.len());
+        let first = first_unit_at_or_after(&units, start);
         Matches {
             item: self.find_units(&units, first),
         }
@@ -350,28 +352,58 @@ fn flag_text(flags: Flags) -> String {
     text
 }
 
+fn first_unit_at_or_after(units: &[Unit], start: usize) -> usize {
+    units
+        .iter()
+        .position(|unit| unit.offset_start >= start)
+        .unwrap_or(units.len())
+}
+
 fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
+    units_from_str_with_offsets(text, unicode, false)
+}
+
+fn units_from_str_utf16(text: &str, unicode: bool) -> Vec<Unit> {
+    units_from_str_with_offsets(text, unicode, true)
+}
+
+fn units_from_str_with_offsets(text: &str, unicode: bool, utf16_offsets: bool) -> Vec<Unit> {
     if unicode {
         let mut units = Vec::with_capacity(text.len());
+        let mut utf16_offset = 0;
         for (offset_start, character) in text.char_indices() {
+            let offset_end = offset_start + character.len_utf8();
+            let (offset_start, offset_end) = if utf16_offsets {
+                (utf16_offset, utf16_offset + character.len_utf16())
+            } else {
+                (offset_start, offset_end)
+            };
             units.push(Unit {
                 value: u32::from(character),
                 offset_start,
-                offset_end: offset_start + character.len_utf8(),
+                offset_end,
             });
+            utf16_offset += character.len_utf16();
         }
         return units;
     }
     let mut units = Vec::with_capacity(text.len());
+    let mut utf16_offset = 0;
     for (offset_start, character) in text.char_indices() {
         let offset_end = offset_start + character.len_utf8();
         let mut buffer = [0; 2];
         for value in character.encode_utf16(&mut buffer) {
+            let (offset_start, offset_end) = if utf16_offsets {
+                (utf16_offset, utf16_offset + 1)
+            } else {
+                (offset_start, offset_end)
+            };
             units.push(Unit {
                 value: u32::from(*value),
                 offset_start,
                 offset_end,
             });
+            utf16_offset += 1;
         }
     }
     units
@@ -1787,6 +1819,12 @@ fn canonical(value: u32, unicode: bool) -> u32 {
     }
 }
 fn lower(value: u32) -> u32 {
+    if (u32::from(b'A')..=u32::from(b'Z')).contains(&value) {
+        return value + 0x20;
+    }
+    if value < 0x80 {
+        return value;
+    }
     char::from_u32(value)
         .map(|character| icu_casemap::CaseMapper::new().simple_fold(character))
         .map_or(value, u32::from)
@@ -1831,6 +1869,20 @@ mod tests {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
         let input = "abcdefdef".encode_utf16().collect::<Vec<_>>();
         assert!(regex.find_from_utf16(&input, 0).next().is_some());
+    }
+
+    #[test]
+    fn string_utf16_offsets_match_unit_offsets() {
+        let unicode = Regex::with_flags(".", Flags::from("u")).unwrap();
+        assert_eq!(
+            unicode.find_from_utf16_str("a😀b", 1).next().unwrap().range,
+            1..3
+        );
+        let legacy = Regex::with_flags(".", Flags::default()).unwrap();
+        assert_eq!(
+            legacy.find_from_utf16_str("a😀b", 1).next().unwrap().range,
+            1..2
+        );
     }
     #[test]
     fn lookahead_capture_preserves_extent() {
