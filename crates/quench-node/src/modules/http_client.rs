@@ -75,32 +75,30 @@ pub struct ClientReq {
 }
 
 pub fn agent_call(
-    _state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    _args: &[Value],
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(agent) = receiver else {
-        return Ok(Value::Undefined);
-    };
-    for key in ["sockets", "freeSockets"] {
-        let pools = execute::get_property(agent, key);
-        for name in execute::own_enumerable_keys(&pools) {
-            let sockets = execute::get_property(&pools, &name);
-            for index in execute::own_enumerable_keys(&sockets) {
-                if let Some(socket) = match execute::get_property(&sockets, &index) {
-                    Value::Object(_) | Value::ObjectAlias(_) => {
-                        Some(execute::get_property(&sockets, &index))
-                    }
-                    _ => None,
-                } {
-                    crate::modules::net::socket_destroy(_state, Some(&socket), &[])?;
-                }
-            }
-            let (updated, _) = execute::delete_property(pools.clone(), &name);
-            execute::replace_value(&pools, &updated);
-        }
-    }
-    Ok(agent.clone())
+    // Node's Agent constructor is callable without `new`; the call path must
+    // preserve the same instance/prototype contract as construction.
+    agent_construct(state, args)
+}
+
+pub fn https_agent_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    https_agent_construct(state, args)
+}
+
+pub fn https_agent_construct(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let agent = agent_construct(state, args)?;
+    let marked = execute::set_property(agent, "\0quench:https-agent", Value::Boolean(true));
+    Ok(marked)
 }
 
 /// `agent.addRequest(request, options)` is an observable extension point.
@@ -242,9 +240,28 @@ fn validate_agent_limit(name: &str, value: Value) -> Result<f64, VmError> {
 }
 
 /// `agent.getName(options)` — stable pool key derived from connection facts.
+fn agent_name_part(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) if value.is_finite() => execute::number_to_js_string(*value),
+        Value::Boolean(value) => value.to_string(),
+        Value::Uint8Array(view) => {
+            let bytes = view.buffer.bytes.borrow();
+            let end = view.byte_offset.saturating_add(view.byte_length()).min(bytes.len());
+            String::from_utf8_lossy(&bytes[view.byte_offset.min(end)..end]).into_owned()
+        }
+        Value::Array(values) => (0..values.logical_len())
+            .map(|index| agent_name_part(&values.index_value(index)))
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Undefined | Value::Null => String::new(),
+        other => format!("{other:?}"),
+    }
+}
+
 pub fn agent_get_name(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args.first().cloned().unwrap_or(Value::Undefined);
@@ -278,7 +295,48 @@ pub fn agent_get_name(
         Value::String(value) if !value.is_empty() => format!(":{value}"),
         _ => String::new(),
     };
-    Ok(Value::String(format!("{host}:{port}:{local}{family}{socket_path}")))
+    if !matches!(
+        receiver.map(|value| execute::get_property(value, "\0quench:https-agent")),
+        Some(Value::Boolean(true))
+    ) {
+        return Ok(Value::String(format!("{host}:{port}:{local}{family}{socket_path}")));
+    }
+    let part = |name: &str| match execute::get_property(&options, name) {
+        value => agent_name_part(&value),
+    };
+    let fields = [
+        host,
+        port,
+        local,
+        part("ca"),
+        part("cert"),
+        part("clientCertEngine"),
+        part("ciphers"),
+        part("key"),
+        part("pfx"),
+        part("rejectUnauthorized"),
+        part("servername"),
+        String::new(),
+        String::new(),
+        part("secureProtocol"),
+        part("crl"),
+        part("honorCipherOrder"),
+        part("ecdhCurve"),
+        part("dhparam"),
+        part("secureOptions"),
+        part("sessionIdContext"),
+        {
+            let sigalgs = part("sigalgs");
+            if sigalgs.is_empty() {
+                sigalgs
+            } else {
+                format!("\"{sigalgs}\"")
+            }
+        },
+        part("privateKeyIdentifier"),
+        part("privateKeyEngine"),
+    ];
+    Ok(Value::String(fields.join(":")))
 }
 
 pub fn agent_connect(
