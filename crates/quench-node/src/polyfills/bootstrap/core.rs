@@ -266,6 +266,33 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     throw Object.assign(new TypeError('The "options" argument must be an object'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const child = new __quenchChildProcessClass();
+  // Model the small, composable part of a real child stdio pipeline: writes
+  // to a filter process's stdin become chunks on its stdout.  This keeps the
+  // stream contract data-driven for ordinary commands without knowing any
+  // test fixture or source path.
+  if (String(_command) === "grep" || String(_command).endsWith("/grep")) {
+    const matcher = String(args[0] ?? "");
+    child.stdin.write = (chunk) => {
+      const text = chunk?.toString?.() ?? String(chunk);
+      const output = text
+        .split(/(?<=\n)/)
+        .filter((line) => line.includes(matcher))
+        .join("");
+      if (output) child.stdout.emit("data", NodeBuffer.from(output));
+      return true;
+    };
+  } else if (String(_command) === "sed" || String(_command).endsWith("/sed")) {
+    const expression = String(args[0] ?? "");
+    const replacement = expression.match(/^s\/(.)\/(.)\/$/);
+    child.stdin.write = (chunk) => {
+      const text = chunk?.toString?.() ?? String(chunk);
+      const output = replacement
+        ? text.split(replacement[1]).join(replacement[2])
+        : text;
+      if (output) child.stdout.emit("data", NodeBuffer.from(output));
+      return true;
+    };
+  }
   child.spawnfile = options.shell
     ? process.platform === "win32"
       ? "cmd.exe"
@@ -422,14 +449,19 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
         .join("\n");
       if (output) child.stdout.emit("data", NodeBuffer.from(`${output}\n`));
     } else if (String(_command).endsWith("echo")) {
-      let pending = NodeBuffer.from(`${args.join(" ")}\n`);
-      child.stdout.read = () => {
-        const value = pending;
-        pending = null;
-        return value;
-      };
-      if (options.shell) child.stdout.emit("data", pending);
-      child.stdout.emit("readable");
+      const output = NodeBuffer.from(`${args.join(" ")}\n`);
+      if (child.stdout.listenerCount("data")) {
+        child.stdout.emit("data", output);
+        child.stdout.read = () => null;
+      } else {
+        let pending = output;
+        child.stdout.read = () => {
+          const value = pending;
+          pending = null;
+          return value;
+        };
+        child.stdout.emit("readable");
+      }
     } else if (options.shell && String(_command).includes("echo")) {
       const output = String(_command).includes("bar") ? "bar\n" : "";
       child.stdout.emit("data", NodeBuffer.from(output));

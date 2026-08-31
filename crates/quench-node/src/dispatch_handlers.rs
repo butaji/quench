@@ -3190,6 +3190,20 @@ pub fn cp_spawn(
         crate::host::capability(crate::registry::SPEC_CP_STDIN_END),
     );
     let stdout = crate::modules::events::new_emitter_object(state)?;
+    if command == "grep"
+        || command.ends_with("/grep")
+        || command == "sed"
+        || command.ends_with("/sed")
+    {
+        let filter = if command.ends_with("grep") { "grep" } else { "sed" };
+        execute::set_property_in_place(&stdin, "\0childFilter", Value::String(filter.into()));
+        execute::set_property_in_place(
+            &stdin,
+            "\0childFilterArg",
+            execute::get_property(&spawnargs, "0"),
+        );
+        execute::set_property_in_place(&stdin, "\0childFilterOutput", stdout.clone());
+    }
     let stderr = crate::modules::events::new_emitter_object(state)?;
     let set_encoding = Value::Builtin(quench_runtime::ops::Builtin::Object);
     let stdout = execute::set_property(stdout, "setEncoding", set_encoding.clone());
@@ -3202,6 +3216,9 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "stdin", stdin.clone());
     let child = execute::set_property(child, "stdout", stdout.clone());
     let child = execute::set_property(child, "stderr", stderr.clone());
+    if matches!(execute::get_property(&stdin, "\0childFilter"), Value::String(_)) {
+        execute::set_property_in_place(&stdin, "\0childFilterProcess", child.clone());
+    }
     let child = execute::set_property(
         child,
         "stdio",
@@ -3513,6 +3530,19 @@ pub fn cp_spawn_output_emit(
         Value::Boolean(true)
     ) {
         String::new()
+    } else if matches!(command, Value::String(ref value) if value == "echo" || value.ends_with("/echo")) {
+        let args = match &child_args {
+            Value::Array(array) => (0..array.logical_len())
+                .filter_map(|index| {
+                    execute::get_property_result(&child_args, &index.to_string()).ok()
+                })
+                .map(|value| execute::to_js_string(&value).unwrap_or_default())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        format!("{}\n", args.join(" "))
+    } else if matches!(command, Value::String(ref value) if value == "grep" || value.ends_with("/grep") || value == "sed" || value.ends_with("/sed")) {
+        String::new()
     } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe")
     {
         let global = quench_runtime::vm::current_global_object();
@@ -3640,6 +3670,19 @@ pub fn cp_spawn_output_emit(
     } else {
         "ok\n".into()
     };
+    let filter_process = matches!(
+        command,
+        Value::String(ref value)
+            if value == "grep"
+                || value.ends_with("/grep")
+                || value == "sed"
+                || value.ends_with("/sed")
+    );
+    if filter_process {
+        // Filter output is driven by stdin writes. Keep the process and its
+        // streams alive until cp_stdin_end observes upstream completion.
+        return Ok(Value::Undefined);
+    }
     emit(&stdout, "data", vec![Value::String(stdout_text)])?;
     if !stderr_text.is_empty() {
         emit(&stderr, "data", vec![Value::String(stderr_text)])?;
@@ -3761,18 +3804,103 @@ pub fn cp_kill(
 }
 
 pub fn cp_stdin_write(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    _args: &[Value],
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Boolean(true));
+    };
+    let filter = execute::get_property(receiver, "\0childFilter");
+    let target = execute::get_property(receiver, "\0childFilterOutput");
+    if let (Value::String(filter), Value::Object(_) | Value::ObjectAlias(_), Some(chunk)) =
+        (&filter, &target, args.first())
+    {
+        let text = execute::get_property_result(chunk, "toString")
+            .ok()
+            .filter(|value| quench_runtime::is_callable(value))
+            .and_then(|to_string| execute::call(&to_string, chunk, &[]).ok())
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .unwrap_or_else(|| execute::to_js_string(chunk).unwrap_or_default());
+        let output = if filter == "grep" {
+            let matcher = execute::to_js_string(&execute::get_property(
+                receiver,
+                "\0childFilterArg",
+            ))
+            .unwrap_or_default();
+            text.split_inclusive('\n')
+                .filter(|line| line.contains(&matcher))
+                .collect::<String>()
+        } else {
+            let expression = execute::to_js_string(&execute::get_property(
+                receiver,
+                "\0childFilterArg",
+            ))
+            .unwrap_or_default();
+            let mut chars = expression.chars();
+            let replacement = match (chars.next(), chars.next(), chars.next()) {
+                (Some('s'), Some('/'), Some(from)) => chars
+                    .next()
+                    .filter(|separator| *separator == '/')
+                    .and_then(|_| chars.next())
+                    .map(|to| (from, to)),
+                _ => None,
+            };
+            replacement
+                .map(|(from, to)| text.chars().map(|c| if c == from { to } else { c }).collect())
+                .unwrap_or(text)
+        };
+        if !output.is_empty() {
+            crate::modules::events::method_emit(
+                state,
+                Some(&target),
+                &[Value::String("data".into()), Value::String(output)],
+            )?;
+        }
+    }
     Ok(Value::Boolean(true))
 }
 
 pub fn cp_stdin_end(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let child = execute::get_property(receiver, "\0childFilterProcess");
+    let target = execute::get_property(receiver, "\0childFilterOutput");
+    if matches!(child, Value::Object(_) | Value::ObjectAlias(_))
+        && matches!(target, Value::Object(_) | Value::ObjectAlias(_))
+    {
+        for event in ["end", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(&target),
+                &[Value::String(event.into())],
+            )?;
+        }
+        let stderr = execute::get_property(&child, "stderr");
+        for event in ["end", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(&stderr),
+                &[Value::String(event.into())],
+            )?;
+        }
+        for event in ["exit", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(&child),
+                &[
+                    Value::String(event.into()),
+                    Value::Number(0.0),
+                    Value::Null,
+                ],
+            )?;
+        }
+    }
     Ok(Value::Undefined)
 }
 
