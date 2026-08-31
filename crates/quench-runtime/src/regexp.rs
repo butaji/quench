@@ -737,6 +737,19 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(found.is_some()));
     }
     let s = argument_string(arguments)?;
+    if !flags.contains(['u', 'v'])
+        && nonunicode_code_unit_pattern(&source)
+        && builtin_regexp_exec_property(receiver)
+        && s.chars().any(|character| character.len_utf16() == 2)
+    {
+        let units = s.encode_utf16().collect::<Vec<_>>();
+        return test(
+            Some(receiver),
+            &[Value::StringUnits(std::rc::Rc::new(
+                crate::value::StringUnitsData::new(units),
+            ))],
+        );
+    }
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
         if crate::regexp_native::find_str(&source, &flags, &s, 0).is_some() {
             return Ok(Value::Boolean(true));
@@ -867,6 +880,13 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
+    if !flags.contains(['u', 'v'])
+        && nonunicode_code_unit_pattern(&source)
+        && s.chars().any(|character| character.len_utf16() == 2)
+    {
+        let units = s.encode_utf16().collect::<Vec<_>>();
+        return exec_units(receiver, Value::String(s), &units);
+    }
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
         set_last_index(receiver, 0.0)?;
         return Ok(Value::Null);
@@ -1069,6 +1089,19 @@ fn nonunicode_code_unit_pattern(source: &str) -> bool {
     source == "."
         || source.contains(".") && source.contains("(?<")
         || source_contains_surrogate_escape(source)
+}
+
+fn legacy_string_units(input: &Value, source: &str, flags: &str) -> Option<Vec<u16>> {
+    if flags.contains(['u', 'v']) || !nonunicode_code_unit_pattern(source) {
+        return None;
+    }
+    let Value::String(input) = input else {
+        return None;
+    };
+    input
+        .chars()
+        .any(|character| character.len_utf16() == 2)
+        .then(|| input.encode_utf16().collect())
 }
 
 fn match_indices(text: &str, m: &Match, unicode: bool) -> Value {
@@ -1997,5 +2030,115 @@ mod tests {
             crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
             Value::Number(4.0)
         );
+    }
+
+    #[test]
+    fn legacy_dot_exec_advances_one_utf16_unit_for_astral_input() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String(".".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                (
+                    "exec".to_string(),
+                    Value::Builtin(crate::ops::Builtin::RegExpExec),
+                ),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = Value::String("😀".to_string());
+        let result = super::exec(Some(&regexp), std::slice::from_ref(&input)).expect("exec");
+        assert_eq!(
+            crate::execute::get_property_result(&result, "0").expect("match"),
+            crate::strings::from_units(vec![0xD83D])
+        );
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
+            Value::Number(1.0)
+        );
+        let result = super::exec(Some(&regexp), std::slice::from_ref(&input)).expect("exec");
+        assert_eq!(
+            crate::execute::get_property_result(&result, "0").expect("match"),
+            crate::strings::from_units(vec![0xDE00])
+        );
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
+            Value::Number(2.0)
+        );
+        super::set_last_index(&regexp, 0.0).expect("reset lastIndex");
+        assert_eq!(
+            super::test(Some(&regexp), std::slice::from_ref(&input)).expect("test"),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
+            Value::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn legacy_dot_replace_splits_astral_string_into_code_units() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String(".".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                ("flags".to_string(), Value::String("g".to_string())),
+                ("global".to_string(), Value::Boolean(true)),
+                (
+                    "exec".to_string(),
+                    Value::Builtin(crate::ops::Builtin::RegExpExec),
+                ),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        assert_eq!(
+            super::symbol_replace(
+                Some(&regexp),
+                &[
+                    Value::String("😀".to_string()),
+                    Value::String("x".to_string()),
+                ],
+            )
+            .expect("replace"),
+            Value::String("xx".to_string())
+        );
+    }
+
+    #[test]
+    fn legacy_dot_split_splits_astral_string_into_code_units() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String(".".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                ("flags".to_string(), Value::String("g".to_string())),
+                ("source".to_string(), Value::String(".".to_string())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let Value::Array(parts) = super::symbol_split(
+            Some(&regexp),
+            &[Value::String("😀".to_string())],
+        )
+        .expect("split") else {
+            panic!("split must return an array");
+        };
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts.get_index(0), Some(Value::String(String::new())));
+        assert_eq!(parts.get_index(1), Some(Value::String(String::new())));
+        assert_eq!(parts.get_index(2), Some(Value::String(String::new())));
     }
 }
