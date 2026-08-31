@@ -599,6 +599,8 @@ pub const SPEC_NET_SERVER_CLOSE_IDLE: NodeSpec =
 pub const SPEC_NET_SERVER_ADDRESS: NodeSpec = NodeSpec::new("net:server:address", 0x1009);
 pub const SPEC_NET_SERVER_UNREF: NodeSpec = NodeSpec::new("net:server:unref", 0x1014);
 pub const SPEC_NET_SERVER_REF: NodeSpec = NodeSpec::new("net:server:ref", 0x1015);
+pub const SPEC_NET_SERVER_GET_CONNECTIONS: NodeSpec =
+    NodeSpec::new("net:server:getConnections", 0x1028);
 pub const SPEC_NET_SOCKET_WRITE: NodeSpec = NodeSpec::new("net:socket:write", 0x100A);
 pub const SPEC_NET_SOCKET_END: NodeSpec = NodeSpec::new("net:socket:end", 0x100B);
 pub const SPEC_NET_SOCKET_DESTROY: NodeSpec = NodeSpec::new("net:socket:destroy", 0x100C);
@@ -1192,6 +1194,7 @@ pub const CAP_NET_SERVER_CLOSE_IDLE: CapId = SPEC_NET_SERVER_CLOSE_IDLE.cap;
 pub const CAP_NET_SERVER_LISTEN: CapId = SPEC_NET_SERVER_LISTEN.cap;
 pub const CAP_NET_SERVER_REF: CapId = SPEC_NET_SERVER_REF.cap;
 pub const CAP_NET_SERVER_UNREF: CapId = SPEC_NET_SERVER_UNREF.cap;
+pub const CAP_NET_SERVER_GET_CONNECTIONS: CapId = SPEC_NET_SERVER_GET_CONNECTIONS.cap;
 pub const CAP_NET_SET_ASF_TIMEOUT: CapId = SPEC_NET_SET_ASF_TIMEOUT.cap;
 pub const CAP_NET_GET_ASF: CapId = SPEC_NET_GET_ASF.cap;
 pub const CAP_NET_SET_ASF: CapId = SPEC_NET_SET_ASF.cap;

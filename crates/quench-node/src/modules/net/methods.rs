@@ -2227,6 +2227,37 @@ pub fn server_ref(
     Ok(receiver.clone())
 }
 
+/// `server.getConnections(callback)` reports the currently accepted sockets.
+pub fn server_get_connections(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| execute::type_error("server"))?;
+    let id = super::net_id(receiver).ok_or_else(|| execute::type_error("server"))?;
+    let count = state
+        .borrow()
+        .net
+        .sockets
+        .values()
+        .filter(|socket| {
+            let socket = socket.borrow();
+            socket.server_id == Some(id) && socket.state != SocketState::Closed
+        })
+        .count();
+    if let Some(callback) = args.first() {
+        if !quench_runtime::is_callable(callback) {
+            return Err(execute::type_error("callback"));
+        }
+        execute::call(
+            callback,
+            &Value::Undefined,
+            &[Value::Null, Value::Number(count as f64)],
+        )?;
+    }
+    Ok(receiver.clone())
+}
+
 /// `server.address()` — the bound address object, or null.
 pub fn server_address(
     state: &Rc<RefCell<HostState>>,

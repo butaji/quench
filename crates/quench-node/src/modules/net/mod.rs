@@ -35,6 +35,7 @@ pub use methods::{
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
     socket_set_type_of_service, socket_get_type_of_service, socket_handle_close,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
+    server_get_connections,
 };
 pub use pump::{finalize, poll};
 
@@ -377,6 +378,10 @@ fn server_props() -> Vec<(&'static str, Value)> {
             cap(crate::registry::SPEC_NET_SERVER_CLOSE_IDLE),
         ),
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
+        (
+            "getConnections",
+            cap(crate::registry::SPEC_NET_SERVER_GET_CONNECTIONS),
+        ),
         ("unref", cap(crate::registry::SPEC_NET_SERVER_UNREF)),
         ("ref", cap(crate::registry::SPEC_NET_SERVER_REF)),
         ("Symbol.asyncIterator", cap(crate::registry::SPEC_NET_ASYNC_ITERATOR)),
