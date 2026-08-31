@@ -242,6 +242,26 @@ pub fn util_format(
     crate::modules::util::validate_json_arguments(args)?;
     Ok(Value::String(crate::modules::util::format(args)))
 }
+
+pub fn util_normalize_encoding(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(Value::String("utf8".into()));
+    }
+    let Value::String(encoding) = value else {
+        return Ok(Value::Undefined);
+    };
+    if encoding.is_empty() {
+        return Ok(Value::String("utf8".into()));
+    }
+    Ok(crate::modules::buffer_enc::canonical_encoding(encoding)
+        .map(|name| Value::String(name.into()))
+        .unwrap_or(Value::Undefined))
+}
 pub fn util_inspect(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
