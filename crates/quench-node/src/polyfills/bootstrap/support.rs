@@ -27,7 +27,8 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
     wrapped.calls = 0;
     wrapped.expected = exact;
     wrapped.__quench_index = (globalThis.__nodeCallChecks ||= []).length;
-    globalThis.__nodeCallChecks.push(wrapped);
+    const checks = globalThis.__nodeCallChecks ||= [];
+    checks[checks.length] = wrapped;
     return wrapped;
   },
   mustCallAtLeast: (fn, minimum = 1) => {
