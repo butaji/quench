@@ -1773,6 +1773,9 @@ pub fn req_error(
     }
     if !request_closed {
         if let (Some(request), Some(error)) = (request, args.first().cloned()) {
+            // A transport-supplied error is already the request's terminal
+            // failure; req_close must not append a generic ECONNRESET.
+            set_request_property(Some(&request), "errored", error.clone());
             net::emit(state, &request, "error", vec![error])?;
         }
     }
