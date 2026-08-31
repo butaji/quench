@@ -575,7 +575,11 @@
           });
         }
       }
-      if (this._isTransform && st.flowing && this.listenerCount("data") > 0) flowReadable(this);
+      const syncReadable = chunk === null && this._isTransform &&
+        st.buffer.length > 0 && this.listenerCount("readable") > 0;
+      if (syncReadable || (this._isTransform && st.flowing && this.listenerCount("data") > 0)) {
+        flowReadable(this);
+      }
       else scheduleFlow(this);
       if (st.ended) return false;
       const buffered = st.objectMode
