@@ -3952,6 +3952,7 @@ pub fn cp_fork(
         "disconnect",
         crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
     );
+    execute::set_property_in_place(&child, "connected", Value::Boolean(true));
     // Run the forked fixture with child argv and a real bidirectional IPC
     // channel. This is source-driven process semantics, not a fixture-name
     // table: the child sends whatever its `process.send` call supplies.
@@ -4006,6 +4007,14 @@ fn fork_child_start(
         "send",
         crate::host::capability(crate::registry::SPEC_CP_SEND),
     );
+    // The child-side `process.disconnect` is the underlying operation wrapped
+    // by user code in fork fixtures.  Keep it on the same process identity so
+    // the parent's ChildProcess.disconnect() crosses the real fork link.
+    execute::set_property_in_place(
+        &process,
+        "disconnect",
+        crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
+    );
     execute::set_property_in_place(&process, "\0forkChild", child.clone());
     let wrapped = crate::modules::require::wrap_cjs(state, filename, &source);
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
@@ -4047,13 +4056,56 @@ pub fn cp_disconnect(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let child = receiver.ok_or(VmError::NotCallable)?;
-    let stdout = execute::get_property(child, "stdout");
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    // A forked child's public disconnect delegates to the child-side
+    // process.disconnect function.  That function is deliberately the same
+    // capability, but with `process` as receiver, so the state transition is
+    // performed exactly once.
+    let fork_process = execute::get_property(receiver, "\0forkProcess");
+    if matches!(fork_process, Value::Object(_) | Value::ObjectAlias(_)) {
+        let disconnect = execute::get_property(&fork_process, "disconnect");
+        if quench_runtime::is_callable(&disconnect) {
+            return execute::call(&disconnect, &fork_process, &[]);
+        }
+    }
+    let child = if matches!(execute::get_property(receiver, "\0forkChild"), Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::get_property(receiver, "\0forkChild")
+    } else {
+        receiver.clone()
+    };
+    if matches!(execute::get_property(&child, "connected"), Value::Boolean(false)) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("code".into(), Value::String("ERR_IPC_DISCONNECTED".into())),
+            (
+                "message".into(),
+                Value::String("Channel closed".into()),
+            ),
+        ])));
+    }
+    execute::set_property_in_place(&child, "connected", Value::Boolean(false));
+    execute::set_property_in_place(receiver, "connected", Value::Boolean(false));
+    let stdout = execute::get_property(&child, "stdout");
     crate::modules::events::method_emit(
         state,
         Some(&stdout),
         &[Value::String("data".into()), Value::String("3".into())],
     )?;
+    let process = if matches!(execute::get_property(&child, "\0forkProcess"), Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::get_property(&child, "\0forkProcess")
+    } else {
+        Value::Undefined
+    };
+    let callback = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_DISCONNECT_EMIT.cap,
+            ),
+        },
+        vec![child, process],
+    );
+    state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
     Ok(Value::Undefined)
 }
 
@@ -4068,6 +4120,9 @@ pub fn cp_disconnect_emit(
             Some(child),
             &[Value::String("disconnect".into())],
         )?;
+    }
+    if matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_))) {
+        crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
     }
     Ok(Value::Undefined)
 }
