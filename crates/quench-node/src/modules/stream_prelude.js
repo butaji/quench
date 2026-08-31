@@ -923,7 +923,11 @@
 
   function sliceCount(count) {
     const number = Number(count);
-    if (!Number.isFinite(number) && number !== Infinity) return 0;
+    if (!Number.isFinite(number) && number !== Infinity) {
+      const error = new RangeError("The count argument must be a finite number");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     if (number < 0) {
       const error = new RangeError("The count argument must be non-negative");
       error.code = "ERR_OUT_OF_RANGE";
@@ -939,7 +943,23 @@
     return error;
   }
 
+  function sliceOptions(options) {
+    if (options === undefined) return;
+    if (options === null || typeof options !== "object") {
+      const error = new TypeError("The options argument must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (options.signal !== undefined &&
+        (!options.signal || typeof options.signal.addEventListener !== "function")) {
+      const error = new TypeError("The signal option must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  }
+
   function sliceReadable(stream, count, drop, options) {
+    sliceOptions(options);
     const limit = sliceCount(count);
     const signal = options?.signal;
     const slice = {
@@ -2026,10 +2046,14 @@
       throw error;
     }
     const asyncIterable = (stage) => stage && typeof stage[Symbol.asyncIterator] === "function";
+    const iterable = (stage) => stage &&
+      (typeof stage[Symbol.iterator] === "function" || asyncIterable(stage));
     const validStage = (stage) => typeof stage === "function" || composeWeb(stage) ||
+      iterable(stage) ||
       (stage && typeof stage === "object" &&
         (typeof stage.on === "function" || asyncIterable(stage)));
     const readableStage = (stage) => typeof stage === "function" || composeWeb(stage) ||
+      iterable(stage) ||
       (stage && ((typeof stage.pipe === "function" && typeof stage.on === "function") ||
         asyncIterable(stage)));
     const writableStage = (stage) => typeof stage === "function" || composeWeb(stage) ||
