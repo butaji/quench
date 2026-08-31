@@ -317,12 +317,7 @@ impl Regex {
     }
 }
 
-fn match_with_retry(
-    program: &Expr,
-    input: &[Unit],
-    state: State,
-    flags: Flags,
-) -> Option<State> {
+fn match_with_retry(program: &Expr, input: &[Unit], state: State, flags: Flags) -> Option<State> {
     BACKTRACK_OVERFLOW.with(|overflow| overflow.set(false));
     UNBOUNDED_BACKTRACK.with(|unbounded| unbounded.set(false));
     let result = match_expr(program, input, state.clone(), flags);
@@ -1949,6 +1944,19 @@ mod tests {
         assert_eq!(regex.find_from("ab", 0).next().unwrap().range, 0..2);
     }
 
+    #[test]
+    fn backtracking_overflow_cannot_make_negative_lookaround_pass() {
+        let mut source = String::from("^(?!(?:");
+        for index in 0..MAX_BACKTRACK_STATES {
+            if index != 0 {
+                source.push('|');
+            }
+            source.push('a');
+        }
+        source.push_str("|ab)$)ab$");
+        let regex = Regex::with_flags(&source, Flags::default()).unwrap();
+        assert!(regex.find_from("ab", 0).next().is_none());
+    }
 
     #[test]
     fn unicode_string_class_matches() {
