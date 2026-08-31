@@ -62,8 +62,10 @@ not staged by compatibility commits.
 
 ## Current evidence
 
-After the Rust TLS validation surface, `util.parseEnv`, filesystem encoding,
-and WebCrypto receiver fixes, the manifest gate reports **594 pass, 95 fail,
-3 timeout** of 692 fixtures. The remaining TLS/HTTPS failures are encrypted
+After the Rust TLS validation surface, self-reexec argv boundary, Blob URL
+registry, `util.parseEnv`, filesystem encoding, and WebCrypto receiver fixes,
+the latest manifest gate reports **589 pass, 100 fail, 3 timeout** of 692
+fixtures. The count is a point-in-time measurement because unsupported and
+timing-sensitive fixtures remain variable. TLS/HTTPS failures are encrypted
 transport effects, not validation gaps; they remain explicit until a bounded
 Rust transport capability exists.
