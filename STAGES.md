@@ -59,3 +59,11 @@ result and the manifest result. A timeout remains an unresolved runtime or
 fixture-capability fact; it is not converted into a pass by omitting the
 fixture. The `tests/node` submodule is the upstream oracle and is intentionally
 not staged by compatibility commits.
+
+## Current evidence
+
+After the Rust TLS validation surface, `util.parseEnv`, filesystem encoding,
+and WebCrypto receiver fixes, the manifest gate reports **594 pass, 95 fail,
+3 timeout** of 692 fixtures. The remaining TLS/HTTPS failures are encrypted
+transport effects, not validation gaps; they remain explicit until a bounded
+Rust transport capability exists.
