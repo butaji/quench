@@ -1802,4 +1802,55 @@ mod tests {
             Value::StringUnits(expected)
         );
     }
+
+    #[test]
+    fn symbol_replace_preserves_utf16_substitution_tokens() {
+        let make_regexp = || {
+            Value::Object(
+                ObjectData::new(vec![
+                    ("\0regexp".to_string(), Value::Boolean(true)),
+                    (
+                        "\0regexp_source".to_string(),
+                        Value::String("(?<x>a)".to_string()),
+                    ),
+                    ("\0regexp_flags".to_string(), Value::String(String::new())),
+                    ("flags".to_string(), Value::String(String::new())),
+                    (
+                        "exec".to_string(),
+                        Value::Builtin(crate::ops::Builtin::RegExpExec),
+                    ),
+                    (
+                        "lastIndex".to_string(),
+                        Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                    ),
+                ])
+                .into()
+            )
+        };
+        let input = || crate::strings::from_units(vec![0xD800, b'a' as u16, 0xDC00]);
+        for (template, expected) in [
+            (
+                "$&",
+                vec![0xD800, b'a' as u16, 0xDC00],
+            ),
+            (
+                "$1",
+                vec![0xD800, b'a' as u16, 0xDC00],
+            ),
+            (
+                "$<x>",
+                vec![0xD800, b'a' as u16, 0xDC00],
+            ),
+            ("$$", vec![0xD800, b'$' as u16, 0xDC00]),
+            ("$`", vec![0xD800, 0xD800, 0xDC00]),
+            ("$'", vec![0xD800, 0xDC00, 0xDC00]),
+        ] {
+            let result = super::symbol_replace(
+                Some(&make_regexp()),
+                &[input(), Value::String(template.to_string())],
+            )
+            .expect("replace");
+            assert_eq!(result, crate::strings::from_units(expected));
+        }
+    }
 }
