@@ -3744,6 +3744,14 @@ pub fn cp_spawn_output_emit(
     emit(&stderr, "end", Vec::new())?;
     emit(&stdout, "close", Vec::new())?;
     emit(&stderr, "close", Vec::new())?;
+    if matches!(
+        execute::get_property(child, "\0childForkIpc"),
+        Value::Boolean(true)
+    ) {
+        // An IPC child remains alive after startup; its exit/close pair is
+        // tied to the channel disconnect rather than the bootstrap callback.
+        return Ok(Value::Undefined);
+    }
     let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
     let signal = execute::get_property(child, "signalCode");
     let shell_missing = matches!(
@@ -3919,11 +3927,16 @@ pub fn cp_stdin_write(
             .first()
             .and_then(|chunk| execute::to_js_string(chunk).ok())
             .unwrap_or_default();
-        crate::modules::events::method_emit(
-            state,
-            Some(&child),
-            &[Value::String("message".into()), Value::String(text)],
-        )?;
+        let callback = host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
+                ),
+            },
+            vec![child, Value::String(text)],
+        );
+        state.borrow_mut().event_loop.queue_immediate(callback, vec![]);
     }
     Ok(Value::Boolean(true))
 }
@@ -4262,10 +4275,14 @@ pub fn cp_message_emit(
     args: &[Value],
 ) -> Result<Value, VmError> {
     if let (Some(child), Some(message)) = (args.first(), args.get(1)) {
+        let mut event_args = vec![Value::String("message".into()), message.clone()];
+        if let Some(handle) = args.get(2).filter(|value| !matches!(value, Value::Undefined)) {
+            event_args.push(handle.clone());
+        }
         crate::modules::events::method_emit(
             state,
             Some(child),
-            &[Value::String("message".into()), message.clone()],
+            &event_args,
         )?;
     }
     Ok(Value::Undefined)
@@ -4344,6 +4361,19 @@ pub fn cp_disconnect_emit(
     if matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_))) {
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
     }
+    if let Some(child) = args.first() {
+        for event in ["exit", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(child),
+                &[
+                    Value::String(event.into()),
+                    Value::Number(0.0),
+                    Value::Null,
+                ],
+            )?;
+        }
+    }
     Ok(Value::Undefined)
 }
 
@@ -4408,6 +4438,21 @@ pub fn cp_send(
             process_args.push(handle.clone());
         }
         crate::modules::process::emit(state, &process_args)?;
+    } else if from_fork_process {
+        let callback = host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
+                ),
+            },
+            vec![
+                child.clone(),
+                delivered.clone(),
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            ],
+        );
+        state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
     } else {
         crate::modules::events::method_emit(state, Some(child), &event_args)?;
     }
