@@ -1405,7 +1405,7 @@ pub fn internal_util_assert_crypto(
 
 pub fn internal_binding(
     state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(Value::String(name)) = args.first() else {
@@ -1586,18 +1586,24 @@ pub fn internal_binding(
             .iter()
             .map(|name| ((*name).to_string(), execute::get_property(&types, name)))
             .collect::<Vec<_>>();
-        // Node's util binding exposes this private slot key for syntax-error
-        // diagnostics.  It is a symbol-shaped runtime key and is hidden from
-        // ordinary own-key enumeration by the shared symbol policy.
-        binding.push((
-            "privateSymbols".to_string(),
-            host_api::object(vec![
-                (
+        // `process.binding('util')` is the public binding and contains only
+        // predicates.  The private symbol table belongs to
+        // `internalBinding('util')`; receiver identity is the one fact that
+        // distinguishes those two entry points without a second JS surface.
+        let process = execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "process",
+        );
+        let public_binding = receiver.is_some_and(|value| value == &process);
+        if !public_binding {
+            binding.push((
+                "privateSymbols".to_string(),
+                host_api::object(vec![(
                     "arrow_message_private_symbol".to_string(),
                     Value::String("Symbol.node:arrowMessage\0internal".into()),
-                ),
-            ]),
-        ));
+                )]),
+            ));
+        }
         return Ok(crate::host::namespace_object_from_pairs(binding));
     }
     if name == "js_stream" {
@@ -1661,7 +1667,7 @@ pub fn internal_binding(
     }
     let prefix = if name == "debug" {
         "No such binding: "
-    } else if _receiver.is_some() {
+    } else if receiver.is_some() {
         "No such module: "
     } else {
         "No such binding: "
@@ -1670,7 +1676,7 @@ pub fn internal_binding(
         quench_runtime::ops::Builtin::Error,
         &[Value::String(format!("{prefix}{name}"))],
     );
-    let error = if _receiver.is_some() {
+    let error = if receiver.is_some() {
         quench_runtime::execute::set_property(
             error,
             "code",
