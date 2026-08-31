@@ -4,13 +4,15 @@ use crate::registry::{
     SPEC_CLUSTER_DISCONNECT, SPEC_CLUSTER_FORK, SPEC_CLUSTER_WORKER_DISCONNECT,
     SPEC_CLUSTER_WORKER_EMIT, SPEC_CLUSTER_WORKER_IS_CONNECTED, SPEC_CLUSTER_WORKER_IS_DEAD,
     SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON, SPEC_CLUSTER_WORKER_PROCESS_SEND,
-    SPEC_CLUSTER_WORKER_SEND,
+    SPEC_CLUSTER_WORKER_SEND, SPEC_CLUSTER_SETUP_EVENT, SPEC_CLUSTER_SETUP_MASTER,
+    SPEC_CLUSTER_SETUP_PRIMARY,
 };
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
 const ID: &str = "\0quench:cluster:id";
 struct Worker {
@@ -29,6 +31,8 @@ pub struct ClusterState {
     workers: HashMap<u64, Worker>,
     module: Option<Value>,
     worker_prototype: Option<Value>,
+    settings: Value,
+    stdio: Option<Value>,
     script: Option<(String, String)>,
     pub(crate) worker_context: Option<u64>,
 }
@@ -39,6 +43,8 @@ impl ClusterState {
             workers: HashMap::new(),
             module: None,
             worker_prototype: None,
+            settings: host_api::object(Vec::new()),
+            stdio: None,
             script: None,
             worker_context: None,
         }
@@ -61,6 +67,141 @@ impl ClusterState {
         self.module.clone()
     }
 }
+
+pub fn setup_primary(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let supplied = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
+    let merged = merge_settings(state, &supplied);
+    let stdio = execute::get_property(&merged, "stdio");
+    let module = state.borrow().cluster.module.clone();
+    {
+        let mut host = state.borrow_mut();
+        host.cluster.settings = merged.clone();
+        host.cluster.stdio = Some(stdio);
+    }
+    if let Some(module) = module {
+        execute::set_property_in_place(&module, "settings", merged);
+        state.borrow().event_loop.queue_microtask_with_receiver(
+            crate::host::capability(SPEC_CLUSTER_SETUP_EVENT),
+            Vec::new(),
+            module,
+        );
+    }
+    Ok(Value::Undefined)
+}
+
+fn merge_settings(state: &Rc<RefCell<HostState>>, supplied: &Value) -> Value {
+    let current = state.borrow().cluster.settings.clone();
+    let mut values = Vec::new();
+    for key in ["args", "exec", "execArgv", "silent", "stdio"] {
+        let value = match execute::get_property(supplied, key) {
+            Value::Undefined => execute::get_property(&current, key),
+            value => value,
+        };
+        if !matches!(value, Value::Undefined) {
+            values.push((key.to_string(), value));
+        }
+    }
+    if values.iter().all(|(key, _)| key != "args") {
+        let process = quench_runtime::vm::current_global_object();
+        if let Ok(process) = execute::get_property_result(&process, "process") {
+            values.push(("args".into(), process_args(&process)));
+        }
+    }
+    if values.iter().all(|(key, _)| key != "exec") {
+        let process = quench_runtime::vm::current_global_object();
+        let exec = execute::get_property_result(&process, "process")
+            .map(|process| execute::get_property(&process, "argv"))
+            .map(|argv| execute::get_property(&argv, "1"))
+            .unwrap_or(Value::Undefined);
+        if !matches!(exec, Value::Undefined) {
+            values.push(("exec".into(), exec));
+        }
+    }
+    if values.iter().all(|(key, _)| key != "execArgv") {
+        values.push(("execArgv".into(), host_api::array(Vec::new())));
+    }
+    if values.iter().all(|(key, _)| key != "silent") {
+        values.push(("silent".into(), Value::Boolean(false)));
+    }
+    for key in execute::own_enumerable_keys(supplied) {
+        if !["args", "exec", "execArgv", "silent", "stdio"].contains(&key.as_str()) {
+            values.push((key.clone(), execute::get_property(supplied, &key)));
+        }
+    }
+    host_api::object(values)
+}
+
+fn process_args(process: &Value) -> Value {
+    let argv = execute::get_property(process, "argv");
+    let length = match execute::get_property(&argv, "length") {
+        Value::Number(length) if length >= 2.0 => length as usize,
+        _ => 0,
+    };
+    host_api::array((2..length)
+        .map(|index| execute::get_property(&argv, &index.to_string()))
+        .collect())
+}
+
+fn array_values(array: &Value) -> Vec<Value> {
+    let Value::Array(values) = array else {
+        return Vec::new();
+    };
+    let length = match execute::get_property(array, "length") {
+        Value::Number(length) if length >= 0.0 => length as usize,
+        _ => values.logical_len(),
+    };
+    (0..length)
+        .map(|index| execute::get_property(array, &index.to_string()))
+        .collect()
+}
+
+pub fn setup_event(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(receiver),
+            &[Value::String("setup".into())],
+        );
+    }
+    Ok(Value::Undefined)
+}
+
+fn stdio_channel(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    let configured = state.borrow().cluster.stdio.clone()?;
+    let Value::Array(slots) = configured else {
+        return None;
+    };
+    let pipe = execute::get_property(&Value::Array(slots), "4");
+    if !matches!(pipe, Value::String(value) if value == "pipe") {
+        return None;
+    }
+    let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
+    let address = listener.local_addr().ok()?;
+    let parent = TcpStream::connect(address).ok()?;
+    let (child, _) = listener.accept().ok()?;
+    let _ = parent.set_nonblocking(true);
+    let _ = child.set_nonblocking(true);
+    crate::modules::net::register_fd_stream(state, 4, child);
+    crate::modules::net::register_fd_stream(state, 4, parent);
+    let options = host_api::object(vec![
+        ("fd".into(), Value::Number(4.0)),
+        ("allowHalfOpen".into(), Value::Boolean(false)),
+    ]);
+    crate::modules::net::socket_construct(state, &[options]).ok()
+}
+
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let workers = host_api::object(Vec::new());
     let module = crate::modules::events::new_emitter_object(state)
@@ -73,6 +214,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ("isMaster", Value::Boolean(true)),
         ("isWorker", Value::Boolean(false)),
         ("worker", Value::Null),
+        ("settings", state.borrow().cluster.settings.clone()),
         ("workers", workers.clone()),
         ("SCHED_NONE", Value::Number(1.0)),
         ("SCHED_RR", Value::Number(2.0)),
@@ -87,11 +229,11 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         // the same lifecycle before `fork()`.
         (
             "setupPrimary",
-            Value::Builtin(quench_runtime::ops::Builtin::Object),
+            crate::host::capability(SPEC_CLUSTER_SETUP_PRIMARY),
         ),
         (
             "setupMaster",
-            Value::Builtin(quench_runtime::ops::Builtin::Object),
+            crate::host::capability(SPEC_CLUSTER_SETUP_MASTER),
         ),
         ("Worker", worker_constructor),
     ] {
@@ -105,6 +247,7 @@ pub fn fork(
     _: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let channel = stdio_channel(state);
     let mut host = state.borrow_mut();
     let id = host.cluster.next_id;
     host.cluster.next_id += 1;
@@ -120,6 +263,18 @@ pub fn fork(
                 .unwrap_or_else(|| host_api::object(Vec::new())),
         ),
         ("connected".into(), Value::Boolean(true)),
+        (
+            "stdio".into(),
+            host_api::array((0..5)
+                .map(|index| {
+                    if index == 4 {
+                        channel.clone().unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    }
+                })
+                .collect()),
+        ),
         ("on".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
         (
             "once".into(),
@@ -208,6 +363,14 @@ pub fn fork(
         );
     }
     run_worker_script(state, id, &worker);
+    let module = { state.borrow().cluster.module.clone() };
+    if let Some(module) = module {
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(&module),
+            &[Value::String("online".into()), worker.clone()],
+        );
+    }
     Ok(worker)
 }
 
@@ -228,6 +391,23 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     }
     let _ = execute::set_property_in_place(worker, "state", Value::String("online".into()));
     let global = quench_runtime::vm::current_global_object();
+    let process_value = execute::get_property_result(&global, "process").ok();
+    let previous_argv = process_value
+        .as_ref()
+        .map(|process| execute::get_property(process, "argv"));
+    let worker_args = state
+        .borrow()
+        .cluster
+        .settings
+        .clone();
+    if let (Some(process), Some(previous_argv)) = (&process_value, &previous_argv) {
+        let args = execute::get_property(&worker_args, "args");
+        let mut values = array_values(previous_argv);
+        if let Value::Array(args) = args {
+            values.extend(array_values(&Value::Array(args)));
+        }
+        execute::set_property_in_place(process, "argv", host_api::array(values));
+    }
     if let Ok(process) = execute::get_property_result(&global, "process") {
         let _ = execute::set_property_in_place(&process, ID, Value::Number(id as f64));
         let disconnect = quench_runtime::host_api::bound_capability_with_arguments(
@@ -299,6 +479,9 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     }
     let global = quench_runtime::vm::current_global_object();
     if let Ok(process) = execute::get_property_result(&global, "process") {
+        if let Some(previous_argv) = previous_argv {
+            let _ = execute::set_property_in_place(&process, "argv", previous_argv);
+        }
         let _ = execute::delete_property(process.clone(), ID);
         let _ = execute::delete_property(process.clone(), "send");
         let _ = execute::delete_property(process.clone(), "disconnect");
@@ -430,6 +613,40 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
             socket.state = crate::modules::net::SocketState::Closed;
             socket.read_eof = true;
         }
+    }
+    let stdio = state
+        .borrow()
+        .cluster
+        .workers
+        .get(&worker_id)
+        .and_then(|worker| execute::get_property_result(&worker.object, "process").ok())
+        .and_then(|process| execute::get_property_result(&process, "stdio").ok());
+    let stdio_sockets = match stdio {
+        Some(Value::Array(values)) => (0..values.logical_len())
+            .map(|index| execute::get_property(&Value::Array(values.clone()), &index.to_string()))
+            .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    for socket in stdio_sockets {
+        let _ = crate::modules::net::socket_destroy(state, Some(&socket), &[]);
+    }
+    let fd_sockets = state
+        .borrow()
+        .net
+        .sockets
+        .values()
+        .filter_map(|socket| {
+            let socket = socket.borrow();
+            matches!(
+                execute::get_property(&socket.js, crate::modules::net::PIPE_FD_PROP),
+                Value::Number(fd) if fd == 4.0
+            )
+            .then(|| socket.js.clone())
+        })
+        .collect::<Vec<_>>();
+    for socket in fd_sockets {
+        let _ = crate::modules::net::socket_destroy(state, Some(&socket), &[]);
     }
 }
 
