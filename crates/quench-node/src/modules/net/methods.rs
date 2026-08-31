@@ -2158,14 +2158,37 @@ pub fn server_listen(
         }
     }
     let (port, host) = listen_target(state, args)?;
-    let listener = match bind_listener(port, host.as_deref()) {
-        Ok(listener) => listener,
-        Err(error) => {
+    let reuse_port = args.first().is_some_and(|options| {
+        matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(execute::get_property(options, "reusePort"), Value::Boolean(true))
+    });
+    // A reuse-port bind shares the existing listener identity when the host
+    // cannot request SO_REUSEPORT directly. Both logical servers still enter
+    // the normal net registry and lifecycle; only the kernel descriptor is
+    // cloned, which is sufficient for accept/close semantics.
+    let shared_listener = reuse_port.then(|| {
+        state.borrow().net.servers.values().find_map(|server| {
+            let server = server.borrow();
+            let matches_port = server
+                .bind_addr
+                .is_some_and(|address| address.port() == port);
+            matches_port
+                .then(|| server.listener.as_ref().and_then(|listener| listener.try_clone().ok()))
+                .flatten()
+        })
+    }).flatten();
+    let listener = if let Some(listener) = shared_listener {
+        listener
+    } else {
+        match bind_listener(port, host.as_deref()) {
+            Ok(listener) => listener,
+            Err(error) => {
             state.borrow_mut().net.pending_errors.push((
                 receiver.clone(),
                 server_bind_error(&error, host.as_deref(), port),
             ));
             return Ok(receiver);
+            }
         }
     };
     register_server(state, &receiver, Some(listener))?;
