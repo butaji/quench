@@ -2168,6 +2168,39 @@ pub fn server_listen(
         }
     }
     let (port, host) = listen_target(state, args)?;
+    // Cluster workers ask the primary for the listener rather than binding a
+    // fresh ephemeral port.  The host models workers in one VM, so preserve
+    // that shared descriptor identity by cloning the first worker-owned
+    // listener for the same address family (and explicit port, when given).
+    let cluster_listener = state
+        .borrow()
+        .cluster
+        .worker_context
+        .is_some()
+        .then(|| {
+            let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
+            state.borrow().net.servers.values().find_map(|server| {
+                let server = server.borrow();
+                if server.owner_worker.is_none()
+                    || !server.listening
+                    || server.closed
+                    || server
+                        .bind_addr
+                        .is_none_or(|address| address.is_ipv6() != requested_ipv6)
+                    || (port != 0
+                        && server
+                            .bind_addr
+                            .is_none_or(|address| address.port() != port))
+                {
+                    return None;
+                }
+                server
+                    .listener
+                    .as_ref()
+                    .and_then(|listener| listener.try_clone().ok())
+            })
+        })
+        .flatten();
     let reuse_port = args.first().is_some_and(|options| {
         matches!(options, Value::Object(_) | Value::ObjectAlias(_))
             && matches!(execute::get_property(options, "reusePort"), Value::Boolean(true))
@@ -2187,7 +2220,7 @@ pub fn server_listen(
                 .flatten()
         })
     }).flatten();
-    let listener = if let Some(listener) = shared_listener {
+    let listener = if let Some(listener) = cluster_listener.or(shared_listener) {
         listener
     } else {
         match bind_listener(port, host.as_deref()) {

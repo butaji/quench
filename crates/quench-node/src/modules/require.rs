@@ -655,8 +655,12 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 let net_socket = quench_runtime::execute::get_property(&net, "Socket");
                 let net_socket_prototype =
                     quench_runtime::execute::get_property(&net_socket, "prototype");
+                // Match Node's constructor inheritance as well as the
+                // instance prototype: `Object.getPrototypeOf(TLSSocket)` is
+                // `net.Socket`, while instances inherit from
+                // `net.Socket.prototype`.
                 let tls_socket = quench_runtime::execute::set_property(
-                    placeholder_constructor(None),
+                    placeholder_constructor(Some(&net_socket)),
                     "prototype",
                     net_socket_prototype,
                 );
