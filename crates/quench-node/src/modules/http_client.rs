@@ -2386,6 +2386,11 @@ pub fn data_handler(
                 .map(|req| req.buffer.clone())
                 .unwrap_or_default();
             if let Some(error) = invalid_response_framing(&head, &raw_body) {
+                if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                    // The protocol error is the observable terminal failure;
+                    // suppress the socket teardown's synthetic ECONNRESET.
+                    req.parse_error = true;
+                }
                 let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
                 net::emit(state, &request, "error", vec![error])?;
                 net::socket_destroy(state, Some(socket), &[])?;
