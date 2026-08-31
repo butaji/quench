@@ -788,6 +788,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_BOUND_SOCKET_FD => crate::modules::net::bound_socket_fd,
         CAP_NET_BOUND_SOCKET_CLOSE => crate::modules::net::bound_socket_close,
         CAP_NET_TCP_BIND => crate::modules::net::tcp_bind,
+        CAP_NET_SERVER_LISTEN2 => crate::modules::net::server_listen2,
         CAP_NET_LOOKUP_CALLBACK => handlers::net_lookup_callback,
         CAP_VM_MODULE_LINK => handlers::vm_module_link,
         CAP_VM_MODULE_EVALUATE => handlers::vm_module_evaluate,
