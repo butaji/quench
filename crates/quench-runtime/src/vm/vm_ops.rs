@@ -64,11 +64,14 @@ pub fn execute_call_continuation(
         environment: std::rc::Rc<crate::environment::Environment>,
         pc: usize,
     }
-    fn start(
-        continuation: crate::completion::CallContinuation,
-    ) -> Result<Option<ActiveCall>, VmError> {
+    enum CallStart {
+        Active(ActiveCall),
+        Native(crate::completion::CallContinuation),
+    }
+
+    fn start(continuation: crate::completion::CallContinuation) -> Result<CallStart, VmError> {
         let Value::Function(function) = &continuation.callee else {
-            return Ok(None);
+            return Ok(CallStart::Native(continuation));
         };
         if crate::functions::is_class_constructor(function) {
             let error =
@@ -89,22 +92,22 @@ pub fn execute_call_continuation(
         // corresponding completion setup. Inlining their raw ops would return
         // the body value directly and skip that observable protocol.
         if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
-            return Ok(None);
+            return Ok(CallStart::Native(continuation));
         }
         // Functions created inside a `with` scope carry a dynamic object
         // environment. The optimized continuation path has no per-frame
         // scope guard, so use the ordinary invocation path for these
         // closures to restore the captured object lookup semantics.
         if !function.with_captures.is_empty() {
-            return Ok(None);
+            return Ok(CallStart::Native(continuation));
         }
         if crate::with_scope::is_active() {
-            return Ok(None);
+            return Ok(CallStart::Native(continuation));
         }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
-        Ok(Some(ActiveCall {
+        Ok(CallStart::Active(ActiveCall {
             code: function.code.clone(),
             continuation,
             registers: callee_registers,
@@ -134,9 +137,9 @@ pub fn execute_call_continuation(
         }
     }
     let mut stack: Vec<ActiveCall> = Vec::new();
-    let mut current = match start(continuation.clone())? {
-        Some(active) => active,
-        None => {
+    let mut current = match start(continuation)? {
+        CallStart::Active(active) => active,
+        CallStart::Native(continuation) => {
             let value = invoke_with_receiver(
                 &continuation.callee,
                 &continuation.receiver,
@@ -182,9 +185,9 @@ pub fn execute_call_continuation(
                 // parent frame rather than an empty register vector.
                 current.registers = std::mem::take(&mut nested.caller_registers);
                 stack.push(current);
-                current = match start(nested.clone())? {
-                    Some(active) => active,
-                    None => {
+                current = match start(nested)? {
+                    CallStart::Active(active) => active,
+                    CallStart::Native(nested) => {
                         let value = match invoke_with_receiver(
                             &nested.callee,
                             &nested.receiver,
@@ -221,9 +224,9 @@ pub fn execute_call_continuation(
                     destination: current.continuation.destination,
                     guards: current.continuation.guards,
                 };
-                current = match start(tail.clone()) {
-                    Ok(Some(active)) => active,
-                    Ok(None) => {
+                current = match start(tail) {
+                    Ok(CallStart::Active(active)) => active,
+                    Ok(CallStart::Native(tail)) => {
                         let value = match invoke_with_receiver(
                             &tail.callee,
                             &tail.receiver,
@@ -247,7 +250,7 @@ pub fn execute_call_continuation(
                         if let Some(parent) = stack.last() {
                             *registers = parent.registers.clone();
                         } else {
-                            *registers = tail.caller_registers.clone();
+                            *registers = current.continuation.caller_registers.clone();
                         }
                         return Err(error);
                     }
