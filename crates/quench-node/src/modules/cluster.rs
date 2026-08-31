@@ -731,6 +731,18 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
         .iter()
         .filter_map(|(_, address)| *address)
         .collect::<Vec<_>>();
+    let server_paths = state
+        .borrow()
+        .net
+        .servers
+        .values()
+        .filter_map(|server| {
+            let server = server.borrow();
+            (server.owner_worker == Some(worker_id))
+                .then(|| server.path.clone())
+                .flatten()
+        })
+        .collect::<Vec<_>>();
     let servers = state
         .borrow()
         .net
@@ -745,6 +757,10 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
             server.listening = false;
             server.closed = true;
         }
+    }
+    for path in server_paths {
+        state.borrow_mut().net.paths.remove(&path);
+        let _ = std::fs::remove_file(path);
     }
     let sockets = state
         .borrow()
