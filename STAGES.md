@@ -74,3 +74,8 @@ Rust transport capability exists.
 The focused util inventory after these changes is **40 pass, 13 fail, 1
 timeout** of 54 fixtures. Filtered results guide family selection but do not
 replace the manifest gate above.
+
+The focused timers inventory after deriving the AbortSignal timeout callback
+ID from the registry is **66 pass, 1 fail, 1 timeout** of 68 fixtures. The
+remaining failure is the scheduler promise family; the timeout is the worker
+termination fixture.
