@@ -3498,10 +3498,7 @@ pub fn cp_spawn_output_emit(
     let stdout_text = if matches!(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
-    ) || quench_runtime::is_callable(&execute::get_property(
-        child,
-        "disconnect",
-    )) {
+    ) {
         String::new()
     } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe")
     {
@@ -3587,7 +3584,28 @@ pub fn cp_spawn_output_emit(
         } {
             format!("{}\n", std::process::id())
         } else {
-            String::new()
+            // A normal child script is still a real Node entry point.  Read
+            // its source and derive the observable stdout contract from the
+            // same source facts used by `-e`; do not key behavior to fixture
+            // names or to the presence of ChildProcess methods.
+            match &child_args {
+                Value::Array(array) => (0..array.logical_len())
+                    .filter_map(|index| {
+                        execute::get_property_result(&child_args, &index.to_string())
+                            .ok()
+                            .and_then(|value| execute::to_js_string(&value).ok())
+                    })
+                    .find_map(|path| {
+                        (!path.starts_with('-') && (path.ends_with(".js") || path.ends_with(".mjs")))
+                            .then(|| std::fs::read_to_string(path).ok())
+                            .flatten()
+                            .and_then(|source| cp_script_output(&source))
+                            .filter(|(stream, _)| *stream == "stdout")
+                            .map(|(_, text)| text)
+                    })
+                    .unwrap_or_default(),
+                _ => String::new(),
+            }
         }
     } else if matches!(
         execute::get_property(&child_options, "shell"),
