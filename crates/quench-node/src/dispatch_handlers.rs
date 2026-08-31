@@ -4548,6 +4548,17 @@ pub fn cp_fork(
         };
         (fork_args, options)
     };
+    if let Value::String(stdio) = execute::get_property(&options, "stdio") {
+        if !matches!(stdio.as_str(), "pipe" | "inherit" | "ignore") {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                (
+                    "code".into(),
+                    Value::String("ERR_INVALID_ARG_VALUE".into()),
+                ),
+            ])));
+        }
+    }
     options = execute::set_property(options, "\0quench:forkIpc", Value::Boolean(true));
     if let Value::Array(stdio) = execute::get_property(&options, "stdio") {
         let has_ipc = (0..stdio.logical_len()).any(|index| {
