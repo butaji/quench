@@ -36,6 +36,7 @@ pub use methods::{
     socket_set_type_of_service, socket_get_type_of_service, socket_handle_close,
     socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
     server_get_connections,
+    tcp_bind, tcp_construct,
 };
 pub use pump::{finalize, poll};
 
@@ -55,9 +56,11 @@ pub(crate) const ONREAD_PAUSED_PROP: &str = "\0quench:net:onread:paused";
 pub(crate) const ONREAD_EOF_PROP: &str = "\0quench:net:onread:eof";
 /// Host-only persistence for stream options across reconnect transport swaps.
 pub(crate) const SOCKET_ENCODING_PROP: &str = "\0quench:net:encoding";
+pub(crate) const TCP_WRAP_BINDING_PROP: &str = "\0quench:net:tcp-wrap-binding";
 pub(crate) const NO_DELAY_PROP: &str = "\0quench:net:no-delay";
 pub(crate) const TOS_PROP: &str = "\0quench:net:tos";
 pub(crate) const HANDLE_CLOSED_PROP: &str = "\0quench:net:handle-closed";
+pub(crate) const HANDLE_NO_DELAY_PROP: &str = "\0quench:net:handle-no-delay";
 const ASYNC_ITER_TARGET_PROP: &str = "\0quench:net:async-iter-target";
 const READ_CHUNK: usize = 16 * 1024;
 

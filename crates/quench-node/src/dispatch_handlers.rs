@@ -1429,6 +1429,39 @@ pub fn internal_binding(
             ),
         ]));
     }
+    if name == "tcp_wrap" {
+        // The bootstrap TCP binding is the canonical declaration shared by
+        // internal/test/binding and the net host. Preserve its prototype
+        // identity so tests can observe patched native methods.
+        let global = quench_runtime::vm::current_global_object();
+        let cached = execute::get_property(&global, crate::modules::net::TCP_WRAP_BINDING_PROP);
+        if matches!(cached, Value::Object(_) | Value::ObjectAlias(_)) {
+            state.borrow_mut().tcp_binding = Some(cached.clone());
+            return Ok(cached);
+        }
+        let prototype = crate::host::namespace_object_from_pairs(vec![
+            (
+                "setNoDelay".to_string(),
+                Value::Builtin(quench_runtime::ops::Builtin::Object),
+            ),
+        ]);
+        let tcp_constructor = execute::set_property(
+            crate::host::capability(crate::registry::SPEC_NET_TCP),
+            "prototype",
+            prototype,
+        );
+        let constants = crate::host::namespace_object_from_pairs(vec![
+            ("SOCKET".to_string(), Value::Number(1.0)),
+        ]);
+        let binding = crate::host::namespace_object_from_pairs(vec![
+            ("TCP".to_string(), tcp_constructor.clone()),
+            ("TCPWrap".to_string(), tcp_constructor),
+            ("constants".to_string(), constants),
+        ]);
+        execute::set_property_in_place(&global, crate::modules::net::TCP_WRAP_BINDING_PROP, binding.clone());
+        state.borrow_mut().tcp_binding = Some(binding.clone());
+        return Ok(binding);
+    }
     if name == "tty_wrap" {
         let mut tty = host_api::object(Vec::new());
         for key in ["bytesRead", "fd", "_externalStream"] {
