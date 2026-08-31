@@ -589,6 +589,8 @@ const __quenchChildProcessModule = () => {
     ChildProcess: __quenchChildProcessClass,
     spawn: __quenchSpawnChild,
     fork: (script, args = [], options = {}) => {
+      if (typeof globalThis.__quench_cp_fork === "function")
+        return globalThis.__quench_cp_fork(script, args, options);
       if (args !== null && typeof args === "object" && !Array.isArray(args)) {
         options = args;
         args = [];
