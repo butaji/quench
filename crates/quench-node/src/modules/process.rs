@@ -704,10 +704,17 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
         }
     }
     let domain_stack = crate::modules::domain::stack_values(state);
+    let process_scope = state.borrow().cluster.process_scope();
     state
         .borrow_mut()
         .event_loop
-        .queue_microtask_with_domain_stack(cb, rest, resource, domain_stack);
+        .queue_microtask_with_domain_stack_scope(
+            cb,
+            rest,
+            resource,
+            domain_stack,
+            process_scope,
+        );
     Ok(Value::Undefined)
 }
 

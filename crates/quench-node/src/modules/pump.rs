@@ -442,6 +442,13 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     let Some(task) = item else {
         return Ok(false);
     };
+    let previous_scope = state.borrow().cluster.process_scope();
+    if task.process_scope != 0 {
+        state
+            .borrow_mut()
+            .cluster
+            .set_process_scope(task.process_scope);
+    }
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
@@ -470,6 +477,20 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
     }
+    let result = match result {
+        Err(error) if task.process_scope != 0 => {
+            if crate::modules::cluster::fail_fork_process(state, task.process_scope, 1)? {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+        result => result,
+    };
+    state
+        .borrow_mut()
+        .cluster
+        .set_process_scope(previous_scope);
     result.map(|()| true)
 }
 
