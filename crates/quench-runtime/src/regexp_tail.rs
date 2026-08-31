@@ -59,63 +59,22 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         return regexp_exec_value(&receiver, input);
     }
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
-    if let Value::StringUnits(units) = &input {
-        return symbol_match_global_units(
-            &receiver,
-            input.clone(),
-            units,
-            unicode,
-        );
-    }
-    let input = crate::strings::materialize(&input).unwrap_or_default();
     if !unicode
         && extract_source(&receiver) == "."
         && builtin_regexp_exec_property(&receiver)
         && (fast_set_last_index(&receiver, &Value::Number(0.0))
             || set_last_index(&receiver, 0.0).is_ok())
     {
-        let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
+        let mut units = Vec::new();
+        crate::strings::for_each_unit(&input, |unit| {
+            units.push(crate::strings::from_units(vec![unit]));
+        });
         return Ok(Value::array(units));
     }
-    symbol_match_global(&receiver, &input, unicode)
+    symbol_match_global(&receiver, input, unicode)
 }
 
-fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
-    set_last_index(receiver, 0.0)?;
-    let mut matched = Vec::new();
-    loop {
-        let previous = match crate::execute::get_property_result(receiver, "lastIndex")? {
-            Value::Number(value) => Some(to_length(value)),
-            _ => None,
-        };
-        let result = regexp_exec(receiver, s)?;
-        if matches!(result, Value::Null) {
-            break;
-        }
-        let full = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
-        matched.push(Value::String(full.clone()));
-        let empty = full.is_empty();
-        if empty {
-            let current = extract_last_index(receiver)?;
-            if previous.is_some_and(|previous| current > previous) {
-                continue;
-            }
-            let next = advance_string_index(s, current, unicode);
-            set_last_index(receiver, next as f64)?;
-        }
-    }
-    if matched.is_empty() {
-        return Ok(Value::Null);
-    }
-    Ok(Value::array(matched))
-}
-
-fn symbol_match_global_units(
-    receiver: &Value,
-    input: Value,
-    units: &[u16],
-    unicode: bool,
-) -> Result<Value, VmError> {
+fn symbol_match_global(receiver: &Value, input: Value, unicode: bool) -> Result<Value, VmError> {
     set_last_index(receiver, 0.0)?;
     let mut matched = Vec::new();
     loop {
@@ -139,7 +98,7 @@ fn symbol_match_global_units(
             if previous.is_some_and(|previous| current > previous) {
                 continue;
             }
-            let next = advance_string_index_units(units, current, unicode);
+            let next = advance_string_index_value(&input, current, unicode);
             set_last_index(receiver, next as f64)?;
         }
     }
@@ -168,21 +127,33 @@ fn builtin_regexp_exec_property(receiver: &Value) -> bool {
 }
 
 fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
-    let pair = unicode
-        && crate::strings::utf16_code_unit(text, index).is_some_and(|unit| {
-            (0xD800..=0xDBFF).contains(&unit)
-                && crate::strings::utf16_code_unit(text, index + 1)
-                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next))
-        });
-    index + if pair { 2 } else { 1 }
+    advance_string_view(crate::strings::StringView::Utf8(text), index, unicode)
 }
 
-fn advance_string_index_units(text: &[u16], index: usize, unicode: bool) -> usize {
+fn advance_string_index_value(text: &Value, index: usize, unicode: bool) -> usize {
+    crate::strings::view_of(text)
+        .map_or(index + 1, |view| advance_string_view(view, index, unicode))
+}
+
+fn advance_string_view(text: crate::strings::StringView<'_>, index: usize, unicode: bool) -> usize {
     let pair = unicode
-        && text.get(index).is_some_and(|unit| (0xD800..=0xDBFF).contains(unit))
-        && text
-            .get(index + 1)
-            .is_some_and(|unit| (0xDC00..=0xDFFF).contains(unit));
+        && match text {
+            crate::strings::StringView::Utf8(value) => {
+                crate::strings::utf16_code_unit(value, index).is_some_and(|unit| {
+                    (0xD800..=0xDBFF).contains(&unit)
+                        && crate::strings::utf16_code_unit(value, index + 1)
+                            .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next))
+                })
+            }
+            crate::strings::StringView::Utf16(value) => {
+                value
+                    .get(index)
+                    .is_some_and(|unit| (0xD800..=0xDBFF).contains(unit))
+                    && value
+                        .get(index + 1)
+                        .is_some_and(|unit| (0xDC00..=0xDFFF).contains(unit))
+            }
+        };
     index + if pair { 2 } else { 1 }
 }
 
