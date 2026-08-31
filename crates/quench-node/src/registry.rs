@@ -528,6 +528,7 @@ pub const SPEC_HTTP_GET: NodeSpec = NodeSpec::new("http:get", 0x0F01);
 pub const SPEC_HTTP_SERVER: NodeSpec = NodeSpec::new("http:createServer", 0x0F02);
 // http response methods (dispatched with the res receiver).
 pub const SPEC_HTTP_RES_SET_HEADER: NodeSpec = NodeSpec::new("http:res:setHeader", 0x0F03);
+pub const SPEC_HTTP_RES_REMOVE_HEADER: NodeSpec = NodeSpec::new("http:res:removeHeader", 0x0F41);
 pub const SPEC_HTTP_RES_WRITE_HEAD: NodeSpec = NodeSpec::new("http:res:writeHead", 0x0F04);
 pub const SPEC_HTTP_RES_WRITE: NodeSpec = NodeSpec::new("http:res:write", 0x0F05);
 pub const SPEC_HTTP_RES_END: NodeSpec = NodeSpec::new("http:res:end", 0x0F06);
