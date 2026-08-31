@@ -890,7 +890,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         .transpose()?
         .flatten()
     {
-        build_match_result(receiver, &s, m, 0, &flags)
+        build_match_result(receiver, &s, m, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
             set_last_index(receiver, 0.0)?;
@@ -954,24 +954,23 @@ fn build_match_result(
     receiver: &Value,
     s: &str,
     m: Match,
-    search_start: usize,
     flags: &str,
 ) -> Result<Value, VmError> {
-    let new_index = crate::strings::byte_to_utf16(s, m.end() + search_start);
+    let new_index = crate::strings::byte_to_utf16(s, m.end());
     if flags.contains('g') || flags.contains('y') {
         set_last_index(receiver, new_index as f64)?;
     }
     let unicode = flags.contains('u') || flags.contains('v');
     let split_astral = !unicode && nonunicode_code_unit_pattern(&extract_source(receiver));
-    let values = match_values(s, &m, search_start, !split_astral);
-    let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
-    let groups = named_groups(s, &m, search_start, !split_astral);
+    let values = match_values(s, &m, !split_astral);
+    let index = Value::Number(crate::strings::byte_to_utf16(s, m.start()) as f64);
+    let groups = named_groups(s, &m, !split_astral);
     let mut result = match_result(values, index, s, groups);
     if flags.contains('d') {
         result = crate::builtins::set_property(
             result,
             "indices",
-            match_indices(s, &m, search_start, !split_astral),
+            match_indices(s, &m, !split_astral),
         );
     }
     Ok(result)
@@ -1072,25 +1071,25 @@ fn nonunicode_code_unit_pattern(source: &str) -> bool {
         || source_contains_surrogate_escape(source)
 }
 
-fn match_indices(text: &str, m: &Match, offset: usize, unicode: bool) -> Value {
+fn match_indices(text: &str, m: &Match, unicode: bool) -> Value {
     let mut indices = vec![Value::array(vec![
-        Value::Number(match_start_index(text, offset + m.start()) as f64),
-        Value::Number(match_end_index(text, offset + m.start(), offset + m.end(), unicode) as f64),
+        Value::Number(match_start_index(text, m.start()) as f64),
+        Value::Number(match_end_index(text, m.start(), m.end(), unicode) as f64),
     ])];
     indices.extend(m.captures.iter().map(|group| {
         group.as_ref().map_or(Value::Undefined, |range| {
             Value::array(vec![
-                Value::Number(match_start_index(text, offset + range.start) as f64),
+                Value::Number(match_start_index(text, range.start) as f64),
                 Value::Number(match_end_index(
                     text,
-                    offset + range.start,
-                    offset + range.end,
+                    range.start,
+                    range.end,
                     unicode,
                 ) as f64),
             ])
         })
     }));
-    let groups = named_index_groups(text, m, offset, unicode);
+    let groups = named_index_groups(text, m, unicode);
     crate::builtins::set_property(Value::array(indices), "groups", groups)
 }
 
@@ -1110,7 +1109,7 @@ fn match_indices_units(m: &Match) -> Value {
     crate::builtins::set_property(Value::array(indices), "groups", named_index_groups_units(m))
 }
 
-fn named_index_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Value {
+fn named_index_groups(text: &str, m: &Match, unicode: bool) -> Value {
     if m.named_groups().next().is_none() {
         Value::Undefined
     } else {
@@ -1118,11 +1117,11 @@ fn named_index_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Va
         properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
             let value = range.map_or(Value::Undefined, |range| {
                 Value::array(vec![
-                    Value::Number(match_start_index(text, offset + range.start) as f64),
+                    Value::Number(match_start_index(text, range.start) as f64),
                     Value::Number(match_end_index(
                         text,
-                        offset + range.start,
-                        offset + range.end,
+                        range.start,
+                        range.end,
                         unicode,
                     ) as f64),
                 ])
@@ -1133,11 +1132,11 @@ fn named_index_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Va
     }
 }
 
-fn named_groups(text: &str, m: &Match, offset: usize, unicode: bool) -> Option<Value> {
+fn named_groups(text: &str, m: &Match, unicode: bool) -> Option<Value> {
     let mut properties = vec![("\0prototype".to_string(), Value::Null)];
     properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
         let value = range.map_or(Value::Undefined, |range| {
-            match_value(text, offset + range.start, offset + range.end, unicode)
+            match_value(text, range.start, range.end, unicode)
         });
         (name, value)
     }));
@@ -1190,19 +1189,19 @@ fn merged_named_ranges(m: &Match) -> Vec<(String, Option<std::ops::Range<usize>>
     merged
 }
 
-fn match_values(text: &str, m: &Match, offset: usize, unicode: bool) -> Vec<Value> {
+fn match_values(text: &str, m: &Match, unicode: bool) -> Vec<Value> {
     let mut values = m
         .groups()
         .map(|group| match group {
-            Some(range) => match_value(text, offset + range.start, offset + range.end, unicode),
+            Some(range) => match_value(text, range.start, range.end, unicode),
             None => Value::Undefined,
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
         values.push(match_value(
             text,
-            offset + m.start(),
-            offset + m.end(),
+            m.start(),
+            m.end(),
             unicode,
         ));
     }
@@ -1958,6 +1957,42 @@ mod tests {
         )
         .expect("test");
         assert_eq!(result, Value::Boolean(true));
+        assert_eq!(
+            crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
+            Value::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn nonnative_exec_keeps_absolute_match_coordinates() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("a.".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(2.0))),
+                ),
+            ])
+            .into(),
+        );
+        let result = super::exec(
+            Some(&regexp),
+            &[Value::String("xxab".to_string())],
+        )
+        .expect("exec");
+        if !crate::value::is_object(&result) {
+            panic!("exec must return a result object");
+        }
+        assert_eq!(
+            crate::execute::get_property_result(&result, "index").expect("index"),
+            Value::Number(2.0)
+        );
+        assert_eq!(
+            crate::execute::get_property_result(&result, "0").expect("match"),
+            Value::String("ab".to_string())
+        );
         assert_eq!(
             crate::execute::get_property_result(&regexp, "lastIndex").expect("lastIndex"),
             Value::Number(4.0)
