@@ -1353,7 +1353,7 @@ pub fn process_send(
         let Some(worker) = guard.cluster.workers.get_mut(&id) else {
             return Ok(Value::Boolean(false));
         };
-        worker.pending_messages.push(message);
+        worker.pending_messages.push(message.clone());
     } else {
         for callback in callbacks {
             state.borrow().event_loop.queue_microtask_with_receiver(
@@ -1362,6 +1362,17 @@ pub fn process_send(
                 worker_object.clone(),
             );
         }
+    }
+    if let Some(module) = state.borrow().cluster.module.clone() {
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(&module),
+            &[
+                Value::String("message".into()),
+                worker_object,
+                message.clone(),
+            ],
+        );
     }
     let connected = state
         .borrow()
