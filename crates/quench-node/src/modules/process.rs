@@ -208,7 +208,9 @@ fn info_props(argv: &[String], exec_path: &str, title: &str) -> Vec<(&'static st
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
         ("stdin", stdin),
-        ("\0kChannelHandle", channel_handle),
+        ("\0kChannelHandle", channel_handle.clone()),
+        ("Symbol.kChannelHandle\0", channel_handle.clone()),
+        ("Symbol.kChannelHandle", channel_handle),
     ]
 }
 
