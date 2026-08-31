@@ -3145,6 +3145,22 @@ pub fn cp_spawn(
                 ),
             ])));
         }
+        let serialization = execute::get_property(&options, "serialization");
+        let valid_serialization = matches!(serialization, Value::Undefined)
+            || matches!(serialization, Value::String(ref value) if value == "json" || value == "advanced");
+        if !valid_serialization {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                (
+                    "message".into(),
+                    Value::String(format!(
+                        "The property 'options.serialization' must be one of: undefined, 'json', 'advanced'. Received {}",
+                        crate::modules::util::inspect(&serialization)
+                    )),
+                ),
+            ])));
+        }
     }
     let spawnargs = if matches!(
         execute::get_property(&options, "shell"),
