@@ -297,6 +297,15 @@
       // otherwise strand the newly queued chunks until another event arrives.
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
+    if (st.buffer.length === 0 && st.ended && st.decoder) {
+      const tail = st.decoder.end();
+      if (tail !== "") {
+        st.decoder = null;
+        st.buffer.push(tail);
+        scheduleFlow(stream);
+        return;
+      }
+    }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
         !st.endScheduled && (st.flowing ||
           (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
@@ -473,6 +482,10 @@
       if (this.destroyed) return null;
       if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
+      if (size === 0) {
+        if (!st.ended && !st.reading) requestRead(this);
+        return null;
+      }
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
           nextTick(() => {
@@ -545,6 +558,11 @@
         st.buffer = [];
         const decoded = st.decoder.write(buffered);
         if (decoded) st.buffer.push(decoded);
+        if (st.ended) {
+          const tail = st.decoder.end();
+          if (tail !== "") st.buffer.push(tail);
+          st.decoder = null;
+        }
       }
       return this;
     }
