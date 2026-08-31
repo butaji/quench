@@ -1545,7 +1545,7 @@ fn is_modifier_units(units: &[Unit]) -> bool {
     if base.last().is_some_and(|unit| unit.value == 0xFE0F) {
         base = &base[..base.len() - 1];
     }
-    base.len() == 1 && is_basic_emoji_code_point(base[0].value)
+    base.len() == 1 && is_emoji_modifier_base_code_point(base[0].value)
 }
 
 fn is_tag_units(units: &[Unit]) -> bool {
@@ -1580,7 +1580,14 @@ fn is_basic_emoji_units(units: &[Unit]) -> bool {
 }
 
 fn is_basic_emoji_code_point(value: u32) -> bool {
-    property_matches("Emoji", None, value)
+    char::from_u32(value).is_some_and(|character| {
+        icu_properties::EmojiSetData::new::<icu_properties::props::BasicEmoji>()
+            .contains(character)
+    })
+}
+
+fn is_emoji_modifier_base_code_point(value: u32) -> bool {
+    property_matches("Emoji_Modifier_Base", None, value)
 }
 
 fn class_match_widths(
@@ -2001,6 +2008,20 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn emoji_string_properties_use_canonical_scalar_sets() {
+        let basic = Regex::with_flags(r"^\p{Basic_Emoji}$", Flags::from("v")).unwrap();
+        assert!(basic.find_from("😀", 0).next().is_some());
+        assert!(basic.find_from("0", 0).next().is_none());
+
+        let modifier =
+            Regex::with_flags(r"^\p{RGI_Emoji_Modifier_Sequence}$", Flags::from("v"))
+                .unwrap();
+        assert!(modifier.find_from("👩🏽", 0).next().is_some());
+        assert!(modifier.find_from("0🏽", 0).next().is_none());
+    }
+
     #[test]
     fn lookbehind_sticky_prefix() {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
