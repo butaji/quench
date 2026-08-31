@@ -366,8 +366,13 @@ pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     let Some(key) = arguments.first() else {
         return map_set_inner(receiver, arguments, false);
     };
-    let mut normalized = arguments.to_vec();
-    normalized[0] = canonicalize_key(key);
+    if !matches!(key, Value::Number(number) if *number == 0.0 && number.is_sign_negative()) {
+        return map_set_inner(receiver, arguments, false);
+    }
+    let normalized = [
+        Value::Number(0.0),
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+    ];
     map_set_inner(receiver, &normalized, false)
 }
 
