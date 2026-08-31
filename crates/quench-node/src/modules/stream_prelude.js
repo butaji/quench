@@ -1346,6 +1346,14 @@
       return this._writableState.highWaterMark;
     }
 
+    get writableLength() {
+      return this._writableState.buffered;
+    }
+
+    get writableNeedDrain() {
+      return this._writableState.needDrain;
+    }
+
     get writableObjectMode() {
       return this._writableState.objectMode;
     }
@@ -1832,11 +1840,23 @@
   }
 
   function pipeline(...args) {
+    const suppliedArgs = args.length;
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
     const streams = args;
+    if (streams.length === 0) {
+      const error = new TypeError(
+        suppliedArgs === 0
+          ? "The streams argument must be an array or at least two streams"
+          : "The pipeline requires at least two streams"
+      );
+      error.code = suppliedArgs === 0 ? "ERR_INVALID_ARG_TYPE" : "ERR_MISSING_ARGS";
+      throw error;
+    }
     if (streams.length < 2) {
-      throw new TypeError("The streams argument must be an array or at least two streams");
+      const error = new TypeError("The pipeline requires at least two streams");
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
     }
     if (!streams[0] || typeof streams[0].pipe !== "function" ||
         typeof streams[0].on !== "function") {
