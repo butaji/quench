@@ -181,6 +181,7 @@ fn accept_one(
         peer: Some(peer),
         local,
         encoding: None,
+        decode_buf: Vec::new(),
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
     let server_js = state
@@ -281,8 +282,8 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         }
         let arg = {
-            let guard = sock.borrow();
-            data_value(&guard, &bytes)
+            let mut guard = sock.borrow_mut();
+            data_value(&mut guard, &bytes)
         };
         super::queue_async_value(state, sock.borrow().id, arg.clone());
         let callback = execute::get_property(&js, ONREAD_CALLBACK_PROP);

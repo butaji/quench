@@ -499,9 +499,10 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             write_shutdown_pending: false,
             finish_emitted: false,
             connect_announced: false,
-            peer: None,
-            local: None,
-            encoding: None,
+        peer: None,
+        local: None,
+        encoding: None,
+        decode_buf: Vec::new(),
         })),
     );
     if let Some(options) = args
@@ -1254,6 +1255,7 @@ fn connect_with_receiver(
         peer: Some(addr),
         local,
         encoding: None,
+        decode_buf: Vec::new(),
     }));
     let queued_write = state
         .borrow_mut()
@@ -2197,7 +2199,11 @@ pub fn socket_write(
         execute::get_property(&guard.js, "allowHalfOpen"),
         Value::Boolean(true)
     );
-    if guard.read_eof && !allow_half_open {
+    let readable_ended = matches!(
+        execute::get_property(&guard.js, "readable"),
+        Value::Boolean(false)
+    );
+    if guard.read_eof && readable_ended && !allow_half_open {
         drop(guard);
         let error = super::handle_write_error(
             "EPIPE",
@@ -2695,7 +2701,11 @@ pub fn socket_set_encoding(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let encoding = args.first().map(execute::to_js_string).transpose()?;
+    let encoding = args
+        .first()
+        .map(execute::to_js_string)
+        .transpose()?
+        .map(|value| value.to_ascii_lowercase());
     if let Some(id) = receiver.and_then(net_id) {
         if let Some(sock) = state.borrow().net.sockets.get(&id) {
             sock.borrow_mut().encoding = encoding;
