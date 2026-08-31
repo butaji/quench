@@ -105,6 +105,8 @@ pub struct NetSocket {
     pub peer: Option<SocketAddr>,
     pub local: Option<SocketAddr>,
     pub encoding: Option<String>,
+    /// Incomplete bytes retained between reads for streaming text decoding.
+    pub decode_buf: Vec<u8>,
 }
 
 pub struct NetBoundSocket {
@@ -889,9 +891,20 @@ fn value_to_string(value: &Value) -> String {
 // ---- pump-parallel value shaping ----
 
 /// The `'data'` payload: a string when an encoding is set, else a Buffer.
-fn data_value(guard: &NetSocket, bytes: &[u8]) -> Value {
+fn data_value(guard: &mut NetSocket, bytes: &[u8]) -> Value {
     match guard.encoding.as_deref() {
-        Some("utf8") | Some("utf-8") => Value::String(String::from_utf8_lossy(bytes).into_owned()),
+        Some("utf8") | Some("utf-8") => {
+            guard.decode_buf.extend_from_slice(bytes);
+            let complete = match std::str::from_utf8(&guard.decode_buf) {
+                Ok(_) => guard.decode_buf.len(),
+                Err(error) if error.error_len().is_none() => error.valid_up_to(),
+                Err(_) => guard.decode_buf.len(),
+            };
+            let trailing = guard.decode_buf.split_off(complete);
+            let decoded = String::from_utf8_lossy(&guard.decode_buf).into_owned();
+            guard.decode_buf = trailing;
+            Value::String(decoded)
+        }
         Some("hex") => Value::String(hex::encode(bytes)),
         Some("latin1") | Some("ascii") => Value::String(bytes.iter().map(|&b| b as char).collect()),
         _ => crate::modules::buffer_proto::make_buffer(bytes),
