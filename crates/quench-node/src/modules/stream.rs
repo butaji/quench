@@ -98,7 +98,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
         if matches!(stream, Value::Function(_) | Value::BoundFunction(_)) {
             for name in [
                 "Readable", "Writable", "Duplex", "Transform", "PassThrough", "Stream",
-                "duplexPair", "destroy", "finished", "pipeline", "compose", "isReadable",
+                "duplexPair", "destroy", "addAbortSignal", "finished", "pipeline", "compose", "isReadable",
                 "isWritable", "isErrored", "isDisturbed",
             ] {
                 if let Ok(value) = quench_runtime::execute::get_property_result(&module, name) {

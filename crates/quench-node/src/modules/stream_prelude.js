@@ -14,10 +14,7 @@
       const wrapper = (...args) => fn.apply(this, args);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.on(name, wrapper);
-      if (name === "error" && this.destroyed && this._destroyError) {
-        this._emitter.removeListener(name, wrapper);
-        fn.call(this, this._destroyError);
-      } else if (name === "close" && this.destroyed && this._destroyClosePending) {
+      if (name === "close" && this.destroyed && this._destroyClosePending) {
         this._emitter.removeListener(name, wrapper);
         fn.call(this);
       }
@@ -46,8 +43,6 @@
       if (name === "end" && this.readable !== false &&
           this._readableState && this._readableState.endEmitted) {
         nextTick(() => fn.call(this));
-      } else if (name === "error" && this._destroyErrorEmitted) {
-        nextTick(() => fn.call(this, this._destroyError));
       } else if (name === "close" && this._destroyCloseEmitted) {
         nextTick(() => fn.call(this));
       } else if (name === "finish" && this.writable !== false &&
@@ -1094,6 +1089,17 @@
     if (options.write) stream._write = options.write;
     if (options.writev) stream._writev = options.writev;
     if (options.destroy) stream._destroy = options.destroy;
+    if (options.signal?.addEventListener) {
+      const abort = () => {
+        const reason = options.signal.reason || Object.assign(
+          new Error("The operation was aborted"),
+          { name: "AbortError", code: "ABORT_ERR" }
+        );
+        stream.destroy(reason);
+      };
+      if (options.signal.aborted) abort();
+      else options.signal.addEventListener("abort", abort, { once: true });
+    }
     if (options.autoDestroy !== false) {
       stream._emitter.on("error", () => {
         if (!stream.destroyed) stream.destroy();
@@ -1275,6 +1281,14 @@
       }
       const encodingProvided = encoding !== undefined;
       const st = this._writableState;
+      if (this.destroyed || st.destroyed) {
+        const error = Object.assign(
+          new Error("Cannot call write after a stream was destroyed"),
+          { code: "ERR_STREAM_DESTROYED" }
+        );
+        if (callback) nextTick(() => callback(error));
+        return false;
+      }
       if (st.ended) {
         if (st.errored) return false;
         const error = new Error("write after end");
@@ -1436,10 +1450,14 @@
       }
       const state = this._writableState;
       if (this.destroyed || state.destroyed) {
-        const error = state.errored || Object.assign(
-          new Error("Cannot call end after a stream was destroyed"),
-          { code: "ERR_STREAM_DESTROYED" }
-        );
+        const error = state.finished
+          ? Object.assign(new Error("write after finish"), {
+              code: "ERR_STREAM_ALREADY_FINISHED"
+            })
+          : Object.assign(
+              new Error("Cannot call end after a stream was destroyed"),
+              { code: "ERR_STREAM_DESTROYED" }
+            );
         if (callback) nextTick(() => callback(error));
         return this;
       }
@@ -1514,13 +1532,16 @@
         new Error("Cannot call write after a stream was destroyed"),
         { code: "ERR_STREAM_DESTROYED" }
       );
+      const notify = this._writableState.writing ? setImmediate : nextTick;
       for (const request of this._writableState.pending.splice(0)) {
-        if (request.callback) nextTick(() => request.callback(pendingError));
+        if (request.callback) notify(() => request.callback(pendingError));
       }
     }
     if (error) {
       if (!this._writableState.errored) this._writableState.errored = error;
       this.writableErrored = error;
+    } else if (this._writableState.errored === undefined) {
+      this._writableState.errored = null;
     }
     const stream = this;
       const destroy = this._destroy;
@@ -1539,19 +1560,43 @@
         if (callback) callback(endError);
       };
       if (destroy) {
-        destroy.call(stream, error, finish);
+        destroy.call(stream, error ?? null, finish);
       } else finish(error);
     });
     return this;
   };
+  Writable.prototype._undestroy = function () {
+    const state = this._writableState;
+    this.destroyed = false;
+    this.closed = false;
+    this.writable = true;
+    this._destroyError = undefined;
+    this._destroyErrorEmitted = false;
+    this._destroyCloseEmitted = false;
+    state.destroyed = false;
+    state.errored = null;
+    state.errorEmitted = false;
+    state.ended = false;
+    state.ending = false;
+    state.finished = false;
+    state.prefinished = false;
+    state.finishScheduled = false;
+    state.writing = false;
+    state.buffered = 0;
+    state.pending = [];
+    state.endCallbacks = [];
+    return this;
+  };
   if (typeof Symbol === "function" && Symbol.asyncDispose) {
-    ReadableClass.prototype[Symbol.asyncDispose] = function () {
+    const asyncDispose = function () {
       const error = new Error("The operation was aborted");
       error.name = "AbortError";
       error.code = "ABORT_ERR";
       this.destroy(error);
       return Promise.resolve();
     };
+    ReadableClass.prototype[Symbol.asyncDispose] = asyncDispose;
+    WritableClass.prototype[Symbol.asyncDispose] = asyncDispose;
   }
 
   // ---- Duplex / Transform ----
@@ -1894,6 +1939,19 @@
     PassThrough,
     Stream: Readable,
     destroy,
+    addAbortSignal(signal, stream) {
+      if (!signal || !stream || typeof stream.destroy !== "function") return stream;
+      const abort = () => {
+        const reason = signal.reason || Object.assign(
+          new Error("The operation was aborted"),
+          { name: "AbortError", code: "ABORT_ERR" }
+        );
+        stream.destroy(reason);
+      };
+      if (signal.aborted) abort();
+      else signal.addEventListener?.("abort", abort, { once: true });
+      return stream;
+    },
     finished,
     pipeline,
     compose,
