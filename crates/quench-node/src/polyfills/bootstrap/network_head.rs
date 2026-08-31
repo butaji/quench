@@ -8,6 +8,15 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const isIPv4Part = (part) =
   return part.length <= 3;
 };
 const __quenchNetServers = new Set();
+// Cluster workers run in the same VM as the primary. Keep ownership as a
+// lifecycle fact on each server so disconnect closes that worker's listeners.
+globalThis.__quench_cluster_close_worker_net = (workerId) => {
+  for (const server of __quenchNetServers) {
+    if (server.__quench_cluster_worker_id !== workerId) continue;
+    server.close();
+  }
+  globalThis.__quench_cluster_close_worker?.(workerId);
+};
 let __quenchNextEphemeralPort = 40000;
 const __quenchBoundPorts = new Set();
 const __quenchBoundPaths = new Set();

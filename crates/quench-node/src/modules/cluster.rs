@@ -629,6 +629,20 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
             socket.read_eof = true;
         }
     }
+    // A disconnected worker owns no remaining host registrations. Remove the
+    // closed records now so a later fork starts from a clean listener/socket
+    // set instead of traversing stale descriptors.
+    state
+        .borrow_mut()
+        .net
+        .servers
+        .retain(|_, server| server.borrow().owner_worker != Some(worker_id));
+    state.borrow_mut().net.sockets.retain(|_, socket| {
+        let socket = socket.borrow();
+        !(socket.server_id.is_some_and(|id| server_ids.contains(&id))
+            || socket.local.is_some_and(|address| server_addrs.contains(&address))
+            || socket.peer.is_some_and(|address| server_addrs.contains(&address)))
+    });
     let stdio = state
         .borrow()
         .cluster
@@ -663,6 +677,17 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
     for socket in fd_sockets {
         let _ = crate::modules::net::socket_destroy(state, Some(&socket), &[]);
     }
+}
+
+pub fn close_worker_net_binding(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(Value::Number(worker_id)) = args.first() {
+        close_worker_net(state, *worker_id as u64);
+    }
+    Ok(Value::Undefined)
 }
 
 fn worker(
@@ -884,9 +909,6 @@ pub fn on(
                         Value::Number(address.map_or(1, |address| address.port()) as f64),
                     ),
                 ]);
-                // A worker's listening notification is asynchronous. Queue
-                // the callback so the parent can finish registering its
-                // disconnect/exit listeners after `fork()` returns.
                 state.borrow_mut().event_loop.queue_microtask_with_receiver(
                     cb.clone(),
                     vec![info],

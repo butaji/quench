@@ -212,6 +212,7 @@ const CAP_CLUSTER_DISCONNECT: u16 = crate::registry::SPEC_CLUSTER_DISCONNECT.cap
 const CAP_CLUSTER_SETUP_PRIMARY: u16 = crate::registry::SPEC_CLUSTER_SETUP_PRIMARY.cap;
 const CAP_CLUSTER_SETUP_MASTER: u16 = crate::registry::SPEC_CLUSTER_SETUP_MASTER.cap;
 const CAP_CLUSTER_SETUP_EVENT: u16 = crate::registry::SPEC_CLUSTER_SETUP_EVENT.cap;
+const CAP_CLUSTER_CLOSE_WORKER_NET: u16 = crate::registry::SPEC_CLUSTER_CLOSE_WORKER_NET.cap;
 const CAP_CLUSTER_WORKER_IS_DEAD: u16 = crate::registry::SPEC_CLUSTER_WORKER_IS_DEAD.cap;
 const CAP_CLUSTER_WORKER_IS_CONNECTED: u16 = crate::registry::SPEC_CLUSTER_WORKER_IS_CONNECTED.cap;
 const CAP_CLUSTER_WORKER_ON: u16 = crate::registry::SPEC_CLUSTER_WORKER_ON.cap;
@@ -645,6 +646,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CLUSTER_DISCONNECT => crate::modules::cluster::disconnect_all,
         CAP_CLUSTER_SETUP_PRIMARY | CAP_CLUSTER_SETUP_MASTER => crate::modules::cluster::setup_primary,
         CAP_CLUSTER_SETUP_EVENT => crate::modules::cluster::setup_event,
+        CAP_CLUSTER_CLOSE_WORKER_NET => crate::modules::cluster::close_worker_net_binding,
         CAP_CLUSTER_WORKER_IS_DEAD => crate::modules::cluster::is_dead,
         CAP_CLUSTER_WORKER_IS_CONNECTED => crate::modules::cluster::is_connected,
         CAP_CLUSTER_WORKER_ON => crate::modules::cluster::on,
