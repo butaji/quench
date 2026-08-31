@@ -113,7 +113,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     }
     globalThis.process.allowedNodeEnvironmentFlags =
       Object.freeze(allowedFlags);
-    globalThis.process.execArgv = [];
+    // The Rust host installs invocation flags before bootstrap. Preserve that
+    // fact; only supply the empty default for embedders that omit it.
+    globalThis.process.execArgv ??= [];
     globalThis.process.argv0 ||= "node";
     globalThis.process.features ||= {};
     globalThis.process.features.inspector ??= false;

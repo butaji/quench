@@ -53,10 +53,24 @@ impl NodeTestRunner {
     }
 
     pub fn run_file_with_args(&mut self, path: &Path, argv: Vec<String>) -> NodeOutcome {
+        self.run_file_with_options(path, argv, Vec::new())
+    }
+
+    /// Run a self-reexec with Node executable flags kept separate from script
+    /// arguments. Flags belong in `process.execArgv`; ordinary values belong in
+    /// `process.argv`, so preserving that boundary is part of the observable
+    /// host contract.
+    pub fn run_file_with_options(
+        &mut self,
+        path: &Path,
+        argv: Vec<String>,
+        exec_argv: Vec<String>,
+    ) -> NodeOutcome {
         let mut fixture = match NodeFixture::from_path(path.to_path_buf()) {
             Ok(fixture) => fixture,
             Err(error) => return NodeOutcome::Fail { reason: error },
         };
+        fixture.exec_argv.extend(exec_argv);
         fixture.argv.extend(argv);
         self.run_fixture(fixture)
     }

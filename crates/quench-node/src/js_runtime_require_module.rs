@@ -190,6 +190,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "customPromisifyArgs".into(),
                     Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
                 ),
+                (
+                    "decorateErrorStack".into(),
+                    crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK),
+                ),
+                (
+                    "assignFunctionName".into(),
+                    crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME),
+                ),
+                (
+                    "isError".into(),
+                    crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_IS_ERROR),
+                ),
             ]));
         }
         if name == "../common" || name.ends_with("/common") || name.ends_with("/common/index") {

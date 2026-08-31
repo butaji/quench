@@ -33,11 +33,15 @@ fn main() -> ExitCode {
         }
         return ExitCode::from(outcome.exit_code.clamp(0, 255) as u8);
     }
-    let Some(path) = arguments.first().map(PathBuf::from) else {
+    let Some(script_index) = arguments.iter().position(|arg| {
+        arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
+    }) else {
         eprintln!("usage: cargo run -p quench-node-test --bin run -- <file.js>");
         return ExitCode::from(2);
     };
-    let argv = arguments.into_iter().skip(1).collect();
+    let path = PathBuf::from(&arguments[script_index]);
+    let exec_argv = arguments[..script_index].to_vec();
+    let argv = arguments.into_iter().skip(script_index + 1).collect();
     let child_mode = std::env::var_os("QUENCH_CHILD_RUNNER").is_some();
     let captured = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink_capture = Arc::clone(&captured);
@@ -47,7 +51,7 @@ fn main() -> ExitCode {
         }
     });
     let mut runner = NodeTestRunner::new().with_output_sink(sink);
-    let outcome = runner.run_file_with_args(&path, argv);
+    let outcome = runner.run_file_with_options(&path, argv, exec_argv);
     if child_mode {
         let lines = captured
             .lock()

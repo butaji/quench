@@ -66,10 +66,7 @@ pub fn spawn_sync(
     let mut child_args = args
         .get(1)
         .and_then(string_args)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|arg| arg != "--enable-source-maps")
-        .collect::<Vec<_>>();
+        .unwrap_or_default();
     if command.contains('\0') || child_args.iter().any(|arg| arg.contains('\0')) {
         return Err(nul_error());
     }
@@ -321,20 +318,6 @@ pub fn spawn_sync(
             ("stdout".into(), output_value(&stdout, options)),
             ("stderr".into(), output_value(&stderr, options)),
         ]));
-    }
-
-    // `process.execPath` points at the compatibility runner. Node options
-    // precede the script path, while `run` expects the script first. Keep
-    // the same script/argv boundary for self-reexecs without special-casing
-    // individual fixtures or flags.
-    if command == state.borrow().process.exec_path
-        && !matches!(child_args.first().map(String::as_str), Some("-p" | "-e" | "--test"))
-    {
-        if let Some(script) = child_args.iter().position(|arg| {
-            arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
-        }) {
-            child_args = child_args.split_off(script);
-        }
     }
 
     let host_exec = state.borrow().process.exec_path.clone();

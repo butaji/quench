@@ -324,6 +324,13 @@ impl VmContext {
         realm::context(realm).unwrap_or(parent)
     }
 
+    /// Create a child realm inheriting host capabilities and bindings while
+    /// giving intrinsic constructors their own identity.
+    pub fn child_realm(&self) -> Self {
+        let realm = realm::create(self);
+        realm::context(realm).unwrap_or_else(|| self.clone())
+    }
+
     pub fn realm(&self) -> RealmId {
         self.realm
     }
