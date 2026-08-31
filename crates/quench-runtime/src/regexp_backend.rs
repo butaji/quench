@@ -1370,12 +1370,17 @@ fn reverse_repeat_options(
         limit: usize,
         greedy: bool,
         output: &mut Vec<State>,
+        seen: &mut Option<HashSet<State>>,
+        visited: &mut HashSet<(usize, State)>,
     ) {
+        if !visited.insert((count, state.clone())) {
+            return;
+        }
         if backtrack_reached(output.len()) {
             return;
         }
         if !greedy && count >= min {
-            output.push(state.clone());
+            push_unique(output, seen, state.clone());
             if backtrack_reached(output.len()) {
                 return;
             }
@@ -1393,6 +1398,8 @@ fn reverse_repeat_options(
                         limit,
                         greedy,
                         output,
+                        seen,
+                        visited,
                     );
                     if backtrack_reached(output.len()) {
                         return;
@@ -1401,10 +1408,12 @@ fn reverse_repeat_options(
             }
         }
         if greedy && count >= min && !backtrack_reached(output.len()) {
-            output.push(state);
+            push_unique(output, seen, state);
         }
     }
     let mut output = Vec::new();
+    let mut seen = None;
+    let mut visited = HashSet::new();
     visit(
         body,
         input,
@@ -1415,6 +1424,8 @@ fn reverse_repeat_options(
         limit,
         greedy,
         &mut output,
+        &mut seen,
+        &mut visited,
     );
     output
 }
@@ -1906,6 +1917,14 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
     icu_properties::CodePointSetData::new::<P>().contains(character)
 }
 
+fn ascii_property_matches(character: char) -> bool {
+    character.is_ascii()
+}
+
+fn ascii_property_ranges() -> Vec<std::ops::RangeInclusive<u32>> {
+    vec![0..=0x7F]
+}
+
 fn binary_property_ranges<P: icu_properties::props::BinaryProperty>() -> Vec<std::ops::RangeInclusive<u32>> {
     icu_properties::CodePointSetData::new::<P>()
         .iter_ranges()
@@ -1921,6 +1940,11 @@ pub(crate) fn compile_property_matcher(
         PropertyMatcherKind::Any
     } else if name == "Assigned" {
         PropertyMatcherKind::Assigned
+    } else if name == "ASCII" {
+        PropertyMatcherKind::Binary {
+            matcher: ascii_property_matches,
+            ranges: ascii_property_ranges,
+        }
     } else if matches!(name, "Script" | "sc") {
         PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
     } else if matches!(name, "Script_Extensions" | "scx") {
@@ -1935,19 +1959,36 @@ pub(crate) fn compile_property_matcher(
                 PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?,
             )
         }
-    } else {
-        macro_rules! binary_property {
-            ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
-                match name {
-                    $( $( $property => PropertyMatcherKind::Binary {
-                        matcher: binary_property_matches::<props::$kind>,
-                        ranges: binary_property_ranges::<props::$kind>,
-                    }, )+ )*
-                    _ => return None,
-                }
-            };
+    } else if value.is_none() {
+        if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(name) {
+            PropertyMatcherKind::GeneralCategory(target)
+        } else if let Some(target) =
+            PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(name)
+        {
+            PropertyMatcherKind::GeneralCategoryGroup(target)
+        } else {
+            binary_property_kind(name)?
         }
-        binary_property!(
+    } else {
+        binary_property_kind(name)?
+    };
+    Some(PropertyMatcher { kind })
+}
+
+fn binary_property_kind(name: &str) -> Option<PropertyMatcherKind> {
+    use icu_properties::props;
+    macro_rules! binary_property {
+        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
+            match name {
+                $( $( $property => Some(PropertyMatcherKind::Binary {
+                    matcher: binary_property_matches::<props::$kind>,
+                    ranges: binary_property_ranges::<props::$kind>,
+                }), )+ )*
+                _ => None,
+            }
+        };
+    }
+    binary_property!(
         "ASCII_Hex_Digit" => AsciiHexDigit,
         "AHex" => AsciiHexDigit,
         "Alphabetic" => Alphabetic,
@@ -2003,9 +2044,7 @@ pub(crate) fn compile_property_matcher(
         "White_Space" | "space" | "WSpace" => WhiteSpace,
         "XID_Continue" | "XIDC" => XidContinue,
         "XID_Start" | "XIDS" => XidStart,
-        )
-    };
-    Some(PropertyMatcher { kind })
+    )
 }
 
 fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
@@ -2062,6 +2101,17 @@ mod tests {
         let matched = regex.find_from("abbbbbbbc", 0).next().unwrap();
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
+    }
+
+    #[test]
+    fn nested_repeat_frontier_preserves_captures() {
+        let regex = Regex::with_flags(r"<body.*>((.*\n?)*?)</body>", Flags::from("i"))
+            .unwrap();
+        let input = "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>";
+        let matched = regex.find_from(input, 0).next().unwrap();
+        assert_eq!(&input[matched.range], "<body onXXX=\"alert(event.type);\">\n<p>one</p>\n<p>two</p>\n</body>");
+        assert_eq!(&input[matched.captures[0].clone().unwrap()], "\n<p>one</p>\n<p>two</p>\n");
+        assert_eq!(&input[matched.captures[1].clone().unwrap()], "<p>two</p>\n");
     }
 
     #[test]
