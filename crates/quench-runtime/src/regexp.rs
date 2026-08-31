@@ -1620,4 +1620,67 @@ mod tests {
             Some(Value::array(vec![Value::Number(0.0), Value::Number(1.0)]))
         );
     }
+
+    #[test]
+    fn symbol_match_preserves_lone_surrogate_input() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
+                ("\0regexp_flags".to_string(), Value::String(String::new())),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800]);
+        let Value::StringUnits(expected) = input.clone() else {
+            panic!("test input must retain a lone surrogate");
+        };
+        let Value::Array(matches) = super::symbol_match(Some(&regexp), &[input]).expect("match")
+        else {
+            panic!("symbol match must return a match result");
+        };
+        assert_eq!(matches.get_index(0), Some(Value::StringUnits(expected)));
+    }
+
+    #[test]
+    fn global_symbol_match_preserves_lone_surrogate_captures() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
+                ("global".to_string(), Value::Boolean(true)),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800, b'a' as u16]);
+        let Value::StringUnits(units) = input else {
+            panic!("test input must retain a lone surrogate");
+        };
+        let Value::Array(matches) =
+            super::symbol_match(Some(&regexp), &[Value::StringUnits(units.clone())])
+                .expect("match")
+        else {
+            panic!("symbol match must return matches");
+        };
+        assert_eq!(
+            matches.get_index(0),
+            Some(crate::strings::from_units(vec![0xD800]))
+        );
+        assert_eq!(matches.get_index(1), Some(Value::String("a".to_string())));
+    }
 }
