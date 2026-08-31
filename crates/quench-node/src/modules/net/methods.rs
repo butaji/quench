@@ -2349,7 +2349,7 @@ fn create_pipe_placeholder(path: &str, options: Option<&Value>) -> std::io::Resu
             || matches!(execute::get_property(value, "writableAll"), Value::Boolean(true))
     }) {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777))?;
     }
     Ok(())
 }
