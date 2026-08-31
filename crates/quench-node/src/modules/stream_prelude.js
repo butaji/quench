@@ -520,10 +520,12 @@
           ? st.buffer.length
           : st.buffer.reduce((total, value) =>
               total + (typeof value === "string" ? value.length : value?.byteLength ?? 1), 0);
-        if (!this.__quenchIterator && !st.ended && !st.reading &&
+        const hasDemand = st.flowing || this.listenerCount("readable") > 0;
+        if (!this.__quenchIterator && hasDemand && !st.ended && !st.reading &&
             buffered < st.highWaterMark) {
           nextTick(() => {
-            if (!this.destroyed && !st.ended && !st.reading) requestRead(this);
+            if (!this.destroyed && !st.ended && !st.reading &&
+                (st.flowing || this.listenerCount("readable") > 0)) requestRead(this);
           });
         }
       }
