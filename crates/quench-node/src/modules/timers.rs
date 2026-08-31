@@ -105,7 +105,15 @@ fn schedule(
     // source consumed by AsyncLocalStorage.getStore().
     let global = quench_runtime::vm::current_global_object();
     let capture = quench_runtime::execute::get_property(&global, "__nodeCaptureAsyncCallback");
-    if quench_runtime::is_callable(&capture) {
+    let host_capability_callback = matches!(
+        &cb,
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(_))
+            )
+    );
+    if quench_runtime::is_callable(&capture) && !host_capability_callback {
         let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
         cb = quench_runtime::execute::call(&capture, &Value::Undefined, &[cb, current])?;
     }
