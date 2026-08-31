@@ -239,7 +239,7 @@
       flowScheduled: false,
       reading: false,
       needReadable: false,
-      readingMore: false,
+      readingMore: true,
       resumeScheduled: false,
       resumeEventPending: false,
       readRequests: 0,
@@ -407,6 +407,36 @@
     return chunk;
   }
 
+  function releaseTransform(stream) {
+    const callback = stream._transformBackpressure;
+    if (!callback || stream.readableLength >= stream._readableState.highWaterMark) return;
+    stream._transformBackpressure = null;
+    nextTick(callback);
+  }
+
+  function takeReadableChunk(state, size) {
+    const requested = Number(size);
+    if (state.objectMode || !Number.isFinite(requested) || requested <= 0 ||
+        state.buffer.length <= 1 || typeof Buffer === "undefined") {
+      return state.buffer.shift();
+    }
+    let remaining = requested;
+    const pieces = [];
+    while (state.buffer.length > 0 && remaining > 0) {
+      const chunk = state.buffer.shift();
+      const length = typeof chunk === "string" ? chunk.length : chunk.byteLength;
+      if (length <= remaining) {
+        pieces.push(chunk);
+        remaining -= length;
+      } else {
+        pieces.push(chunk.subarray(0, remaining));
+        state.buffer.unshift(chunk.subarray(remaining));
+        remaining = 0;
+      }
+    }
+    return pieces.length === 1 ? pieces[0] : Buffer.concat(pieces);
+  }
+
   function readableChunkError(stream) {
     const error = new TypeError("The chunk argument must be of type string or an instance of Buffer");
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -436,6 +466,7 @@
     }
 
     get readableLength() {
+      if (this._readableState.objectMode) return this._readableState.buffer.length;
       return this._readableState.buffer.reduce((total, chunk) =>
         total + (typeof chunk === "string" ? chunk.length : chunk?.byteLength ?? 1), 0);
     }
@@ -520,12 +551,13 @@
           ? st.buffer.length
           : st.buffer.reduce((total, value) =>
               total + (typeof value === "string" ? value.length : value?.byteLength ?? 1), 0);
-        const hasDemand = st.flowing || this.listenerCount("readable") > 0;
-        if (!this.__quenchIterator && hasDemand && !st.ended && !st.reading &&
+        if (!this.__quenchIterator && !st.ended && !st.reading &&
             buffered < st.highWaterMark) {
           nextTick(() => {
             if (!this.destroyed && !st.ended && !st.reading &&
-                (st.flowing || this.listenerCount("readable") > 0)) requestRead(this);
+                (st.readingMore || st.flowing || this.listenerCount("readable") > 0)) {
+              requestRead(this);
+            }
           });
         }
       }
@@ -583,10 +615,7 @@
       if (st.buffer.length > 0) {
         const requested = Number(size);
         const buffered = this.readableLength;
-        let chunk = !st.objectMode && Number.isFinite(requested) &&
-          requested >= buffered && st.buffer.length > 1 && typeof Buffer !== "undefined"
-          ? Buffer.concat(st.buffer.splice(0))
-          : st.buffer.shift();
+        let chunk = takeReadableChunk(st, requested);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
@@ -608,6 +637,7 @@
         if (st.buffer.length === 0 && !st.ended) {
           st.needReadable = Number.isFinite(requested) && requested <= buffered;
         }
+        releaseTransform(this);
         return chunk;
       }
       if (st.buffer.length === 0 && st.reading && st.readRequests === 0) {
@@ -621,10 +651,7 @@
       if (st.buffer.length > 0) {
         const requested = Number(size);
         const buffered = this.readableLength;
-        let chunk = !st.objectMode && Number.isFinite(requested) &&
-          requested >= buffered && st.buffer.length > 1 && typeof Buffer !== "undefined"
-          ? Buffer.concat(st.buffer.splice(0))
-          : st.buffer.shift();
+        let chunk = takeReadableChunk(st, requested);
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
@@ -646,6 +673,7 @@
         if (st.buffer.length === 0 && !st.ended) {
           st.needReadable = Number.isFinite(requested) && requested <= buffered;
         }
+        releaseTransform(this);
         return chunk;
       }
       finishIfEnded();
@@ -653,6 +681,7 @@
         st.needReadable = true;
       }
       if (this._passThrough) finishWritable(this);
+      releaseTransform(this);
       return null;
     }
 
@@ -1335,7 +1364,7 @@
       destroyed: false
     };
     stream._writableState.getBuffer = function () {
-      return this.pending.map((item) => item.chunk);
+      return this.pending.slice();
     };
     stream.writable = options.writable !== false;
     stream.writableAborted = false;
@@ -1505,6 +1534,10 @@
 
     get writableLength() {
       return this._writableState.buffered;
+    }
+
+    get writableBuffer() {
+      return this._writableState.getBuffer();
     }
 
     get writableNeedDrain() {
@@ -1907,9 +1940,10 @@
   }
   mixWritable(Duplex.prototype);
 
-  class Transform extends Duplex {
+  class TransformClass extends Duplex {
     constructor(options) {
       super(options || {});
+      this._transformBackpressure = null;
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
       // When the writable side finishes, flush then end the readable side.
@@ -1933,13 +1967,27 @@
     _write(chunk, encoding, callback) {
       this._transform(chunk, encoding, (error, data) => {
         if (!error && data != null) this.push(data);
-        if (!error && this._readableState.ended) nextTick(() => callback());
-        else callback(error);
+        if (error) return callback(error);
+        if (this._readableState.buffer.length > 0 &&
+            this.readableLength >= this._readableState.highWaterMark &&
+            !this._readableState.flowing) {
+          this._transformBackpressure = callback;
+          return;
+        }
+        if (this._readableState.ended) nextTick(callback);
+        else callback();
       });
     }
   }
 
-  class PassThrough extends Transform {
+  const Transform = function (options = {}) {
+    return Reflect.construct(TransformClass, [options], new.target || Transform);
+  };
+  Transform.prototype = TransformClass.prototype;
+  Transform.prototype.constructor = Transform;
+  Object.setPrototypeOf(Transform, TransformClass);
+
+  class PassThroughClass extends TransformClass {
     constructor(options) {
       super(options || {});
       this._passThrough = true;
@@ -1950,6 +1998,12 @@
       };
     }
   }
+  const PassThrough = function (options = {}) {
+    return Reflect.construct(PassThroughClass, [options], new.target || PassThrough);
+  };
+  PassThrough.prototype = PassThroughClass.prototype;
+  PassThrough.prototype.constructor = PassThrough;
+  Object.setPrototypeOf(PassThrough, PassThroughClass);
 
   function duplexPair(options = {}) {
     const left = new Duplex(options);
