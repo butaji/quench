@@ -1672,7 +1672,10 @@ enum PropertyMatcherKind {
     ScriptExtensions(icu_properties::props::Script),
     GeneralCategory(icu_properties::props::GeneralCategory),
     GeneralCategoryGroup(icu_properties::props::GeneralCategoryGroup),
-    Binary(fn(char) -> bool),
+    Binary {
+        matcher: fn(char) -> bool,
+        ranges: fn() -> Vec<std::ops::RangeInclusive<u32>>,
+    },
 }
 
 impl PropertyMatcher {
@@ -1696,7 +1699,32 @@ impl PropertyMatcher {
             PropertyMatcherKind::GeneralCategoryGroup(target) => {
                 target.contains(CodePointMapData::<props::GeneralCategory>::new().get(character))
             }
-            PropertyMatcherKind::Binary(matcher) => matcher(character),
+            PropertyMatcherKind::Binary { matcher, .. } => matcher(character),
+        }
+    }
+
+    pub(crate) fn ranges(self) -> Vec<std::ops::RangeInclusive<u32>> {
+        use icu_properties::{props, CodePointMapData};
+        match self.kind {
+            PropertyMatcherKind::Any => vec![0..=0x10FFFF],
+            PropertyMatcherKind::Assigned => CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_value_complemented(props::GeneralCategory::Unassigned)
+                .collect(),
+            PropertyMatcherKind::Script(target) => icu_properties::CodePointMapData::<props::Script>::new()
+                .iter_ranges_for_value(target)
+                .collect(),
+            PropertyMatcherKind::ScriptExtensions(target) => {
+                icu_properties::script::ScriptWithExtensions::new()
+                    .get_script_extensions_ranges(target)
+                    .collect()
+            }
+            PropertyMatcherKind::GeneralCategory(target) => CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_value(target)
+                .collect(),
+            PropertyMatcherKind::GeneralCategoryGroup(target) => CodePointMapData::<props::GeneralCategory>::new()
+                .iter_ranges_for_group(target)
+                .collect(),
+            PropertyMatcherKind::Binary { ranges, .. } => ranges(),
         }
     }
 }
@@ -1705,7 +1733,16 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
     icu_properties::CodePointSetData::new::<P>().contains(character)
 }
 
-pub(crate) fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
+fn binary_property_ranges<P: icu_properties::props::BinaryProperty>() -> Vec<std::ops::RangeInclusive<u32>> {
+    icu_properties::CodePointSetData::new::<P>()
+        .iter_ranges()
+        .collect()
+}
+
+pub(crate) fn compile_property_matcher(
+    name: &str,
+    value: Option<&str>,
+) -> Option<PropertyMatcher> {
     use icu_properties::{props, PropertyParser};
     let kind = if name == "Any" {
         PropertyMatcherKind::Any
@@ -1729,7 +1766,10 @@ pub(crate) fn compile_property_matcher(name: &str, value: Option<&str>) -> Optio
         macro_rules! binary_property {
             ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
                 match name {
-                    $( $( $property => PropertyMatcherKind::Binary(binary_property_matches::<props::$kind>), )+ )*
+                    $( $( $property => PropertyMatcherKind::Binary {
+                        matcher: binary_property_matches::<props::$kind>,
+                        ranges: binary_property_ranges::<props::$kind>,
+                    }, )+ )*
                     _ => return None,
                 }
             };
