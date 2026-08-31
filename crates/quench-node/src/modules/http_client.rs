@@ -2891,8 +2891,9 @@ fn reject_trailing_response(
         req.parse_error = true;
         req.buffer.clear();
     }
-    let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
-    net::emit(state, &request, "error", vec![invalid_response_constant()])?;
+    // Bytes after a completed response are parser-owned trailing data. Node
+    // closes the connection without re-emitting a second request error once
+    // the response lifecycle has already completed.
     net::socket_destroy(state, Some(socket), &[]).map(|_| ())
 }
 
