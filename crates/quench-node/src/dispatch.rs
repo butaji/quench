@@ -444,6 +444,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_UTIL_DECORATE_ERROR_STACK => internal_util_decorate_error_stack,
         CAP_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME => internal_util_assign_function_name,
         CAP_INTERNAL_UTIL_IS_ERROR => internal_util_is_error,
+        CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET => internal_util_weak_reference_get,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
         CAP_OS_AVAILABLE_PARALLELISM => crate::modules::os::available_parallelism,
@@ -1033,6 +1034,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
     use handlers::*;
     Some(match cap {
         CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm_api::construct_run_in_new_context,
+        CAP_INTERNAL_UTIL_WEAK_REFERENCE_CONSTRUCT => internal_util_weak_reference_construct,
         CAP_INTERNAL_JS_STREAM => internal_js_stream_construct,
         CAP_VM_SOURCE_TEXT_MODULE => vm_source_text_module_construct,
         CAP_EVENTS_NEW => events_new,

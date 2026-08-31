@@ -371,6 +371,8 @@ node_api! {
     (SPEC_INTERNAL_UTIL_DECORATE_ERROR_STACK, CAP_INTERNAL_UTIL_DECORATE_ERROR_STACK, "internal/util:decorateErrorStack", 0x2202),
     (SPEC_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME, CAP_INTERNAL_UTIL_ASSIGN_FUNCTION_NAME, "internal/util:assignFunctionName", 0x2203),
     (SPEC_INTERNAL_UTIL_IS_ERROR, CAP_INTERNAL_UTIL_IS_ERROR, "internal/util:isError", 0x2204),
+    (SPEC_INTERNAL_UTIL_WEAK_REFERENCE_CONSTRUCT, CAP_INTERNAL_UTIL_WEAK_REFERENCE_CONSTRUCT, "internal/util:WeakReference", 0x2207),
+    (SPEC_INTERNAL_UTIL_WEAK_REFERENCE_GET, CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET, "internal/util:WeakReference:get", 0x2208),
 }
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
