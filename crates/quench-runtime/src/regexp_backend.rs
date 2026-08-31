@@ -2048,6 +2048,10 @@ mod tests {
                 .unwrap();
         assert!(modifier.find_from("👩🏽", 0).next().is_some());
         assert!(modifier.find_from("0🏽", 0).next().is_none());
+
+        let zwj = Regex::with_flags(r"^\p{RGI_Emoji_ZWJ_Sequence}$", Flags::from("v")).unwrap();
+        assert!(zwj.find_from("⛓️‍💥", 0).next().is_some());
+        assert!(zwj.find_from("⛹🏻‍♀️", 0).next().is_some());
     }
 
     #[test]
