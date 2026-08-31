@@ -320,11 +320,10 @@ fn run_stage_files(
     files: Vec<PathBuf>,
     isolated: bool,
 ) -> Result<Vec<StageFileResult>, String> {
-    // Generated RegExp fixtures can retain large Unicode tables in the child
-    // allocator even after a fixture realm is reset. Isolated children must
-    // therefore process one fixture at a time; small in-process stages keep a
-    // modest batch for throughput.
-    let work_batch = if isolated { 1 } else { 4 };
+    // Child processes bound allocator retention. Four-fixture batches keep
+    // process startup amortized while remaining disposable for pathological
+    // patterns; in-process stages use the same modest batch.
+    let work_batch = 4;
     // OXC and the reducer need more than the platform default for deeply
     // nested fixtures, but 256 MiB per worker makes a four-worker RegExp
     // stage reserve a gigabyte before the engine heap is counted.
