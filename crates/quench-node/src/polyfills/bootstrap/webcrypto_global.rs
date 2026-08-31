@@ -61,7 +61,12 @@ if (typeof globalThis.SubtleCrypto !== "function") {
     }
     return true;
   };
-  globalThis.SubtleCrypto = SubtleCrypto;
+  Object.defineProperty(globalThis, "SubtleCrypto", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: SubtleCrypto,
+  });
 }
 const __quenchGlobalCrypto = globalThis.crypto || {};
 if (!__quenchGlobalCrypto.getRandomValues) {
