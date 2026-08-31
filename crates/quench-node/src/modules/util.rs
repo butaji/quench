@@ -43,10 +43,14 @@ pub fn format_with_options(
 
 /// Parse Node's dotenv-style environment format into a null-prototype object.
 pub fn parse_env(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(source)) = arguments.first() else {
+    let source = match arguments.first() {
+        Some(Value::String(source)) => source.clone(),
+        Some(Value::StringUnits(units)) => String::from_utf16_lossy(units),
+        _ => {
         return Err(crate::modules::buffer_enc::invalid_arg_type(
             "str must be a string".into(),
         ));
+        }
     };
     let lines = source.lines().collect::<Vec<_>>();
     let mut values = Vec::new();
