@@ -72,6 +72,9 @@ fn run_code_completion_step_from(
 ) -> Result<CompletionStep, VmError> {
     let mut pc = start;
     while let Some(instruction) = code.instruction(pc) {
+        if !context.consume_execution_budget() {
+            return Err(VmError::Interrupted);
+        }
         match instruction.opcode {
             crate::ir::Opcode::Jump => {
                 pc = usize::from(instruction.a);
