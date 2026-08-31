@@ -1897,4 +1897,42 @@ mod tests {
             assert_eq!(result, crate::strings::from_units(expected));
         }
     }
+
+    #[test]
+    fn replace_exec_units_preserves_lone_surrogates() {
+        let receiver = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("a".to_string())),
+                ("\0regexp_flags".to_string(), Value::String(String::new())),
+                ("flags".to_string(), Value::String(String::new())),
+                (
+                    "exec".to_string(),
+                    Value::Builtin(crate::ops::Builtin::RegExpExec),
+                ),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800, b'a' as u16, 0xDC00]);
+        let Value::StringUnits(units) = input.clone() else {
+            panic!("input must retain lone surrogates");
+        };
+        let result = super::replace_with_exec_units(
+            &receiver,
+            input,
+            &units,
+            &['x' as u16],
+            false,
+            false,
+        )
+        .expect("replace");
+        assert_eq!(
+            result,
+            crate::strings::from_units(vec![0xD800, b'x' as u16, 0xDC00])
+        );
+    }
 }
