@@ -253,6 +253,12 @@ pub fn type_error(message: &str) -> VmError {
 /// Own enumerable string keys of a value, in property order.
 pub fn own_enumerable_keys(value: &crate::value::Value) -> Vec<String> {
     crate::own_keys::enumerable_key_strings(Some(value))
+        .into_iter()
+        // JSON.parse-with-source keeps primitive source spans in private
+        // slots. They support the reviver context but are not JavaScript
+        // properties and must not affect enumeration or deep equality.
+        .filter(|key| !key.starts_with("\0jsonsrc\0"))
+        .collect()
 }
 
 pub fn own_keys(value: &crate::value::Value) -> Vec<crate::value::Value> {
