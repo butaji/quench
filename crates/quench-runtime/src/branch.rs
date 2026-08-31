@@ -104,21 +104,15 @@ pub(crate) fn reduce_with_registers(
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
             let mut block_locals = locals.clone();
-            crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
             let mut ops = Vec::new();
-            let mut last = None;
-            for child in &block.body {
-                last = crate::reduce::reduce_statement(
-                    child,
-                    &mut ops,
-                    facts,
-                    next_register,
-                    next_slot,
-                    &mut block_locals,
-                )?
-                .or(last);
-            }
-            let (ops, last) = (ops, last);
+            let last = crate::blocks::reduce(
+                block,
+                &mut ops,
+                facts,
+                next_register,
+                next_slot,
+                &mut block_locals,
+            )?;
             Ok((ops, last))
         }
         statement => {
