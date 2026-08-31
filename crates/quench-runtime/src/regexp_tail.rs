@@ -49,6 +49,13 @@ fn string_value_argument(arguments: &[Value]) -> Result<Value, VmError> {
     }
 }
 
+fn string_value(value: &Value) -> Result<Value, VmError> {
+    match value {
+        value @ (Value::String(_) | Value::StringUnits(_)) => Ok(value.clone()),
+        value => crate::conversion::to_string(value).map(Value::String),
+    }
+}
+
 // RegExp.prototype[Symbol.match]
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
@@ -212,18 +219,43 @@ include!("regexp_split.rs");
 // RegExp.prototype[Symbol.replace]
 fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@replace")?;
-    let s = to_string_argument(arguments)?;
+    let input = string_value_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let flags = observable_flags(&receiver)?;
     let global = observable_bool(&receiver, "global")?;
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if crate::conversion::is_callable(&replacement) {
+        let s = crate::strings::materialize(&input).unwrap_or_default();
         if dynamic_exec(&receiver, global) {
             return replace_with_exec_callable(&receiver, &s, &replacement, global);
         }
         return replace_with_callable(&receiver, &s, &replacement);
     }
-    let replacement = crate::conversion::to_string(&replacement)?;
+    let replacement = string_value(&replacement)?;
+    if let (Some(units), Some(replacement_units)) = (
+        crate::strings::view_of(&input).and_then(|view| match view {
+            crate::strings::StringView::Utf16(units) => Some(units),
+            crate::strings::StringView::Utf8(_) => None,
+        }),
+        crate::strings::expand_utf16(&replacement),
+    ) {
+        let has_substitution = replacement_units.contains(&(b'$' as u16));
+        if !has_substitution
+            && !dynamic_exec(&receiver, global)
+            && !extract_source(&receiver).starts_with('^')
+        {
+            return replace_units_simple(
+                &receiver,
+                input.clone(),
+                units,
+                &replacement_units,
+                global,
+                unicode,
+            );
+        }
+    }
+    let s = crate::strings::materialize(&input).unwrap_or_default();
+    let replacement = crate::strings::materialize(&replacement).unwrap_or_default();
     if global && !replacement.contains('$') {
         if let Some(non_whitespace) = simple_class_run(&extract_source(&receiver)) {
             return replace_simple_class_runs(&s, &replacement, non_whitespace);
@@ -238,6 +270,52 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         return replace_with_exec(&receiver, &s, &replacement, global);
     }
     replace_with_template(&receiver, &s, &replacement)
+}
+
+fn replace_units_simple(
+    receiver: &Value,
+    input: Value,
+    units: &[u16],
+    replacement: &[u16],
+    global: bool,
+    unicode: bool,
+) -> Result<Value, VmError> {
+    if global {
+        set_last_index(receiver, 0.0)?;
+    }
+    let mut output = Vec::with_capacity(units.len() + replacement.len());
+    let mut copied = 0;
+    loop {
+        let result = regexp_exec_value(receiver, input.clone())?;
+        if matches!(result, Value::Null) {
+            break;
+        }
+        let start = crate::conversion::to_number(&crate::execute::get_property_result(&result, "index")?)?
+            .max(0.0) as usize;
+        let matched = crate::execute::get_property_result(&result, "0")?;
+        let length = crate::strings::view_of(&matched)
+            .map(crate::strings::view_len_units)
+            .unwrap_or_default();
+        let start = start.min(units.len());
+        let end = start.saturating_add(length).min(units.len());
+        if start >= copied {
+            output.extend_from_slice(&units[copied..start]);
+            output.extend_from_slice(replacement);
+            copied = end;
+        }
+        if !global {
+            break;
+        }
+        if start == end {
+            if end >= units.len() {
+                break;
+            }
+            let next = advance_string_index_value(&input, end, unicode);
+            set_last_index(receiver, next as f64)?;
+        }
+    }
+    output.extend_from_slice(&units[copied..]);
+    Ok(crate::strings::from_units(output))
 }
 
 fn simple_class_run(source: &str) -> Option<bool> {
