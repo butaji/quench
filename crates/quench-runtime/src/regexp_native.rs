@@ -157,7 +157,7 @@ pub(crate) fn find_units(
             value,
             negative,
         } => find_property_repeat_units(name, value, negative, flags, input, start),
-        NativePattern::Repeat { unit, min, max } => find_repeat_units(tail, unit, min, max, sticky)
+        NativePattern::Repeat { unit, min, max } => find_repeat(tail, u16::from(unit), min, max, sticky)
             .map(|matched| NativeMatch {
                 start: start + matched.start,
                 end: start + matched.end,
@@ -502,9 +502,9 @@ fn parse_repeat(source: &str) -> Option<NativePattern<'_>> {
     })
 }
 
-fn find_repeat(
-    input: &[u8],
-    unit: u8,
+fn find_repeat<T: Copy + PartialEq>(
+    input: &[T],
+    unit: T,
     min: usize,
     max: Option<usize>,
     sticky: bool,
@@ -524,41 +524,6 @@ fn find_repeat(
         let available = input[start..]
             .iter()
             .take_while(|candidate| **candidate == unit)
-            .count();
-        if available >= min {
-            let end = start + max.map_or(available, |upper| available.min(upper));
-            return Some(start..end);
-        }
-        if sticky {
-            break;
-        }
-        start += available;
-    }
-    (min == 0).then_some(0..0)
-}
-
-fn find_repeat_units(
-    input: &[u16],
-    unit: u8,
-    min: usize,
-    max: Option<usize>,
-    sticky: bool,
-) -> Option<std::ops::Range<usize>> {
-    if min == 0 && input.first().copied() != Some(u16::from(unit)) {
-        return Some(0..0);
-    }
-    let mut start = 0;
-    while start < input.len() {
-        if input[start] != u16::from(unit) {
-            if sticky {
-                break;
-            }
-            start += 1;
-            continue;
-        }
-        let available = input[start..]
-            .iter()
-            .take_while(|candidate| **candidate == u16::from(unit))
             .count();
         if available >= min {
             let end = start + max.map_or(available, |upper| available.min(upper));
