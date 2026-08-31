@@ -5335,7 +5335,11 @@ pub fn cp_async(
         let eval_script = command_text.contains(" -e ");
         let self_reexec = command_text.contains(&state.borrow().process.exec_path) && !eval_script;
         let shell_capture =
-            if !eval_script
+            if timeout.is_some()
+                || eval_script
+            {
+                None
+            } else if !eval_script
                 && (crate::modules::child_process::needs_shell(&command_text) || self_reexec)
             {
                 crate::modules::child_process::shell_output(&command_text, Some(&options))
