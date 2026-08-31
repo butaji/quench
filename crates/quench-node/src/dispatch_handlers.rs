@@ -4178,13 +4178,6 @@ pub fn cp_instance_spawn(
             options,
         ));
     }
-    let file = execute::get_property(options, "file");
-    if !matches!(file, Value::String(_)) {
-        return Err(cp_instance_arg_error(
-            "The \"options.file\" property must be of type string.",
-            &file,
-        ));
-    }
     for (key, kind) in [
         ("envPairs", "an instance of Array"),
         ("args", "an instance of Array"),
@@ -4196,6 +4189,13 @@ pub fn cp_instance_spawn(
                 &value,
             ));
         }
+    }
+    let file = execute::get_property(options, "file");
+    if !matches!(file, Value::String(_)) {
+        return Err(cp_instance_arg_error(
+            "The \"options.file\" property must be of type string.",
+            &file,
+        ));
     }
     execute::set_property_in_place(child, "pid", Value::Number(0.0));
     let _ = state;
