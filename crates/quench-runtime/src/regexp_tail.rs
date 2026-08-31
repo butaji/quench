@@ -127,7 +127,7 @@ fn symbol_match_global_units(
         if matches!(result, Value::Null) {
             break;
         }
-        let full = crate::execute::get_property_result(&result, "0")?;
+        let full = match_result_text(crate::execute::get_property_result(&result, "0")?)?;
         let empty = match crate::strings::view_of(&full) {
             Some(crate::strings::StringView::Utf8(value)) => value.is_empty(),
             Some(crate::strings::StringView::Utf16(value)) => value.is_empty(),
@@ -147,6 +147,13 @@ fn symbol_match_global_units(
         return Ok(Value::Null);
     }
     Ok(Value::array(matched))
+}
+
+fn match_result_text(value: Value) -> Result<Value, VmError> {
+    match value {
+        value @ (Value::String(_) | Value::StringUnits(_)) => Ok(value),
+        value => crate::conversion::to_string(&value).map(Value::String),
+    }
 }
 
 fn builtin_regexp_exec_property(receiver: &Value) -> bool {
