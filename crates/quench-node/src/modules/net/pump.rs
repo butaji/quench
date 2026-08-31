@@ -331,6 +331,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
         super::set_socket_property(&js, "readable", Value::Boolean(false));
         let js = execute::canonical_value(&js);
+        execute::set_property_in_place(&js, "readable", Value::Boolean(false));
         super::end_async_stream(state, sock.borrow().id);
         emit(state, &js, "end", Vec::new())?;
     }
