@@ -207,7 +207,7 @@ fn integrity_properties(
     for key in keys.iter() {
         let metadata_key = crate::builtins::descriptor_key(key);
         let metadata = integrity_descriptor(&sealed, &metadata_key, frozen);
-        sealed.retain(|(name, _)| name != &metadata_key);
+        sealed.retain_names(|name| name != &metadata_key);
         sealed.push((metadata_key.into(), metadata));
     }
     crate::value::ObjectData::with_shared_properties(

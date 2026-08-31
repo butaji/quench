@@ -370,7 +370,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
                 .position_rev(&descriptor_key)
                 .is_some()
             {
-                Rc::make_mut(properties).retain(|(name, _)| name != &descriptor_key);
+                Rc::make_mut(properties).retain_names(|name| name != &descriptor_key);
             }
             return;
         }
@@ -380,7 +380,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     match result {
         Value::Object(properties) => {
             let properties = Rc::make_mut(properties);
-            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.retain_names(|name| name != &descriptor_key);
             properties.push((descriptor_key.into(), metadata));
         }
         Value::Function(function) => {
