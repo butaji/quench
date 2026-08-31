@@ -530,10 +530,16 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
     let result =
         quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
-            let context = quench_runtime::vm::current_context();
+            // Cluster workers re-enter this VM synchronously. Bound only this
+            // logical process so an uncooperative worker yields to the
+            // primary state machine and can be terminated through its public
+            // process handle.
+            let context = (*quench_runtime::vm::current_context())
+                .clone()
+                .with_execution_budget(100_000);
             quench_runtime::vm::execute_code_isolated_in_context(program.code(), &context)
-            .map(|_| ())
-            .map_err(|error| vec![error.render()])
+                .map(|_| ())
+                .map_err(|error| vec![error.render()])
         });
     // Child bootstrap and its first I/O notification run before `fork()`
     // returns, but under the child's module identity. Drain only the bounded

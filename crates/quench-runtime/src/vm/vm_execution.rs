@@ -13,6 +13,7 @@ impl VmError {
             VmError::Thrown(value) => render_thrown(value),
             VmError::Suspended(_) => "Suspended".to_string(),
             VmError::NotCallable => "TypeError: value is not callable".to_string(),
+            VmError::Interrupted => "Execution interrupted".to_string(),
             other => format!("{other:?}"),
         }
     }
