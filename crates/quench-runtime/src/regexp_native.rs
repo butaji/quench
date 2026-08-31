@@ -346,109 +346,16 @@ fn property_ranges(
     value: Option<&str>,
     negative: bool,
 ) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
-    use icu_properties::{props, CodePointMapData, PropertyParser};
     let ranges = if name == "ASCII" {
         vec![0..=0x7F]
-    } else if matches!(name, "Script" | "sc") {
-        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
-        icu_properties::CodePointMapData::<props::Script>::new()
-            .iter_ranges_for_value(target)
-            .collect()
-    } else if matches!(name, "Script_Extensions" | "scx") {
-        let target = PropertyParser::<props::Script>::new().get_loose(value?)?;
-        icu_properties::script::ScriptWithExtensions::new()
-            .get_script_extensions_ranges(target)
-            .collect()
-    } else if matches!(name, "General_Category" | "gc") {
-        let parser = PropertyParser::<props::GeneralCategory>::new();
-        if let Some(target) = parser.get_loose(value?) {
-            CodePointMapData::<props::GeneralCategory>::new()
-                .iter_ranges_for_value(target)
-                .collect()
-        } else {
-            let target = PropertyParser::<props::GeneralCategoryGroup>::new().get_loose(value?)?;
-            CodePointMapData::<props::GeneralCategory>::new()
-                .iter_ranges_for_group(target)
-                .collect()
-        }
-    } else if name == "Assigned" {
-        CodePointMapData::<props::GeneralCategory>::new()
-            .iter_ranges_for_value_complemented(props::GeneralCategory::Unassigned)
-            .collect()
     } else {
-        binary_property_ranges(name)?
+        crate::regexp_backend::compile_property_matcher(name, value)?.ranges()
     };
     Some(if negative {
         complement_ranges(ranges)
     } else {
         ranges
     })
-}
-
-fn binary_property_ranges(
-    name: &str,
-) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
-    use icu_properties::{props, CodePointSetData};
-    macro_rules! ranges {
-        ($( $($property:literal)|+ => $kind:ident),* $(,)?) => {
-            match name {
-                $( $( $property => Some(CodePointSetData::new::<props::$kind>().iter_ranges().collect()), )+ )*
-                _ => None,
-            }
-        };
-    }
-    ranges!(
-        "ASCII_Hex_Digit" | "AHex" => AsciiHexDigit,
-        "Alphabetic" | "Alpha" => Alphabetic,
-        "Bidi_Control" | "Bidi_C" => BidiControl,
-        "Bidi_Mirrored" | "Bidi_M" => BidiMirrored,
-        "Case_Ignorable" | "CI" => CaseIgnorable,
-        "Cased" => Cased,
-        "Changes_When_Casefolded" | "CWCF" => ChangesWhenCasefolded,
-        "Changes_When_Casemapped" | "CWCM" => ChangesWhenCasemapped,
-        "Changes_When_NFKC_Casefolded" | "CWKCF" => ChangesWhenNfkcCasefolded,
-        "Changes_When_Lowercased" | "CWL" => ChangesWhenLowercased,
-        "Changes_When_Titlecased" | "CWT" => ChangesWhenTitlecased,
-        "Changes_When_Uppercased" | "CWU" => ChangesWhenUppercased,
-        "Dash" => Dash,
-        "Deprecated" | "Dep" => Deprecated,
-        "Default_Ignorable_Code_Point" | "DI" => DefaultIgnorableCodePoint,
-        "Diacritic" | "Dia" => Diacritic,
-        "Emoji" => Emoji,
-        "Emoji_Component" | "EComp" => EmojiComponent,
-        "Emoji_Modifier" | "EMod" => EmojiModifier,
-        "Emoji_Modifier_Base" | "EBase" => EmojiModifierBase,
-        "Emoji_Presentation" | "EPres" => EmojiPresentation,
-        "Extended_Pictographic" | "ExtPict" => ExtendedPictographic,
-        "Extender" | "Ext" => Extender,
-        "Grapheme_Base" | "Gr_Base" => GraphemeBase,
-        "Grapheme_Extend" | "Gr_Ext" => GraphemeExtend,
-        "Hex_Digit" | "Hex" => HexDigit,
-        "ID_Continue" | "IDC" => IdContinue,
-        "ID_Start" | "IDS" => IdStart,
-        "Ideographic" | "Ideo" => Ideographic,
-        "IDS_Binary_Operator" | "IDSB" => IdsBinaryOperator,
-        "IDS_Trinary_Operator" | "IDST" => IdsTrinaryOperator,
-        "Join_Control" | "Join_C" => JoinControl,
-        "Logical_Order_Exception" | "LOE" => LogicalOrderException,
-        "Lowercase" | "Lower" => Lowercase,
-        "Math" => Math,
-        "Noncharacter_Code_Point" | "NChar" => NoncharacterCodePoint,
-        "Pattern_Syntax" | "Pat_Syn" => PatternSyntax,
-        "Pattern_White_Space" | "Pat_WS" => PatternWhiteSpace,
-        "Quotation_Mark" | "QMark" => QuotationMark,
-        "Radical" => Radical,
-        "Regional_Indicator" | "RI" => RegionalIndicator,
-        "Sentence_Terminal" | "STerm" => SentenceTerminal,
-        "Soft_Dotted" | "SD" => SoftDotted,
-        "Terminal_Punctuation" | "Term" => TerminalPunctuation,
-        "Unified_Ideograph" | "UIdeo" => UnifiedIdeograph,
-        "Uppercase" | "Upper" => Uppercase,
-        "Variation_Selector" | "VS" => VariationSelector,
-        "White_Space" | "space" | "WSpace" => WhiteSpace,
-        "XID_Continue" | "XIDC" => XidContinue,
-        "XID_Start" | "XIDS" => XidStart,
-    )
 }
 
 fn complement_ranges(ranges: Vec<std::ops::RangeInclusive<u32>>) -> Vec<std::ops::RangeInclusive<u32>> {
