@@ -86,6 +86,8 @@ pub struct HostState {
     pub os_binding: Option<Value>,
     /// Canonical `internalBinding("cares_wrap")` object for this realm.
     pub cares_binding: Option<Value>,
+    /// Canonical `internalBinding("tcp_wrap")` object for this realm.
+    pub tcp_binding: Option<Value>,
     /// Composite AbortSignals keyed by each source target identity.
     pub abort_composites: std::collections::HashMap<u64, Vec<Value>>,
     /// Strong roots for host-created identity-bearing objects exposed as aliases.
@@ -136,6 +138,7 @@ impl NodeHost {
             string_decoder_next_id: 1,
             os_binding: None,
             cares_binding: None,
+            tcp_binding: None,
             abort_composites: std::collections::HashMap::new(),
             identity_roots: Vec::new(),
             child_process_prototype: None,
