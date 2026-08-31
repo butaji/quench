@@ -116,6 +116,35 @@ fn accept_one(
         let _ = stream.shutdown(std::net::Shutdown::Both);
         return Ok(());
     }
+    let server_js = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .map(|server| server.borrow().js.clone());
+    if let Some(server_js) = server_js {
+        let max_connections = match execute::get_property(&server_js, "maxConnections") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+            _ => None,
+        };
+        let live_connections = state
+            .borrow()
+            .net
+            .sockets
+            .values()
+            .filter(|socket| {
+                let socket = socket.borrow();
+                socket.server_id == Some(server_id) && socket.state != SocketState::Closed
+            })
+            .count();
+        if max_connections.is_some_and(|limit| live_connections >= limit) {
+            let local = stream.local_addr().ok();
+            let info = host_api::object(net_info_props(peer, local));
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            emit(state, &server_js, "drop", vec![info])?;
+            return Ok(());
+        }
+    }
     let (object, id) = new_net_object(state, socket_props())?;
     let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
