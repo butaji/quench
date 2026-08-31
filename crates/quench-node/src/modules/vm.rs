@@ -50,7 +50,53 @@ pub fn run_in_new_context(
         let updated = execute::delete_property(global.clone(), "\0quench_vm_filename").0;
         execute::replace_value(&global, &updated);
     }
-    result
+    let result = result?;
+    let marker_name = |value: &Value| match value {
+        Value::ArrayBuffer(buffer) if buffer.shared => "\0vmSharedArrayBufferPrototype",
+        Value::ArrayBuffer(_) => "\0vmArrayBufferPrototype",
+        _ => "\0vmArrayBufferPrototype",
+    };
+    let apply_realm_marker = |target: &Value, marker: Value| {
+        if !matches!(marker, Value::Object(_)) {
+            return;
+        }
+        let original = execute::get_prototype_of(target).unwrap_or(Value::Null);
+        let _ = execute::set_prototype_of(&marker, &original);
+        let _ = execute::set_prototype_of(target, &marker);
+    };
+    let apply_to_buffer = |target: &Value| {
+        let buffer = execute::get_property(target, "buffer");
+        if matches!(buffer, Value::ArrayBuffer(_)) {
+            let marker = args
+                .get(1)
+                .map(|sandbox| execute::get_property(sandbox, marker_name(&buffer)))
+                .unwrap_or(Value::Undefined);
+            apply_realm_marker(&buffer, marker);
+        }
+    };
+    match &result {
+        Value::ArrayBuffer(_) => {
+            let marker = args
+                .get(1)
+                .map(|sandbox| execute::get_property(sandbox, marker_name(&result)))
+                .unwrap_or(Value::Undefined);
+            apply_realm_marker(&result, marker);
+        }
+        Value::Float64Array(_)
+        | Value::Float32Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Uint32Array(_)
+        | Value::Uint8Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_)
+        | Value::DataView(_) => apply_to_buffer(&result),
+        _ => {}
+    }
+    Ok(result)
 }
 
 pub fn construct_run_in_new_context(
@@ -73,6 +119,16 @@ pub fn create_context(
         return Err(execute::type_error("context must be an object"));
     }
     let updated = execute::set_property(context.clone(), "\0vmContext", Value::Boolean(true));
+    let updated = execute::set_property(
+        updated,
+        "\0vmArrayBufferPrototype",
+        quench_runtime::host_api::object(Vec::new()),
+    );
+    let updated = execute::set_property(
+        updated,
+        "\0vmSharedArrayBufferPrototype",
+        quench_runtime::host_api::object(Vec::new()),
+    );
     execute::replace_value(&context, &updated);
     Ok(context)
 }
