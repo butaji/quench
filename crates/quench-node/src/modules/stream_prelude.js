@@ -1793,6 +1793,48 @@
     }
   }
 
+  function duplexPair(options = {}) {
+    const left = new Duplex(options);
+    const right = new Duplex(options);
+    const connect = (source, destination) => {
+      source.__pairPending = [];
+      source._write = (chunk, encoding, callback) => {
+        if (source.writableCorked > 0) {
+          source.__pairPending.push([chunk, encoding, callback]);
+        } else {
+          destination.push(chunk, encoding);
+          callback?.();
+        }
+      };
+      source.uncork = () => {
+        if (source.writableCorked > 0) source._writableState.corked -= 1;
+        if (source.writableCorked !== 0) return;
+        const pending = source.__pairPending.splice(0);
+        for (const [chunk, encoding, callback] of pending) {
+          destination.push(chunk, encoding);
+          callback?.();
+        }
+        return source;
+      };
+      source._final = (callback) => {
+        const flush = () => {
+          const pending = source.__pairPending.splice(0);
+          for (const [chunk, encoding, writeCallback] of pending) {
+            destination.push(chunk, encoding);
+            writeCallback?.();
+          }
+          destination.push(null);
+          callback?.();
+        };
+        source._writableState.corked = 0;
+        queueMicrotask(flush);
+      };
+    };
+    connect(left, right);
+    connect(right, left);
+    return [left, right];
+  }
+
   function finished(stream, options, callback) {
     if (!stream || typeof stream.on !== "function") {
       const error = new TypeError("The \"stream\" argument must be an instance of Stream");
@@ -2182,6 +2224,7 @@
     Duplex: DuplexCompat,
     Transform,
     PassThrough,
+    duplexPair,
     Stream,
     destroy,
     addAbortSignal(signal, stream) {
