@@ -1329,6 +1329,29 @@ pub fn send(
         crate::modules::process::emit(state, &[Value::String("message".into()), message]);
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
+    let child_exit = state.borrow_mut().process.exit_code.take();
+    if let Some(code) = child_exit {
+        close_worker_net(state, id);
+        if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
+            worker.connected = false;
+            worker.dead = true;
+        }
+        if let Ok(process) = execute::get_property_result(&obj, "process") {
+            let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
+            let _ = execute::set_property_in_place(&process, "channel", Value::Null);
+            let _ = execute::set_property_in_place(&process, "exitCode", Value::Number(code as f64));
+            let _ = emit(state, Some(&process), &[Value::String("close".into())]);
+        }
+        let _ = emit(
+            state,
+            Some(&obj),
+            &[
+                Value::String("exit".into()),
+                Value::Number(code as f64),
+                Value::Null,
+            ],
+        );
+    }
     if process_result.is_err() {
         if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
             worker.connected = false;
