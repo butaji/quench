@@ -704,7 +704,8 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         super::set_socket_bytes_read(&js, bytes_read);
         super::replace_socket_property(&js, "_handle", quench_runtime::value::Value::Null);
         crate::modules::http::connection_close(state, &js)?;
-        emit(state, &js, "close", Vec::new())?;
+        // Net socket close carries Node's `hadError` boolean argument.
+        emit(state, &js, "close", vec![Value::Boolean(false)])?;
     }
     Ok(())
 }

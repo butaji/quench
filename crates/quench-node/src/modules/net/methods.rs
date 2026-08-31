@@ -1263,6 +1263,26 @@ fn connect_with_receiver(
     };
     let _ = stream.set_nonblocking(true);
     let object_receiver = receiver.or(lookup_socket_for_result.as_ref());
+    // A reconnect replaces only the transport.  Node keeps stream options
+    // configured on the public Socket (notably setEncoding) across that
+    // replacement, so carry the fact from the retired host entry forward.
+    let existing_encoding = object_receiver
+        .and_then(net_id)
+        .and_then(|id| {
+            state
+                .borrow()
+                .net
+                .sockets
+                .get(&id)
+                .and_then(|socket| socket.borrow().encoding.clone())
+        })
+        .or_else(|| match object_receiver {
+            Some(object) => match execute::get_property(object, SOCKET_ENCODING_PROP) {
+                Value::String(value) => Some(value),
+                _ => None,
+            },
+            None => None,
+        });
     let (object, id) = match object_receiver {
         Some(object) => (
             object.clone(),
@@ -1334,7 +1354,7 @@ fn connect_with_receiver(
         connect_announced: false,
         peer: Some(addr),
         local,
-        encoding: None,
+        encoding: existing_encoding,
         decode_buf: Vec::new(),
     }));
     let queued_write = state
@@ -2605,7 +2625,11 @@ pub fn socket_destroy(
             .borrow_mut()
             .net
             .pending_events
-            .push((receiver.clone(), "close".into(), Vec::new()));
+            .push((
+                receiver.clone(),
+                "close".into(),
+                vec![Value::Boolean(args.first().is_some())],
+            ));
     }
     Ok(receiver)
 }
@@ -2887,6 +2911,12 @@ pub fn socket_set_encoding(
         .map(execute::to_js_string)
         .transpose()?
         .map(|value| value.to_ascii_lowercase());
+    if let Some(receiver) = receiver {
+        let value = encoding
+            .as_ref()
+            .map_or(Value::Undefined, |value| Value::String(value.clone()));
+        execute::set_property_in_place(receiver, SOCKET_ENCODING_PROP, value);
+    }
     if let Some(id) = receiver.and_then(net_id) {
         if let Some(sock) = state.borrow().net.sockets.get(&id) {
             sock.borrow_mut().encoding = encoding;
