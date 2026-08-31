@@ -1915,6 +1915,14 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
     icu_properties::CodePointSetData::new::<P>().contains(character)
 }
 
+fn ascii_property_matches(character: char) -> bool {
+    character.is_ascii()
+}
+
+fn ascii_property_ranges() -> Vec<std::ops::RangeInclusive<u32>> {
+    vec![0..=0x7F]
+}
+
 fn binary_property_ranges<P: icu_properties::props::BinaryProperty>() -> Vec<std::ops::RangeInclusive<u32>> {
     icu_properties::CodePointSetData::new::<P>()
         .iter_ranges()
@@ -1930,6 +1938,11 @@ pub(crate) fn compile_property_matcher(
         PropertyMatcherKind::Any
     } else if name == "Assigned" {
         PropertyMatcherKind::Assigned
+    } else if name == "ASCII" {
+        PropertyMatcherKind::Binary {
+            matcher: ascii_property_matches,
+            ranges: ascii_property_ranges,
+        }
     } else if matches!(name, "Script" | "sc") {
         PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
     } else if matches!(name, "Script_Extensions" | "scx") {
