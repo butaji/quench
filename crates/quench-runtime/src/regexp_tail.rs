@@ -217,8 +217,20 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let flags = observable_flags(&receiver)?;
     let global = observable_bool(&receiver, "global")?;
     let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
+    let source = extract_source(&receiver);
+    let legacy_units = crate::regexp::legacy_string_units(&input, &source, &flags);
     if crate::conversion::is_callable(&replacement) {
         if let Value::StringUnits(units) = &input {
+            return replace_with_exec_units_callable(
+                &receiver,
+                input.clone(),
+                units,
+                &replacement,
+                global,
+                unicode,
+            );
+        }
+        if let Some(units) = legacy_units.as_deref() {
             return replace_with_exec_units_callable(
                 &receiver,
                 input.clone(),
@@ -238,7 +250,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     if dynamic_exec(&receiver, global) {
         if let (Value::StringUnits(units), Some(replacement_units)) = (
             &input,
-            crate::strings::expand_utf16(&replacement),
+        crate::strings::expand_utf16(&replacement),
         ) {
             return replace_with_exec_units(
                 &receiver,
@@ -249,15 +261,27 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
                 unicode,
             );
         }
+        if let Some(units) = legacy_units.as_deref() {
+            if let Some(replacement_units) = crate::strings::expand_utf16(&replacement) {
+                return replace_with_exec_units(
+                    &receiver,
+                    input.clone(),
+                    units,
+                    &replacement_units,
+                    global,
+                    unicode,
+                );
+            }
+        }
     }
     if let (Some(units), Some(replacement_units)) = (
         crate::strings::view_of(&input).and_then(|view| match view {
             crate::strings::StringView::Utf16(units) => Some(units),
             crate::strings::StringView::Utf8(_) => None,
         }),
-        crate::strings::expand_utf16(&replacement),
+            crate::strings::expand_utf16(&replacement),
     ) {
-        if !dynamic_exec(&receiver, global) && !extract_source(&receiver).starts_with('^') {
+        if !dynamic_exec(&receiver, global) && !source.starts_with('^') {
             return replace_units_template(
                 &receiver,
                 input.clone(),
@@ -268,6 +292,20 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
             );
         }
     }
+    if let Some(units) = legacy_units.as_deref() {
+        if !dynamic_exec(&receiver, global) && !source.starts_with('^') {
+            if let Some(replacement_units) = crate::strings::expand_utf16(&replacement) {
+                return replace_units_template(
+                    &receiver,
+                    input.clone(),
+                    units,
+                    &replacement_units,
+                    global,
+                    unicode,
+                );
+            }
+        }
+    }
     let s = crate::strings::materialize(&input).unwrap_or_default();
     let replacement = crate::strings::materialize(&replacement).unwrap_or_default();
     if global && !replacement.contains('$') {
@@ -275,7 +313,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
             return replace_simple_class_runs(&s, &replacement, non_whitespace);
         }
     }
-    if let Some(target) = surrogate_alternative_pattern(&extract_source(&receiver)) {
+    if let Some(target) = surrogate_alternative_pattern(&source) {
         if global && !unicode && !replacement.contains('$') {
             return replace_surrogate_units(&s, &replacement, target);
         }
