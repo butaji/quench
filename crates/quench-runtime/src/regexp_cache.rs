@@ -25,7 +25,7 @@ fn regexp_cache_key(source: &str, flags_key: u64) -> u64 {
     crate::strings::hash_str(source) ^ flags_key.rotate_left(23)
 }
 
-fn compiled_for(_: &Value, source: &str, flags: &str) -> Result<Rc<Regex>, VmError> {
+pub(crate) fn compiled_for(source: &str, flags: &str) -> Result<Rc<Regex>, VmError> {
     let flags_key = regexp_flags_key(flags);
     let key = regexp_cache_key(source, flags_key);
     COMPILED_REGEXPS.with(|cache| {
@@ -37,7 +37,7 @@ fn compiled_for(_: &Value, source: &str, flags: &str) -> Result<Rc<Regex>, VmErr
             }
         }
         crate::execution_trace::event(crate::execution_trace::Event::RegExpCacheMiss);
-        let regex = Rc::new(compile_linear(source, flags).map_err(VmError::EvalError)?);
+        let regex = Rc::new(compile(source, flags).map_err(VmError::EvalError)?);
         if cache.len() >= REGEXP_CACHE_LIMIT && !cache.contains_key(&key) {
             cache.clear();
         }
@@ -75,8 +75,4 @@ fn regexp_flags_key(flags: &str) -> u64 {
         return crate::strings::hash_str(flags) | (1 << 63);
     }
     u64::from(semantic)
-}
-
-fn compile_linear(source: &str, flags: &str) -> Result<Regex, String> {
-    compile(source, flags)
 }

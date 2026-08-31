@@ -20,7 +20,7 @@ fn regex_receiver(receiver: Option<&Value>, method: &str) -> Result<Value, VmErr
 fn compiled_regex(receiver: &Value) -> Result<(std::rc::Rc<Regex>, String), VmError> {
     let (source, flags, _) = extract_regex_parts(receiver)?;
     let pattern = if source.is_empty() { "(?:)" } else { &source };
-    let re = crate::regexp::compiled_for(receiver, pattern, &flags)?;
+    let re = crate::regexp::compiled_for(pattern, &flags)?;
     Ok((re, flags))
 }
 
