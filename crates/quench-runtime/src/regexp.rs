@@ -1750,4 +1750,56 @@ mod tests {
             Some(crate::strings::from_units(vec![0xDC00]))
         );
     }
+
+    #[test]
+    fn match_all_start_keeps_utf16_last_index_coordinates() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(1.0))),
+                ),
+            ])
+            .into(),
+        );
+        assert_eq!(
+            super::match_all_start(&regexp, &Value::String("😀x".to_string()))
+                .expect("lastIndex"),
+            1
+        );
+    }
+
+    #[test]
+    fn regexp_iterator_preserves_string_units_input_and_match() {
+        let mut regexp = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String(".".to_string()),
+                ),
+                (
+                    "\0regexp_flags".to_string(),
+                    Value::String("g".to_string()),
+                ),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800]);
+        let mut done = false;
+        let result = super::iterator_step(&mut regexp, &input, true, false, &mut done)
+            .expect("iterator step")
+            .expect("match");
+        let Value::StringUnits(expected) = input else {
+            panic!("test input must retain a lone surrogate");
+        };
+        assert_eq!(
+            crate::execute::get_property_result(&result, "0").expect("match value"),
+            Value::StringUnits(expected)
+        );
+    }
 }
