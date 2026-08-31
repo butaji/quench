@@ -285,6 +285,7 @@ node_api! {
     (SPEC_URL_LEGACY_NEW, CAP_URL_LEGACY_NEW, "url:Url", 40),
     (SPEC_URL_RESOLVE_OBJECT, CAP_URL_RESOLVE_OBJECT, "url:resolveObject", 0x0520),
     (SPEC_URL_SEARCHPARAMS_NEW, CAP_URL_SEARCH, "url:URLSearchParams", 0x0504),
+    (SPEC_URL_CREATE_OBJECT_URL, CAP_URL_CREATE_OBJECT_URL, "url:createObjectURL", 0x0521),
 }
 
 node_api! {
@@ -411,6 +412,7 @@ pub const SPEC_BUFFER_INCLUDES: NodeSpec = NodeSpec::new("buffer.prototype:inclu
 pub const SPEC_BUFFER_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:write", 0x081D);
 pub const SPEC_BUFFER_INSPECT: NodeSpec = NodeSpec::new("buffer.prototype:inspect", 0x081E);
 pub const SPEC_BUFFER_COPY_BYTES_FROM: NodeSpec = NodeSpec::new("buffer:copyBytesFrom", 0x081F);
+pub const SPEC_BUFFER_RESOLVE_OBJECT_URL: NodeSpec = NodeSpec::new("buffer:resolveObjectURL", 0x082D);
 pub const SPEC_BUFFER_INSPECT_MAX_BYTES_GET: NodeSpec =
     NodeSpec::new("buffer:inspectMaxBytesGet", 0x0854);
 pub const SPEC_BUFFER_INSPECT_MAX_BYTES_SET: NodeSpec =
@@ -917,6 +919,7 @@ pub const CAP_INTERNAL_BUFFER_ALIGNED_OFFSET: CapId = SPEC_INTERNAL_BUFFER_ALIGN
 pub const CAP_INTERNAL_BUFFER_FILL: CapId = SPEC_INTERNAL_BUFFER_FILL.cap;
 pub const CAP_INTERNAL_VIEW_HAS_BUFFER: CapId = SPEC_INTERNAL_VIEW_HAS_BUFFER.cap;
 pub const CAP_BUFFER_OF: CapId = SPEC_BUFFER_OF.cap;
+pub const CAP_BUFFER_RESOLVE_OBJECT_URL: CapId = SPEC_BUFFER_RESOLVE_OBJECT_URL.cap;
 pub const CAP_FS_READFILE: CapId = SPEC_FS_READFILE.cap;
 pub const CAP_FS_WRITEFILE: CapId = SPEC_FS_WRITEFILE.cap;
 pub const CAP_FS_STAT: CapId = SPEC_FS_STAT.cap;

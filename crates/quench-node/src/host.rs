@@ -69,6 +69,9 @@ pub struct HostState {
     /// Shared `URL` class pair (constructor, prototype), built on first use
     /// so `instanceof URL` has one canonical prototype per realm.
     pub url_class: Option<(Value, Value)>,
+    /// Strong roots for live `blob:nodedata:` registrations.
+    pub blob_urls: std::collections::HashMap<String, Value>,
+    pub next_blob_url: u64,
     /// `require('stream')` module value, evaluated once from the
     /// embedded JS prelude (`modules/stream_prelude.js`).
     pub stream_module: Option<Value>,
@@ -130,6 +133,8 @@ impl NodeHost {
             module_stack: Vec::new(),
             pending_uncaught: None,
             url_class: None,
+            blob_urls: std::collections::HashMap::new(),
+            next_blob_url: 1,
             stream_module: None,
             stream_consumers_module: None,
             util_module: None,
