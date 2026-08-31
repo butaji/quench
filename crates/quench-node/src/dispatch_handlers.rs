@@ -709,19 +709,51 @@ pub fn process_set_source_maps_enabled(
 }
 
 pub fn process_ref(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    update_fork_timers(state, receiver, true);
     process_ref_like(args.first(), "Symbol.for.nodejs.ref\0", "ref")
 }
 
 pub fn process_unref(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    update_fork_timers(state, receiver, false);
     process_ref_like(args.first(), "Symbol.for.nodejs.unref\0", "unref")
+}
+
+/// Apply ChildProcess ref/unref to only the timers created while its forked
+/// source ran in the shared realm. Ordinary process/timer calls carry no
+/// hidden timer list and retain their existing no-op contract.
+fn update_fork_timers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    referenced: bool,
+) {
+    let Some(receiver) = receiver else {
+        return;
+    };
+    let ids = execute::get_property(receiver, "\0childTimerIds");
+    let Value::Array(ids) = ids else {
+        return;
+    };
+    let mut timers = state.borrow_mut();
+    for index in 0..ids.logical_len() {
+        let Ok(value) = execute::get_property_result(&Value::Array(ids.clone()), &index.to_string())
+        else {
+            continue;
+        };
+        let Value::Number(id) = value else {
+            continue;
+        };
+        if let Some(timer) = timers.timers.timers.get_mut(&(id as u64)) {
+            timer.referenced = referenced;
+        }
+    }
 }
 
 pub fn process_set_uncaught_exception_capture_callback(
@@ -3284,6 +3316,20 @@ pub fn cp_spawn(
         "Symbol.dispose",
         crate::host::capability(crate::registry::SPEC_CP_KILL),
     );
+    // ChildProcess follows the same ref/unref capability contract as other
+    // event-loop handles.  The host has no separate child runtime object, so
+    // these operations are intentionally allocation-free no-ops while still
+    // preserving the observable callable API and chaining shape.
+    let child = execute::set_property(
+        child,
+        "ref",
+        crate::host::capability(crate::registry::SPEC_PROCESS_REF),
+    );
+    let child = execute::set_property(
+        child,
+        "unref",
+        crate::host::capability(crate::registry::SPEC_PROCESS_UNREF),
+    );
     // `spawn()` returns a ChildProcess instance.  Keep the host-created
     // object (and its event identity) while linking it to the one public
     // constructor prototype used by `instanceof` in Node code.
@@ -3392,17 +3438,20 @@ pub fn cp_spawn(
     // The host models ordinary children in-process, but their public pid must
     // still be a distinct, positive identity.  Using zero would invoke
     // POSIX process-group semantics when user code calls `process.kill(pid)`.
-    let simulated_pid = std::process::id() as u64 + 1;
+    let simulated_pid = {
+        let mut process = state.borrow_mut();
+        let mut candidate = std::process::id() as i64 + 1;
+        while process.process.alive_pids.contains(&candidate) {
+            candidate += 1;
+        }
+        process.process.alive_pids.insert(candidate);
+        candidate as u64
+    };
     execute::set_property_in_place(
         &child,
         "pid",
         Value::Number(simulated_pid as f64),
     );
-    state
-        .borrow_mut()
-        .process
-        .alive_pids
-        .insert(simulated_pid as i64);
     if command == "foo123"
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
@@ -3578,7 +3627,10 @@ pub fn cp_spawn_output_emit(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
     ) {
-        String::new()
+        match execute::get_property(&stdout, "\0childPendingOutput") {
+            Value::String(value) => value,
+            _ => String::new(),
+        }
     } else if matches!(command, Value::String(ref value) if value == "echo" || value.ends_with("/echo")) {
         let args = match &child_args {
             Value::Array(array) => (0..array.logical_len())
@@ -3905,6 +3957,30 @@ pub fn cp_stdin_write(
     let Some(receiver) = receiver else {
         return Ok(Value::Boolean(true));
     };
+    // A forked script runs in the host realm, but its process.stdout must
+    // retain the ChildProcess stream identity.  Buffer writes until the
+    // normal spawn-output turn so listeners installed after fork() observe
+    // the data just as they do for an out-of-process child.
+    if matches!(
+        execute::get_property(receiver, "\0forkStdoutTarget"),
+        Value::Boolean(true)
+    ) {
+        let previous = execute::get_property(receiver, "\0childPendingOutput");
+        let chunk = args
+            .first()
+            .and_then(|value| execute::to_js_string(value).ok())
+            .unwrap_or_default();
+        let output = match previous {
+            Value::String(previous) => format!("{previous}{chunk}"),
+            _ => chunk,
+        };
+        execute::set_property_in_place(
+            receiver,
+            "\0childPendingOutput",
+            Value::String(output),
+        );
+        return Ok(Value::Boolean(true));
+    }
     let filter = execute::get_property(receiver, "\0childFilter");
     let target = execute::get_property(receiver, "\0childFilterOutput");
     if let (Value::String(filter), Value::Object(_) | Value::ObjectAlias(_), Some(chunk)) =
@@ -4254,10 +4330,20 @@ fn fork_child_start(
     };
     let global = quench_runtime::vm::current_global_object();
     let process = execute::get_property(&global, "process");
+    let timers_before = state
+        .borrow()
+        .timers
+        .timers
+        .keys()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
     let previous_argv = execute::get_property(&process, "argv");
     let previous_send = execute::get_property(&process, "send");
     let previous_disconnect = execute::get_property(&process, "disconnect");
     let previous_connected = execute::get_property(&process, "connected");
+    let previous_stdout = execute::get_property(&process, "stdout");
+    let console = execute::get_property(&global, "console");
+    let previous_console_stdout = execute::get_property(&console, "_stdout");
     let argv0 = execute::get_property_result(&previous_argv, "0")
         .unwrap_or_else(|_| Value::String("quench-node".into()));
     let mut child_argv = vec![argv0, Value::String(filename.clone())];
@@ -4271,6 +4357,25 @@ fn fork_child_start(
     }
     execute::set_property_in_place(&process, "argv", host_api::array(child_argv));
     execute::set_property_in_place(&process, "connected", Value::Boolean(true));
+    let child_stdout = execute::get_property(child, "stdout");
+    if matches!(child_stdout, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_property_in_place(
+            &child_stdout,
+            "\0forkStdoutTarget",
+            Value::Boolean(true),
+        );
+        execute::set_property_in_place(
+            &child_stdout,
+            "write",
+            crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+        );
+        execute::set_property_in_place(&process, "stdout", child_stdout);
+        execute::set_property_in_place(
+            &console,
+            "_stdout",
+            execute::get_property(&process, "stdout"),
+        );
+    }
     execute::set_property_in_place(
         child,
         "\0forkProcess",
@@ -4304,6 +4409,17 @@ fn fork_child_start(
         &context,
     );
     execute::set_property_in_place(&process, "argv", previous_argv);
+    execute::set_property_in_place(&process, "stdout", previous_stdout);
+    execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
+    let timers_after = state
+        .borrow()
+        .timers
+        .timers
+        .keys()
+        .filter(|id| !timers_before.contains(id))
+        .map(|id| Value::Number(*id as f64))
+        .collect::<Vec<_>>();
+    execute::set_property_in_place(child, "\0childTimerIds", host_api::array(timers_after));
     if result.is_err() {
         execute::set_property_in_place(&process, "send", previous_send);
         execute::set_property_in_place(&process, "disconnect", previous_disconnect);
