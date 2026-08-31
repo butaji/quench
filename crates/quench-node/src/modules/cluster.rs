@@ -730,7 +730,10 @@ pub fn disconnect(
     state.borrow_mut().process.exit_code = None;
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
-    if child_call || child_result.is_err() || child_exit.is_some() {
+    let already_terminal = state.borrow().cluster.workers.get(&id).is_some_and(|worker| {
+        worker.dead || worker.pending_disconnect || worker.pending_exit.is_some()
+    });
+    if child_call || already_terminal || child_result.is_err() || child_exit.is_some() {
         let code = child_exit.unwrap_or(1);
         let code = if child_call && child_exit.is_none() && child_result.is_ok() {
             0
@@ -763,12 +766,29 @@ pub fn disconnect(
                 ],
             );
         }
+        if !child_call {
+            remove_worker(state, id, &obj);
+        }
     }
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
         execute::call(cb, &Value::Undefined, &[])?;
     }
     Ok(obj)
 }
+
+fn remove_worker(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
+    state.borrow_mut().cluster.workers.remove(&id);
+    let Some(module) = state.borrow().cluster.module.clone() else {
+        return;
+    };
+    let Ok(workers) = execute::get_property_result(&module, "workers") else {
+        return;
+    };
+    let (workers, _) = execute::delete_property(workers, &id.to_string());
+    let _ = execute::set_property_in_place(&module, "workers", workers);
+    let _ = execute::set_property_in_place(worker, "state", Value::String("dead".into()));
+}
+
 pub fn kill(
     state: &Rc<RefCell<HostState>>,
     r: Option<&Value>,
