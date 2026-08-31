@@ -494,7 +494,10 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
             events.eofs.push(sock.clone());
             continue;
         }
-        if guard.state != SocketState::Closed && !guard.connect_announced {
+        if guard.stream.is_some()
+            && guard.state != SocketState::Closed
+            && !guard.connect_announced
+        {
             guard.connect_announced = true;
             events.connects.push(sock.clone());
         }
