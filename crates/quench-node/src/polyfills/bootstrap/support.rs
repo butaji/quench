@@ -103,6 +103,20 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
   localhostIPv4: "127.0.0.1",
   localhostIPv6: "::1",
   hasIPv6: true,
+  // `common.getTTYfd` is a test-helper fact, not a second Node runtime.  Keep
+  // the probe on the Rust-owned tty/fs capabilities so every common import
+  // observes the same host result.
+  getTTYfd: () => {
+    const tty = globalThis.require("tty");
+    for (const fd of [0, 1, 2]) {
+      if (tty.isatty(fd)) return fd;
+    }
+    try {
+      return globalThis.require("fs").openSync("/dev/tty");
+    } catch (_) {
+      return -1;
+    }
+  },
   // Keep the socket fixture name in the shared helper object so every
   // `require('../common')` spelling observes the same path fact.
   PIPE: `node-test.${process.pid}.sock`,
