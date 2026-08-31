@@ -413,6 +413,14 @@ pub(crate) fn set_server_connection_key(
 
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
+        (
+            "_readableState",
+            host_api::object(vec![
+                ("pipeCount".into(), Value::Number(0.0)),
+                ("awaitDrainWriters".into(), Value::Null),
+                ("pipes".into(), host_api::array(Vec::new())),
+            ]),
+        ),
         // Node exposes a nulled-out native handle after a socket closes.
         ("_handle", Value::Null),
         // HTTP Agent exposes parser=null while a keep-alive socket is idle.
@@ -955,10 +963,21 @@ pub fn build() -> Value {
 
 pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
     let socket_prototype = host_api::object(Vec::new());
+    let global = quench_runtime::vm::current_global_object();
+    let require = execute::get_property(&global, "require");
+    if quench_runtime::is_callable(&require) {
+        if let Ok(stream) = execute::call(&require, &Value::Undefined, &[Value::String("stream".into())]) {
+            let duplex = execute::get_property(&stream, "Duplex");
+            let prototype = execute::get_property(&duplex, "prototype");
+            let pipe = execute::get_property(&prototype, "pipe");
+            if quench_runtime::is_callable(&pipe) {
+                execute::set_property_in_place(&socket_prototype, "pipe", pipe);
+            }
+        }
+    }
     if let Some(state) = state {
         state.borrow_mut().net.socket_prototype = Some(socket_prototype.clone());
     }
-    let global = quench_runtime::vm::current_global_object();
     execute::set_property_in_place(
         &global,
         "\0quench:net:socket-prototype",
