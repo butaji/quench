@@ -92,11 +92,17 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     }
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     if matches!(target, Value::Proxy(_)) {
-        return crate::proxy::proxy_define_property(
+        let result = crate::proxy::proxy_define_property(
             &target,
             &key,
             arguments.get(2).unwrap_or(&Value::Undefined),
-        );
+        )?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty returned false",
+            ));
+        }
+        return Ok(target);
     }
     let Some(descriptor) = arguments.get(2) else {
         return Ok(target.clone());
@@ -109,6 +115,13 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let descriptor = descriptor_fields(descriptor)?;
     let result = define_own_property(&target, &key, &descriptor)?;
     crate::locals::replace_value(&target, &result);
+    // Host-side callers (module construction and capability setup) do not
+    // have the opcode register file that normally publishes a global COW
+    // transition.  Synchronize that one derived object representative here;
+    // otherwise a hidden global property leaves subsequent global lookups on
+    // an unregistered snapshot and drops context-provided bindings.
+    let mut registers = crate::register_file::RegisterFile::new();
+    crate::vm::synchronize_global_object(&mut registers, &target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
 }
@@ -160,6 +173,49 @@ pub(crate) fn define_own_property(
     // representative rather than the pre-coercion COW snapshot.
     let target = crate::locals::resolved_replacement(target);
     validate_array_index_length(&target, key)?;
+    // Integer-indexed exotic objects reserve every CanonicalNumericIndexString
+    // key, including invalid indices such as -0, -1, 0.1, and Infinity.
+    // These keys never become ordinary properties; Reflect.defineProperty
+    // converts this rejection to false while Object.defineProperty throws.
+    let is_typed_array = target.typed_array_meta().is_some();
+    if is_typed_array
+        && crate::typed_array_ops::canonical_numeric_index(key)
+        && crate::typed_array_ops::typed_array_index(key).is_none()
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on an integer-indexed exotic object",
+        ));
+    }
+    if is_typed_array {
+        if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
+            if crate::typed_array_prototype::is_out_of_bounds(&target)
+                || crate::typed_array_ops::logical_len(&target)
+                    .is_some_and(|length| index >= length)
+            {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot define a property on an out-of-bounds typed array",
+                ));
+            }
+            let accessor = descriptor
+                .iter()
+                .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+            let restricted = descriptor.iter().any(|(name, value)| {
+                matches!(name.as_str(), "configurable" | "enumerable" | "writable")
+                    && matches!(value, Value::Boolean(false))
+            });
+            if accessor || restricted {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot define a property on an integer-indexed exotic object",
+                ));
+            }
+            if let Some((_, value)) = descriptor.iter().rev().find(|(name, _)| name == "value") {
+                if let Some(updated) = crate::typed_array_ops::set_property(&target, key, value) {
+                    return updated;
+                }
+            }
+            return Ok(target);
+        }
+    }
     if let Some(result) = prepare_array_length_definition(&target, key, descriptor)? {
         return Ok(result);
     }
@@ -305,7 +361,17 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     let descriptor_key = descriptor_key(key);
     if let Value::Object(properties) = result {
         if default_ordinary_descriptor(descriptor) {
-            Rc::make_mut(properties).retain(|(name, _)| name != &descriptor_key);
+            // Avoid cloning a freshly-created cyclic object merely to remove a
+            // metadata entry that is absent. `Rc::make_mut` would allocate a
+            // new representative and leave weak self aliases targeting the
+            // discarded one.
+            if properties
+                .hot_properties()
+                .position_rev(&descriptor_key)
+                .is_some()
+            {
+                Rc::make_mut(properties).retain_names(|name| name != &descriptor_key);
+            }
             return;
         }
     }
@@ -314,7 +380,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     match result {
         Value::Object(properties) => {
             let properties = Rc::make_mut(properties);
-            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.retain_names(|name| name != &descriptor_key);
             properties.push((descriptor_key.into(), metadata));
         }
         Value::Function(function) => {
@@ -334,6 +400,11 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             let mut properties = bound.properties.borrow_mut();
             properties.retain(|(name, _)| name != &descriptor_key);
             properties.push((descriptor_key, metadata));
+        }
+        value if key != "length" && value.typed_array_meta().is_some() => {
+            if let Some(meta) = value.typed_array_meta() {
+                meta.set_descriptor(key, metadata);
+            }
         }
         _ => {}
     }

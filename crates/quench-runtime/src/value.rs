@@ -852,16 +852,36 @@ impl ObjectProperties {
     }
 
     pub fn retain(&mut self, mut keep: impl FnMut((&PropertyName, &Value)) -> bool) {
-        let mut names = Vec::with_capacity(self.names.len());
-        let mut values = Vec::with_capacity(self.values.len());
-        for (name, value) in self.names.drain(..).zip(self.values.drain(..)) {
-            if keep((&name, &value.load())) {
-                names.push(name);
-                values.push(value);
+        self.compact(|name, word| {
+            let value = word.load();
+            keep((name, &value))
+        });
+    }
+
+    /// Retain entries from the canonical table without decoding their values.
+    /// Name-only predicates are common for metadata and deletion markers; a
+    /// stable swap-compaction preserves encounter order and reuses both vector
+    /// allocations while leaving each owning slot untouched.
+    pub fn retain_names(&mut self, mut keep: impl FnMut(&PropertyName) -> bool) {
+        self.compact(|name, _| keep(name));
+    }
+
+    fn compact(
+        &mut self,
+        mut keep: impl FnMut(&PropertyName, &crate::register_file::SlotWord) -> bool,
+    ) {
+        let mut write = 0;
+        for read in 0..self.names.len() {
+            if keep(&self.names[read], &self.values[read]) {
+                if write != read {
+                    self.names.swap(write, read);
+                    self.values.swap(write, read);
+                }
+                write += 1;
             }
         }
-        self.names = names;
-        self.values = values;
+        self.names.truncate(write);
+        self.values.truncate(write);
     }
 }
 
@@ -1091,7 +1111,7 @@ impl ObjectData {
                 Value::BindingCell(cell) => Some(cell),
                 _ => None,
             });
-        self.properties.retain(|(name, _)| name != &deleted);
+        self.properties.retain_names(|name| name != &deleted);
         let value = if let Some(cell) = cell {
             cell.store(value);
             Value::BindingCell(cell)
@@ -2206,8 +2226,8 @@ mod pointer_source_invariants {
 
 mod layout_tests {
     use super::{
-        ObjectData, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX, SMALL_INTEGER_MIN,
-        SMALL_INTEGER_TAG_BITS, VALUE_ALIGNMENT_BYTES, VALUE_ALIGNMENT_TAG_BITS,
+        ObjectData, ObjectProperties, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX,
+        SMALL_INTEGER_MIN, SMALL_INTEGER_TAG_BITS, VALUE_ALIGNMENT_BYTES, VALUE_ALIGNMENT_TAG_BITS,
     };
     use crate::heap::{CACHE_LINE_BYTES, HOT_HEADER_BYTES};
 
@@ -2295,6 +2315,26 @@ mod layout_tests {
         assert_eq!(reused.shape(), object.shape());
         #[cfg(debug_assertions)]
         reused.assert_canonical_slots();
+    }
+
+    #[test]
+    fn name_only_retention_compacts_slots_in_encounter_order() {
+        let mut properties = ObjectProperties::from(vec![
+            ("keep-a".into(), Value::Number(1.0)),
+            ("drop".into(), Value::Number(2.0)),
+            ("keep-b".into(), Value::Number(3.0)),
+        ]);
+        properties.retain_names(|name| name != "drop");
+        assert_eq!(
+            properties
+                .iter()
+                .map(|(name, value)| (name.as_str().to_owned(), value))
+                .collect::<Vec<_>>(),
+            vec![
+                ("keep-a".to_string(), Value::Number(1.0)),
+                ("keep-b".to_string(), Value::Number(3.0)),
+            ]
+        );
     }
 
     #[test]
