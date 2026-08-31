@@ -71,9 +71,11 @@ sensitive fixtures remain variable. TLS/HTTPS failures are encrypted
 transport effects, not validation gaps; they remain explicit until a bounded
 Rust transport capability exists.
 
-The focused util inventory after these changes is **40 pass, 13 fail, 1
-timeout** of 54 fixtures. Filtered results guide family selection but do not
-replace the manifest gate above.
+The focused util inventory after these changes is **42 pass, 11 fail, 1
+timeout** of 54 fixtures. The two latest fixes preserve canonical object
+identity through named-property caches and expose the Rust proxy-details
+capability through `internalBinding('util')`. Filtered results guide family
+selection but do not replace the manifest gate above.
 
 The focused timers inventory after deriving the AbortSignal timeout callback
 ID from the registry is **67 pass, 0 fail, 1 timeout** of 68 fixtures. The
