@@ -522,6 +522,39 @@ fn decode_owned(word: TaggedValue) -> Option<Value> {
     }
 }
 
+/// Decode a word while consuming its register ownership. Pointer tags can move
+/// their `Rc` directly into the resulting `Value`; unlike `decode_owned`, no
+/// retain/release pair is needed because the source word is not dropped.
+#[inline(always)]
+fn decode_consumed(word: TaggedValue) -> Option<Value> {
+    crate::execution_trace::value_decode_current();
+    crate::execution_trace::event(crate::execution_trace::Event::RegisterFileRead);
+    match word.decode() {
+        DecodedValue::ObjectPtr(pointer) => Some(Value::Object(unsafe {
+            Rc::from_raw(pointer as *const crate::value::ObjectData)
+        })),
+        DecodedValue::ArrayPtr(pointer) => Some(Value::Array(unsafe {
+            Rc::from_raw(pointer as *const crate::value::ArrayData)
+        })),
+        DecodedValue::FunctionPtr(pointer) => Some(Value::Function(unsafe {
+            Rc::from_raw(pointer as *const crate::value::FunctionValue)
+        })),
+        DecodedValue::HeapPtr(pointer) => {
+            let value = unsafe { Rc::from_raw(pointer as *const AlignedValue) };
+            match Rc::try_unwrap(value) {
+                Ok(value) => Some(value.0),
+                Err(value) => Some(value.0.clone()),
+            }
+        }
+        DecodedValue::Number(value) => Some(Value::Number(value)),
+        DecodedValue::I31(value) => Some(Value::Number(f64::from(value))),
+        DecodedValue::Bool(value) => Some(Value::Boolean(value)),
+        DecodedValue::Null => Some(Value::Null),
+        DecodedValue::Undefined => Some(Value::Undefined),
+        DecodedValue::HeapRef(_) => None,
+    }
+}
+
 /// Canonical active-frame register storage.
 ///
 /// Registers are one copyable word. Heap pointers fit losslessly in the word's
@@ -789,7 +822,11 @@ impl RegisterFile {
     }
 
     pub fn into_values(self) -> Vec<Value> {
-        self.to_values()
+        let mut registers = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `registers` is never dropped after moving out its vector, so
+        // each owning word is consumed exactly once by `decode_consumed`.
+        let words = unsafe { std::ptr::read(&mut registers.words) };
+        words.into_iter().filter_map(decode_consumed).collect()
     }
 
     pub fn len(&self) -> usize {
@@ -1158,6 +1195,24 @@ mod tests {
         assert!(destination.copy_strong_function_from(1, &source, 1));
         assert_eq!(destination.word(0), source.word(0));
         assert_eq!(destination.word(1), source.word(1));
+    }
+
+    #[test]
+    fn consuming_registers_moves_heap_words_without_extra_rc_churn() {
+        let object = Rc::new(ObjectData::new(Vec::new()));
+        let registers = RegisterFile::from_values(vec![Value::Object(Rc::clone(&object))]);
+        assert_eq!(Rc::strong_count(&object), 2);
+        let values = registers.into_values();
+        assert!(matches!(values.as_slice(), [Value::Object(_)]));
+        assert_eq!(Rc::strong_count(&object), 2);
+        drop(values);
+        assert_eq!(Rc::strong_count(&object), 1);
+
+        let registers = RegisterFile::from_values(vec![Value::String("payload".into())]);
+        assert_eq!(
+            registers.into_values(),
+            vec![Value::String("payload".into())]
+        );
     }
 
     #[test]
