@@ -196,7 +196,6 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
         server.listening && server.refed && !server.closed
     }) || !host.net.pending_errors.is_empty()
         || !host.net.pending_events.is_empty()
-        || !host.net.pending_lookups.is_empty()
         || host.net.sockets.values().any(|s| {
             let socket = s.borrow();
             let paused = matches!(
