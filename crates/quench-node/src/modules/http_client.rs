@@ -1561,11 +1561,27 @@ pub fn req_end(
             );
             subscribe_event(state, &socket, "timeout", internal_cb)?;
             if request_timeout_set {
-                net::socket_set_timeout(
-                    state,
-                    Some(&socket),
-                    &[Value::Number(value), request_timeout_cb.clone()],
-                )?;
+                let connected = net::net_id(&socket).is_some_and(|socket_id| {
+                    state
+                        .borrow()
+                        .net
+                        .sockets
+                        .get(&socket_id)
+                        .is_some_and(|entry| entry.borrow().stream.is_some())
+                });
+                if connected {
+                    net::socket_set_timeout(
+                        state,
+                        Some(&socket),
+                        &[Value::Number(value), request_timeout_cb.clone()],
+                    )?;
+                } else {
+                    // A lookup may leave the socket unconnected. Keep the
+                    // request callback observable now; the connect transition
+                    // installs the actual timer once a transport exists.
+                    execute::set_property_in_place(&socket, "timeout", Value::Number(value));
+                    subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
+                }
             } else {
                 execute::set_property_in_place(&socket, "timeout", Value::Number(value));
                 subscribe_event(state, &socket, "timeout", request_timeout_cb.clone())?;
