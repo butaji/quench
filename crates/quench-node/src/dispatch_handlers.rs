@@ -3066,11 +3066,150 @@ pub fn buffer_btoa(
 }
 
 pub fn cp_spawn_sync(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::child_process::spawn_sync(_state, args)
+    if let Some(options) = args
+        .get(2)
+        .or_else(|| args.get(1))
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if let Some(internal) = state.borrow().module_cache.get("internal/child_process") {
+            let spawn_sync = execute::get_property(internal, "spawnSync");
+            let original = execute::get_property(internal, "\0originalSpawnSync");
+            if spawn_sync != original
+                && matches!(spawn_sync, Value::Function(_) | Value::BoundFunction(_))
+            {
+                let command = args.first().cloned().unwrap_or(Value::Undefined);
+                let child_args = args.get(1).cloned().unwrap_or_else(|| host_api::array(Vec::new()));
+                let shell = execute::get_property(options, "shell");
+                let process_object = execute::get_property(
+                    &quench_runtime::vm::current_global_object(),
+                    "process",
+                );
+                let platform = {
+                    let descriptor = execute::get_property(
+                        &process_object,
+                        "\0quench:descriptor:\0platform",
+                    );
+                    let getter = execute::get_property(&descriptor, "get");
+                    if quench_runtime::is_callable(&getter) {
+                        execute::call(&getter, &process_object, &[])
+                            .ok()
+                            .and_then(|value| execute::to_js_string(&value).ok())
+                            .unwrap_or_default()
+                    } else {
+                        execute::to_js_string(&execute::get_property(&process_object, "platform"))
+                            .unwrap_or_default()
+                    }
+                };
+                let is_windows = platform == "win32";
+                let shell_file = match shell.clone() {
+                    Value::String(value) => value,
+                    Value::Boolean(true) if is_windows => {
+                        let env = execute::get_property(&process_object, "env");
+                        match execute::get_property(&env, "comspec") {
+                            Value::String(value) if !value.is_empty() => value,
+                            _ => "cmd.exe".into(),
+                        }
+                    }
+                    Value::Boolean(true) if platform == "android" => "/system/bin/sh".into(),
+                    Value::Boolean(true) => "/bin/sh".into(),
+                    _ => String::new(),
+                };
+                let command_text = std::iter::once(
+                    execute::to_js_string(&command).unwrap_or_default(),
+                )
+                .chain(match child_args {
+                    Value::Array(values) => (0..values.logical_len())
+                        .filter_map(|index| {
+                            execute::get_property_result(
+                                &Value::Array(values.clone()),
+                                &index.to_string(),
+                            )
+                            .ok()
+                            .and_then(|value| execute::to_js_string(&value).ok())
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+                let is_cmd = shell_file.ends_with("cmd.exe") || shell_file == "cmd";
+                let flags = if is_cmd {
+                    vec!["/d", "/s", "/c"]
+                } else {
+                    vec!["-c"]
+                };
+                let output_command = if is_cmd {
+                    format!("\"{command_text}\"")
+                } else {
+                    command_text
+                };
+                let mut internal_options = vec![
+                    ("file".into(), Value::String(shell_file.clone())),
+                    (
+                        "args".into(),
+                        host_api::array(
+                            std::iter::once(Value::String(shell_file.clone()))
+                                .chain(flags.iter().map(|flag| Value::String((*flag).into())))
+                                .chain(std::iter::once(Value::String(output_command)))
+                                .collect(),
+                        ),
+                    ),
+                    ("shell".into(), shell),
+                    ("windowsHide".into(), Value::Boolean(false)),
+                    ("windowsVerbatimArguments".into(), Value::Boolean(is_cmd)),
+                ];
+                if let Value::String(cwd) = execute::get_property(options, "cwd") {
+                    internal_options.push(("cwd".into(), Value::String(cwd)));
+                }
+                return execute::call(
+                    &spawn_sync,
+                    &Value::Undefined,
+                    &[host_api::object(internal_options)],
+                );
+            }
+        }
+    }
+    if let Some(internal) = args.first().filter(|value| {
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+            && !matches!(execute::get_property(value, "file"), Value::Undefined)
+    }) {
+        let file = execute::get_property(internal, "file");
+        let child_args = match execute::get_property(internal, "args") {
+            Value::Array(values) if values.logical_len() > 0 => {
+                let first = execute::get_property_result(
+                    &Value::Array(values.clone()),
+                    "0",
+                )
+                .unwrap_or(Value::Undefined);
+                if first == file {
+                    host_api::array(
+                        (1..values.logical_len())
+                            .filter_map(|index| {
+                                execute::get_property_result(
+                                    &Value::Array(values.clone()),
+                                    &index.to_string(),
+                                )
+                                .ok()
+                            })
+                            .collect(),
+                    )
+                } else {
+                    Value::Array(values)
+                }
+            }
+            value => value,
+        };
+        let options = execute::set_property(internal.clone(), "shell", Value::Undefined);
+        return crate::modules::child_process::spawn_sync(
+            state,
+            &[file, child_args, options],
+        );
+    }
+    crate::modules::child_process::spawn_sync(state, args)
 }
 
 pub fn cp_spawn(
@@ -3266,6 +3405,11 @@ pub fn cp_spawn(
         Value::Builtin(quench_runtime::ops::Builtin::Object),
     );
     let stdout = execute::set_property(
+        stdout,
+        "destroy",
+        Value::Builtin(quench_runtime::ops::Builtin::Object),
+    );
+    let stdout = execute::set_property(
         execute::set_property(
             stdout,
             "ref",
@@ -3292,6 +3436,11 @@ pub fn cp_spawn(
     let stderr = execute::set_property(
         stderr,
         "pipe",
+        Value::Builtin(quench_runtime::ops::Builtin::Object),
+    );
+    let stderr = execute::set_property(
+        stderr,
+        "destroy",
         Value::Builtin(quench_runtime::ops::Builtin::Object),
     );
     let stderr = execute::set_property(
@@ -3334,11 +3483,6 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "killed", Value::Boolean(false));
     let child = execute::set_property(child, "signalCode", Value::Null);
     let child = execute::set_property(child, "exitCode", Value::Undefined);
-    let child = execute::set_property(
-        child,
-        "kill",
-        crate::host::capability(crate::registry::SPEC_CP_KILL),
-    );
     let child = execute::set_property(
         child,
         "Symbol.dispose",
@@ -5211,7 +5355,18 @@ pub fn cp_exec_complete(
             _ => stdout.clone(),
         }
     } else {
-        stdout.clone()
+        match execute::get_property(child, "\0childMaxBuffer") {
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
+                Value::String(
+                    execute::to_js_string(stdout)
+                        .unwrap_or_default()
+                        .chars()
+                        .take(limit as usize)
+                        .collect(),
+                )
+            }
+            _ => stdout.clone(),
+        }
     };
     let stderr = if use_buffer && !stderr_encoded {
         let buffer = cp_buffer_value(&execute::to_js_string(stderr).unwrap_or_default())?;
@@ -5234,9 +5389,35 @@ pub fn cp_exec_complete(
             _ => stderr.clone(),
         }
     } else {
-        stderr.clone()
+        match execute::get_property(child, "\0childMaxBuffer") {
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
+                Value::String(
+                    execute::to_js_string(stderr)
+                        .unwrap_or_default()
+                        .chars()
+                        .take(limit as usize)
+                        .collect(),
+                )
+            }
+            _ => stderr.clone(),
+        }
     };
-    execute::call(callback, &Value::Undefined, &[error.clone(), stdout, stderr])
+    let error = match execute::get_property(child, "\0childExecError") {
+        Value::Undefined => error.clone(),
+        value => value,
+    };
+    execute::call(callback, &Value::Undefined, &[error, stdout, stderr])
+}
+
+pub fn cp_exec_error(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let (Some(child), Some(error)) = (args.first(), args.get(1)) {
+        execute::set_property_in_place(child, "\0childExecError", error.clone());
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn cp_async(
@@ -5275,6 +5456,31 @@ pub fn cp_async(
         None,
         &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
+    let error_listener = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_EXEC_ERROR.cap,
+            ),
+        },
+        vec![child.clone()],
+    );
+    crate::modules::events::method_on(
+        state,
+        Some(&child),
+        &[Value::String("error".into()), error_listener],
+    )?;
+    // `ChildProcess#spawn` is the observable construction hook.  Calling it
+    // on the canonical instance lets internal consumers replace the hook
+    // while preserving the same child and stream identities.
+    let spawn = execute::get_property(&child, "spawn");
+    if quench_runtime::is_callable(&spawn) {
+        let spawn_options = host_api::object(vec![
+            ("file".into(), command.clone()),
+            ("args".into(), host_api::array(Vec::new())),
+        ]);
+        let _ = execute::call(&spawn, &child, &[spawn_options]);
+    }
     // exec()/execFile() expose text streams by default; only an explicit
     // `encoding: null` (or another non-utf8 encoding) keeps Buffer chunks.
     let encoding = execute::get_property(&options, "encoding");
@@ -5284,8 +5490,12 @@ pub fn cp_async(
         let utf8 = Value::String("utf8".into());
         let stdout = execute::get_property(&child, "stdout");
         let stderr = execute::get_property(&child, "stderr");
-        cp_stream_set_encoding(state, Some(&stdout), std::slice::from_ref(&utf8))?;
-        cp_stream_set_encoding(state, Some(&stderr), std::slice::from_ref(&utf8))?;
+        if matches!(stdout, Value::Object(_) | Value::ObjectAlias(_)) {
+            cp_stream_set_encoding(state, Some(&stdout), std::slice::from_ref(&utf8))?;
+        }
+        if matches!(stderr, Value::Object(_) | Value::ObjectAlias(_)) {
+            cp_stream_set_encoding(state, Some(&stderr), std::slice::from_ref(&utf8))?;
+        }
     }
     if let Some(callback) = callback {
         let timeout = match execute::get_property(&options, "timeout") {
@@ -5333,14 +5543,12 @@ pub fn cp_async(
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let eval_script = command_text.contains(" -e ");
-        let self_reexec = command_text.contains(&state.borrow().process.exec_path) && !eval_script;
         let shell_capture =
             if timeout.is_some()
                 || eval_script
             {
                 None
-            } else if !eval_script
-                && (crate::modules::child_process::needs_shell(&command_text) || self_reexec)
+            } else if !eval_script && crate::modules::child_process::needs_shell(&command_text)
             {
                 crate::modules::child_process::shell_output(&command_text, Some(&options))
                     .ok()
@@ -5392,6 +5600,9 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
+        if matches!(execute::get_property(&child, "stdout"), Value::Null | Value::Undefined) {
+            output.clear();
+        }
         let mut stderr = if let Some((_, stderr, _)) = shell_capture {
             stderr
         } else if eval_script {
@@ -5410,6 +5621,9 @@ pub fn cp_async(
         } else {
             String::new()
         };
+        if matches!(execute::get_property(&child, "stderr"), Value::Null | Value::Undefined) {
+            stderr.clear();
+        }
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
         let max_buffer = match execute::get_property(&options, "maxBuffer") {
@@ -5447,6 +5661,18 @@ pub fn cp_async(
                     *value = value.chars().take(limit).collect();
                 }
                 callback_error = error;
+                let kill_signal = match execute::get_property(&options, "killSignal") {
+                    Value::Undefined => Value::String("SIGTERM".into()),
+                    value => value,
+                };
+                let kill = execute::get_property(&child, "kill");
+                if quench_runtime::is_callable(&kill) {
+                    if let Err(VmError::Thrown(value)) =
+                        execute::call(&kill, &child, &[kill_signal])
+                    {
+                        callback_error = value;
+                    }
+                }
             }
         }
         if eval_script && command_text.contains("process.exit(1)") {

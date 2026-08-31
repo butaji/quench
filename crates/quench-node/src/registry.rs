@@ -355,6 +355,8 @@ pub const SPEC_CP_SEND_ACK: NodeSpec = NodeSpec::new("child_process:sendAck", 0x
 pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
 pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
     NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
+pub const SPEC_CP_EXEC_ERROR: NodeSpec =
+    NodeSpec::new("child_process:exec:error", 0x1E17);
 pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec =
     NodeSpec::new("internal/util:emitExperimentalWarning", 0x2201);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
@@ -1102,6 +1104,7 @@ pub const CAP_CP_STDIN_WRITE: CapId = SPEC_CP_STDIN_WRITE.cap;
 pub const CAP_CP_STDOUT_READ: CapId = SPEC_CP_STDOUT_READ.cap;
 pub const CAP_CP_STREAM_SET_ENCODING: CapId = SPEC_CP_STREAM_SET_ENCODING.cap;
 pub const CAP_CP_EXEC_COMPLETE: CapId = SPEC_CP_EXEC_COMPLETE.cap;
+pub const CAP_CP_EXEC_ERROR: CapId = SPEC_CP_EXEC_ERROR.cap;
 pub const CAP_DIAGNOSTICS_BOUNDED_CHANNEL: CapId = SPEC_DIAGNOSTICS_BOUNDED_CHANNEL.cap;
 pub const CAP_DIAGNOSTICS_BOUNDED_RUN: CapId = SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
 pub const CAP_DIAGNOSTICS_BOUNDED_SCOPE: CapId = SPEC_DIAGNOSTICS_BOUNDED_SCOPE.cap;
