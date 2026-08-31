@@ -442,6 +442,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("parser", Value::Null),
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
+        ("writableCorked", Value::Number(0.0)),
         ("allowHalfOpen", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
         ("connecting", Value::Boolean(false)),
