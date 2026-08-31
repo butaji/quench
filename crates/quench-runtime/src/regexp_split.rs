@@ -5,6 +5,15 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     let matcher = split_matcher(&receiver, &flags)?;
     let limit = split_limit(arguments)?;
     if dynamic_splitter(&matcher) {
+        if let Value::StringUnits(units) = &input {
+            return split_with_exec_units(
+                matcher,
+                input.clone(),
+                units,
+                limit,
+                unicode_mode(&flags),
+            );
+        }
         let input = crate::strings::materialize(&input).unwrap_or_default();
         return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
@@ -174,6 +183,53 @@ fn split_with_exec(mut matcher: Value, input: &str, limit: usize, unicode: bool)
     Ok(Value::array(values))
 }
 
+fn split_with_exec_units(
+    mut matcher: Value,
+    input: Value,
+    units: &[u16],
+    limit: usize,
+    unicode: bool,
+) -> Result<Value, VmError> {
+    if limit == 0 {
+        return Ok(Value::array(Vec::new()));
+    }
+    if units.is_empty() {
+        let result = regexp_exec_value(&matcher, input.clone())?;
+        return Ok(Value::array(if matches!(result, Value::Null) {
+            vec![input]
+        } else {
+            Vec::new()
+        }));
+    }
+    let mut values = Vec::new();
+    let mut p = 0;
+    let mut q = 0;
+    while q < units.len() {
+        set_last_index(&matcher, q as f64)?;
+        matcher = crate::locals::resolved_replacement(matcher);
+        let result = regexp_exec_value(&matcher, input.clone())?;
+        if matches!(result, Value::Null) {
+            q = advance_string_index_value(&input, q, unicode);
+            continue;
+        }
+        let end = extract_last_index(&matcher)?;
+        if end == p {
+            q = advance_string_index_value(&input, q, unicode);
+            continue;
+        }
+        split_push_units(&mut values, units, p, q, &result, limit)?;
+        if values.len() >= limit {
+            return Ok(Value::array(values));
+        }
+        p = end.min(units.len());
+        q = p;
+    }
+    if values.len() < limit {
+        values.push(crate::strings::from_units(units[p..].to_vec()));
+    }
+    Ok(Value::array(values))
+}
+
 fn split_empty_exec(matcher: &Value, input: &str) -> Result<Value, VmError> {
     let result = regexp_exec(matcher, input)?;
     let values = if matches!(result, Value::Null) { vec![Value::String(input.to_string())] } else { Vec::new() };
@@ -187,6 +243,25 @@ fn split_push(values: &mut Vec<Value>, input: &str, start: usize, end: usize, re
     let length = crate::conversion::to_number(&crate::execute::get_property_result(result, "length")?)?;
     for index in 1..to_length(length) {
         if values.len() == limit { break; }
+        values.push(crate::execute::get_property_result(result, &index.to_string())?);
+    }
+    Ok(())
+}
+
+fn split_push_units(
+    values: &mut Vec<Value>,
+    input: &[u16],
+    start: usize,
+    end: usize,
+    result: &Value,
+    limit: usize,
+) -> Result<(), VmError> {
+    values.push(crate::strings::from_units(input[start..end].to_vec()));
+    let length = crate::conversion::to_number(&crate::execute::get_property_result(result, "length")?)?;
+    for index in 1..to_length(length) {
+        if values.len() == limit {
+            break;
+        }
         values.push(crate::execute::get_property_result(result, &index.to_string())?);
     }
     Ok(())

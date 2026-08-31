@@ -1752,6 +1752,50 @@ mod tests {
     }
 
     #[test]
+    fn split_exec_units_preserves_lone_surrogates() {
+        let matcher = Value::Object(
+            ObjectData::new(vec![
+                ("\0regexp".to_string(), Value::Boolean(true)),
+                ("\0regexp_source".to_string(), Value::String("a".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("y".to_string())),
+                ("flags".to_string(), Value::String("y".to_string())),
+                ("source".to_string(), Value::String("a".to_string())),
+                (
+                    "exec".to_string(),
+                    Value::Builtin(crate::ops::Builtin::RegExpExec),
+                ),
+                (
+                    "lastIndex".to_string(),
+                    Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0))),
+                ),
+            ])
+            .into(),
+        );
+        let input = crate::strings::from_units(vec![0xD800, b'a' as u16, 0xDC00]);
+        let Value::StringUnits(units) = input.clone() else {
+            panic!("input must retain lone surrogates");
+        };
+        let Value::Array(parts) = super::split_with_exec_units(
+            matcher,
+            input,
+            &units,
+            usize::MAX,
+            false,
+        )
+        .expect("split") else {
+            panic!("split must return an array");
+        };
+        assert_eq!(
+            parts.get_index(0),
+            Some(crate::strings::from_units(vec![0xD800]))
+        );
+        assert_eq!(
+            parts.get_index(1),
+            Some(crate::strings::from_units(vec![0xDC00]))
+        );
+    }
+
+    #[test]
     fn match_all_start_keeps_utf16_last_index_coordinates() {
         let regexp = Value::Object(
             ObjectData::new(vec![
