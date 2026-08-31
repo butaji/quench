@@ -460,6 +460,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSERT_CRYPTO),
             ),
             (
+                "normalizeEncoding".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING),
+            ),
+            (
                 "customPromisifyArgs".to_string(),
                 Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
             ),
