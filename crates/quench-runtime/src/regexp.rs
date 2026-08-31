@@ -3,6 +3,8 @@ include!("regexp_named_groups.rs");
 include!("regexp_surrogates.rs");
 include!("regexp_cache.rs");
 
+use std::borrow::Cow;
+
 pub(crate) fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
     if flags.contains('u') || flags.contains('v') {
@@ -11,10 +13,9 @@ pub(crate) fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     if flags.contains('v') && invalid_v_character_class(pattern) {
         return Err("invalid UnicodeSets character class".to_string());
     }
-    let normalized = normalize_legacy_identity_escapes(
-        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
-        flags,
-    );
+    let named = normalize_named_group_escapes(pattern);
+    let scripts = normalize_new_unicode_scripts(&named);
+    let normalized = normalize_legacy_identity_escapes(&scripts, flags);
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
@@ -42,10 +43,9 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
         return Err("SyntaxError: invalid UnicodeSets character class".to_string());
     }
     let reg_flags: Flags = flags.into();
-    let normalized = normalize_legacy_identity_escapes(
-        &normalize_new_unicode_scripts(&normalize_named_group_escapes(pattern)),
-        flags,
-    );
+    let named = normalize_named_group_escapes(pattern);
+    let scripts = normalize_new_unicode_scripts(&named);
+    let normalized = normalize_legacy_identity_escapes(&scripts, flags);
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&normalized, reg_flags)
     }))
@@ -74,7 +74,10 @@ fn invalid_v_character_class(pattern: &str) -> bool {
         .any(|property| pattern == format!("[^\\p{{{property}}}]").as_str())
 }
 
-fn normalize_named_group_escapes(pattern: &str) -> String {
+fn normalize_named_group_escapes(pattern: &str) -> Cow<'_, str> {
+    if !pattern.contains("(?<") && !pattern.contains(r"\k<") {
+        return Cow::Borrowed(pattern);
+    }
     let chars: Vec<char> = pattern.chars().collect();
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0;
@@ -122,12 +125,15 @@ fn normalize_named_group_escapes(pattern: &str) -> String {
         output.push(chars[index]);
         index += 1;
     }
-    output
+    Cow::Owned(output)
 }
 
-fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
+fn normalize_legacy_identity_escapes<'a>(pattern: &'a str, flags: &str) -> Cow<'a, str> {
     if flags.contains('u') || flags.contains('v') {
-        return pattern.to_string();
+        return Cow::Borrowed(pattern);
+    }
+    if !pattern.as_bytes().contains(&b'\\') {
+        return Cow::Borrowed(pattern);
     }
     let chars: Vec<char> = pattern.chars().collect();
     let has_named_group = pattern.as_bytes().windows(3).any(|window| window == b"(?<");
@@ -192,7 +198,7 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
         }
         index += 2;
     }
-    output
+    Cow::Owned(output)
 }
 
 fn pattern_capture_count(chars: &[char]) -> usize {
@@ -253,7 +259,13 @@ const NEW_UNICODE_SCRIPTS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn normalize_new_unicode_scripts(pattern: &str) -> String {
+fn normalize_new_unicode_scripts(pattern: &str) -> Cow<'_, str> {
+    if !NEW_UNICODE_SCRIPTS
+        .iter()
+        .any(|(name, alias, _)| pattern.contains(name) || pattern.contains(alias))
+    {
+        return Cow::Borrowed(pattern);
+    }
     let mut normalized = pattern.to_string();
     for (name, alias, ranges) in NEW_UNICODE_SCRIPTS {
         for value in [*name, *alias] {
@@ -270,7 +282,7 @@ fn normalize_new_unicode_scripts(pattern: &str) -> String {
             }
         }
     }
-    normalized
+    Cow::Owned(normalized)
 }
 
 pub fn execute_builtin(
@@ -1264,7 +1276,11 @@ include!("regexp_tail.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, has_regexp_internal_slot, regexp_flags_key, replace_with_template};
+    use super::{
+        compile, has_regexp_internal_slot, normalize_legacy_identity_escapes,
+        normalize_named_group_escapes, normalize_new_unicode_scripts, regexp_flags_key,
+        replace_with_template,
+    };
     use crate::value::{ObjectData, Value};
 
     #[test]
@@ -1280,6 +1296,14 @@ mod tests {
     #[test]
     fn unicode_ranges_are_checked_by_the_regex_parser() {
         compile(r"^[\w\u0128-\uffff*_-]+$", "").expect("valid Unicode range");
+    }
+
+    #[test]
+    fn regexp_normalizers_leave_plain_patterns_unchanged() {
+        let pattern = "plain-literal";
+        assert_eq!(normalize_named_group_escapes(pattern), pattern);
+        assert_eq!(normalize_new_unicode_scripts(pattern), pattern);
+        assert_eq!(normalize_legacy_identity_escapes(pattern, ""), pattern);
     }
 
     #[test]
