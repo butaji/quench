@@ -1592,16 +1592,17 @@ mod tests {
         let Value::StringUnits(expected) = input.clone() else {
             panic!("test input must retain a lone surrogate");
         };
-        let Value::Array(match_result) =
-            super::exec(Some(&regexp), &[input]).expect("exec")
-        else {
+        let Value::Array(match_result) = super::exec(Some(&regexp), &[input]).expect("exec") else {
             panic!("exec must return a match result");
         };
         assert_eq!(
             match_result.get_index(0),
             Some(Value::StringUnits(expected.clone()))
         );
-        assert_eq!(match_result.get_index(1), Some(Value::StringUnits(expected)));
+        assert_eq!(
+            match_result.get_index(1),
+            Some(Value::StringUnits(expected))
+        );
         let indices = crate::execute::get_property_result(
             &Value::Array(std::rc::Rc::clone(&match_result)),
             "indices",
