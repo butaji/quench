@@ -556,6 +556,10 @@ fn read_available(
             Ok(n) => {
                 guard.bytes_read = guard.bytes_read.saturating_add(n as u64);
                 datas.push((sock.clone(), buf[..n].to_vec()));
+                // Deliver one kernel chunk per pump turn.  A `data` observer
+                // may pause the socket; reading ahead here would bypass that
+                // observable backpressure boundary before the callback runs.
+                break;
             }
             Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(_) => {
