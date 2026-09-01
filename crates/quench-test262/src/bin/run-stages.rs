@@ -332,7 +332,11 @@ fn run_stage_files(
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|count| *count > 0)
-        .unwrap_or(4)
+        // Isolated batches each own a complete engine process. Keep the
+        // default lower for those batches so allocation-heavy fixtures (for
+        // example the million-case URI decoders) cannot exhaust the host
+        // before the stage can report its result.
+        .unwrap_or(if isolated { 2 } else { 4 })
         .min(files.len());
     let files = Arc::new(files);
     let next = Arc::new(AtomicUsize::new(0));
