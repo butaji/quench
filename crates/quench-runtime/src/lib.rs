@@ -97,6 +97,7 @@ mod reduce_support;
 mod reflect;
 pub mod regexp;
 mod regexp_backend;
+mod regexp_emoji_data;
 mod regexp_native;
 pub mod register_file;
 pub mod resource;

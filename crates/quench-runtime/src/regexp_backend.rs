@@ -1637,31 +1637,14 @@ fn is_tag_units(units: &[Unit]) -> bool {
 }
 
 fn is_zwj_units(units: &[Unit]) -> bool {
-    units.iter().any(|unit| unit.value == 0x200D)
-        && units
-            .split(|unit| unit.value == 0x200D)
-            .all(is_zwj_component)
-}
-
-fn is_zwj_component(component: &[Unit]) -> bool {
-    if component.is_empty() {
-        return false;
-    }
-    let mut base = component;
-    let modified = base
-        .last()
-        .is_some_and(|unit| (0x1F3FB..=0x1F3FF).contains(&unit.value));
-    if modified {
-        base = &base[..base.len() - 1];
-        if base.last().is_some_and(|unit| unit.value == 0xFE0F) {
-            base = &base[..base.len() - 1];
-        }
-    }
-    if modified {
-        base.len() == 1 && is_emoji_modifier_base_code_point(base[0].value)
-    } else {
-        is_basic_emoji_units(base)
-    }
+    // A ZWJ sequence is rooted in an emoji base; a skin-tone modifier cannot
+    // start one even when the generated DFA contains that scalar on a shared
+    // transition. Keep the structural ZWJ requirement explicit at this edge.
+    units
+        .first()
+        .is_some_and(|unit| !(0x1F3FB..=0x1F3FF).contains(&unit.value))
+        && units.iter().any(|unit| unit.value == 0x200D)
+        && crate::regexp_emoji_data::contains(units.iter().map(|unit| unit.value))
 }
 
 fn is_basic_emoji_units(units: &[Unit]) -> bool {
@@ -2176,6 +2159,9 @@ mod tests {
         let zwj = Regex::with_flags(r"^\p{RGI_Emoji_ZWJ_Sequence}$", Flags::from("v")).unwrap();
         assert!(zwj.find_from("⛓️‍💥", 0).next().is_some());
         assert!(zwj.find_from("⛹🏻‍♀️", 0).next().is_some());
+        assert!(zwj.find_from("😀‍😀", 0).next().is_none());
+        assert!(zwj.find_from("👩‍👨", 0).next().is_none());
+        assert!(zwj.find_from("🏻‍❤️‍💋‍👨🏻", 0).next().is_none());
     }
 
     #[test]
