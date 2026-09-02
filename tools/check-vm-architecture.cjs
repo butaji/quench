@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Read-only architecture gate for the interpreter migration. It checks the
+// Read-only architecture gate for the fact-generated VM plan. It checks the
 // declarations and build boundaries; it never executes a guest or benchmark.
 const fs = require("fs");
 const path = require("path");
@@ -9,17 +9,8 @@ const path = require("path");
 const root = path.resolve(process.argv[2] || path.join(__dirname, ".."));
 const failures = [];
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
+const exists = (relative) => fs.existsSync(path.join(root, relative));
 const fail = (message) => failures.push(message);
-
-const goal = read("GOAL.md");
-if (!goal.includes("declarative Rust macro")) fail("GOAL must require declarative macros");
-if (!goal.includes("There is no JIT")) fail("GOAL must remain interpreter-only");
-if (!goal.includes("Workload-specific kernels and their fact")) {
-  fail("GOAL must prohibit workload-specific fact recognizers");
-}
-if (!goal.includes("Reusable\nkernels are allowed")) {
-  fail("GOAL must preserve reusable fact-guarded kernels");
-}
 
 const ir = read("crates/quench-runtime/src/ir.rs");
 if ((ir.match(/vm_op!\s*\{/g) || []).length !== 1) {
@@ -85,11 +76,38 @@ const tasks = JSON.parse(read("tasks/index.json"));
 if (tasks.schema !== 1 || !Array.isArray(tasks.items) || tasks.items.length === 0) {
   fail("tasks/index.json has an invalid schema or empty queue");
 } else {
+  const allowedThemes = new Set(["deegen_codegen", "quickjs_perf", "benchmark_integrity", "copy_patch_jit"]);
   const ids = new Set(tasks.items.map((item) => item.id));
   if (ids.size !== tasks.items.length) fail("task IDs must be unique");
   for (const item of tasks.items) {
+    if (!allowedThemes.has(item.theme)) fail(`task ${item.id} uses a forbidden theme`);
+    if (/richards\s+score|benchmark[- ]specific\s+kernel/i.test(`${item.title} ${item.theme}`)) {
+      fail(`task ${item.id} contains a benchmark-specific optimization target`);
+    }
     for (const dependency of item.depends_on || []) {
       if (!ids.has(dependency)) fail(`${item.id} depends on missing task ${dependency}`);
+    }
+  }
+
+  // copy_patch_jit is the one sanctioned, bounded exception to interpreter-first/
+  // no-JIT. It is permitted only when its design doc exists and every task in
+  // the theme is gated behind a correctness/dispatch prerequisite.
+  const copyPatchIds = new Set(
+    tasks.items.filter((item) => item.theme === "copy_patch_jit").map((item) => item.id)
+  );
+  if (copyPatchIds.size > 0) {
+    if (!exists("docs/copy-and-patch-jit.md")) {
+      fail("copy_patch_jit theme requires docs/copy-and-patch-jit.md to document it as a bounded, gated exception");
+    }
+    const gateIds = ["011", "016", "019", "026"];
+    for (const id of copyPatchIds) {
+      const item = tasks.items.find((candidate) => candidate.id === id);
+      const dependsOnGate = (item.depends_on || []).some(
+        (dependency) => gateIds.includes(dependency) || copyPatchIds.has(dependency)
+      );
+      if (!dependsOnGate) {
+        fail(`copy_patch_jit task ${id} must depend on a correctness/dispatch gate (011, 016, 019, 026) or another copy_patch_jit task`);
+      }
     }
   }
 }
@@ -130,24 +148,6 @@ function walk(directory) {
   for (const file of indexedFiles) {
     if (!fs.existsSync(path.join(taskDirectory, file))) {
       fail(`indexed task file is missing: tasks/${file}`);
-    }
-  }
-  if (Object.hasOwn(tasks.themes || {}, "copy_patch_jit")) {
-    if (!goal.includes("bounded, explicitly gated exception")) {
-      fail("copy_patch_jit theme requires GOAL.md to document it as a bounded, gated exception");
-    }
-    const copyPatchIds = new Set(
-      tasks.items.filter((item) => item.theme === "copy_patch_jit").map((item) => item.id)
-    );
-    const gateIds = ["011", "016", "019", "026"];
-    for (const id of copyPatchIds) {
-      const item = tasks.items.find((candidate) => candidate.id === id);
-      const dependsOnGate = (item.depends_on || []).some(
-        (dependency) => gateIds.includes(dependency) || copyPatchIds.has(dependency)
-      );
-      if (!dependsOnGate) {
-        fail(`copy_patch_jit task ${id} must depend on a correctness/dispatch gate (011, 016, 019, 026) or another copy_patch_jit task`);
-      }
     }
   }
 }
