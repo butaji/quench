@@ -1,0 +1,89 @@
+# Copy-and-patch region-stencil tier
+
+This document is the canonical description of `copy_patch_jit`, the one
+bounded, explicitly gated exception to this project's otherwise
+interpreter-only scope. It exists because `tools/check-vm-architecture.cjs`
+requires this file (or an equivalent) to exist and be referenced from
+`tasks/index.json` before the `copy_patch_jit` theme is permitted.
+
+## Relationship to the Deegen paper
+
+The design adopts one technique from Deegen (arXiv:2411.11469) — Copy-and-Patch
+code generation (Xu and Kjolstad, 2021) as used for Deegen's baseline JIT tier
+(§7) — without adopting the rest of Deegen's two-tier JIT-capable VM: no
+optimizing JIT, no profiling-triggered tier-up, no OSR-entry, no
+deoptimization protocol. Deegen's baseline JIT is, in its own words, designed
+to "compile fast at the cost of the quality of the generated JIT code" (§7.1);
+this tier goes further and drops the "compile" step almost entirely by
+working from a build-time-derived, pre-rendered stencil catalog rather than a
+runtime code generator.
+
+## Data model
+
+- `Fact` — reuse the existing `vm_op!`/`Proven`/`Guarded`/`Unknown`
+  classification as-is; a stencil never gets a second fact representation.
+- `RegionKey` — canonical specialization key: `hash(region_id, fact_vector)`.
+  Same facts always hash to the same key.
+- `Hole` — `{ offset: u16, kind: HoleKind }`.
+- `HoleKind` — a closed enum: `Imm32 | Disp32 | Rel32 | Ptr64`. No generic
+  relocation engine.
+- `Stencil` — `{ bytes: &'static [u8], holes: &'static [Hole] }`, pure data.
+- `PatchValues` — a read-only view into the existing `QuickeningSite`
+  shape/callee/slow-path state (`crates/quench-runtime/src/quickening.rs`);
+  never a second copy of that fact.
+- `BoxingFact` — a declared description of the existing `JsValue` tagged
+  layout (task 017) so type-check strength reduction has one source of
+  truth, mirroring the Deegen paper's boxing-scheme description APIs (§5.1)
+  without renegotiating the boxing scheme itself.
+
+## Design (mirrors the paper's techniques, not its scope)
+
+- **Region stencils, not opcode stencils.** Stencils are fused **regions** (a
+  loop body, a property-access chain) admitted by existing Proven/Guarded
+  facts, not one-stencil-per-bytecode as the paper does (Appendix B compiles
+  one bytecode at a time) — this is this project's own extension beyond the
+  paper. A fused region is only admitted after a build-time proof that its
+  interior has no externally-reachable entry point besides its declared one,
+  so hot-cold splitting and jump-to-fallthrough stay sound across the fused
+  boundary.
+- **Type-check elimination as one named algorithm.** Mirrors the paper's
+  algorithm 𝒜 (§5.1): one reusable build-time pass over a region's semantic
+  function and a fact predicate, not per-operation ad hoc logic.
+- **Runtime does select/alloc/copy/patch/execute only.** If instruction
+  selection, register allocation, or CFG analysis ever shows up at runtime,
+  that is a real optimizing JIT and out of scope.
+- **Callee-directed tail dispatch is a prerequisite (task 026).** The paper's
+  fast-path fallthrough elimination (§7.1) only has meaning once "what runs
+  next" is a callee-supplied address, not a value a driver loop interprets —
+  mirroring the paper's continuation-passing interpreter design (§6.1).
+- **Patch data before patching code.** The stencil lifecycle
+  (`Cold -> Rendered -> Installed -> Repatch -> Retired`) rewrites only
+  `PatchValues` when the installed stencil's holes still cover a new fact,
+  and only re-renders/copies code when they do not — using the same bounded
+  degrade-tier limit as interpreter-side quickening (task 014) before
+  retiring to the ordinary path permanently. `Repatch` is the effectful half
+  of the same named idempotent-probe/effectful-apply interface
+  `QuickeningSite::observe` already implements as its pure half (mirroring
+  the paper's λi/λe generic-IC split, §5.2).
+- **Memoization, not hotness-triggered tier-up.** Rendered regions are
+  memoized by `RegionKey` so identical `(region, fact)` combinations are
+  never re-rendered. This memoization is eager per admitted fact
+  combination, never hotness-triggered — the paper's profiling/tier-up
+  machinery (§3) is explicitly out of scope and would need its own task.
+
+## Bounded-exception invariants (mechanically enforced)
+
+`tools/check-vm-architecture.cjs` enforces, whenever the `copy_patch_jit`
+theme exists in `tasks/index.json`:
+
+1. This document (or an equivalent bounded-exception writeup) exists and is
+   referenced by `tasks/index.json`.
+2. Every `copy_patch_jit` task depends on one of the correctness/dispatch
+   gates (011, 016, 019, 026) or another `copy_patch_jit` task, so the
+   exception cannot begin before its prerequisites land.
+3. Every `copy_patch_jit` path keeps the complete ordinary interpreter as its
+   fallback on any Unknown fact, hole-table miss, or patch failure — the same
+   rule that governs every other guarded fast path in this project
+   (see `docs/benchmark-integrity.md`).
+
+See `tasks/021.md`-`tasks/026.md` for the implementation breakdown.
