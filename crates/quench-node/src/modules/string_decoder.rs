@@ -303,19 +303,10 @@ pub fn end(
                     ])]),
                 )));
             }
-            let keep = high && pending.len() == 2;
-            if !keep {
-                let updated = quench_runtime::execute::set_property(
-                    receiver.clone(),
-                    "\0pending",
-                    host_api::bytes(&[]),
-                );
-                quench_runtime::execute::replace_value(receiver, &updated);
-                state
-                    .borrow_mut()
-                    .string_decoder_pending
-                    .insert(key, Vec::new());
-            }
+            // Keep any incomplete code unit in the decoder state while
+            // decoding the supplied final bytes. `write()` prepends that
+            // state, which is required for an odd UTF-16 byte split (for
+            // example `41 00 42` followed by `00`).
             return write(state, Some(receiver), args);
         }
         let prefix = end(state, Some(receiver), &[])?;
