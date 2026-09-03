@@ -10985,14 +10985,32 @@ pub fn cp_exec_file(
                 completion_error = Some(overflow);
             }
         }
-        state.borrow_mut().event_loop.queue_microtask(
-            callback,
-            vec![
+        let signal = args.iter().find_map(|value| match value {
+            Value::Object(_) | Value::ObjectAlias(_) => {
+                let candidate = execute::get_property(value, "signal");
+                matches!(candidate, Value::Object(_) | Value::ObjectAlias(_)).then_some(candidate)
+            }
+            _ => None,
+        });
+        if signal.is_some() {
+            cp_queue_exec_completion(
+                state,
+                callback,
+                signal,
                 completion_error.unwrap_or(Value::Null),
-                Value::String(stdout),
-                Value::String(stderr),
-            ],
-        );
+                stdout,
+                stderr,
+            )?;
+        } else {
+            state.borrow_mut().event_loop.queue_microtask(
+                callback,
+                vec![
+                    completion_error.unwrap_or(Value::Null),
+                    Value::String(stdout),
+                    Value::String(stderr),
+                ],
+            );
+        }
         return Ok(child);
     }
     // With the callback in the args slot, completion is driven by the child
