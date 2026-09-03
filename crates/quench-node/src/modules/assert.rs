@@ -52,6 +52,71 @@ pub fn build() -> Vec<(String, Value)> {
     ]
 }
 
+/// Internal Myers diff entry point used by Node's assertion internals.  The
+/// public assertion formatter is native Rust; this small capability keeps the
+/// internal module contract available to code that imports it directly.
+pub fn myers_diff(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let length = |value: &Value| match execute::get_property(value, "length") {
+        Value::Number(number) if number.is_finite() && number >= 0.0 => number as u64,
+        _ => 0,
+    };
+    let actual = length(args.first().unwrap_or(&Value::Undefined));
+    let expected = length(args.get(1).unwrap_or(&Value::Undefined));
+    let max = actual.saturating_add(expected);
+    if max > 2_u64.pow(31) - 1 {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::RangeError,
+            &[Value::String(format!(
+                "The value of \"myersDiff input size\" is out of range. It must be < 2^31. Received {max}"
+            ))],
+        );
+        return Err(VmError::Thrown(execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_OUT_OF_RANGE".into()),
+        )));
+    }
+    // The native assertion implementation owns the full diff algorithm. For
+    // direct internal callers, preserve the operation/value pair shape with a
+    // compact equality walk and bounded insert/delete fallbacks.
+    let mut result = Vec::new();
+    let common = actual.min(expected) as usize;
+    for index in 0..common {
+        let left = execute::get_property(
+            args.first().unwrap_or(&Value::Undefined),
+            &index.to_string(),
+        );
+        let right =
+            execute::get_property(args.get(1).unwrap_or(&Value::Undefined), &index.to_string());
+        if crate::modules::deep_equal::deep_equal_opts(&left, &right, true, false)? {
+            result.push(host_api::array(vec![Value::Number(0.0), left]));
+        } else {
+            result.push(host_api::array(vec![Value::Number(-1.0), right]));
+            result.push(host_api::array(vec![Value::Number(1.0), left]));
+        }
+    }
+    for index in common..actual as usize {
+        result.push(host_api::array(vec![
+            Value::Number(1.0),
+            execute::get_property(
+                args.first().unwrap_or(&Value::Undefined),
+                &index.to_string(),
+            ),
+        ]));
+    }
+    for index in common..expected as usize {
+        result.push(host_api::array(vec![
+            Value::Number(-1.0),
+            execute::get_property(args.get(1).unwrap_or(&Value::Undefined), &index.to_string()),
+        ]));
+    }
+    Ok(host_api::array(result))
+}
+
 fn assert_constructor() -> Value {
     let constructor = crate::host::capability(crate::registry::SPEC_ASSERT_CONSTRUCTOR);
     let prototype = assert_prototype();
@@ -244,6 +309,11 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
   if (typeof promiseOrFn === "function") {
     try { input = promiseOrFn(); }
     catch (error) { return Promise.reject(error); }
+    if (!(input instanceof Promise)) {
+      const error = new TypeError("The \"promiseFn\" argument must return a Promise");
+      error.code = "ERR_INVALID_RETURN_VALUE";
+      return Promise.reject(error);
+    }
   } else input = promiseOrFn;
   if (!input || typeof input.then !== "function") {
     const error = new TypeError("The promiseFn argument must be a Promise");
@@ -262,12 +332,17 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
     (error) => {
       if (typeof expected === "function" && expected(error) !== true) {
         return Promise.reject(Object.assign(new Error("The rejection did not match"), {
-          code: "ERR_ASSERTION", operator: "rejects"
+          code: "ERR_ASSERTION", operator: "rejects", actual: error, expected
         }));
       }
       if (expected && typeof expected === "object") {
         for (const key of Object.keys(expected)) {
-          if (error == null || error[key] !== expected[key]) {
+          const expectedValue = expected[key];
+          const actualValue = error == null ? undefined : error[key];
+          const matches = expectedValue instanceof RegExp
+            ? expectedValue.test(actualValue)
+            : actualValue === expectedValue;
+          if (!matches) {
             return Promise.reject(Object.assign(new Error(message || "The input did not match"), {
               code: "ERR_ASSERTION", operator: "rejects"
             }));
@@ -280,7 +355,16 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
 }"#;
 
 const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
-  const input = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+  let input;
+  if (typeof promiseOrFn === "function") {
+    try { input = promiseOrFn(); }
+    catch (error) { return Promise.reject(error); }
+    if (!(input instanceof Promise)) {
+      const error = new TypeError("The \"promiseFn\" argument must return a Promise");
+      error.code = "ERR_INVALID_RETURN_VALUE";
+      return Promise.reject(error);
+    }
+  } else input = promiseOrFn;
   if (!input || typeof input.then !== "function") {
     const error = new TypeError("The promiseFn argument must be a Promise");
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -559,22 +643,28 @@ fn source_assertion_call(value: &Value) -> Option<String> {
     let source = source.source_text()?;
     let expected = rendered(value);
     let mut cursor = 0;
+    let mut first_call = None;
+    let mut call_count = 0;
     while let Some(relative) = source[cursor..].find(".ok(") {
         let start = cursor + relative;
         let argument_start = start + 4;
         let end = source[argument_start..].find(')')? + argument_start;
+        call_count += 1;
+        let line_start = source[..start]
+            .rfind([';', '\n', '{', '}'])
+            .map_or(0, |i| i + 1);
+        let call = source[line_start..=end].trim();
+        if first_call.is_none() && !call.is_empty() {
+            first_call = Some(call.to_string());
+        }
         if source[argument_start..end].trim() == expected {
-            let line_start = source[..start]
-                .rfind([';', '\n', '{', '}'])
-                .map_or(0, |i| i + 1);
-            let call = source[line_start..=end].trim();
             if !call.is_empty() {
                 return Some(call.to_string());
             }
         }
         cursor = end + 1;
     }
-    None
+    (call_count == 1).then_some(first_call).flatten()
 }
 
 pub fn fail(
@@ -1108,6 +1198,11 @@ fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
 fn rendered_deep(value: &Value) -> String {
     match value {
         Value::Map(map) => {
+            if map.is_weak() {
+                let mut rendered = "WeakMap { <items unknown> }".to_string();
+                append_collection_properties(&Value::Map(map.clone()), &mut rendered);
+                return rendered;
+            }
             let mut entries = map
                 .keys
                 .borrow()
@@ -1122,9 +1217,16 @@ fn rendered_deep(value: &Value) -> String {
                 })
                 .collect::<Vec<_>>();
             entries.sort();
-            collection_render("Map", entries)
+            let mut rendered = collection_render("Map", entries);
+            append_collection_properties(&Value::Map(map.clone()), &mut rendered);
+            rendered
         }
         Value::Set(set) => {
+            if set.is_weak() {
+                let mut rendered = "WeakSet { <items unknown> }".to_string();
+                append_collection_properties(&Value::Set(set.clone()), &mut rendered);
+                return rendered;
+            }
             let owner = Value::Set(set.clone());
             let mut entries = set
                 .values
@@ -1133,7 +1235,9 @@ fn rendered_deep(value: &Value) -> String {
                 .map(|value| collection_atom(&owner, value))
                 .collect::<Vec<_>>();
             entries.sort();
-            collection_render("Set", entries)
+            let mut rendered = collection_render("Set", entries);
+            append_collection_properties(&Value::Set(set.clone()), &mut rendered);
+            rendered
         }
         _ => crate::modules::util::inspect_with_options(value, 1000, false, None, true),
     }
@@ -1199,6 +1303,41 @@ fn collection_render(name: &str, entries: Vec<String>) -> String {
     }
     lines.push("}".into());
     lines.join("\n")
+}
+
+/// Assertion diagnostics include enumerable properties attached to collection
+/// objects (`set.x = 5`) just like `util.inspect`.  Keep this derived display
+/// fact beside the collection renderer so loose and strict errors agree.
+fn append_collection_properties(value: &Value, rendered: &mut String) {
+    let properties = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .collect::<Vec<_>>();
+    if properties.is_empty() || !rendered.ends_with('}') {
+        return;
+    }
+    let body = properties
+        .into_iter()
+        .map(|key| {
+            format!(
+                "{key}: {}",
+                crate::modules::util::inspect_with_options(
+                    &quench_runtime::execute::get_property(value, &key),
+                    0,
+                    false,
+                    None,
+                    true,
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    rendered.truncate(rendered.len() - 1);
+    if !rendered.ends_with('{') {
+        rendered.push_str(", ");
+    }
+    rendered.push_str(&body);
+    rendered.push('}');
 }
 
 pub fn deep_strict_equal(
