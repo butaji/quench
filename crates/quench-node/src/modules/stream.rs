@@ -1275,6 +1275,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
                 ("isErrored", SPEC_STREAM_IS_ERRORED),
                 ("isDisturbed", SPEC_STREAM_IS_DISTURBED),
                 ("destroy", SPEC_STREAM_DESTROY),
+                ("pipeline", SPEC_STREAM_PIPELINE),
                 ("addAbortSignal", SPEC_STREAM_ADD_ABORT_SIGNAL),
                 ("finished", SPEC_STREAM_FINISHED),
                 ("compose", SPEC_STREAM_COMPOSE),
