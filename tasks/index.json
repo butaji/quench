@@ -18,13 +18,13 @@
             "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence; superseded task files removed once this plan closed the gap in docs/deegen-alignment.md."
         ],
         "remaining_slices": [
-            "027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037"
+            "039"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md: commit/verify existing tier-up+OSR work, then close each audited-absent mechanism (slow-path outlining, register pinning, tag register optimization, true bytecode quickening, JIT-side SMC IC + inline slab, hot-cold splitting, stencil region breadth), then verify the extra beyond-paper Optimizing tier and do full closing verification. The mechanism-validation curriculum (quench-bench/deegen-curriculum/) is hand-authored directly, not a task in this backlog.",
-            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037"]
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record); priority now on 039 (native AArch64 stencil execution -- this machine's actual architecture) since the x86_64-only executable gate confounds several of the closing results. The mechanism-validation curriculum (quench-bench/deegen-curriculum/) is hand-authored directly, not a task in this backlog.",
+            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039"]
         }
     },
     "items": [
@@ -38,6 +38,7 @@
         {"id": "034", "file": "034.md", "title": "Hot-cold code splitting by block-frequency analysis (§7.2)", "theme": "deegen_full_jit", "depends_on": ["028"]},
         {"id": "035", "file": "035.md", "title": "Widen region-stencil coverage breadth toward full-catalog parity", "theme": "deegen_full_jit", "depends_on": ["033"]},
         {"id": "036", "file": "036.md", "title": "Verify and document the beyond-paper Optimizing tier as a kept, measured net win", "theme": "deegen_full_jit", "depends_on": ["035"]},
-        {"id": "037", "file": "037.md", "title": "Full differential and neutral-corpus verification of the complete two-tier system", "theme": "deegen_full_jit", "depends_on": ["036"]}
+        {"id": "037", "file": "037.md", "title": "Full differential and neutral-corpus verification of the complete two-tier system", "theme": "deegen_full_jit", "depends_on": ["036"]},
+        {"id": "039", "file": "039.md", "title": "Native AArch64 stencil execution backend (this machine's actual architecture)", "theme": "deegen_full_jit", "depends_on": ["037"]}
     ]
 }
