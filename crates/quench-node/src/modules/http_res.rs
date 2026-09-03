@@ -812,8 +812,15 @@ pub fn res_end(
 pub fn res_destroy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        execute::set_property_in_place(receiver, "destroyed", Value::Boolean(true));
+        execute::set_property_in_place(receiver, "closed", Value::Boolean(true));
+        if let Some(error) = args.first() {
+            execute::set_property_in_place(receiver, "errored", error.clone());
+        }
+    }
     let Some(id) = res_state(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };

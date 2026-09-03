@@ -297,6 +297,12 @@ fn eval_module_factory(source: &str) -> Option<Value> {
     quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context).ok()
 }
 
+fn stream_promises_module(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    let stream = crate::modules::stream::build(state).ok()?;
+    let factory = eval_module_factory("(stream) => ({ pipeline(...args) { return new Promise((resolve, reject) => { const callback = (error) => error ? reject(error) : resolve(); try { stream.pipeline(...args, callback); } catch (error) { reject(error); } }); }, finished(streamValue, options = {}) { return new Promise((resolve, reject) => { const callback = (error) => error ? reject(error) : resolve(); try { stream.finished(streamValue, options, callback); } catch (error) { reject(error); } }); } })")?;
+    execute::call(&factory, &Value::Undefined, &[stream]).ok()
+}
+
 fn internal_vfs_router_module() -> Option<Value> {
     let factory = eval_module_factory(
         "() => { const path = globalThis.__nodePath; return {\
@@ -3077,22 +3083,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 0x1c01,
             )),
         )])),
-        "stream/promises" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "finished".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "stream_promises:finished",
-                    0x1c02,
-                )),
-            ),
-            (
-                "pipeline".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "stream_promises:pipeline",
-                    0x1c03,
-                )),
-            ),
-        ])),
+        "stream/promises" => stream_promises_module(state),
         "timers" => Some(
             crate::modules::timers::build_with_promises()
                 .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
