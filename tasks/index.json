@@ -10,21 +10,22 @@
         "Every task belongs to exactly one theme",
         "Performance measurements are evidence: any optimization admitted here must generalize to any JavaScript program with the same runtime shape, not be sized to one fixture's numbers (see docs/benchmark-integrity.md)",
         "Deegen (arXiv:2411.11469) is a two-tier design: interpreter + baseline JIT + tier-switching. No optimizing JIT, no deoptimization protocol — the paper doesn't build either. See docs/deegen-alignment.md.",
-        "Nail the Deegen implementation completely (tasks 027-037, every audited-absent mechanism in docs/deegen-alignment.md closed) BEFORE any benchmark-driven optimization work outside this backlog. No fixture-specific tuning (e.g. Splay/Richards helpers) or new performance work starts until docs/deegen-alignment.md's status table has zero Absent/Partial rows and task 037's closing verification is recorded.",
+        "Tasks 027-037 closed with task 037's own recorded finding that the status-table closure gate was NOT fully satisfied (Optimizing-tier net win unproven, tag register blocked, hot-cold splitting not justified -- all three confounded by the x86_64-only executable gate on this ARM64 dev machine, see docs/deegen-alignment.md). Tasks 039+ are the direct, in-backlog continuation addressing that finding, not new scope creep. No fixture-specific tuning (e.g. Splay/Richards helpers) or performance work OUTSIDE this deegen_full_jit theme starts until this theme's own task chain is done.",
         "The existing ExecutionTier::Optimizing scaffold is kept as a beyond-paper extra optimization layer, not described as the paper's (nonexistent) optimizing tier"
     ],
     "implementation_state": {
         "completed_slices": [
-            "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence; superseded task files removed once this plan closed the gap in docs/deegen-alignment.md."
+            "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence.",
+            "027-037 (this theme's first pass): tier-up/OSR committed and verified, slow-path outlining, register-pinning approximation, bounded logical quickening, bounded SMC IC stub chain + inline slab, catalog admission reconciled. NOT fully closed -- see docs/deegen-alignment.md for the honestly-recorded remainder (tag register blocked, hot-cold splitting not justified, Optimizing-tier net win unproven), all three confounded by the x86_64-only executable gate. Tasks 039+ continue from here."
         ],
         "remaining_slices": [
-            "039", "040"
+            "039", "040", "041"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record). Priority now: 039 (native AArch64 stencil execution -- this machine's actual architecture, since the x86_64-only executable gate confounds several closing results), then 040 (widen specialized stencil leaves by real hotness evidence: loop glue, call, property, array, ForI -- in that order). The mechanism-validation curriculum (quench-bench/deegen-curriculum/) is hand-authored directly, not a task in this backlog.",
-            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040"]
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record, which itself found the closure gate not fully satisfied). Priority now: 039 (native AArch64 stencil execution -- this machine's actual architecture, since the x86_64-only executable gate confounds several closing results), then 040 (widen specialized stencil leaves by quench's own measured hotness evidence: loop glue, call, property, array, ForI), then 041 (systematic V8-informed survey of JS-scenario categories -- elements-kind specialization, global access, comparison/typeof/instanceof, enum cache, string representation -- to catch coverage gaps task 040's own-corpus evidence might under-sample; closes only evidence-backed gaps, not a license to port V8 internals). The mechanism-validation curriculum (quench-bench/deegen-curriculum/) is hand-authored directly, not a task in this backlog.",
+            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041"]
         }
     },
     "items": [
@@ -40,6 +41,7 @@
         {"id": "036", "file": "036.md", "title": "Verify and document the beyond-paper Optimizing tier as a kept, measured net win", "theme": "deegen_full_jit", "depends_on": ["035"]},
         {"id": "037", "file": "037.md", "title": "Full differential and neutral-corpus verification of the complete two-tier system", "theme": "deegen_full_jit", "depends_on": ["036"]},
         {"id": "039", "file": "039.md", "title": "Native AArch64 stencil execution backend (this machine's actual architecture)", "theme": "deegen_full_jit", "depends_on": ["037"]},
-        {"id": "040", "file": "040.md", "title": "Widen specialized stencil leaves by real hotness evidence (call, property, loop glue, array, ForI)", "theme": "deegen_full_jit", "depends_on": ["039"]}
+        {"id": "040", "file": "040.md", "title": "Widen specialized stencil leaves by real hotness evidence (call, property, loop glue, array, ForI)", "theme": "deegen_full_jit", "depends_on": ["039"]},
+        {"id": "041", "file": "041.md", "title": "V8-informed JS-scenario stencil coverage survey", "theme": "deegen_full_jit", "depends_on": ["040"]}
     ]
 }
