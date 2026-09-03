@@ -1,6 +1,6 @@
 {
     "schema": 1,
-    "title": "Fact-generated interpreter VM — full Deegen-paper alignment",
+    "title": "Fact-generated interpreter VM — Deegen two-tier paper alignment",
     "source_of_truth": "tasks/index.json",
     "constraints": [
         "quench-runtime owns JavaScript semantics; quench-node owns only the Node host boundary",
@@ -9,58 +9,35 @@
         "Generated code is derived from one declaration; handwritten code is limited to irreducible behavior",
         "Every task belongs to exactly one theme",
         "Performance measurements are evidence: any optimization admitted here must generalize to any JavaScript program with the same runtime shape, not be sized to one fixture's numbers (see docs/benchmark-integrity.md)",
-        "See docs/deegen-alignment.md for the paper-vs-implementation gap this plan closes",
-        "Speculative optimization (optimizing JIT, tier-up, OSR) is admitted only alongside its deoptimization safety net; no speculative tier ships without a working bailout path"
+        "Deegen (arXiv:2411.11469) is a two-tier design: interpreter + baseline JIT + tier-switching. No optimizing JIT, no deoptimization protocol — the paper doesn't build either. See docs/deegen-alignment.md.",
+        "Nail the Deegen implementation completely (tasks 027-037, every audited-absent mechanism in docs/deegen-alignment.md closed) BEFORE any benchmark-driven optimization work outside this backlog. No fixture-specific tuning (e.g. Splay/Richards helpers) or new performance work starts until docs/deegen-alignment.md's status table has zero Absent/Partial rows and task 037's closing verification is recorded.",
+        "The existing ExecutionTier::Optimizing scaffold is kept as a beyond-paper extra optimization layer, not described as the paper's (nonexistent) optimizing tier"
     ],
     "implementation_state": {
         "completed_slices": [
             "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence; superseded task files removed once this plan closed the gap in docs/deegen-alignment.md."
         ],
         "remaining_slices": [
-            "027", "028", "029", "030", "031"
+            "027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Close the remaining gap between quench and the Deegen paper's (arXiv:2411.11469) full two-tier JIT-capable VM design: profiling-driven tier-up, OSR entry, deoptimization, and a real optimizing JIT tier built from the same vm_op! fact schema. See docs/deegen-alignment.md.",
-            "plan": ["027", "028", "029", "030", "031"]
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md: commit/verify existing tier-up+OSR work, then close each audited-absent mechanism (slow-path outlining, register pinning, tag register optimization, true bytecode quickening, JIT-side SMC IC + inline slab, hot-cold splitting, stencil region breadth), then verify the extra beyond-paper Optimizing tier and do full closing verification.",
+            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037"]
         }
     },
     "items": [
-        {
-            "id": "027",
-            "file": "027.md",
-            "title": "Profiling counters and tier-up policy",
-            "theme": "deegen_full_jit",
-            "depends_on": []
-        },
-        {
-            "id": "028",
-            "file": "028.md",
-            "title": "OSR entry into a lower-tier-compiled loop",
-            "theme": "deegen_full_jit",
-            "depends_on": ["027"]
-        },
-        {
-            "id": "029",
-            "file": "029.md",
-            "title": "Deoptimization protocol and frame reconstruction",
-            "theme": "deegen_full_jit",
-            "depends_on": ["028"]
-        },
-        {
-            "id": "030",
-            "file": "030.md",
-            "title": "Cross-tier generic inline cache (λi/λe) shared by baseline and optimizing JIT",
-            "theme": "deegen_full_jit",
-            "depends_on": ["029"]
-        },
-        {
-            "id": "031",
-            "file": "031.md",
-            "title": "Optimizing JIT IR: instruction selection, register allocation, speculative type specialization",
-            "theme": "deegen_full_jit",
-            "depends_on": ["030"]
-        }
+        {"id": "027", "file": "027.md", "title": "Commit and verify the existing uncommitted tier-up/OSR/stencil work", "theme": "deegen_full_jit", "depends_on": []},
+        {"id": "028", "file": "028.md", "title": "Audit and complete OSR-entry wiring end-to-end", "theme": "deegen_full_jit", "depends_on": ["027"]},
+        {"id": "029", "file": "029.md", "title": "Slow-path outlining: CPS EnterSlowPath construct, AOT non-inlined slow paths", "theme": "deegen_full_jit", "depends_on": ["028"]},
+        {"id": "030", "file": "030.md", "title": "Register pinning for VM dispatch state (§6.1)", "theme": "deegen_full_jit", "depends_on": ["028"]},
+        {"id": "031", "file": "031.md", "title": "Tag register optimization for the boxing scheme (§5.3)", "theme": "deegen_full_jit", "depends_on": ["030"]},
+        {"id": "032", "file": "032.md", "title": "True bytecode quickening: instruction-stream rewrite on IC hit (§6.2)", "theme": "deegen_full_jit", "depends_on": ["028"]},
+        {"id": "033", "file": "033.md", "title": "JIT-side self-modifying-code IC stub chain and inline slab (§7.1)", "theme": "deegen_full_jit", "depends_on": ["032"]},
+        {"id": "034", "file": "034.md", "title": "Hot-cold code splitting by block-frequency analysis (§7.2)", "theme": "deegen_full_jit", "depends_on": ["028"]},
+        {"id": "035", "file": "035.md", "title": "Widen region-stencil coverage breadth toward full-catalog parity", "theme": "deegen_full_jit", "depends_on": ["033"]},
+        {"id": "036", "file": "036.md", "title": "Verify and document the beyond-paper Optimizing tier as a kept, measured net win", "theme": "deegen_full_jit", "depends_on": ["035"]},
+        {"id": "037", "file": "037.md", "title": "Full differential and neutral-corpus verification of the complete two-tier system", "theme": "deegen_full_jit", "depends_on": ["036"]}
     ]
 }

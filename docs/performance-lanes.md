@@ -6,8 +6,9 @@ but never supply score numbers. The current performance target is the ordinary
 fact-generated interpreter with catalog-backed opcode handlers, bounded
 quickening, and reusable generic fast paths, plus the bounded copy-and-patch
 region-stencil tier described in
-[`copy-and-patch-jit.md`](copy-and-patch-jit.md), with the remaining
-tier-up/OSR/deopt/optimizing-JIT gap to the Deegen paper tracked in
+[`copy-and-patch-jit.md`](copy-and-patch-jit.md). Deegen (arXiv:2411.11469)
+is a two-tier design (interpreter + baseline JIT + tier-switching, no
+optimizing JIT, no deopt); alignment status is tracked in
 [`deegen-alignment.md`](deegen-alignment.md). Join
 evidence by artifact/profile/run identity; unavailable data is unknown, not
 zero. The runtime contains no workload-specific kernel feature; reusable
