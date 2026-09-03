@@ -728,7 +728,7 @@ pub fn kill(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             &process,
             &[Value::Number(pid as f64), Value::Number(signal as f64)],
         )?;
-    } else if pid > 0 && !state.borrow().process.alive_pids.contains(&pid) {
+    } else if pid == 0 || (pid > 0 && !state.borrow().process.alive_pids.contains(&pid)) {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String("kill ESRCH".into())],
