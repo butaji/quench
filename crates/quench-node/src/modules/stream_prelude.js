@@ -2780,7 +2780,7 @@
     }
     if (source && typeof source.then === "function") {
       let started = false;
-      return new Duplex({
+      const result = new Duplex({
         ...options,
         readable: true,
         writable: false,
@@ -2793,6 +2793,8 @@
           }, (error) => this.destroy(error));
         }
       });
+      result.read(0);
+      return result;
     }
     return Readable.from(source, options);
   };
