@@ -882,8 +882,8 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     // `./tmpdir` points at the checkout's `.tmp.0` directory.
     if spec == "../common"
         || spec == "../common/index"
-        || spec.ends_with("/common")
-        || spec.ends_with("/common/index")
+        || spec.contains("node/test/common")
+        || spec.contains("node/common")
     {
         let common = quench_runtime::execute::get_property(
             &quench_runtime::vm::current_global_object(),
@@ -895,8 +895,8 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     }
     if spec == "../common/tmpdir"
         || spec == "../common/tmpdir.js"
-        || spec.ends_with("/common/tmpdir")
-        || spec.ends_with("/common/tmpdir.js")
+        || spec.contains("node/test/common/tmpdir")
+        || spec.contains("node/common/tmpdir")
         || (matches!(spec.as_str(), "./tmpdir" | "./tmpdir.js")
             && state.borrow().dir_stack.last().is_some_and(|dir| {
                 std::path::Path::new(dir)
@@ -1927,9 +1927,9 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         &[
             exports,
             require,
-            pending.module,
-            Value::String(pending.filename),
-            Value::String(pending.dirname),
+            pending.module.clone(),
+            Value::String(pending.filename.clone()),
+            Value::String(pending.dirname.clone()),
         ],
     );
     state.borrow_mut().module_stack.pop();
