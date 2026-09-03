@@ -1303,6 +1303,9 @@ pub struct CodeView<'a> {
 pub enum ExecutionTier {
     Interpreter,
     Baseline,
+    /// Quench-specific extra promotion layer. It re-wraps already compiled
+    /// baseline entries as a physical execution view, not a second semantic
+    /// IR and not the (nonexistent) optimizing JIT in Deegen's two-tier paper.
     Optimizing,
 }
 
