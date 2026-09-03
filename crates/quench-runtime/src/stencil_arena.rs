@@ -96,7 +96,7 @@ impl StencilArena {
     /// Invoke the build-time Number Add+Return stencil using the platform ABI.  The
     /// address must belong to this arena and the arena must already be RX;
     /// otherwise the complete ordinary path remains the only valid option.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_f64(&self, address: usize, lhs: f64, rhs: f64) -> Result<f64, ArenaError> {
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
@@ -107,7 +107,7 @@ impl StencilArena {
         Ok(entry(lhs, rhs))
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn execute_f64(&self, _address: usize, _lhs: f64, _rhs: f64) -> Result<f64, ArenaError> {
         Err(ArenaError::ProtectionFailed)
     }
@@ -115,7 +115,7 @@ impl StencilArena {
     /// Invoke the generated tagged-word property leaf.  The leaf only loads
     /// from a slot already validated by the complete Rust property gateway;
     /// the caller performs the owning retain when writing the returned bits.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_word(
         &self,
         address: usize,
@@ -126,7 +126,7 @@ impl StencilArena {
 
     /// Invoke a raw tagged-word leaf. The leaf is read-only; ownership is
     /// deliberately handled by the Rust register writer after the return.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_tagged_word(
         &self,
         address: usize,
@@ -146,7 +146,7 @@ impl StencilArena {
     /// receive one opaque context pointer in the platform's first argument
     /// register and tail-call the canonical Rust bridge.  The arena performs
     /// only address/protection checks; the bridge owns all VM semantics.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_dispatch(
         &self,
         address: usize,
@@ -162,7 +162,7 @@ impl StencilArena {
         Ok(entry(context))
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn execute_dispatch(
         &self,
         _address: usize,
@@ -171,7 +171,7 @@ impl StencilArena {
         Err(ArenaError::ProtectionFailed)
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn execute_word(
         &self,
         _address: usize,
@@ -180,7 +180,7 @@ impl StencilArena {
         Err(ArenaError::ProtectionFailed)
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn execute_tagged_word(
         &self,
         _address: usize,
@@ -340,19 +340,14 @@ impl StencilArena {
                 fallback,
             );
         }
-        let offset = match self.render_or_get(cache, key, &record.stencil, values) {
-            Ok(offset) => offset,
+        let address = match self.render_or_get(cache, key, &record.stencil, values) {
+            Ok(address) => address,
             Err(_) => return fallback(),
         };
         if self.make_executable().is_err() {
-            if let Some(address) = self.address(offset) {
-                cache.remove(key, cache_signature(&record.stencil, values), address);
-            }
+            cache.remove(key, cache_signature(&record.stencil, values), address);
             return fallback();
         }
-        let Some(address) = self.address(offset) else {
-            return fallback();
-        };
         self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
     }
 
@@ -462,7 +457,7 @@ impl StencilArena {
         self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn render_fallthrough_f64<const N: usize>(
         &mut self,
         _cache: &mut RenderedRegionCache,
@@ -476,6 +471,48 @@ impl StencilArena {
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
         fallback()
+    }
+
+    /// AArch64's direct-branch encoding is not the x86 rel32 hole format used
+    /// by the two-region test stencil. The generated ARM fallthrough row is
+    /// therefore a semantically equivalent single fadd/ret leaf; retain the
+    /// same bounded render/cache/protection protocol while omitting the
+    /// architecture-specific chain.
+    #[cfg(target_arch = "aarch64")]
+    pub fn render_fallthrough_f64<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        head: &Stencil,
+        _tail: &Stencil,
+        values: &PatchValues<'_, N>,
+        _rel32_offset: u16,
+        lhs: f64,
+        rhs: f64,
+        fallback: impl FnOnce() -> Result<f64, ArenaError>,
+    ) -> Result<f64, ArenaError> {
+        let signature = cache_signature(head, values);
+        if let Some(address) = cache
+            .get(key, signature)
+            .filter(|address| self.owns_address(*address))
+        {
+            if self.is_executable() {
+                return self.execute_f64(address, lhs, rhs).or_else(|_| fallback());
+            }
+            cache.remove(key, signature, address);
+        }
+        if !head.validate() {
+            return fallback();
+        }
+        let address = match self.render_or_get(cache, key, head, values) {
+            Ok(address) => address,
+            Err(_) => return fallback(),
+        };
+        if self.make_executable().is_err() {
+            cache.remove(key, signature, address);
+            return fallback();
+        }
+        self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
     }
 
     /// Flip the entire arena from writable to executable once all regions have
@@ -623,7 +660,7 @@ mod tests {
         assert_eq!(arena.used(), 3);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn executable_add_region_matches_ordinary_number_semantics() {
         let mut arena = StencilArena::new(4096).unwrap();
@@ -648,7 +685,7 @@ mod tests {
         assert!(nan.is_nan());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn executable_add_const_region_uses_patched_constant_data() {
         let mut arena = StencilArena::new(4096).unwrap();
@@ -658,8 +695,39 @@ mod tests {
         let key = crate::stencil_select::add_const_region_key();
         let result = arena.render_selected_f64(&mut cache, key, &values, 4.0, 0.0, || Ok(99.0));
         assert_eq!(result, Ok(6.5));
-        assert_eq!(arena.used(), 21);
-        assert_eq!(arena.byte(13), 0);
+        assert_eq!(
+            arena.used(),
+            if cfg!(target_arch = "aarch64") {
+                20
+            } else {
+                21
+            }
+        );
+        assert_eq!(
+            arena.byte(if cfg!(target_arch = "aarch64") {
+                12
+            } else {
+                13
+            }),
+            0
+        );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_property_leaf_matches_raw_tagged_word_load() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetN);
+        let values = PatchValues::from_site(&site);
+        let key = crate::stencil_select::property_region_key();
+        let record = crate::stencil_select::select_region(key).expect("property row");
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        let word = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
+        assert_eq!(arena.execute_tagged_word(address, &word), Ok(word.bits()));
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -697,7 +765,7 @@ mod tests {
         assert_eq!(arena.used(), head.bytes.len() + tail.bytes.len());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generated_fallthrough_region_is_selected_by_canonical_key() {
         let mut arena = StencilArena::new(4096).unwrap();
@@ -718,7 +786,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generated_dispatch_entry_calls_the_patched_bridge() {
         extern "C" fn probe(context: *mut std::ffi::c_void) -> u64 {
@@ -731,11 +799,10 @@ mod tests {
         let values = PatchValues::from_site(&site).with_pointer_bits(probe as *const () as usize);
         let key = crate::stencil_select::dispatch_region_key();
         let record = crate::stencil_select::select_region(key).expect("dispatch catalog row");
-        let offset = arena
+        let address = arena
             .render_or_get(&mut cache, key, &record.stencil, &values)
             .unwrap();
         arena.make_executable().unwrap();
-        let address = arena.address(offset).expect("dispatch address");
         let mut marker = 0u8;
         let status = arena
             .execute_dispatch(address, (&mut marker as *mut u8).cast())

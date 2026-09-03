@@ -283,7 +283,7 @@ fn code_arena_lowers_constant_add_in_either_operand_position() {
     assert!(!add.add_const_is_left());
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[test]
 fn non_x86_baseline_does_not_admit_native_numeric_plan() {
     let function = super::FunctionCode::from_ops(vec![
@@ -330,7 +330,7 @@ fn native_add_const_rejects_constant_left_for_signed_zero_order() {
     assert!(plan.native_binary_at(0).is_none());
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[test]
 fn non_x86_native_execution_rejects_before_mapping() {
     let mut plan = super::NativeBinaryPlan {

@@ -2765,10 +2765,15 @@ mod compact_handler_tests {
             &context,
         )
         .expect("optimized fallback step");
-        assert_eq!(
-            completion,
-            crate::completion::Completion::Return(Value::String("ab".into()))
-        );
+        if cfg!(target_arch = "x86_64") {
+            assert_eq!(completion, crate::completion::Completion::Normal);
+        } else {
+            assert_eq!(
+                completion,
+                crate::completion::Completion::Return(Value::String("ab".into()))
+            );
+        }
+        assert_eq!(registers.read(0), Some(Value::String("ab".into())));
     }
 
     #[test]

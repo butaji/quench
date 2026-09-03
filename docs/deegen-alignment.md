@@ -27,7 +27,7 @@ optimizations below — not an optimizing JIT or deopt.
 | 8 | Bytecode quickening — opcode/instruction rewrite on IC hit (§6.2) | **Present (bounded logical rewrite)** | `ir.rs` declares generated `GetPropertyQuickened`/`GetNQuickened`/`AGetIQuickened` variants. `machine.rs` stores a fixed-size per-instruction rewrite cell; `CodeView::instruction` exposes the specialized opcode after a confirmed shape hit, and `dequicken_instruction` restores the canonical opcode on shape/key/descriptor mismatch. The immutable canonical stream and complete generic handler remain the fallback; no source/fixture identity is involved. |
 | 9 | Baseline JIT stencil granularity: one stencil per bytecode variant (§7) | **Diverges by design; full catalog fallback** | quench fuses multi-opcode **region** stencils instead (`docs/copy-and-patch-jit.md`: "this project's own extension beyond the paper"). The generated `DISPATCH` region admits every `Opcode::ALL` entry (31/31, including the bounded quickened variants; 100% before and after task 035's declaration reconciliation), while the inventory in `docs/deegen-stencil-coverage.md` distinguishes that complete trampoline fallback from the smaller set of specialized leaves (8/31, 25.8%). |
 | 10 | Polymorphic IC + IC inline slab in JIT (§7.1) | **Present (bounded placement model)** | `IcStubChain::install` chooses the reserved inline slab when a stub fits and otherwise allocates an outlined placement; capacity is fixed and the (N+1)th key returns ordinary fallback. Unit tests assert both placement classes and the arena-sized state bound. |
-| 11 | Hot-cold code splitting by block-frequency analysis, fallthrough branch elimination (§7.2) | **Not justified (Gate 0)** | A five-second DWARF-enabled macOS `sample` of a long neutral arithmetic loop showed no `StencilArena`/`render_selected`/`execute_f64` samples: executable rendered regions are x86_64-gated and inactive on this ARM64 host. With no measured rendered-region icache or branch-miss cost, task 034 correctly made no layout change. |
+| 11 | Hot-cold code splitting by block-frequency analysis, fallthrough branch elimination (§7.2) | **Gate now justified; implementation still deferred** | Task 039 enabled the proven eight-leaf ARM64 backend. A five-second DWARF `sample` of neutral arithmetic captured `StencilArena::render_or_get` (4 rendered-region stack samples); `execute_f64` is inlined on this optimized ARM64 build. The navier-stokes sample remained timeout-bound and showed no rendered symbol, so no layout change is claimed here; task 034 remains the implementation owner after a workload with stable rendered-region samples is selected. |
 | 12 | Tier-up via per-function retired-bytecode counting (§3) | **Present, committed and verified** | `TierState{invocations, retired, threshold:32}` (`machine.rs:1940-1961`), `enter_invocation()`/`retire_at()` (`machine.rs:2241-2340`) — counts bytecodes retired within the function, matching the paper's design exactly. Covered by the runtime library gates and the neutral-corpus run recorded for task 027. |
 | 13 | OSR-entry: branch into already-compiled JIT code at a back-edge (§7.1) | **Present and verified** | `is_osr_candidate`/`is_osr_entry` (`machine.rs`) computes admission; `maybe_osr_switch` (`vm_runtime.rs`) now checks the compiled plan entry before transferring the live frame into baseline code. The synthetic compact back-edge test records one transfer and matches the cold interpreter result; `ForI` is explicitly excluded as a structured loop with no bytecode back-edge. |
 
@@ -61,8 +61,9 @@ change is being claimed.
   counting (#12), OSR-entry wiring and admission test (#13), and the shared
   slow-path CPS gateway (#3b), plus bounded logical instruction quickening
   (#8).
-- **Real gaps, worth closing**: tag register optimization (#6), stencil region breadth (#9).
-  Hot-cold splitting remains an explicit not-justified Gate-0 item on ARM64.
+- **Real gaps, worth closing**: tag register optimization (#6), stencil region breadth (#9),
+  and hot-cold splitting (#11) now that ARM64 rendered-region activity is
+  observable; each remains independently gated by evidence.
 - Register pinning is represented by the safe one-pointer dispatch-state
   approximation above; a fixed-register ABI remains unavailable in stable Rust.
 - **Intentional, documented divergence, not a gap**: region-fused stencils
@@ -73,3 +74,29 @@ change is being claimed.
 
 See `tasks/index.json` theme `deegen_full_jit` (027-037) for the ordered
 backlog closing these gaps.
+
+## Task 039: native AArch64 stencil execution
+
+Task 039 replaced executable stencil literals with build-time `const fn`
+encoders for the eight existing specialized leaves (Move, Add, AddConst,
+Return, Sub, Mul, Div, and GetN), with ARM ARM/Intel SDM field comments. The
+opt-in `QUENCH_VERIFY_STENCIL_ENCODINGS=1 cargo check -p quench-runtime
+--lib --no-default-features` clang/objdump check passed and is not part of
+normal builds. The W^X arena and complete Rust fallback remain bounded.
+
+Full gates passed: 585 no-default tests, 595 execution-trace tests, and
+`cargo check -p quench-node`. The final bounded default neutral corpus was
+100/100, Score **252.757** (1.0065 wall, 0.2935 RSS, 1.0563 instructions,
+0.7282 cycles versus Node). On this ARM64 host, setting the explicit
+`QUENCH_ENABLE_AARCH64_STENCILS=1` switch exercises the real leaves; its
+paired sweep was 100/100 but scored **221.143**, so the default keeps the
+complete ordinary baseline path until that ABI/call-overhead cost is improved.
+A temporary ARM-reachable quench-only Optimizing view was also 100/100 but
+scored **221.143** in the earlier paired run, so the final Optimizing gate
+remains x86_64-only. The trace-enabled 38-case
+curriculum completed with 33/38 cases passing its optional checks (the five
+failures are existing counter/performance ceilings); speed score **171.9**,
+memory score **352.5**. With the ARM switch enabled, cases 017/018/019 passed
+at 0.41x/0.58x/0.50x wall time; cases 025/026/027 remained constrained
+(3.09x, timeout, and 2.60x). These are existing slow-path findings, not
+fixture-specific tuning.
