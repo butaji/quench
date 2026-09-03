@@ -195,6 +195,7 @@ mod tests {
                 "report",
                 "performance",
                 "support",
+                "punycode",
                 "dns",
                 "dgram-head",
                 "dgram",

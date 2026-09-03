@@ -876,6 +876,17 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     if spec == "vfs" {
         return Err(not_found(&spec));
     }
+    if matches!(spec.as_str(), "punycode" | "node:punycode") {
+        let global = quench_runtime::vm::current_global_object();
+        let module = execute::get_property(&global, "__quenchPunycode");
+        if matches!(module, Value::Object(_) | Value::ObjectAlias(_)) {
+            state
+                .borrow_mut()
+                .module_cache
+                .insert("punycode".into(), module.clone());
+            return Ok(module);
+        }
+    }
     // The Node test helpers are one host-owned resource.  Resolve every
     // spelling of the common entry point and tmpdir helper before filesystem
     // resolution; otherwise `common/index.js` loads a second JS copy whose
