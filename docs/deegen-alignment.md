@@ -23,7 +23,7 @@ optimizations below — not an optimizing JIT or deopt.
 | 4 | Type-check elimination algorithm 𝒜 (§5.1) | **Present** | `stencil_fact.rs` `BoxingFact`/`RegionKey::from_facts` over `Certainty::Proven/Guarded` vectors; `docs/copy-and-patch-jit.md` names this explicitly as mirroring 𝒜. |
 | 5 | JIT-side λi/λe as self-modifying-code (SMC) IC stub chain (§7.1) | **Absent** | Repatch is hole-patching of pre-rendered bytes in a bounded arena (`stencil_patch.rs`), not an SMC stub chain that grows/branches at runtime. |
 | 6 | Tag register optimization (§5.3) | **Absent** | No pinned register holding a large boxing constant for small-offset field access; `tagged_value.rs` embeds NaN-tagging constants as immediates. No `tag_register`/`TAG_REG` anywhere in the crate. |
-| 7 | Register pinning for VM state across dispatch (§6.1) | **Absent** | `vm_dispatch.rs`/`vm_runtime.rs` pass `CodeView`/`RegisterFile`/`VmContext` as ordinary parameters; no fixed-register calling convention, register allocation left to rustc/LLVM. |
+| 7 | Register pinning for VM state across dispatch (§6.1) | **Present (safe approximation)** | `vm_runtime.rs` `DispatchState` groups `CodeView`/`RegisterFile`/`VmContext`/tier owner behind one stable state pointer across the CPS chain. Gate-0 DWARF/sample + ARM64 disassembly measured dispatch stack-memory operations at 259/1030 (25.15%) before and 242/1006 (24.06%) after; `run_instruction` remained 16.42% vs 16.52%. Rust has no portable GHCcc equivalent, so this is deliberately not a fixed physical-register ABI or unsafe register hack. |
 | 8 | Bytecode quickening — literal opcode/instruction rewrite on IC hit (§6.2) | **Absent (misleading name)** | `quickening.rs` implements a side-table IC (item 3), not literal bytecode-stream mutation. No opcode/instruction write-back found anywhere in the file. The paper's quickening specifically replaces the instruction itself; this doesn't. |
 | 9 | Baseline JIT stencil granularity: one stencil per bytecode variant (§7) | **Diverges by design** | quench fuses multi-opcode **region** stencils instead (`docs/copy-and-patch-jit.md`: "this project's own extension beyond the paper"). Currently only a handful of hand-enumerated regions exist (Number Add+Return, one guarded property region, a two-region fallthrough — see `stencil_select.rs`), narrower in breadth than the paper's full per-bytecode coverage even though the fusion technique itself is a deliberate, documented extension. |
 | 10 | Polymorphic IC + IC inline slab in JIT (§7.1) | **Absent** | No SMC stub chain and no inline-slab-vs-outlined-stub distinction anywhere in `stencil_arena.rs`/`stencil_patch.rs`. |
@@ -46,11 +46,11 @@ document it as not the paper's (nonexistent) optimizing JIT.
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
   counting (#12), OSR-entry wiring and admission test (#13), and the shared
   slow-path CPS gateway (#3b).
-- **Real gaps, worth closing**: slow-path outlining/EnterSlowPath (#3b), tag
-  register optimization (#6), register pinning (#7), true bytecode quickening
+- **Real gaps, worth closing**: tag register optimization (#6), true bytecode quickening
   as instruction rewrite (#8), JIT-side SMC IC stub chain + inline slab
-  (#5/#10), hot-cold code splitting (#11), OSR-entry wiring verification
-  (#13), stencil region breadth (#9).
+  (#5/#10), hot-cold code splitting (#11), stencil region breadth (#9).
+- Register pinning is represented by the safe one-pointer dispatch-state
+  approximation above; a fixed-register ABI remains unavailable in stable Rust.
 - **Intentional, documented divergence, not a gap**: region-fused stencils
   instead of one-per-bytecode (#9's fusion *technique* itself) — keep as is,
   it's this project's own sanctioned extension.
