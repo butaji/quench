@@ -23,7 +23,6 @@ use crate::host::HostState;
 const TIMER_ID_PROP: &str = "\0quench:timer:id";
 /// Node's `TIMEOUT_MAX` (2^31 - 1); larger delays clamp to 1ms.
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
-const PROMISES_PRELUDE: &str = include_str!("timers_promises.js");
 thread_local! { static MOCK_TIMER_NOW: Cell<Option<u64>> = const { Cell::new(None) }; }
 
 pub fn set_mock_timer_now(value: Option<u64>) {
@@ -50,12 +49,16 @@ pub struct Timer {
     pub destroyed: Rc<quench_runtime::value::BindingCell>,
     pub referenced: bool,
     pub active: bool,
+    pub(crate) retired: bool,
     pub domain: Option<Value>,
+    pub(crate) order: u64,
 }
 
 pub struct TimerRegistry {
     pub next_id: u64,
+    pub(crate) next_order: u64,
     pub timers: HashMap<u64, Timer>,
+    pub mock_originals: Option<Vec<(Value, String, Value)>>,
 }
 
 impl Default for TimerRegistry {
@@ -68,19 +71,29 @@ impl TimerRegistry {
     pub fn new() -> Self {
         Self {
             next_id: 1,
+            next_order: 1,
             timers: HashMap::new(),
+            mock_originals: None,
         }
     }
 
-    fn allocate(&mut self) -> u64 {
+    fn allocate(&mut self) -> (u64, u64) {
         let id = self.next_id;
         self.next_id += 1;
-        id
+        let order = self.next_order;
+        self.next_order += 1;
+        (id, order)
     }
 }
 
 pub fn set_timeout(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     schedule(state, args, TimerKind::Timeout)
+}
+
+pub fn set_unref_timeout(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let timer = set_timeout(state, args)?;
+    method_unref(state, Some(&timer));
+    Ok(timer)
 }
 
 pub fn set_interval(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -97,7 +110,12 @@ fn schedule(
     kind: TimerKind,
 ) -> Result<Value, VmError> {
     let mut cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if !quench_runtime::is_callable(&cb) {
+    // Mock timers intentionally permit an omitted callback, matching Node's
+    // fake-clock surface (`setTimeout()` still returns a disposable handle).
+    // Real timers retain the ordinary ERR_INVALID_ARG_TYPE validation.
+    let mock_noop =
+        !quench_runtime::is_callable(&cb) && state.borrow().timers.mock_originals.is_some();
+    if !quench_runtime::is_callable(&cb) && !mock_noop {
         return Err(invalid_callback_error());
     }
     // Capture the JS async context at registration time. The wrapper restores
@@ -113,7 +131,7 @@ fn schedule(
                 Value::Builtin(quench_runtime::ops::Builtin::HostCapability(_))
             )
     );
-    if quench_runtime::is_callable(&capture) && !host_capability_callback {
+    if !mock_noop && quench_runtime::is_callable(&capture) && !host_capability_callback {
         let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
         cb = quench_runtime::execute::call(&capture, &Value::Undefined, &[cb, current])?;
     }
@@ -126,7 +144,7 @@ fn schedule(
             args.get(2..).unwrap_or(&[]).to_vec(),
         ),
     };
-    let id = state.borrow_mut().timers.allocate();
+    let (id, order) = state.borrow_mut().timers.allocate();
     let fire_at = monotonic_ms().saturating_add(delay);
     let destroyed = quench_runtime::value::BindingCell::new(Value::Boolean(false));
     let object = timer_object(id, &destroyed, &kind)?;
@@ -143,10 +161,35 @@ fn schedule(
     let global = quench_runtime::vm::current_global_object();
     let current = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
     let stores = quench_runtime::execute::get_property(&current, "__nodeAsyncStores");
+    let legacy_stores = quench_runtime::execute::get_property(&current, "__nodeAsyncStoresLegacy");
+    let legacy_stores = if matches!(legacy_stores, Value::Undefined) {
+        crate::modules::async_hooks::legacy_store_for_resource(
+            state,
+            crate::modules::async_hooks::current_resource_id(state),
+        )
+    } else {
+        legacy_stores
+    };
+    if !matches!(legacy_stores, Value::Undefined) {
+        let _ = quench_runtime::execute::set_property_in_place(
+            &object,
+            "__nodeAsyncStoresLegacy",
+            legacy_stores.clone(),
+        );
+    }
     let async_resource = if matches!(stores, Value::Undefined) {
         async_resource
     } else {
         quench_runtime::execute::set_property(async_resource, "__nodeAsyncStores", stores)
+    };
+    let async_resource = if matches!(legacy_stores, Value::Undefined) {
+        async_resource
+    } else {
+        quench_runtime::execute::set_property(
+            async_resource,
+            "__nodeAsyncStoresLegacy",
+            legacy_stores,
+        )
     };
     state.borrow_mut().timers.timers.insert(
         id,
@@ -161,7 +204,9 @@ fn schedule(
             destroyed,
             referenced: true,
             active: true,
+            retired: false,
             domain,
+            order,
         },
     );
     Ok(object)
@@ -182,7 +227,7 @@ fn timer_object(
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
         (
             "_destroyed".to_string(),
-            Value::BindingCell(Rc::clone(destroyed)),
+            Value::Boolean(false),
         ),
         (
             "constructor".to_string(),
@@ -245,6 +290,7 @@ fn clear_matching(
         let timer = state.borrow_mut().timers.timers.remove(&id);
         if let Some(timer) = timer {
             mark_destroyed(&timer);
+            clear_timer_metadata(&timer.object);
             crate::modules::async_hooks::resource_destroy(state, Some(&timer.async_resource), &[])?;
         }
     }
@@ -252,7 +298,32 @@ fn clear_matching(
 }
 
 pub(crate) fn mark_destroyed(timer: &Timer) {
-    *timer.destroyed.borrow_mut() = Value::Boolean(true);
+    set_destroyed(timer, true);
+}
+
+pub(crate) fn mark_reactivated(timer: &Timer) {
+    set_destroyed(timer, false);
+}
+
+fn set_destroyed(timer: &Timer, destroyed: bool) {
+    *timer.destroyed.borrow_mut() = Value::Boolean(destroyed);
+    let _ = quench_runtime::execute::set_property_in_place(
+        &timer.object,
+        "_destroyed",
+        Value::Boolean(destroyed),
+    );
+}
+
+pub(crate) fn clear_timer_metadata(object: &Value) {
+    for key in [
+        "__nodeAsyncStoresLegacy",
+        "_onTimeout",
+        "_timerArgs",
+        "_onImmediate",
+        "_argv",
+    ] {
+        let _ = quench_runtime::execute::set_property_in_place(object, key, Value::Undefined);
+    }
 }
 
 fn timer_id_of(receiver: Option<&Value>) -> Option<u64> {
@@ -297,10 +368,15 @@ pub fn method_close(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) ->
 
 pub fn method_refresh(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Value {
     if let Some(id) = timer_id_of(receiver) {
-        if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+        let mut timers = state.borrow_mut();
+        let order = timers.timers.next_order;
+        timers.timers.next_order = order.saturating_add(1);
+        if let Some(timer) = timers.timers.timers.get_mut(&id) {
             timer.fire_at = monotonic_ms().saturating_add(timer.period.max(1));
+            timer.order = order;
             timer.active = true;
-            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+            timer.retired = false;
+            mark_reactivated(timer);
         }
     }
     receiver.cloned().unwrap_or(Value::Undefined)
@@ -451,15 +527,7 @@ pub fn build() -> Vec<(String, Value)> {
 /// Build the Promise-returning timer namespace from the same timer
 /// capabilities as the callback API.
 pub fn build_promises() -> Result<Value, VmError> {
-    let program = quench_runtime::reduce::reduce_global_script_source(PROMISES_PRELUDE)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
-    let mut registers = quench_runtime::register_file::RegisterFile::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
-    })?;
-    let timers = crate::host::namespace_object_from_pairs(build());
-    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[timers])
+    crate::modules::timers_promises::build()
 }
 
 /// Build the callback namespace with Node's promisify identity links.

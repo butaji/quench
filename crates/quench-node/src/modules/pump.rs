@@ -605,7 +605,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             timer.retired = false;
             timer.referenced = true;
             timer.fire_at = now.saturating_add(timer.period.max(1));
-            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+            super::timers::mark_reactivated(timer);
         }
     }
     if !destroy && result.is_ok() {
