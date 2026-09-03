@@ -207,6 +207,7 @@ impl NodeRunner {
             quench_node::polyfills::bootstrap::lookup("globals-extra").unwrap_or("");
         let report_surface =
             quench_node::polyfills::bootstrap::lookup("report").unwrap_or("");
+        let punycode_surface = quench_node::polyfills::bootstrap::lookup("punycode").unwrap_or("");
         let support_surface = quench_node::polyfills::bootstrap::lookup("support").unwrap_or("");
         let async_resource_surface =
             quench_node::polyfills::bootstrap::lookup("async-resource").unwrap_or("");
@@ -235,6 +236,7 @@ impl NodeRunner {
         // and identity checks observe the same host surface as `globalThis`.
         let source =
             format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+        let source = format!("{punycode_surface}\n{source}");
         self.host
             .state()
             .borrow_mut()
