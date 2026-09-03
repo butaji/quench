@@ -453,7 +453,15 @@ pub fn res_write(
         Some(Value::Number(value)) if value.is_finite() && value >= 0.0 => value,
         _ => 0.0,
     };
-    let writable_length = current_length + bytes.len() as f64;
+    // For an implicit chunked response, the writable queue counts the first
+    // chunk's framing bytes as well as its payload. Empty writes enqueue no
+    // chunk and therefore leave the length unchanged.
+    let framing = if current_length == 0.0 && !bytes.is_empty() {
+        5.0
+    } else {
+        0.0
+    };
+    let writable_length = current_length + bytes.len() as f64 + framing;
     let writable_ok = writable_length <= high_water_mark;
     if let Some(receiver) = receiver {
         execute::set_property_in_place(
@@ -764,7 +772,11 @@ pub fn res_end(
         execute::set_property_in_place(response, "finished", Value::Boolean(true));
         execute::set_property_in_place(response, "writableEnded", Value::Boolean(true));
         execute::set_property_in_place(response, "destroyed", Value::Boolean(true));
-        net::emit(state, response, "finish", Vec::new())?;
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((response.clone(), "finish".into(), Vec::new()));
         // Node's ServerResponse closes as a writable stream completes; this
         // is independent of whether its HTTP socket is retained by keep-alive.
         if !matches!(
@@ -772,7 +784,11 @@ pub fn res_end(
             Value::Boolean(true)
         ) {
             execute::set_property_in_place(response, RESPONSE_CLOSE_PENDING_PROP, Value::Boolean(true));
-            net::emit(state, response, "close", Vec::new())?;
+            state
+                .borrow_mut()
+                .net
+                .pending_events
+                .push((response.clone(), "close".into(), Vec::new()));
         }
     }
     if !keep_alive {
