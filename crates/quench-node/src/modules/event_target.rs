@@ -38,10 +38,18 @@ pub struct EventTarget {
     pub warned: bool,
     /// Resource kind used for Node's observable warning label.
     pub message_port: bool,
+    pub message_peer: Option<Value>,
+    pub message_closed: bool,
+    pub message_refed: bool,
+    /// Messages posted before a listener is attached. `receiveMessageOnPort`
+    /// consumes this queue synchronously; the event-loop delivery callback
+    /// drains one entry when a listener is present.
+    pub message_queue: Vec<(Value, Vec<Value>)>,
 }
 
 thread_local! {
     static NODE_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static MESSAGE_PORT_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 impl EventTarget {
@@ -94,8 +102,40 @@ fn target_id(receiver: &Value) -> Option<TargetId> {
     }
 }
 
+/// Consume one queued message for `receiveMessageOnPort`. Keeping this at the
+/// EventTarget boundary means worker_threads does not duplicate port state.
+pub(crate) fn take_message(state: &Rc<RefCell<HostState>>, port: &Value) -> Option<Value> {
+    let id = target_id(port)?;
+    let target = state.borrow().targets.get(id)?;
+    let mut target = target.borrow_mut();
+    if !target.message_port || target.message_queue.is_empty() {
+        return None;
+    }
+    Some(target.message_queue.remove(0).0)
+}
+
 pub(crate) fn target_identity(receiver: &Value) -> Option<u64> {
     target_id(receiver).map(|id| id.0)
+}
+
+pub(crate) fn is_message_port(state: &Rc<RefCell<HostState>>, value: &Value) -> bool {
+    target_id(value)
+        .and_then(|id| state.borrow().targets.get(id))
+        .is_some_and(|target| target.borrow().message_port)
+}
+
+/// Number of listeners of a given type retained by a host EventTarget.
+/// AbortSignal dependency pruning uses this to avoid retaining composites that
+/// no longer have an observer, matching Node's weak dependent-signal set.
+pub(crate) fn listener_count_for(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+) -> usize {
+    target_id(receiver)
+        .and_then(|id| state.borrow().targets.get(id))
+        .map(|target| target.borrow().listeners_of(event).len())
+        .unwrap_or(0)
 }
 
 fn is_abort_signal(value: &Value) -> bool {
@@ -158,12 +198,15 @@ fn allocate_target(state: &Rc<RefCell<HostState>>, node: bool) -> Result<Value, 
 }
 
 pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    let port1 = allocate_target(state, false)?;
-    let port2 = allocate_target(state, false)?;
-    for port in [&port1, &port2] {
+    let port1 = new_message_port(state)?;
+    let port2 = new_message_port(state)?;
+    for (port, peer) in [(&port1, port2.clone()), (&port2, port1.clone())] {
         if let Some(id) = target_id(port) {
             if let Some(target) = state.borrow().targets.get(id) {
-                target.borrow_mut().message_port = true;
+                let mut target = target.borrow_mut();
+                target.message_peer = Some(peer);
+                target.message_refed = false;
+                target.message_closed = false;
             }
         }
     }
@@ -171,6 +214,327 @@ pub fn new_message_channel(state: &Rc<RefCell<HostState>>) -> Result<Value, VmEr
         ("port1".into(), port1),
         ("port2".into(), port2),
     ]))
+}
+
+/// Allocate one detached `MessagePort`. The public `MessagePort` constructor
+/// and `MessageChannel` both lower to this same host representation.
+pub fn new_message_port(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    let mut port = allocate_target(state, false)?;
+    if let Some(id) = target_id(&port) {
+        if let Some(target) = state.borrow().targets.get(id) {
+            let mut target = target.borrow_mut();
+            target.message_port = true;
+            target.message_refed = false;
+            target.message_closed = false;
+        }
+    }
+    for (name, cap) in [
+        ("postMessage", crate::registry::SPEC_MESSAGE_PORT_POST),
+        ("close", crate::registry::SPEC_MESSAGE_PORT_CLOSE),
+        ("start", crate::registry::SPEC_MESSAGE_PORT_START),
+        ("ref", crate::registry::SPEC_MESSAGE_PORT_REF),
+        ("unref", crate::registry::SPEC_MESSAGE_PORT_UNREF),
+        ("hasRef", crate::registry::SPEC_MESSAGE_PORT_HAS_REF),
+        ("addEventListener", crate::registry::SPEC_TARGET_ADD),
+        ("removeEventListener", crate::registry::SPEC_TARGET_REMOVE),
+        ("dispatchEvent", crate::registry::SPEC_TARGET_DISPATCH),
+    ] {
+        execute::set_property_in_place(&port, name, crate::host::capability(cap));
+    }
+    crate::modules::events::initialize_emitter(state, &port)?;
+    if let Ok(prototype) = crate::modules::events::emitter_prototype() {
+        for name in ["on", "addListener", "once", "emit", "removeListener", "off"] {
+            let value = execute::get_property(&prototype, name);
+            execute::set_property_in_place(&port, name, value);
+        }
+    }
+    if let Some(prototype) = MESSAGE_PORT_PROTOTYPE.with(|slot| slot.borrow().clone()) {
+        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+            port = execute::set_prototype_of(&port, &prototype)?;
+        }
+    }
+    Ok(port)
+}
+
+pub(crate) fn set_message_port_prototype(prototype: Value) {
+    MESSAGE_PORT_PROTOTYPE.with(|slot| *slot.borrow_mut() = Some(prototype));
+}
+
+pub fn message_port_post_message(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(invalid_this());
+    };
+    let Some(id) = target_id(receiver) else {
+        return Err(invalid_this());
+    };
+    let Some(target) = state.borrow().targets.get(id) else {
+        return Err(invalid_this());
+    };
+    let (peer, closed) = {
+        let target = target.borrow();
+        (target.message_peer.clone(), target.message_closed)
+    };
+    if closed {
+        return Ok(Value::Undefined);
+    }
+    let Some(peer) = peer else {
+        return Ok(Value::Undefined);
+    };
+    let posted = args.first().cloned().unwrap_or(Value::Undefined);
+    let data = crate::modules::clone::deep_clone(posted.clone());
+    let raw_transfer = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let transfer = if matches!(raw_transfer, Value::Object(_) | Value::ObjectAlias(_)) {
+        let inner = execute::get_property(&raw_transfer, "transfer");
+        if matches!(inner, Value::Null) {
+            return Err(transfer_type_error(
+                "Optional options.transfer argument must be an iterable",
+            ));
+        }
+        inner
+    } else {
+        raw_transfer.clone()
+    };
+    let transfer_items = collect_transfer(&transfer)?;
+    let transferred_ports = transfer_items
+        .iter()
+        .filter(|value| is_message_port(state, value))
+        .cloned()
+        .collect::<Vec<_>>();
+    for item in &transfer_items {
+        if let Value::ArrayBuffer(buffer) = item {
+            if buffer.untransferable {
+                return Err(quench_runtime::execute::VmError::Thrown(
+                    quench_runtime::builtins::dom_exception(
+                        "Cannot transfer an object that is not transferable",
+                        "DataCloneError",
+                    ),
+                ));
+            }
+            buffer.detach();
+        }
+    }
+    if contains_uncloneable(&posted) {
+        return Err(quench_runtime::execute::VmError::Thrown(
+            quench_runtime::builtins::dom_exception(
+                "function foo() {} could not be cloned.",
+                "DataCloneError",
+            ),
+        ));
+    }
+    if let Some(target) = state.borrow().targets.get(id) {
+        if let Some(peer_id) = target.borrow().message_peer.as_ref().and_then(target_id) {
+            if let Some(peer_target) = state.borrow().targets.get(peer_id) {
+                peer_target
+                    .borrow_mut()
+                    .message_queue
+                    .push((data.clone(), transferred_ports.clone()));
+            }
+        }
+    }
+    state.borrow_mut().event_loop.queue_microtask(
+        crate::host::capability(crate::registry::SPEC_MESSAGE_PORT_DELIVER),
+        vec![peer, data],
+    );
+    Ok(Value::Undefined)
+}
+
+fn collect_transfer(value: &Value) -> Result<Vec<Value>, VmError> {
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Ok(Vec::new());
+    }
+    if matches!(
+        value,
+        Value::String(_) | Value::Number(_) | Value::Boolean(_)
+    ) {
+        return Err(transfer_type_error(
+            "Optional transferList argument must be an iterable",
+        ));
+    }
+    if let Value::Array(_) = value {
+        let length = match execute::get_property(value, "length") {
+            Value::Number(number) if number.is_finite() && number >= 0.0 => number as usize,
+            _ => 0,
+        };
+        return Ok((0..length)
+            .map(|index| execute::get_property(value, &index.to_string()))
+            .collect());
+    }
+    let iterator = execute::get_property(value, "Symbol.iterator");
+    if !quench_runtime::is_callable(&iterator) {
+        return Err(quench_runtime::execute::VmError::Thrown(host_api::object(
+            vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("Optional transferList argument must be an iterable".into()),
+                ),
+            ],
+        )));
+    }
+    let iter = execute::call(&iterator, value, &[])?;
+    let next = execute::get_property(&iter, "next");
+    if !quench_runtime::is_callable(&next) {
+        return Err(quench_runtime::execute::VmError::Thrown(host_api::object(
+            vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("Optional transferList argument must be an iterable".into()),
+                ),
+            ],
+        )));
+    }
+    let mut items = Vec::new();
+    for _ in 0..1024 {
+        let step = execute::call(&next, &iter, &[])?;
+        if matches!(execute::get_property(&step, "done"), Value::Boolean(true)) {
+            return Ok(items);
+        }
+        items.push(execute::get_property(&step, "value"));
+    }
+    Ok(items)
+}
+
+fn transfer_type_error(message: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
+}
+
+fn contains_uncloneable(value: &Value) -> bool {
+    quench_runtime::is_callable(value)
+}
+
+pub fn message_port_deliver(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(peer) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(id) = target_id(peer) else {
+        return Ok(Value::Undefined);
+    };
+    let closed = state
+        .borrow()
+        .targets
+        .get(id)
+        .is_some_and(|target| target.borrow().message_closed);
+    if closed {
+        return Ok(Value::Undefined);
+    }
+    let Some(target) = state.borrow().targets.get(id) else {
+        return Ok(Value::Undefined);
+    };
+    let (data, ports) = {
+        let mut target = target.borrow_mut();
+        let Some((data, ports)) = target.message_queue.first().cloned() else {
+            return Ok(Value::Undefined);
+        };
+        if target
+            .events
+            .iter()
+            .all(|(_, listeners)| listeners.is_empty())
+            && !quench_runtime::is_callable(&execute::get_property(peer, "onmessage"))
+        {
+            return Ok(Value::Undefined);
+        }
+        target.message_queue.remove(0);
+        (data, ports)
+    };
+    let event = host_api::object(vec![
+        ("type".into(), Value::String("message".into())),
+        ("data".into(), data.clone()),
+        ("target".into(), peer.clone()),
+        ("currentTarget".into(), peer.clone()),
+        ("ports".into(), host_api::array(ports)),
+    ]);
+    let _ = dispatch_event(state, Some(peer), std::slice::from_ref(&event))?;
+    let _ = crate::modules::events::method_emit(
+        state,
+        Some(peer),
+        &[Value::String("message".into()), data],
+    )?;
+    let onmessage = execute::get_property(peer, "onmessage");
+    if quench_runtime::is_callable(&onmessage) {
+        execute::call(&onmessage, peer, &[event])?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn message_port_close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = receiver.and_then(target_id) else {
+        return Err(invalid_this());
+    };
+    if let Some(target) = state.borrow().targets.get(id) {
+        target.borrow_mut().message_closed = true;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn message_port_start(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    receiver.cloned().ok_or_else(invalid_this)
+}
+
+pub fn message_port_ref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = receiver.and_then(target_id) else {
+        return Err(invalid_this());
+    };
+    if let Some(target) = state.borrow().targets.get(id) {
+        target.borrow_mut().message_refed = true;
+    }
+    receiver.cloned().ok_or_else(invalid_this)
+}
+
+pub fn message_port_unref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = receiver.and_then(target_id) else {
+        return Err(invalid_this());
+    };
+    if let Some(target) = state.borrow().targets.get(id) {
+        target.borrow_mut().message_refed = false;
+    }
+    receiver.cloned().ok_or_else(invalid_this)
+}
+
+pub fn message_port_has_ref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = receiver.and_then(target_id) else {
+        return Err(invalid_this());
+    };
+    let refed = state
+        .borrow()
+        .targets
+        .get(id)
+        .is_some_and(|target| target.borrow().message_refed);
+    Ok(Value::Boolean(refed))
 }
 
 pub(crate) fn set_node_prototype(prototype: Value) {
@@ -300,6 +664,12 @@ fn node_register(
             limit,
         );
     }
+    if inserted && event == "abort" && is_abort_signal(receiver.expect("validated receiver")) {
+        crate::dispatch_handlers::activate_abort_composite(
+            state,
+            receiver.expect("validated receiver"),
+        );
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -314,14 +684,10 @@ fn warn_max_listeners(
     limit: usize,
 ) {
     let target_kind = target_id(target).and_then(|id| {
-        state
-            .borrow()
-            .targets
-            .get(id)
-            .map(|target| {
-                let target = target.borrow();
-                (target.node, target.message_port)
-            })
+        state.borrow().targets.get(id).map(|target| {
+            let target = target.borrow();
+            (target.node, target.message_port)
+        })
     });
     let label = if is_abort_signal(target) {
         "[AbortSignal]"
@@ -894,6 +1260,12 @@ pub fn add_event_listener(
             limit,
         );
     }
+    if inserted && event == "abort" && is_abort_signal(receiver.expect("validated receiver")) {
+        crate::dispatch_handlers::activate_abort_composite(
+            state,
+            receiver.expect("validated receiver"),
+        );
+    }
     Ok(Value::Undefined)
 }
 
@@ -1298,10 +1670,22 @@ pub fn listener_count(
         _ => String::new(),
     };
     if let Some(callbacks) = emitter_callbacks(state, &target, &event) {
-        return Ok(Value::Number(callbacks.len() as f64));
+        let count = args.get(2).map_or(callbacks.len(), |callback| {
+            callbacks
+                .iter()
+                .filter(|listener| execute::same_value(listener, callback))
+                .count()
+        });
+        return Ok(Value::Number(count as f64));
     }
     if let Some(callbacks) = target_callbacks(state, &target, &event) {
-        return Ok(Value::Number(callbacks.len() as f64));
+        let count = args.get(2).map_or(callbacks.len(), |callback| {
+            callbacks
+                .iter()
+                .filter(|listener| execute::same_value(listener, callback))
+                .count()
+        });
+        return Ok(Value::Number(count as f64));
     }
     Err(invalid_emitter_error(&target))
 }
