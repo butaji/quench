@@ -11,9 +11,10 @@ The design adopts one technique from Deegen (arXiv:2411.11469) — Copy-and-Patc
 code generation (Xu and Kjolstad, 2021) as used for Deegen's baseline JIT tier
 (§7) — without adopting the rest of Deegen's two-tier JIT-capable VM: no
 optimizing JIT, no profiling-triggered tier-up, no OSR-entry, no
-deoptimization protocol. Deegen's baseline JIT is, in its own words, designed
-to "compile fast at the cost of the quality of the generated JIT code" (§7.1);
-this tier goes further and drops the "compile" step almost entirely by
+deoptimization protocol. Deegen's own baseline JIT design goal is stated as
+"to compile as quickly as possible" with code quality only "a secondary
+priority" (§7.1); this tier goes further and drops the "compile" step almost
+entirely by
 working from a build-time-derived, pre-rendered stencil catalog rather than a
 runtime code generator.
 
@@ -32,8 +33,9 @@ runtime code generator.
   never a second copy of that fact.
 - `BoxingFact` — a declared description of the existing `JsValue` tagged
   layout (task 017) so type-check strength reduction has one source of
-  truth, mirroring the Deegen paper's boxing-scheme description APIs (§5.1)
-  without renegotiating the boxing scheme itself.
+  truth, mirroring the Deegen paper's boxing-scheme description APIs
+  (§4.2/Appendix A.2, consumed by §5.1's type-based optimization) without
+  renegotiating the boxing scheme itself.
 
 ## Design (mirrors the paper's techniques, not its scope)
 
@@ -86,9 +88,10 @@ See `tasks/021.md`-`tasks/026.md` for the implementation breakdown.
 
 ## Current implementation evidence
 
-The build script emits a fused Number Add+Return x86-64 fragment and a property
-region with a typed `Ptr64` hole. Each generated key is derived from that
-region's generated opcode slice, so the eligibility facts have one source.
+The build script emits a fused Number Add+Return x86-64 fragment, a guarded
+property region with a typed `Ptr64` hole, and a two-region `Rel32`
+fallthrough variant. Each generated key is derived from that region's
+generated opcode slice, so the eligibility facts have one source.
 Runtime selection is a single `RegionKey` lookup; rendering uses the bounded RW
 arena, copies and patches before the one-way RX transition, and invokes the
 installed Add fragment through the arena-owned ABI entry. Invalid keys, stale

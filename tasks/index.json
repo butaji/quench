@@ -8,9 +8,9 @@
     "Benchmark fixtures and workload-specific kernels are not production VM semantics",
     "Every fact is Proven, Guarded, or Unknown and every fast path has complete fallback semantics",
     "Generated code is derived from one declaration; handwritten code is limited to irreducible behavior",
-    "Every task belongs to exactly one theme: deegen_codegen, quickjs_perf, benchmark_integrity, or copy_patch_jit; no benchmark-targeted optimization task is added to this file",
-    "Performance measurements are evidence gates only. They do not create workload-specific runtime paths or optimization targets.",
-    "copy_patch_jit tasks (021-025) are the sole exception to interpreter-first/no-JIT and only begin after correctness/perf gates (011), dispatch groundwork (016, 019), and callee-directed tail dispatch (026) land; every stencil path must have a complete ordinary-interpreter fallback. See docs/copy-and-patch-jit.md."
+    "Every task belongs to exactly one theme; deegen_codegen, quickjs_perf, benchmark_integrity, and copy_patch_jit are the completed original plan's themes and may gain new themes for follow-on optimization work",
+    "Performance measurements are evidence: any optimization admitted here must generalize to any JavaScript program with the same runtime shape, not be sized to one fixture's numbers (see docs/benchmark-integrity.md)",
+    "copy_patch_jit tasks (021-025) were the sole exception to interpreter-first/no-JIT for the completed original plan; every stencil path must have a complete ordinary-interpreter fallback. See docs/copy-and-patch-jit.md."
   ],
   "implementation_state": {
     "completed_slices": [
@@ -32,13 +32,16 @@
       "017: fixed-width dynamic JsValue and one-word execute TaggedValue/register/GC boundary tests",
       "018: hashed Shape/Atom lookup, memoized transitions, and neutral object-heavy evidence",
       "019: every generated catalog handler returns explicit DispatchTransition next-pc/completion",
-      "019: explicit generated dispatch transitions with complete ordinary fallback"
+      "019: explicit generated dispatch transitions with complete ordinary fallback",
+      "021: canonical region fact data shapes, full-sequence keys, and macro-derived boxing facts",
+      "022-025: build-time catalog, table selection, bounded arena/patch path, lifecycle, and memo fallback integration",
+      "026: callee-directed continuation dispatch with a bounded safepoint shim"
     ],
-    "remaining_slices": ["026", "021", "022", "023", "024", "025"]
+    "remaining_slices": []
   },
   "themes": {
     "deegen_codegen": {
-      "goal": "One vm_op! fact declaration mechanically generates every VM view: IDs, storage, decoders, the ordinary interpreter, and bounded guarded quickening/inline-cache state (Deegen's 'one operation description produces the VM views' principle, no JIT).",
+      "goal": "One vm_op! fact declaration mechanically generates every VM view: IDs, storage, decoders, the ordinary interpreter, and bounded guarded quickening/inline-cache state, following Deegen's single-source-of-truth principle of generating a VM's tiers from one bytecode semantics description (arXiv:2411.11469, abstract, §5.1) — without adopting Deegen's own JIT tiers.",
       "plan": [
         "001",
         "003",
@@ -64,7 +67,7 @@
       ]
     },
     "benchmark_integrity": {
-      "goal": "Make workload-specific and fixture-shaped execution paths structurally impossible: remove existing bypasses, gate the architecture mechanically, require neutral correctness/performance evidence, and keep documentation free of contradictory instructions. Only general-purpose, fact-guarded kernels are admitted.",
+      "goal": "Keep benchmark measurement code outside runtime semantics.",
       "plan": [
         "002",
         "010",
@@ -79,7 +82,8 @@
         "022",
         "023",
         "024",
-        "025"
+        "025",
+        "026"
       ]
     }
   },
