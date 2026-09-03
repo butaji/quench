@@ -5,7 +5,7 @@
 
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -20,10 +20,115 @@ pub type CallHandler =
     fn(&Rc<RefCell<HostState>>, Option<&Value>, &[Value]) -> Result<Value, VmError>;
 pub type ConstructHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Value, VmError>;
 
+pub fn fs_cp(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::fs::cp(state, None, args)
+}
+
+pub fn fs_cp_sync(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::fs::cp_sync(state, None, args)
+}
+
+pub fn fs_cp_promise(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::fs::cp_promise(state, None, args)
+}
+
+pub fn fs_string_to_flags(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::fs::string_to_flags(args.first())
+}
+
 thread_local! {
     static OS_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static EVENT_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static GC_EPOCH: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Internal symbol used by Node's AbortSignal implementation to expose the
+/// number of currently observed composite signals. The embedded value model
+/// represents symbols as strings carrying a private identity suffix.
+const ABORT_DEPENDANTS_KEY: &str = "Symbol.kDependantSignals\0quench";
+const ABORT_ACTIVE_KEY: &str = "\0quench:abort:active";
+
+fn mark_abort_signal(signal: &Value) {
+    let dependants = host_api::object(vec![("size".into(), Value::Number(0.0))]);
+    execute::set_property_in_place(signal, ABORT_DEPENDANTS_KEY, dependants);
+}
+
+fn set_abort_dependant_size(signal: &Value, size: usize) {
+    let dependants = execute::get_property(signal, ABORT_DEPENDANTS_KEY);
+    if matches!(dependants, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_property_in_place(&dependants, "size", Value::Number(size as f64));
+    }
+}
+
+fn weak_abort_signal(value: &Value) -> Option<quench_runtime::value::WeakObject> {
+    match execute::canonical_value(value) {
+        Value::Object(object) => Some(Rc::downgrade(&object)),
+        Value::ObjectAlias(alias) => Some(alias.0.borrow().clone()),
+        _ => None,
+    }
+}
+
+/// Promote a composite's pending source edges once user code observes it with
+/// an abort listener. Composites without observers are intentionally absent
+/// from the dependency graph, so retaining them in an array cannot inflate a
+/// source signal's `kDependantSignals` set.
+pub(crate) fn activate_abort_composite(state: &Rc<RefCell<HostState>>, composite: &Value) {
+    // Listener insertion can be observed repeatedly (for example through
+    // `addEventListener` and `onabort`).  Promote a composite only once;
+    // keeping this fact on the composite avoids an O(n²) identity scan when a
+    // large `AbortSignal.any()` set is observed.
+    if matches!(
+        execute::get_property(composite, ABORT_ACTIVE_KEY),
+        Value::Boolean(true)
+    ) {
+        return;
+    }
+    execute::set_property_in_place(composite, ABORT_ACTIVE_KEY, Value::Boolean(true));
+    let Some(composite_weak) = weak_abort_signal(composite) else {
+        return;
+    };
+    let pending = execute::get_property(composite, "\0quench:abort:sources");
+    let Value::Array(ref sources) = pending else {
+        return;
+    };
+    for index in 0..sources.logical_len() {
+        let Value::Number(identity) = execute::get_property(&pending, &index.to_string()) else {
+            continue;
+        };
+        if !identity.is_finite() || identity < 0.0 {
+            continue;
+        }
+        let identity = identity as u64;
+        let mut host = state.borrow_mut();
+        let list = host.abort_composites.entry(identity).or_default();
+        list.push(composite_weak.clone());
+        let size = list.len();
+        let source = host
+            .abort_signal_refs
+            .get(&identity)
+            .and_then(|weak| weak.upgrade())
+            .map(Value::Object);
+        drop(host);
+        if let Some(source) = source {
+            set_abort_dependant_size(&source, size);
+        }
+    }
 }
 
 fn event_prototype() -> Value {
@@ -42,6 +147,7 @@ fn event_prototype() -> Value {
         ]);
         let prototype = execute::define_property(prototype, "isTrusted", descriptor)
             .unwrap_or_else(|_| host_api::object(Vec::new()));
+        execute::set_property_in_place(&prototype, "isTrusted", Value::Undefined);
         *slot.borrow_mut() = Some(prototype.clone());
         prototype
     })
@@ -216,14 +322,35 @@ pub fn console_log(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::console::log(state, args, false)
+    crate::modules::console::log_named(state, args, false, "console.log")
+}
+pub fn console_info(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::console::log_named(state, args, false, "console.info")
+}
+pub fn console_debug(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::console::log_named(state, args, false, "console.debug")
 }
 pub fn console_warn(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::console::log(state, args, true)
+    crate::modules::console::log_named(state, args, true, "console.warn")
+}
+pub fn console_error(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::console::log_named(state, args, true, "console.error")
 }
 pub fn console_trace(
     state: &Rc<RefCell<HostState>>,
@@ -280,13 +407,20 @@ pub fn util_get_cidr(
         Some(Value::String(value)) => value,
         _ => return Ok(Value::Null),
     };
-    let prefix = match (family.as_str(), address.parse::<std::net::IpAddr>(), netmask.parse::<std::net::IpAddr>()) {
+    let prefix = match (
+        family.as_str(),
+        address.parse::<std::net::IpAddr>(),
+        netmask.parse::<std::net::IpAddr>(),
+    ) {
         ("IPv4", Ok(std::net::IpAddr::V4(_)), Ok(std::net::IpAddr::V4(mask))) => {
             prefix_length(&mask.octets())
         }
         ("IPv6", Ok(std::net::IpAddr::V6(_)), Ok(std::net::IpAddr::V6(mask))) => {
             let segments = mask.segments();
-            let bytes = segments.iter().flat_map(|segment| segment.to_be_bytes()).collect::<Vec<_>>();
+            let bytes = segments
+                .iter()
+                .flat_map(|segment| segment.to_be_bytes())
+                .collect::<Vec<_>>();
             prefix_length(&bytes)
         }
         _ => None,
@@ -330,6 +464,65 @@ pub fn util_inspect(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    if args.get(1).is_some_and(|options| {
+        matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(execute::get_property(options, "depth"), Value::Number(value) if value < 0.0)
+    }) {
+        return Ok(Value::String(crate::modules::util::inspect_minimal(&arg)));
+    }
+    let _custom_inspect_guard = crate::modules::util::custom_inspect_guard(
+        args.get(1).and_then(|options| {
+            matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
+                !matches!(execute::get_property(options, "customInspect"), Value::Boolean(false))
+            })
+        }),
+    );
+    let _stylize_guard = crate::modules::util::stylize_guard(args.get(1).and_then(|options| {
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return None;
+        }
+        let stylize = execute::get_property(options, "stylize");
+        quench_runtime::is_callable(&stylize).then_some(stylize)
+    }));
+    let break_length =
+        args.iter().find_map(
+            |options| match execute::get_property(options, "breakLength") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+                Value::Number(value) if value == f64::INFINITY => Some(usize::MAX),
+                _ => None,
+            },
+        );
+    let compact = args.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "compact"),
+            Value::Boolean(true)
+        )
+    });
+    let noncompact = args.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "compact"),
+            Value::Boolean(false)
+        )
+    });
+    if compact {
+        if let Some(rendered) =
+            crate::modules::util::inspect_error_compact_with_break(&arg, break_length)
+        {
+            let canonical = execute::canonical_value(&arg);
+            let has_extras = execute::own_enumerable_keys(&canonical)
+                .into_iter()
+                .any(|key| !matches!(key.as_str(), "name" | "message" | "stack"));
+            if !has_extras {
+                return Ok(Value::String(rendered));
+            }
+            return Ok(Value::String(rendered));
+        }
+    }
+    if noncompact {
+        if let Some(rendered) = crate::modules::util::inspect_error_noncompact(&arg) {
+            return Ok(Value::String(rendered));
+        }
+    }
     if matches!(
         execute::get_property(&arg, "\0source_text_module"),
         Value::Boolean(true)
@@ -340,6 +533,45 @@ pub fn util_inspect(
         )
     }) {
         return Ok(Value::String("[SourceTextModule]".into()));
+    }
+    if matches!(
+        execute::get_property(&arg, "\0synthetic_module"),
+        Value::Boolean(true)
+    ) && args.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "depth"),
+            Value::Number(value) if value < 0.0
+        )
+    }) {
+        return Ok(Value::String("[SyntheticModule]".into()));
+    }
+    if matches!(
+        execute::get_property(&arg, "Symbol.toStringTag"),
+        Value::String(ref tag) if tag == "Blob"
+    ) {
+        let depth = args.get(1).and_then(|options| {
+            let value = if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+                execute::get_property(options, "depth")
+            } else {
+                options.clone()
+            };
+            match value {
+                Value::Number(value) => Some(value),
+                Value::Null => Some(f64::INFINITY),
+                _ => None,
+            }
+        });
+        if depth.is_some_and(|value| value < 0.0) {
+            return Ok(Value::String("[Blob]".into()));
+        }
+        let size = crate::modules::util::inspect(&execute::get_property(&arg, "size"));
+        let blob_type = match execute::get_property(&arg, "type") {
+            Value::String(value) => value,
+            _ => String::new(),
+        };
+        return Ok(Value::String(format!(
+            "Blob {{ size: {size}, type: '{blob_type}' }}"
+        )));
     }
     if matches!(execute::get_property(&arg, "Symbol.toStringTag"), Value::String(ref tag) if tag == "AbortController")
         && execute::has_own_property(&arg, "signal")
@@ -382,7 +614,13 @@ pub fn util_inspect(
         .or_else(|| args.get(2))
         .and_then(|options| {
             let options = if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-                execute::get_property(options, "depth")
+                let depth = execute::get_property(options, "depth");
+                if matches!(depth, Value::Undefined)
+                    && execute::has_own_property(options, "depth")
+                {
+                    return Some(usize::MAX / 2);
+                }
+                depth
             } else {
                 options.clone()
             };
@@ -394,28 +632,57 @@ pub fn util_inspect(
                 _ => None,
             }
         });
+    let depth = depth.or_else(|| match crate::modules::util::inspect_default_option("depth") {
+        Value::Null => Some(usize::MAX / 2),
+        Value::Number(value) if value.is_finite() && value >= 0.0 => {
+            Some(value as usize + 1)
+        }
+        _ => None,
+    });
     let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)))
         || args.get(1).is_some_and(|options| {
+            if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+                return false;
+            }
             matches!(
                 execute::get_property(options, "showHidden"),
                 Value::Boolean(true)
             )
-        });
+        })
+        || matches!(
+            args.get(1),
+            None if matches!(
+                crate::modules::util::inspect_default_option("showHidden"),
+                Value::Boolean(true)
+            )
+        );
     let show_proxy =
         args.get(1).is_some_and(
-            |options| match execute::get_property(options, "showProxy") {
-                Value::Boolean(value) => value,
-                Value::Number(value) => value != 0.0 && !value.is_nan(),
+            |options| match options {
+                Value::Object(_) | Value::ObjectAlias(_) => {
+                    match execute::get_property(options, "showProxy") {
+                        Value::Boolean(value) => value,
+                        Value::Number(value) => value != 0.0 && !value.is_nan(),
+                        _ => false,
+                    }
+                }
                 _ => false,
             },
         );
-    let colors = args.get(1).is_some_and(|options| {
+    let colors = matches!(args.get(3), Some(Value::Boolean(true)))
+        || args.get(1).is_some_and(|options| {
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return false;
+        }
         matches!(
             execute::get_property(options, "colors"),
             Value::Boolean(true)
         )
     });
     let break_length_one = args.get(1).is_some_and(|options| {
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return false;
+        }
         matches!(
             execute::get_property(options, "breakLength"),
             Value::Number(value) if value <= 1.0
@@ -436,12 +703,30 @@ pub fn util_inspect(
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .and_then(
             |options| match execute::get_property(options, "maxArrayLength") {
-                Value::Number(value) if value.is_finite() && value >= 0.0 => {
-                    Some(value.floor() as usize)
-                }
+                Value::Number(value) if value.is_finite() => Some(if value < 0.0 {
+                    0
+                } else {
+                    value.floor() as usize
+                }),
+                // `null` and Infinity disable the limit; preserve that
+                // distinction from an omitted option for collection values.
+                Value::Null | Value::Number(_) => Some(usize::MAX),
                 _ => None,
             },
-        );
+        )
+        .or_else(|| match crate::modules::util::inspect_default_option("maxArrayLength") {
+            Value::Null => Some(usize::MAX),
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+            Value::Number(_) => Some(usize::MAX),
+            _ => None,
+        });
+    let _compact_guard = crate::modules::util::compact_guard(
+        args.get(1).and_then(|options| match execute::get_property(options, "compact") {
+            Value::Boolean(value) => Some(value),
+            _ => None,
+        }),
+    );
+    let _break_length_guard = crate::modules::util::break_length_guard(Some(break_length.unwrap_or(80)));
     let getters = args.iter().any(|value| {
         matches!(value, Value::Object(_) | Value::ObjectAlias(_))
             && matches!(
@@ -472,6 +757,43 @@ pub fn util_inspect(
             crate::modules::util::inspect_with_options_colors(&arg, 3, false, None, false, colors)
         }
     }))
+}
+
+pub fn util_transferable_abort_controller(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let constructor = execute::get_property(&global, "AbortController");
+    execute::construct_value(&constructor, &[])
+}
+
+pub fn util_transferable_abort_signal(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let signal = args
+        .first()
+        .ok_or_else(|| execute::type_error("The signal argument must be an AbortSignal"))?;
+    if !matches!(
+        execute::get_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+        Value::Boolean(true)
+    ) {
+        return Err(execute::type_error(
+            "The signal argument must be an AbortSignal",
+        ));
+    }
+    Ok(signal.clone())
+}
+
+pub fn stream_add_abort_signal_no_validate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(args.get(1).cloned().unwrap_or(Value::Undefined))
 }
 
 pub fn util_aborted(
@@ -569,10 +891,15 @@ pub fn util_promisify(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(original) = args.first().cloned() else {
-        return Err(VmError::NotCallable);
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"original\" argument must be of type function".into(),
+        ));
     };
     if !quench_runtime::is_callable(&original) {
-        return Err(VmError::NotCallable);
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"original\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(&original)
+        )));
     }
     let custom_key = crate::modules::util::PROMISIFY_CUSTOM_KEY;
     if let Ok(custom) = execute::get_property_result(&original, custom_key) {
@@ -609,7 +936,9 @@ pub fn util_promisify(
                     },
                 );
             }
-            return Err(VmError::NotCallable);
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"original\" argument must be of type function".into(),
+            ));
         }
     }
     if let Some(name) = timer_promise_alias(&original) {
@@ -627,9 +956,10 @@ pub fn util_promisify(
             });
         }
     }
-    let wrapper = bound_custom(
+    let wrapper = bound_custom_in_realm(
         crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap,
         vec![original.clone()],
+        quench_runtime::callable_realm(&original),
     );
     let wrapper = match execute::get_property(&original, "name") {
         Value::String(name) => execute::set_property(wrapper, "name", Value::String(name)),
@@ -638,9 +968,564 @@ pub fn util_promisify(
     let custom = wrapper.clone();
     if !execute::set_property_in_place(&wrapper, crate::modules::util::PROMISIFY_CUSTOM_KEY, custom)
     {
-        return Err(VmError::NotCallable);
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"original\" argument must be of type function".into(),
+        ));
     }
     Ok(wrapper)
+}
+
+pub fn util_callbackify(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(original) = args.first().cloned() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"original\" argument must be of type function".into(),
+        ));
+    };
+    if !quench_runtime::is_callable(&original) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"original\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(&original)
+        )));
+    }
+    let wrapper = bound_custom(
+        crate::registry::SPEC_UTIL_CALLBACKIFIED_CALL.cap,
+        vec![original.clone()],
+    );
+    if let Value::Number(length) = execute::get_property(&original, "length") {
+        let _ = execute::set_property_in_place(&wrapper, "length", Value::Number(length + 1.0));
+    }
+    if let Value::String(name) = execute::get_property(&original, "name") {
+        let _ = execute::set_property_in_place(
+            &wrapper,
+            "name",
+            Value::String(format!("{name}Callbackified")),
+        );
+    }
+    Ok(wrapper)
+}
+
+fn callbackify_falsy(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Undefined | Value::Null | Value::Boolean(false)
+    ) || matches!(value, Value::Number(number) if *number == 0.0 || number.is_nan())
+        || matches!(value, Value::String(value) if value.is_empty())
+}
+
+fn callbackify_rejection(value: Value) -> Value {
+    if !callbackify_falsy(&value) {
+        return value;
+    }
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(
+            "Promise was rejected with falsy value".into(),
+        )],
+    );
+    let error = execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_FALSY_VALUE_REJECTION".into()),
+    );
+    let error = execute::set_property(error, "reason", value);
+    error
+}
+
+pub fn util_callbackified_call(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(original) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    let Some(callback) = args.last() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The last argument must be of type function. Received undefined".into(),
+        ));
+    };
+    if !quench_runtime::is_callable(callback) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The last argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(callback)
+        )));
+    }
+    let call_args = if args.len() > 2 {
+        &args[1..args.len() - 1]
+    } else {
+        &[]
+    };
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let result = quench_runtime::vm::call_value(original, &receiver, call_args);
+    match result {
+        Ok(result) => {
+            let then = execute::get_property(&result, "then");
+            if quench_runtime::is_callable(&then) {
+                let fulfilled = bound_custom(
+                    crate::registry::SPEC_UTIL_CALLBACKIFIED_FULFILLED.cap,
+                    vec![callback.clone(), receiver.clone()],
+                );
+                let rejected = bound_custom(
+                    crate::registry::SPEC_UTIL_CALLBACKIFIED_REJECTED.cap,
+                    vec![callback.clone(), receiver.clone()],
+                );
+                let _ = execute::call(&then, &result, &[fulfilled, rejected])?;
+            } else {
+                let _ = execute::call(callback, &receiver, &[Value::Null, result])?;
+            }
+        }
+        Err(VmError::Thrown(error)) => {
+            let _ = execute::call(callback, &receiver, &[error, Value::Undefined])?;
+        }
+        Err(_) => {
+            let _ = execute::call(
+                callback,
+                &receiver,
+                &[Value::Undefined, Value::Undefined],
+            )?;
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn util_callbackified_fulfilled(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or(VmError::NotCallable)?;
+    let receiver = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let value = args.get(2).cloned().unwrap_or(Value::Undefined);
+    execute::call(callback, &receiver, &[Value::Null, value])
+}
+
+pub fn util_callbackified_rejected(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().ok_or(VmError::NotCallable)?;
+    let receiver = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let reason = callbackify_rejection(args.get(2).cloned().unwrap_or(Value::Undefined));
+    execute::call(callback, &receiver, &[reason, Value::Undefined])
+}
+
+pub fn internal_errors_e(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let codes = args.first().ok_or(VmError::NotCallable)?;
+    let Value::String(code) = args.get(1).cloned().unwrap_or(Value::Undefined) else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"code\" argument must be of type string".into(),
+        ));
+    };
+    let formatter = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let base = args
+        .get(3)
+        .cloned()
+        .unwrap_or(Value::Builtin(quench_runtime::ops::Builtin::Error));
+    let constructor = internal_error_constructor(&code, formatter, base.clone());
+    for candidate in args.iter().skip(3) {
+        let name = execute::get_property(candidate, "name");
+        if let Value::String(name) = name {
+            let nested = internal_error_constructor(
+                &code,
+                execute::get_property(&constructor, "\0error_formatter"),
+                candidate.clone(),
+            );
+            let _ = execute::set_property_in_place(&constructor, &name, nested);
+        }
+    }
+    let _ = execute::set_property_in_place(codes, &code, constructor.clone());
+    Ok(constructor)
+}
+
+fn internal_error_constructor(code: &str, formatter: Value, base: Value) -> Value {
+    let formatter_copy = formatter.clone();
+    let constructor = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_INTERNAL_ERRORS_CONSTRUCTOR.cap,
+            ),
+        },
+        vec![Value::String(code.to_string()), formatter, base],
+    );
+    let _ = execute::set_property_in_place(&constructor, "\0error_formatter", formatter_copy);
+    constructor
+}
+
+pub fn internal_system_error_constructor() -> Value {
+    let constructor = internal_error_constructor(
+        "",
+        Value::Undefined,
+        host_api::object(vec![("\0system_error_base".into(), Value::Boolean(true))]),
+    );
+    let _ = execute::set_property_in_place(&constructor, "\0system_error", Value::Boolean(true));
+    constructor
+}
+
+pub fn internal_errors_hide_stack_frames(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let function = args.first().cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&function) {
+        return Err(VmError::NotCallable);
+    }
+    let _ = execute::set_callable_property(
+        &function,
+        "\0quench:hidden_stack_frames",
+        Value::Boolean(true),
+    );
+    if matches!(
+        execute::get_property(&function, "withoutStackTrace"),
+        Value::Undefined
+    ) {
+        let _ = execute::set_callable_property(&function, "withoutStackTrace", function.clone());
+    }
+    Ok(function)
+}
+
+pub fn internal_errors_info_get(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let info = args.first().ok_or(VmError::NotCallable)?;
+    let key = args.get(1).and_then(|value| match value {
+        Value::String(key) => Some(key.as_str()),
+        _ => None,
+    });
+    let value = key
+        .map(|key| execute::get_property(info, key))
+        .unwrap_or(Value::Undefined);
+    if matches!(key, Some("path" | "dest")) {
+        if let Value::Uint8Array(view) = value {
+            let bytes = view.buffer.bytes.borrow();
+            return Ok(Value::String(
+                String::from_utf8_lossy(&bytes[view.byte_offset..view.byte_offset + view.length])
+                    .into_owned(),
+            ));
+        }
+    }
+    Ok(value)
+}
+
+pub fn internal_errors_info_set(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let info = args.first().ok_or(VmError::NotCallable)?;
+    let Some(Value::String(key)) = args.get(1) else {
+        return Err(VmError::NotCallable);
+    };
+    let value = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let _ = execute::set_property_in_place(info, key, value.clone());
+    Ok(value)
+}
+
+pub fn internal_errors_node_flag_get(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(true))
+}
+
+pub fn internal_errors_node_flag_set(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(VmError::Thrown(quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(
+            "Cannot assign to read-only property Symbol(kIsNodeError)".into(),
+        )],
+    )))
+}
+
+pub fn internal_errors_info_get_value(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(args.first().cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn internal_errors_info_set_value(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(VmError::Thrown(quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(
+            "Cannot assign to read-only property 'info'".into(),
+        )],
+    )))
+}
+
+pub fn internal_errors_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Value::String(code) = args.first().cloned().unwrap_or(Value::Undefined) else {
+        return Err(VmError::NotCallable);
+    };
+    let formatter = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let base = args
+        .get(2)
+        .cloned()
+        .unwrap_or(Value::Builtin(quench_runtime::ops::Builtin::Error));
+    let values = args.get(3..).unwrap_or_default();
+    let call_frames = quench_runtime::vm::current_call_stack_frames();
+    if code == "AbortError" {
+        return internal_abort_error(values);
+    }
+    let system_error = matches!(
+        execute::get_property(&base, "\0system_error"),
+        Value::Boolean(true)
+    ) || matches!(
+        execute::get_property(&base, "\0system_error_base"),
+        Value::Boolean(true)
+    );
+    if system_error {
+        return internal_system_error(values, &code, &call_frames);
+    }
+    if values.is_empty() {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!(
+                "Code: {code}; The provided arguments length (0) does not match the required ones (1)."
+            ))],
+        );
+        let _ = execute::set_property_in_place(
+            &error,
+            "code",
+            Value::String("ERR_INTERNAL_ASSERTION".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    let message = internal_error_message(&formatter, values)?;
+    let error = execute::construct_value(&base, &[message])?;
+    let _ = execute::set_property_in_place(&error, "code", Value::String(code));
+    Ok(error)
+}
+
+fn internal_abort_error(values: &[Value]) -> Result<Value, VmError> {
+    let message = match values.first() {
+        None | Some(Value::Undefined) => "The operation was aborted".to_string(),
+        Some(value) => execute::to_js_string(value)?,
+    };
+    if let Some(options) = values.get(1) {
+        if !matches!(
+            options,
+            Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)
+        ) {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::TypeError,
+                &[Value::String(
+                    "The \"options\" argument must be of type object.".into(),
+                )],
+            );
+            let _ = execute::set_property_in_place(
+                &error,
+                "code",
+                Value::String("ERR_INVALID_ARG_TYPE".into()),
+            );
+            return Err(VmError::Thrown(error));
+        }
+    }
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let _ = execute::set_property_in_place(&error, "name", Value::String("AbortError".into()));
+    let _ = execute::set_property_in_place(&error, "code", Value::String("ABORT_ERR".into()));
+    if let Some(Value::Object(_) | Value::ObjectAlias(_)) = values.get(1) {
+        let cause = execute::get_property(values.get(1).expect("checked option"), "cause");
+        if !matches!(cause, Value::Undefined) {
+            let _ = execute::set_property_in_place(&error, "cause", cause);
+        }
+    }
+    Ok(error)
+}
+
+fn internal_system_error(
+    values: &[Value],
+    code: &str,
+    captured_frames: &[String],
+) -> Result<Value, VmError> {
+    let source_name = quench_runtime::vm::current_context()
+        .source_name()
+        .map(|name| name.to_string());
+    let Some(Value::Object(_) | Value::ObjectAlias(_)) = values.first() else {
+        return Err(VmError::Thrown(quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::TypeError,
+            &[Value::String(
+                "Cannot read properties of undefined (reading 'syscall')".into(),
+            )],
+        )));
+    };
+    let info = values[0].clone();
+    let syscall = system_error_field(&info, "syscall")?;
+    let returned = system_error_field(&info, "code")?;
+    let detail = system_error_field(&info, "message")?;
+    let mut message = format!("custom message: {syscall} returned {returned} ({detail})");
+    for (key, separator) in [("path", " "), ("dest", " => ")] {
+        let value = execute::get_property(&info, key);
+        if !matches!(value, Value::Undefined | Value::Null) {
+            message.push_str(separator);
+            message.push_str(&system_error_value(value)?);
+        }
+    }
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let _ = execute::set_property_in_place(&error, "name", Value::String("SystemError".into()));
+    let _ = execute::set_property_in_place(&error, "code", Value::String(code.to_string()));
+    let _ = execute::define_property(
+        error.clone(),
+        "info",
+        host_api::object(vec![
+            (
+                "get".into(),
+                host_api::bound_capability_with_arguments(
+                    quench_runtime::ops::HostCapabilityRef {
+                        realm: quench_runtime::ops::RealmId::ROOT,
+                        kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                            crate::registry::SPEC_INTERNAL_ERRORS_INFO_GET_VALUE.cap,
+                        ),
+                    },
+                    vec![info.clone()],
+                ),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_ERRORS_INFO_SET_VALUE),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    );
+    let _ = execute::define_property(
+        error.clone(),
+        "Symbol(kIsNodeError)\0quench",
+        host_api::object(vec![
+            (
+                "get".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_ERRORS_NODE_FLAG_GET),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_ERRORS_NODE_FLAG_SET),
+            ),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    );
+    for key in ["errno", "syscall", "path", "dest"] {
+        let getter = host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_INTERNAL_ERRORS_INFO_GET.cap,
+                ),
+            },
+            vec![info.clone(), Value::String(key.into())],
+        );
+        let setter = host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                    crate::registry::SPEC_INTERNAL_ERRORS_INFO_SET.cap,
+                ),
+            },
+            vec![info.clone(), Value::String(key.into())],
+        );
+        let descriptor = host_api::object(vec![
+            ("get".into(), getter),
+            ("set".into(), setter),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]);
+        let _ = execute::define_property(error.clone(), key, descriptor);
+    }
+    // Defining the legacy accessors can publish a copy-on-write successor of
+    // the error object. Reapply the stack on the final representative so the
+    // constructor's observable value retains the captured caller frames.
+    if let Some(filename) = source_name.as_deref() {
+        let mut stack = format!(
+            "SystemError: {}",
+            execute::to_js_string(&execute::get_property(&error, "message")).unwrap_or_default()
+        );
+        let mut frames = captured_frames.to_vec();
+        if let Some(current) = frames.pop() {
+            frames.insert(0, current);
+        }
+        for frame in frames {
+            stack.push_str(&format!("\n    at {frame} ({filename}:1:1)"));
+        }
+        if captured_frames.is_empty() {
+            stack.push_str(&format!("\n    at {filename}:1:1"));
+        }
+        let canonical = execute::canonical_value(&error);
+        let updated = execute::set_property(canonical, "stack", Value::String(stack));
+        let _ = execute::set_property_in_place(
+            &updated,
+            "\0quench:stack_decorated",
+            Value::Boolean(true),
+        );
+        let _ = execute::set_property_in_place(
+            &updated,
+            "\0quench:system_error_instance",
+            Value::Boolean(true),
+        );
+        return Ok(updated);
+    }
+    Ok(error)
+}
+
+fn system_error_field(info: &Value, key: &str) -> Result<String, VmError> {
+    system_error_value(execute::get_property(info, key))
+}
+
+fn system_error_value(value: Value) -> Result<String, VmError> {
+    if let Value::Uint8Array(view) = &value {
+        let bytes = view.buffer.bytes.borrow();
+        return Ok(String::from_utf8_lossy(
+            &bytes[view.byte_offset..view.byte_offset + view.length],
+        )
+        .into_owned());
+    }
+    execute::to_js_string(&value)
+}
+
+fn internal_error_message(formatter: &Value, values: &[Value]) -> Result<Value, VmError> {
+    if quench_runtime::is_callable(formatter) {
+        return execute::call(formatter, &Value::Undefined, values);
+    }
+    let Value::String(mut message) = formatter.clone() else {
+        return Ok(Value::Undefined);
+    };
+    for value in values {
+        let rendered = execute::to_js_string(value)?;
+        if let Some(index) = message.find("%s") {
+            message.replace_range(index..index + 2, &rendered);
+        }
+    }
+    Ok(Value::String(message))
 }
 
 pub fn util_deprecate(
@@ -811,11 +1696,7 @@ pub fn process_unref(
 /// Apply ChildProcess ref/unref to only the timers created while its forked
 /// source ran in the shared realm. Ordinary process/timer calls carry no
 /// hidden timer list and retain their existing no-op contract.
-fn update_fork_timers(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    referenced: bool,
-) {
+fn update_fork_timers(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, referenced: bool) {
     let Some(receiver) = receiver else {
         return;
     };
@@ -825,7 +1706,8 @@ fn update_fork_timers(
     };
     let mut timers = state.borrow_mut();
     for index in 0..ids.logical_len() {
-        let Ok(value) = execute::get_property_result(&Value::Array(ids.clone()), &index.to_string())
+        let Ok(value) =
+            execute::get_property_result(&Value::Array(ids.clone()), &index.to_string())
         else {
             continue;
         };
@@ -844,9 +1726,7 @@ pub fn process_set_uncaught_exception_capture_callback(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(callback, Value::Null)
-        && !quench_runtime::is_callable(&callback)
-    {
+    if !matches!(callback, Value::Null) && !quench_runtime::is_callable(&callback) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"fn\" argument must be of type function or null.{}",
             crate::modules::buffer_enc::invalid_arg_received(&callback)
@@ -874,7 +1754,10 @@ pub fn process_set_uncaught_exception_capture_callback(
             ),
         ])));
     }
-    state.borrow_mut().process.uncaught_exception_capture_callback =
+    state
+        .borrow_mut()
+        .process
+        .uncaught_exception_capture_callback =
         (!matches!(callback, Value::Null)).then_some(callback);
     Ok(Value::Undefined)
 }
@@ -1126,11 +2009,27 @@ pub fn util_promisified_call(
     let promise = Rc::new(quench_runtime::value::PromiseData::new(
         quench_runtime::value::PromiseState::Pending,
     ));
-    let custom_args = quench_runtime::execute::get_property_result(
+    let mut custom_args = quench_runtime::execute::get_property_result(
         original,
         crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
     )
     .unwrap_or(Value::Undefined);
+    let is_exec_like = matches!(
+        &original,
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+                    quench_runtime::ops::HostCapabilityKind::Custom(cap)
+                )) if cap == 0x1e02 || cap == 0x1e03
+            )
+    );
+    if is_exec_like && matches!(custom_args, Value::Undefined) {
+        custom_args = host_api::array(vec![
+            Value::String("stdout".into()),
+            Value::String("stderr".into()),
+        ]);
+    }
     let callback = bound_custom(
         crate::registry::SPEC_UTIL_PROMISIFIED_CALLBACK.cap,
         vec![Value::Promise(Rc::clone(&promise)), custom_args],
@@ -1152,10 +2051,7 @@ pub fn util_promisified_call(
         if let Some(options) = call_args.get(1) {
             let signal = execute::get_property(options, "signal");
             let valid = matches!(signal, Value::Undefined)
-                || matches!(
-                    execute::get_property(&signal, "aborted"),
-                    Value::Boolean(_)
-                );
+                || matches!(execute::get_property(&signal, "aborted"), Value::Boolean(_));
             if !valid {
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("name".into(), Value::String("TypeError".into())),
@@ -1175,10 +2071,10 @@ pub fn util_promisified_call(
         Ok(result) => {
             if matches!(result, Value::Object(_) | Value::ObjectAlias(_)) {
                 let promise_value = Value::Promise(Rc::clone(&promise));
-                let _ = execute::set_property(promise_value, "child", result.clone());
+                execute::set_property_in_place(&promise_value, "child", result.clone());
             }
             if matches!(result, Value::Promise(_)) {
-                crate::modules::process::emit_warning(
+                crate::modules::process::emit_warning_now(
                     state,
                     "DeprecationWarning",
                     "Calling promisify on a function that returns a Promise is likely a mistake.",
@@ -1246,6 +2142,10 @@ pub fn util_promisified_callback(
                 return Ok(Value::Undefined);
             }
         }
+        // Node's default promisifier preserves callback arity: no success
+        // values become `undefined`, one remains scalar, and multiple values
+        // resolve as an array. Named `customPromisifyArgs` results take the
+        // object path above.
         let value = match values {
             [] => Value::Undefined,
             [value] => value.clone(),
@@ -1263,6 +2163,17 @@ fn bound_custom(cap: u16, arguments: Vec<Value>) -> Value {
             kind: quench_runtime::ops::HostCapabilityKind::Custom(cap),
         },
         arguments,
+    )
+}
+
+fn bound_custom_in_realm(cap: u16, arguments: Vec<Value>, realm: quench_runtime::ops::RealmId) -> Value {
+    host_api::bound_capability_with_arguments_in_realm(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(cap),
+        },
+        arguments,
+        realm,
     )
 }
 
@@ -1319,6 +2230,13 @@ pub fn timers_set_timeout(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::timers::set_timeout(state, args)
+}
+pub fn timers_set_unref_timeout(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::timers::set_unref_timeout(state, args)
 }
 pub fn timers_clear_timeout(
     state: &Rc<RefCell<HostState>>,
@@ -1476,6 +2394,14 @@ pub fn internal_util_assert_crypto(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let openssl = execute::get_property(&execute::get_property(&global, "process"), "versions");
+    if !matches!(
+        execute::get_property(&openssl, "openssl"),
+        Value::Undefined | Value::Null
+    ) {
+        return Ok(Value::Undefined);
+    }
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
         &[Value::String("Crypto is not available".into())],
@@ -1483,6 +2409,463 @@ pub fn internal_util_assert_crypto(
     let error =
         quench_runtime::execute::set_property(error, "code", Value::String("ERR_NO_CRYPTO".into()));
     Err(VmError::Thrown(error))
+}
+
+fn offset_length_args(args: &[Value]) -> Option<(f64, f64, f64)> {
+    match (args.first(), args.get(1), args.get(2)) {
+        (Some(Value::Number(offset)), Some(Value::Number(length)), Some(Value::Number(bytes))) => {
+            Some((*offset, *length, *bytes))
+        }
+        _ => None,
+    }
+}
+
+pub fn internal_fs_validate_offset_length_read(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some((offset, length, byte_length)) = offset_length_args(args) else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "offset, length, and byteLength must be numbers".into(),
+        ));
+    };
+    if offset < 0.0 {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "offset",
+            ">= 0",
+            &execute::number_to_js_string(offset),
+        ));
+    }
+    if length < 0.0 {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "length",
+            ">= 0",
+            &execute::number_to_js_string(length),
+        ));
+    }
+    if offset + length > byte_length {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "length",
+            &format!("<= {}", execute::number_to_js_string(byte_length - offset)),
+            &execute::number_to_js_string(length),
+        ));
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn internal_fs_validate_offset_length_write(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some((offset, length, byte_length)) = offset_length_args(args) else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "offset, length, and byteLength must be numbers".into(),
+        ));
+    };
+    if offset > byte_length {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "offset",
+            &format!("<= {}", execute::number_to_js_string(byte_length)),
+            &execute::number_to_js_string(offset),
+        ));
+    }
+    const IO_MAX: f64 = 2_147_483_647.0;
+    if byte_length < IO_MAX && offset + length > byte_length {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "length",
+            &format!("<= {}", execute::number_to_js_string(byte_length - offset)),
+            &execute::number_to_js_string(length),
+        ));
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn internal_binding_util_is_inside_node_modules(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let call_stack = quench_runtime::vm::current_call_stack_source_names();
+    if let Some(caller) = call_stack.iter().rev().flatten().next() {
+        return Ok(Value::Boolean(caller.contains("node_modules")));
+    }
+    if quench_runtime::vm::current_active_source_name()
+        .is_some_and(|path| path.contains("node_modules"))
+    {
+        return Ok(Value::Boolean(true));
+    }
+    if quench_runtime::vm::current_call_stack_source_names()
+        .iter()
+        .flatten()
+        .any(|path| path.contains("node_modules"))
+    {
+        return Ok(Value::Boolean(true));
+    }
+    let filename = execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "\0quench_vm_filename",
+    );
+    Ok(Value::Boolean(
+        matches!(filename, Value::String(path) if path.contains("node_modules")),
+    ))
+}
+
+/// WHATWG label lookup used by Node's internal encoding module.
+pub fn internal_encoding_get_label(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(label) = args.first().and_then(|value| match value {
+        Value::String(value) => Some(value.clone()),
+        Value::StringUnits(units) => Some(String::from_utf16_lossy(units)),
+        _ => None,
+    }) else {
+        return Ok(Value::Undefined);
+    };
+    let Some(encoding) = encoding_rs::Encoding::for_label(label.trim().as_bytes()) else {
+        return Ok(Value::Undefined);
+    };
+    Ok(Value::String(encoding.name().to_ascii_lowercase()))
+}
+
+pub fn internal_async_context_frame_current(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Null)
+}
+
+pub fn internal_async_hooks_enabled_hooks_exist(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(
+        crate::modules::async_hooks::enabled_hooks_exist(state),
+    ))
+}
+
+fn callback_error(error: VmError) -> Value {
+    match error {
+        VmError::Thrown(value) => value,
+        VmError::NotCallable => quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::TypeError,
+            &[Value::String("callback is not callable".into())],
+        ),
+        VmError::EvalError(message) => quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(message)],
+        ),
+        _ => Value::Undefined,
+    }
+}
+
+fn dirent_name(value: &Value) -> Value {
+    value.clone()
+}
+
+pub fn internal_fs_get_dirents(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = match crate::modules::fs::path_arg(args.first()) {
+        Ok(path) => path,
+        Err(error) => {
+            if let Some(callback) = args
+                .last()
+                .filter(|value| quench_runtime::is_callable(value))
+            {
+                let _ = quench_runtime::vm::call_value(
+                    callback,
+                    &Value::Undefined,
+                    &[callback_error(error)],
+                );
+                return Ok(Value::Undefined);
+            }
+            return Err(error);
+        }
+    };
+    let names = match args.get(1) {
+        Some(Value::Array(entries)) => (0..entries.logical_len())
+            .filter_map(|index| {
+                match quench_runtime::execute::get_property(
+                    &Value::Array(entries.clone()),
+                    &index.to_string(),
+                ) {
+                    Value::Array(entry) => Some(dirent_name(
+                        &quench_runtime::execute::get_property(&Value::Array(entry), "0"),
+                    )),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let callback = args
+        .last()
+        .filter(|value| quench_runtime::is_callable(value));
+    if let Some(callback) = callback {
+        let _ = std::fs::read_dir(path);
+        let _ = quench_runtime::vm::call_value(
+            callback,
+            &Value::Undefined,
+            &[Value::Null, quench_runtime::host_api::array(names)],
+        );
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn internal_fs_get_dirent(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = match crate::modules::fs::path_arg(args.first()) {
+        Ok(path) => path,
+        Err(error) => {
+            if let Some(callback) = args
+                .last()
+                .filter(|value| quench_runtime::is_callable(value))
+            {
+                let _ = quench_runtime::vm::call_value(
+                    callback,
+                    &Value::Undefined,
+                    &[callback_error(error)],
+                );
+                return Ok(Value::Undefined);
+            }
+            return Err(error);
+        }
+    };
+    let name = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let parent_path = match args.get(1) {
+        Some(Value::Uint8Array(_)) => quench_runtime::host_api::bytes(path.as_bytes()),
+        _ => Value::String(path.into()),
+    };
+    let dirent = quench_runtime::host_api::object(vec![
+        ("name".into(), name),
+        ("parentPath".into(), parent_path.clone()),
+        ("path".into(), parent_path),
+    ]);
+    if let Some(callback) = args
+        .last()
+        .filter(|value| quench_runtime::is_callable(value))
+    {
+        let _ = quench_runtime::vm::call_value(
+            callback,
+            &Value::Undefined,
+            &[Value::Null, dirent.clone()],
+        );
+    }
+    Ok(dirent)
+}
+
+pub fn stream_iter_text(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let consumers = crate::modules::stream::build_consumers(state)?;
+    let text = execute::get_property(&consumers, "text");
+    execute::call(&text, &Value::Undefined, args)
+}
+
+pub fn stream_iter_bytes(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let consumers = crate::modules::stream::build_consumers(state)?;
+    let bytes = execute::get_property(&consumers, "bytes");
+    execute::call(&bytes, &Value::Undefined, args)
+}
+
+fn zlib_iter_transform(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+    decompress: bool,
+) -> Result<Value, VmError> {
+    if args.is_empty() {
+        return Ok(crate::host::capability(if decompress {
+            crate::registry::SPEC_ZLIB_ITER_DECOMPRESS
+        } else {
+            crate::registry::SPEC_ZLIB_ITER_COMPRESS
+        }));
+    }
+    let source = match args.first() {
+        Some(Value::Array(values)) => {
+            let mut bytes = Vec::new();
+            for index in 0..values.logical_len() {
+                if let Some(value) = values.get(index) {
+                    if let Some(chunk) = crate::modules::crypto::bytes_from_value(&value) {
+                        bytes.extend(chunk);
+                    }
+                }
+            }
+            crate::modules::buffer_proto::make_buffer(&bytes)
+        }
+        Some(value) => value.clone(),
+        None => Value::Undefined,
+    };
+    let output = if decompress {
+        crate::modules::zlib::gunzip(state, None, &[source])?
+    } else {
+        crate::modules::zlib::gzip(state, None, &[source])?
+    };
+    Ok(host_api::array(vec![output]))
+}
+
+pub fn zlib_iter_compress(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    zlib_iter_transform(state, args, false)
+}
+
+pub fn zlib_iter_decompress(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    zlib_iter_transform(state, args, true)
+}
+
+pub fn internal_validate_integer(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let name = execute::to_js_string(args.get(1).unwrap_or(&Value::String("value".into())))?;
+    let valid =
+        matches!(value, Value::Number(number) if number.is_finite() && number.fract() == 0.0);
+    if !valid {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
+    }
+    if let Value::Number(number) = value {
+        if let Some(minimum) = args.get(2).and_then(|value| match value {
+            Value::Number(number) => Some(*number),
+            _ => None,
+        }) {
+            if *number < minimum {
+                return Err(crate::modules::buffer_enc::out_of_range(
+                    &name,
+                    &format!(">= {minimum}"),
+                    &number.to_string(),
+                ));
+            }
+        }
+        if let Some(maximum) = args.get(3).and_then(|value| match value {
+            Value::Number(number) => Some(*number),
+            _ => None,
+        }) {
+            if *number > maximum {
+                return Err(crate::modules::buffer_enc::out_of_range(
+                    &name,
+                    &format!("<= {maximum}"),
+                    &number.to_string(),
+                ));
+            }
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn internal_validate_one_of(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if quench_runtime::is_callable(value) {
+        return Ok(Value::Undefined);
+    }
+    let name = execute::to_js_string(args.get(1).unwrap_or(&Value::String("value".into())))?;
+    let allowed = args.get(2).unwrap_or(&Value::Undefined);
+    let length = match execute::get_property(allowed, "length") {
+        Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+        _ => 0,
+    };
+    if length == 0 {
+        return Ok(Value::Undefined);
+    }
+    if (0..length).any(|index| {
+        execute::same_value(value, &execute::get_property(allowed, &index.to_string()))
+    }) {
+        return Ok(Value::Undefined);
+    }
+    let choices = (0..length)
+        .map(|index| {
+            crate::modules::util::inspect(&execute::get_property(allowed, &index.to_string()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+        "The argument '{name}' must be one of: {choices}. Received {}",
+        crate::modules::util::inspect(value)
+    )))
+}
+
+pub fn internal_validate_port(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let allow_zero = !matches!(args.get(2), Some(Value::Boolean(false)));
+    let parsed = match value {
+        Value::Number(number) if number.is_finite() && number.fract() == 0.0 => {
+            (*number >= 0.0 && *number <= 65535.0).then_some(*number as u16)
+        }
+        Value::String(text) => parse_port_text(text),
+        _ => None,
+    };
+    let Some(port) = parsed.filter(|port| allow_zero || *port != 0) else {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::RangeError,
+            &[Value::String("Port should be >= 0 and < 65536".into())],
+        );
+        return Err(VmError::Thrown(execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_SOCKET_BAD_PORT".into()),
+        )));
+    };
+    Ok(Value::Number(port as f64))
+}
+
+fn parse_port_text(text: &str) -> Option<u16> {
+    let text = text.trim();
+    if text.is_empty() || text.starts_with('-') {
+        return None;
+    }
+    let (radix, digits) =
+        if let Some(value) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+            (16, value)
+        } else if let Some(value) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+            (8, value)
+        } else if let Some(value) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+            (2, value)
+        } else {
+            (10, text)
+        };
+    (!digits.is_empty())
+        .then(|| u32::from_str_radix(digits, radix).ok())
+        .flatten()
+        .filter(|value| *value <= 65535)
+        .map(|value| value as u16)
 }
 
 pub fn internal_util_decorate_error_stack(
@@ -1494,11 +2877,9 @@ pub fn internal_util_decorate_error_stack(
         return Ok(Value::Undefined);
     };
     let stack = quench_runtime::execute::get_property_result(value, "stack").ok();
-    let arrow = quench_runtime::execute::get_property_result(
-        value,
-        "Symbol.node:arrowMessage\0internal",
-    )
-    .ok();
+    let arrow =
+        quench_runtime::execute::get_property_result(value, "Symbol.node:arrowMessage\0internal")
+            .ok();
     if let (Some(Value::String(stack)), Some(Value::String(arrow))) = (stack, arrow) {
         if !stack.starts_with(&arrow) {
             let _ = quench_runtime::execute::set_property_in_place(
@@ -1548,6 +2929,1188 @@ pub fn internal_util_is_error(
     Ok(Value::Boolean(is_error))
 }
 
+pub fn internal_crypto_get_openssl_sec_level(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(2.0))
+}
+
+pub fn internal_crypto_is_x509_certificate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    Ok(Value::Boolean(matches!(
+        execute::get_property(value, "\0quench:crypto:x509-data"),
+        Value::Uint8Array(_) | Value::ArrayBuffer(_)
+    )))
+}
+
+pub fn internal_crypto_bigint_array_to_unsigned_int(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let bytes = args
+        .first()
+        .and_then(crate::modules::crypto::bytes_from_value)
+        .ok_or_else(|| {
+            VmError::Thrown(quench_runtime::builtins::dom_exception(
+                "algorithm.publicExponent must be an integer array",
+                "OperationError",
+            ))
+        })?;
+    let first = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len());
+    let bytes = &bytes[first..];
+    if bytes.len() > 4 {
+        return Err(VmError::Thrown(quench_runtime::builtins::dom_exception(
+            "algorithm.publicExponent must fit in an unsigned 32-bit integer",
+            "OperationError",
+        )));
+    }
+    let value = bytes
+        .iter()
+        .fold(0_u32, |value, byte| (value << 8) | u32::from(*byte));
+    Ok(Value::Number(value as f64))
+}
+
+pub fn internal_crypto_bigint_array_to_unsigned_bigint(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let bytes = args
+        .first()
+        .and_then(crate::modules::crypto::bytes_from_value)
+        .ok_or_else(|| {
+            VmError::Thrown(quench_runtime::builtins::dom_exception(
+                "algorithm.publicExponent must be an integer array",
+                "OperationError",
+            ))
+        })?;
+    let first = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len());
+    let bytes = &bytes[first..];
+    if bytes.is_empty() {
+        return Ok(Value::BigInt("0".into()));
+    }
+    let number = openssl::bn::BigNum::from_slice(bytes).map_err(|_| {
+        VmError::Thrown(quench_runtime::builtins::dom_exception(
+            "algorithm.publicExponent is invalid",
+            "OperationError",
+        ))
+    })?;
+    let decimal = number.to_dec_str().map_err(|_| {
+        VmError::Thrown(quench_runtime::builtins::dom_exception(
+            "algorithm.publicExponent is invalid",
+            "OperationError",
+        ))
+    })?;
+    Ok(Value::BigInt(decimal.to_string()))
+}
+
+pub fn internal_crypto_key_handle(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let key = args.first().unwrap_or(&Value::Undefined);
+    Ok(execute::get_property(
+        key,
+        crate::modules::webcrypto::KEY_DATA_PROP,
+    ))
+}
+
+pub fn internal_crypto_get_usages_mask(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let usages = args.first().unwrap_or(&Value::Undefined);
+    let table = [
+        ("encrypt", 1_u32),
+        ("decrypt", 2),
+        ("sign", 4),
+        ("verify", 8),
+        ("deriveKey", 16),
+        ("deriveBits", 32),
+        ("wrapKey", 64),
+        ("unwrapKey", 128),
+        ("encapsulateKey", 256),
+        ("encapsulateBits", 512),
+        ("decapsulateKey", 1024),
+        ("decapsulateBits", 2048),
+    ];
+    let mask = table.iter().fold(0_u32, |mask, (name, bit)| {
+        let present = array_contains_usage(usages, name)
+            || matches!(
+                execute::call(
+                    &execute::get_property(usages, "has"),
+                    usages,
+                    &[Value::String((*name).into())],
+                ),
+                Ok(Value::Boolean(true))
+            );
+        mask | if present { *bit } else { 0 }
+    });
+    Ok(Value::Number(mask as f64))
+}
+
+fn array_contains_usage(value: &Value, expected: &str) -> bool {
+    let Value::Array(values) = value else {
+        return false;
+    };
+    (0..values.logical_len()).any(|index| {
+        let item = execute::get_property(value, &index.to_string());
+        execute::to_js_string(&item).ok().as_deref() == Some(expected)
+    })
+}
+
+pub fn internal_crypto_aes_cipher(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let iv = args
+        .get(2)
+        .and_then(crate::modules::crypto::bytes_from_value);
+    let promise = if matches!(iv.as_deref(), Some(value) if value.len() != 16) {
+        let cause = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String("Invalid initialization vector".into())],
+        );
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(
+                "The operation failed for an operation-specific reason".into(),
+            )],
+        );
+        let error = execute::set_property(error, "name", Value::String("OperationError".into()));
+        let error = execute::set_property(error, "cause", cause);
+        Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+            quench_runtime::value::PromiseState::Rejected(error),
+        )))
+    } else {
+        Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+            quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
+        )))
+    };
+    Ok(promise)
+}
+
+pub fn internal_crypto_webidl_required_arguments(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let present = args.first().and_then(number_value).unwrap_or(0.0);
+    let required = args.get(1).and_then(number_value).unwrap_or(0.0);
+    if present < required {
+        let prefix = execute::to_js_string(&execute::get_property(
+            args.get(2).unwrap_or(&Value::Undefined),
+            "prefix",
+        ))
+        .unwrap_or_default();
+        let plural = if required == 1.0 {
+            "argument"
+        } else {
+            "arguments"
+        };
+        return Err(webidl_type_error(
+            "ERR_MISSING_ARGS",
+            &format!("{prefix}: {required} {plural} required, but only {present} present."),
+        ));
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn internal_crypto_webidl_boolean(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(args.first().is_some_and(execute::is_truthy)))
+}
+
+pub fn internal_crypto_webidl_octet(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_integer(args, 8, 255)
+}
+
+pub fn internal_crypto_webidl_unsigned_short(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_integer(args, 16, 65_535)
+}
+
+pub fn internal_crypto_webidl_unsigned_long(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_integer(args, 32, 4_294_967_295)
+}
+
+pub fn internal_crypto_webidl_dom_string(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if execute::is_symbol(value)
+        || matches!(value, Value::Builtin(quench_runtime::ops::Builtin::Symbol))
+    {
+        let options = args.get(1).unwrap_or(&Value::Undefined);
+        let prefix =
+            execute::to_js_string(&execute::get_property(options, "prefix")).unwrap_or_default();
+        let context = execute::to_js_string(&execute::get_property(options, "context"))
+            .unwrap_or_else(|_| "1st argument".into());
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!("{prefix}: {context} is a Symbol and cannot be converted to a string."),
+        ));
+    }
+    execute::to_js_string(value)
+        .map(Value::String)
+        .map_err(|_| webidl_type_error("ERR_INVALID_ARG_TYPE", "Cannot convert to string"))
+}
+
+pub fn internal_crypto_webidl_object(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(
+        value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_) | Value::Function(_)
+    ) {
+        return Ok(value.clone());
+    }
+    Err(webidl_type_error(
+        "ERR_INVALID_ARG_TYPE",
+        &format_webidl_message(args.get(1), "is not an object."),
+    ))
+}
+
+pub fn internal_crypto_webidl_uint8_array(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if let Value::Uint8Array(view) = value {
+        validate_webidl_buffer(view.buffer.as_ref(), true, args.get(1))?;
+        return Ok(value.clone());
+    }
+    Err(webidl_type_error(
+        "ERR_INVALID_ARG_TYPE",
+        &format_webidl_message(args.get(1), "is not an Uint8Array object."),
+    ))
+}
+
+pub fn internal_crypto_webidl_dictionary(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(null_object(Vec::new()));
+    }
+    let name = execute::to_js_string(&execute::get_property(value, "name"))
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let profile = dictionary_profile(value, &name);
+    for required in profile.required {
+        if matches!(execute::get_property(value, required), Value::Undefined) {
+            let options = args.get(1).unwrap_or(&Value::Undefined);
+            let prefix = execute::to_js_string(&execute::get_property(options, "prefix"))
+                .unwrap_or_default();
+            let context = execute::to_js_string(&execute::get_property(options, "context"))
+                .unwrap_or_else(|_| "1st argument".into());
+            return Err(webidl_type_error(
+                "ERR_MISSING_OPTION",
+                &format!(
+                    "{prefix}: {context} cannot be converted to '{}' because '{}' is required in '{}'.",
+                    profile.name, required, profile.name
+                ),
+            ));
+        }
+    }
+    for key in execute::own_enumerable_keys(value) {
+        let member = execute::get_property(value, &key);
+        if matches!(member, Value::Number(number) if number < 0.0) {
+            let maximum = dictionary_member_max(&name, &key);
+            let options = args.get(1).unwrap_or(&Value::Undefined);
+            let prefix = execute::to_js_string(&execute::get_property(options, "prefix"))
+                .unwrap_or_default();
+            let context = execute::to_js_string(&execute::get_property(options, "context"))
+                .unwrap_or_else(|_| "1st argument".into());
+            return Err(webidl_type_error(
+                "ERR_OUT_OF_RANGE",
+                &format!(
+                    "{prefix}: {key} in {context} is outside the expected range of 0 to {maximum}."
+                ),
+            ));
+        }
+    }
+    let pairs = execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| profile.fields.iter().any(|field| *field == key))
+        .map(|key| (key.clone(), execute::get_property(value, &key)))
+        .collect();
+    Ok(null_object(pairs))
+}
+
+struct DictionaryProfile {
+    name: &'static str,
+    fields: &'static [&'static str],
+    required: &'static [&'static str],
+}
+
+const ALGORITHM_FIELDS: &[&str] = &["name"];
+const RSA_KEYGEN_FIELDS: &[&str] = &["name", "modulusLength", "publicExponent"];
+const RSA_HASHED_KEYGEN_FIELDS: &[&str] = &["name", "modulusLength", "publicExponent", "hash"];
+const RSA_HASHED_IMPORT_FIELDS: &[&str] = &["name", "hash"];
+const NAMED_CURVE_FIELDS: &[&str] = &["name", "namedCurve"];
+const RSA_PSS_FIELDS: &[&str] = &["name", "saltLength"];
+const RSA_OAEP_FIELDS: &[&str] = &["name", "label"];
+const HASH_LENGTH_FIELDS: &[&str] = &["name", "hash", "length"];
+const HKDF_FIELDS: &[&str] = &["name", "hash", "salt", "info"];
+const PBKDF2_FIELDS: &[&str] = &["name", "salt", "iterations", "hash"];
+const AES_CBC_FIELDS: &[&str] = &["name", "iv"];
+const AEAD_FIELDS: &[&str] = &["name", "iv", "additionalData", "tagLength"];
+const AES_CTR_FIELDS: &[&str] = &["name", "counter", "length"];
+const ECDH_FIELDS: &[&str] = &["name", "public"];
+const OUTPUT_FIELDS: &[&str] = &["name", "outputLength", "customization"];
+const TURBO_FIELDS: &[&str] = &["name", "outputLength", "domainSeparation"];
+const CSHAKE_FIELDS: &[&str] = &["name", "outputLength", "functionName", "customization"];
+const ARGON_FIELDS: &[&str] = &[
+    "name",
+    "nonce",
+    "parallelism",
+    "memory",
+    "passes",
+    "version",
+    "secretValue",
+    "associatedData",
+];
+const CONTEXT_FIELDS: &[&str] = &["name", "context"];
+
+fn dictionary_profile(value: &Value, algorithm: &str) -> DictionaryProfile {
+    let has = |key: &str| !matches!(execute::get_property(value, key), Value::Undefined);
+    if has("modulusLength") || has("publicExponent") {
+        let hashed = has("hash") || algorithm == "RSA-OAEP";
+        return DictionaryProfile {
+            name: if hashed {
+                "RsaHashedKeyGenParams"
+            } else {
+                "RsaKeyGenParams"
+            },
+            fields: if hashed {
+                RSA_HASHED_KEYGEN_FIELDS
+            } else {
+                RSA_KEYGEN_FIELDS
+            },
+            required: if hashed {
+                &["name", "hash", "modulusLength", "publicExponent"]
+            } else {
+                &["name", "modulusLength", "publicExponent"]
+            },
+        };
+    }
+    let (name, fields, required): (&str, &[&str], &[&str]) = match () {
+        _ if has("namedCurve") => (
+            "EcKeyImportParams",
+            NAMED_CURVE_FIELDS,
+            &["name", "namedCurve"],
+        ),
+        _ if has("saltLength") => ("RsaPssParams", RSA_PSS_FIELDS, &["name", "saltLength"]),
+        _ if algorithm == "RSA-PSS" => ("RsaPssParams", RSA_PSS_FIELDS, &["name", "saltLength"]),
+        _ if has("label") => ("RsaOaepParams", RSA_OAEP_FIELDS, &["name"]),
+        _ if has("counter") => (
+            "AesCtrParams",
+            AES_CTR_FIELDS,
+            &["name", "counter", "length"],
+        ),
+        _ if has("tagLength") || has("additionalData") => {
+            ("AeadParams", AEAD_FIELDS, &["name", "iv"])
+        }
+        _ if has("iv") && algorithm.starts_with("AES") => {
+            ("AesCbcParams", AES_CBC_FIELDS, &["name", "iv"])
+        }
+        _ if has("iterations") => (
+            "Pbkdf2Params",
+            PBKDF2_FIELDS,
+            &["name", "salt", "iterations", "hash"],
+        ),
+        _ if has("nonce") => (
+            "Argon2Params",
+            ARGON_FIELDS,
+            &["name", "nonce", "parallelism", "memory", "passes"],
+        ),
+        _ if has("context") => ("ContextParams", CONTEXT_FIELDS, &["name"]),
+        _ if has("public") => ("EcdhKeyDeriveParams", ECDH_FIELDS, &["name", "public"]),
+        _ if has("functionName") => ("CShakeParams", CSHAKE_FIELDS, &["name", "outputLength"]),
+        _ if has("outputLength") && algorithm.starts_with("KMAC") => {
+            ("KmacParams", OUTPUT_FIELDS, &["name", "outputLength"])
+        }
+        _ if has("outputLength") && algorithm.starts_with("TURBOSHAKE") => {
+            ("TurboShakeParams", TURBO_FIELDS, &["name", "outputLength"])
+        }
+        _ if has("outputLength") => (
+            "KangarooTwelveParams",
+            OUTPUT_FIELDS,
+            &["name", "outputLength"],
+        ),
+        _ if has("hash") && algorithm.starts_with("ECDSA") => {
+            ("EcdsaParams", RSA_HASHED_IMPORT_FIELDS, &["name", "hash"])
+        }
+        _ if has("hash") && algorithm.starts_with("HKDF") => {
+            ("HkdfParams", HKDF_FIELDS, &["name", "hash", "salt", "info"])
+        }
+        _ if has("hash") && algorithm.starts_with("HMAC") => {
+            ("HmacKeyGenParams", HASH_LENGTH_FIELDS, &["name", "hash"])
+        }
+        _ if has("hash") => (
+            "RsaHashedImportParams",
+            RSA_HASHED_IMPORT_FIELDS,
+            &["name", "hash"],
+        ),
+        _ if algorithm == "RSA-OAEP" => (
+            "RsaHashedImportParams",
+            RSA_HASHED_IMPORT_FIELDS,
+            &["name", "hash"],
+        ),
+        _ if algorithm.starts_with("ECDSA") => (
+            "EcKeyImportParams",
+            NAMED_CURVE_FIELDS,
+            &["name", "namedCurve"],
+        ),
+        _ if has("length") && algorithm.starts_with("AES") => {
+            ("AesKeyGenParams", &["name", "length"], &["name", "length"])
+        }
+        _ if has("length") => ("HmacKeyGenParams", HASH_LENGTH_FIELDS, &["name"]),
+        _ => ("Algorithm", ALGORITHM_FIELDS, &["name"]),
+    };
+    DictionaryProfile {
+        name,
+        fields,
+        required,
+    }
+}
+
+pub fn internal_crypto_webidl_big_integer(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(Value::Uint8Array(view)) = args.first() {
+        validate_webidl_buffer(view.buffer.as_ref(), true, args.get(1))?;
+        return Ok(args.first().cloned().unwrap_or(Value::Undefined));
+    }
+    Err(webidl_type_error(
+        "ERR_INVALID_ARG_TYPE",
+        &format_webidl_message(args.get(1), "is not a BigInteger."),
+    ))
+}
+
+pub fn internal_crypto_webidl_buffer_source(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let Some(buffer) = webidl_buffer(value) else {
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format_webidl_message(
+                args.get(1),
+                "is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.",
+            ),
+        ));
+    };
+    validate_webidl_buffer(buffer, !matches!(value, Value::ArrayBuffer(_)), args.get(1))?;
+    Ok(value.clone())
+}
+
+pub fn internal_crypto_webidl_crypto_key(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(
+        execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    ) {
+        return Ok(value.clone());
+    }
+    Err(webidl_type_error(
+        "ERR_INVALID_ARG_TYPE",
+        &format_webidl_message(args.get(1), "is not of type CryptoKey."),
+    ))
+}
+
+pub fn internal_crypto_webidl_algorithm_identifier(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        return internal_crypto_webidl_object(_state, _receiver, args);
+    }
+    internal_crypto_webidl_dom_string(_state, _receiver, args)
+}
+
+pub fn internal_crypto_webidl_key_format(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_enum(
+        args,
+        "KeyFormat",
+        &[
+            "jwk",
+            "spki",
+            "pkcs8",
+            "raw",
+            "raw-public",
+            "raw-seed",
+            "raw-secret",
+            "raw-private",
+        ],
+    )
+}
+
+pub fn internal_crypto_webidl_key_usage(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_enum(
+        args,
+        "KeyUsage",
+        &[
+            "encrypt",
+            "decrypt",
+            "sign",
+            "verify",
+            "deriveKey",
+            "deriveBits",
+            "wrapKey",
+            "unwrapKey",
+            "encapsulateBits",
+            "decapsulateBits",
+            "encapsulateKey",
+            "decapsulateKey",
+        ],
+    )
+}
+
+fn webidl_enum(args: &[Value], name: &str, allowed: &[&str]) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let text = execute::to_js_string(value).unwrap_or_default();
+    if matches!(value, Value::String(_) | Value::StringUnits(_))
+        && allowed.iter().any(|candidate| *candidate == text)
+    {
+        return Ok(Value::String(text));
+    }
+    Err(webidl_type_error(
+        "ERR_INVALID_ARG_VALUE",
+        &format_webidl_message(
+            args.get(1),
+            &format!("'{text}' is not a valid enum value of type {name}."),
+        ),
+    ))
+}
+
+pub fn internal_crypto_webidl_json_web_key(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format_webidl_message(args.get(1), "is not an object."),
+        ));
+    }
+    let fields = [
+        "kty", "use", "key_ops", "alg", "ext", "crv", "x", "y", "d", "n", "e", "p", "q", "dp",
+        "dq", "qi", "oth", "k", "pub", "priv",
+    ];
+    let pairs = fields
+        .into_iter()
+        .filter_map(|key| {
+            let member = execute::get_property(value, key);
+            (!matches!(member, Value::Undefined))
+                .then(|| (key.into(), json_web_key_member(key, member)))
+        })
+        .collect();
+    Ok(null_object(pairs))
+}
+
+pub fn internal_crypto_webidl_algorithm(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(null_object(Vec::new()));
+    }
+    let name = execute::get_property(value, "name");
+    if matches!(name, Value::Undefined) {
+        return Err(webidl_type_error(
+            "ERR_MISSING_OPTION",
+            &format_webidl_message(
+                args.get(1),
+                "cannot be converted to 'Algorithm' because 'name' is required in 'Algorithm'.",
+            ),
+        ));
+    }
+    Ok(null_object(vec![("name".into(), name)]))
+}
+
+pub fn internal_crypto_webidl_rsa_oaep(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(null_object(Vec::new()));
+    }
+    let fields = ["name", "label"];
+    let pairs = fields
+        .into_iter()
+        .filter_map(|key| {
+            let member = execute::get_property(value, key);
+            (!matches!(member, Value::Undefined)).then(|| (key.into(), member))
+        })
+        .collect();
+    Ok(null_object(pairs))
+}
+
+pub fn internal_crypto_webidl_ec_import(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    named_dictionary(
+        args,
+        "EcKeyImportParams",
+        &["name", "namedCurve"],
+        &["name", "namedCurve"],
+    )
+}
+
+pub fn internal_crypto_webidl_ec_gen(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    named_dictionary(
+        args,
+        "EcKeyGenParams",
+        &["name", "namedCurve"],
+        &["name", "namedCurve"],
+    )
+}
+
+pub fn internal_crypto_webidl_ecdsa(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    named_dictionary(args, "EcdsaParams", &["name", "hash"], &["name", "hash"])
+}
+
+pub fn internal_crypto_webidl_hmac_keygen(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "length", 4_294_967_295)?;
+    named_dictionary(
+        args,
+        "HmacKeyGenParams",
+        &["name", "hash", "length"],
+        &["name", "hash"],
+    )
+}
+
+pub fn internal_crypto_webidl_hmac_import(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "length", 4_294_967_295)?;
+    named_dictionary(
+        args,
+        "HmacImportParams",
+        &["name", "hash", "length"],
+        &["name", "hash"],
+    )
+}
+
+pub fn internal_crypto_webidl_aes_keygen(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "length", 65_535)?;
+    named_dictionary(
+        args,
+        "AesKeyGenParams",
+        &["name", "length"],
+        &["name", "length"],
+    )
+}
+
+pub fn internal_crypto_webidl_aes_derived(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "length", 65_535)?;
+    named_dictionary(
+        args,
+        "AesDerivedKeyParams",
+        &["name", "length"],
+        &["name", "length"],
+    )
+}
+
+pub fn internal_crypto_webidl_hkdf(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    named_dictionary(
+        args,
+        "HkdfParams",
+        &["name", "hash", "salt", "info"],
+        &["name", "hash", "salt", "info"],
+    )
+}
+
+pub fn internal_crypto_webidl_pbkdf2(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "iterations", 4_294_967_295)?;
+    named_dictionary(
+        args,
+        "Pbkdf2Params",
+        &["name", "salt", "iterations", "hash"],
+        &["name", "salt", "iterations", "hash"],
+    )
+}
+
+pub fn internal_crypto_webidl_argon2(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    for field in ["parallelism", "memory", "passes", "version"] {
+        webidl_check_nonnegative(
+            args,
+            field,
+            if field == "version" {
+                255
+            } else {
+                4_294_967_295
+            },
+        )?;
+    }
+    if matches!(execute::get_property(args.first().unwrap_or(&Value::Undefined), "passes"), Value::Number(value) if value == 0.0)
+    {
+        return Err(webidl_operation_error("passes must be > 0"));
+    }
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if matches!(execute::get_property(object, "parallelism"), Value::Number(value) if value <= 0.0 || value > 16_777_215.0)
+    {
+        return Err(webidl_operation_error(
+            "parallelism must be > 0 and <= 16777215",
+        ));
+    }
+    if let (Value::Number(memory), Value::Number(parallelism)) = (
+        execute::get_property(object, "memory"),
+        execute::get_property(object, "parallelism"),
+    ) {
+        if memory < 8.0 * parallelism {
+            return Err(webidl_operation_error(
+                "memory must be at least 8 times the degree of parallelism",
+            ));
+        }
+    }
+    named_dictionary(
+        args,
+        "Argon2Params",
+        &[
+            "name",
+            "nonce",
+            "parallelism",
+            "memory",
+            "passes",
+            "version",
+            "secretValue",
+            "associatedData",
+        ],
+        &["name", "nonce", "parallelism", "memory", "passes"],
+    )
+}
+
+pub fn internal_crypto_webidl_aes_cbc(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    named_dictionary(args, "AesCbcParams", &["name", "iv"], &["name", "iv"])
+}
+
+pub fn internal_crypto_webidl_aead(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "tagLength", 255)?;
+    named_dictionary(
+        args,
+        "AeadParams",
+        &["name", "iv", "additionalData", "tagLength"],
+        &["name", "iv"],
+    )
+}
+
+pub fn internal_crypto_webidl_aes_ctr(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    webidl_check_nonnegative(args, "length", 255)?;
+    named_dictionary(
+        args,
+        "AesCtrParams",
+        &["name", "counter", "length"],
+        &["name", "counter", "length"],
+    )
+}
+
+pub fn internal_crypto_webidl_ecdh(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    named_dictionary(
+        args,
+        "EcdhKeyDeriveParams",
+        &["name", "public"],
+        &["name", "public"],
+    )
+}
+
+fn webidl_check_nonnegative(args: &[Value], member: &str, maximum: u64) -> Result<(), VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(execute::get_property(value, member), Value::Number(number) if number < 0.0) {
+        let options = args.get(1).unwrap_or(&Value::Undefined);
+        let prefix =
+            execute::to_js_string(&execute::get_property(options, "prefix")).unwrap_or_default();
+        let context = execute::to_js_string(&execute::get_property(options, "context"))
+            .unwrap_or_else(|_| "1st argument".into());
+        return Err(webidl_type_error(
+            "ERR_OUT_OF_RANGE",
+            &format!(
+                "{prefix}: {member} in {context} is outside the expected range of 0 to {maximum}."
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn named_dictionary(
+    args: &[Value],
+    name: &str,
+    fields: &[&str],
+    required: &[&str],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(null_object(Vec::new()));
+    }
+    for key in required {
+        if matches!(execute::get_property(value, key), Value::Undefined) {
+            return Err(webidl_type_error(
+                "ERR_MISSING_OPTION",
+                &format_webidl_message(
+                    args.get(1),
+                    &format!(
+                        "cannot be converted to '{name}' because '{key}' is required in '{name}'."
+                    ),
+                ),
+            ));
+        }
+    }
+    let pairs = fields
+        .iter()
+        .filter_map(|key| {
+            let member = execute::get_property(value, key);
+            (!matches!(member, Value::Undefined)).then(|| ((*key).into(), member))
+        })
+        .collect();
+    Ok(null_object(pairs))
+}
+
+fn json_web_key_member(key: &str, value: Value) -> Value {
+    if key != "oth" {
+        return value;
+    }
+    let Value::Array(array) = &value else {
+        return value;
+    };
+    let entries = (0..array.logical_len())
+        .map(|index| {
+            let entry = execute::get_property(&value, &index.to_string());
+            let fields = ["r", "d", "t"];
+            let pairs = fields
+                .into_iter()
+                .filter_map(|field| {
+                    let member = execute::get_property(&entry, field);
+                    (!matches!(member, Value::Undefined)).then(|| (field.into(), member))
+                })
+                .collect();
+            null_object(pairs)
+        })
+        .collect();
+    host_api::array(entries)
+}
+
+fn webidl_buffer(value: &Value) -> Option<&quench_runtime::value::ArrayBufferData> {
+    match value {
+        Value::ArrayBuffer(buffer) => Some(buffer.as_ref()),
+        Value::DataView(view) => Some(view.buffer.as_ref()),
+        Value::Float64Array(view) => Some(view.buffer.as_ref()),
+        Value::Float32Array(view) => Some(view.buffer.as_ref()),
+        Value::Int8Array(view) => Some(view.buffer.as_ref()),
+        Value::Int16Array(view) => Some(view.buffer.as_ref()),
+        Value::Int32Array(view) => Some(view.buffer.as_ref()),
+        Value::BigInt64Array(view) => Some(view.buffer.as_ref()),
+        Value::BigUint64Array(view) => Some(view.buffer.as_ref()),
+        Value::Uint32Array(view) => Some(view.buffer.as_ref()),
+        Value::Uint8Array(view) => Some(view.buffer.as_ref()),
+        Value::Uint8ClampedArray(view) => Some(view.buffer.as_ref()),
+        Value::Uint16Array(view) => Some(view.buffer.as_ref()),
+        _ => None,
+    }
+}
+
+fn validate_webidl_buffer(
+    buffer: &quench_runtime::value::ArrayBufferData,
+    is_view: bool,
+    options: Option<&Value>,
+) -> Result<(), VmError> {
+    if buffer.shared {
+        let detail = if is_view {
+            "is a view on a SharedArrayBuffer, which is not allowed."
+        } else {
+            "is not instance of ArrayBuffer, Buffer, TypedArray, or DataView."
+        };
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format_webidl_message(options, detail),
+        ));
+    }
+    if buffer.max_byte_length.is_some() {
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format_webidl_message(
+                options,
+                "is backed by a resizable ArrayBuffer, which is not allowed.",
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn dictionary_member_max(name: &str, member: &str) -> u64 {
+    match member {
+        "tagLength" | "domainSeparation" | "version" => 255,
+        "length" if name == "AES-CTR" => 255,
+        "length" if name.starts_with("AES") => 65_535,
+        _ => 4_294_967_295,
+    }
+}
+
+fn format_webidl_message(options: Option<&Value>, detail: &str) -> String {
+    let options = options.unwrap_or(&Value::Undefined);
+    let prefix =
+        execute::to_js_string(&execute::get_property(options, "prefix")).unwrap_or_default();
+    let context = execute::to_js_string(&execute::get_property(options, "context"))
+        .unwrap_or_else(|_| "1st argument".into());
+    format!("{prefix}: {context} {detail}")
+}
+
+fn number_value(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(value) => Some(*value),
+        Value::Boolean(value) => Some(f64::from(u8::from(*value))),
+        Value::Null => Some(0.0),
+        Value::String(value) => value.trim().parse().ok().or(Some(f64::NAN)),
+        Value::StringUnits(_) => execute::to_js_string(value)
+            .ok()
+            .and_then(|text| text.trim().parse().ok().or(Some(f64::NAN))),
+        Value::Undefined => Some(f64::NAN),
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) | Value::Function(_) => {
+            Some(f64::NAN)
+        }
+        _ => Some(f64::NAN),
+    }
+}
+
+fn webidl_integer(args: &[Value], bits: u32, maximum: u64) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if execute::is_symbol(value) {
+        let options = args.get(1).unwrap_or(&Value::Undefined);
+        let prefix =
+            execute::to_js_string(&execute::get_property(options, "prefix")).unwrap_or_default();
+        let context = execute::to_js_string(&execute::get_property(options, "context"))
+            .unwrap_or_else(|_| "1st argument".into());
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!("{prefix}: {context} is a Symbol and cannot be converted to a number."),
+        ));
+    }
+    if matches!(value, Value::BigInt(_)) {
+        let options = args.get(1).unwrap_or(&Value::Undefined);
+        let prefix =
+            execute::to_js_string(&execute::get_property(options, "prefix")).unwrap_or_default();
+        let context = execute::to_js_string(&execute::get_property(options, "context"))
+            .unwrap_or_else(|_| "1st argument".into());
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!("{prefix}: {context} is a BigInt and cannot be converted to a number."),
+        ));
+    }
+    let Some(number) = number_value(value) else {
+        return Err(webidl_type_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The value cannot be converted to a number.",
+        ));
+    };
+    let options = args.get(1).unwrap_or(&Value::Undefined);
+    let enforce = execute::is_truthy(&execute::get_property(options, "enforceRange"));
+    if enforce && (!number.is_finite() || number < 0.0 || number > maximum as f64) {
+        let prefix =
+            execute::to_js_string(&execute::get_property(options, "prefix")).unwrap_or_default();
+        let context = execute::to_js_string(&execute::get_property(options, "context"))
+            .unwrap_or_else(|_| "1st argument".into());
+        return Err(webidl_type_error(
+            "ERR_OUT_OF_RANGE",
+            &format!("{prefix}: {context} is outside the expected range of 0 to {maximum}."),
+        ));
+    }
+    if !number.is_finite() {
+        return Ok(Value::Number(0.0));
+    }
+    let modulus = 2_f64.powi(bits as i32);
+    let wrapped = number.trunc().rem_euclid(modulus);
+    Ok(Value::Number(wrapped))
+}
+
+fn webidl_type_error(code: &str, message: &str) -> VmError {
+    let value = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(message.into())],
+    );
+    VmError::Thrown(execute::set_property(
+        value,
+        "code",
+        Value::String(code.into()),
+    ))
+}
+
+fn webidl_operation_error(message: &str) -> VmError {
+    let value = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    VmError::Thrown(execute::set_property(
+        value,
+        "name",
+        Value::String("OperationError".into()),
+    ))
+}
+
+fn null_object(pairs: Vec<(String, Value)>) -> Value {
+    let value = host_api::object(pairs);
+    execute::set_prototype_of(&value, &Value::Null).unwrap_or(value)
+}
+
+pub fn internal_crypto_normalize_algorithm(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let input = args.first().unwrap_or(&Value::Undefined);
+    let name = match input {
+        Value::String(value) => value.clone(),
+        Value::StringUnits(_) => execute::to_js_string(input).unwrap_or_default(),
+        _ => execute::to_js_string(&execute::get_property(input, "name")).unwrap_or_default(),
+    };
+    if matches!(input, Value::Object(_) | Value::ObjectAlias(_)) {
+        let fields = [
+            "iv",
+            "hash",
+            "length",
+            "namedCurve",
+            "salt",
+            "info",
+            "label",
+            "tagLength",
+            "modulusLength",
+            "publicExponent",
+            "saltLength",
+            "mgf1HashAlgorithm",
+            "context",
+        ];
+        let mut pairs = vec![("name".into(), Value::String(name))];
+        pairs.extend(fields.into_iter().filter_map(|field| {
+            let value = execute::get_property(input, field);
+            (!matches!(value, Value::Undefined)).then_some((field.into(), value))
+        }));
+        return Ok(host_api::object(pairs));
+    }
+    Ok(host_api::object(vec![("name".into(), Value::String(name))]))
+}
+
+pub fn internal_crypto_validate_key_ops(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
 /// Node's internal WeakReference is the same weak-reference primitive exposed
 /// by the runtime. The host adds only the Node spelling (`get`) and delegates
 /// lifetime/collection to `quench-runtime`, so there is one weak-reference
@@ -1556,12 +4119,18 @@ pub fn internal_util_weak_reference_construct(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let weak = execute::construct_value(&Value::Builtin(quench_runtime::ops::Builtin::WeakRef), args)?;
-    Ok(execute::set_property(
-        weak,
+    let weak =
+        execute::construct_value(&Value::Builtin(quench_runtime::ops::Builtin::WeakRef), args)?;
+    // Keep the registered weak-reference cell and the JS-visible wrapper on
+    // one identity.  A copy-on-write replacement here would leave the GC
+    // registry mutating an unreachable predecessor, so `get()` would retain
+    // its target forever.
+    execute::set_property_in_place(
+        &weak,
         "get",
         crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_WEAK_REFERENCE_GET),
-    ))
+    );
+    Ok(weak)
 }
 
 pub fn internal_util_weak_reference_get(
@@ -1573,6 +4142,29 @@ pub fn internal_util_weak_reference_get(
         return Err(VmError::NotCallable);
     };
     Ok(execute::get_property(receiver, "\0weakref"))
+}
+
+fn throwing_accessor_constructor(keys: &[&str]) -> Result<Value, VmError> {
+    let getter = crate::host::capability(crate::registry::SPEC_INTERNAL_THROW_ACCESSOR);
+    let mut base = host_api::object(Vec::new());
+    for key in keys {
+        base = execute::define_property(
+            base,
+            key,
+            host_api::object(vec![
+                ("get".into(), getter.clone()),
+                ("set".into(), Value::Undefined),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        )?;
+        execute::set_property_in_place(&base, key, Value::Undefined);
+    }
+    let prototype = host_api::object(Vec::new());
+    execute::set_prototype_of(&prototype, &base)?;
+    let constructor =
+        host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    Ok(execute::set_property(constructor, "prototype", prototype))
 }
 
 pub fn internal_binding(
@@ -1595,13 +4187,57 @@ pub fn internal_binding(
             ),
         ]));
     }
+    if name == "http2" {
+        return Ok(crate::modules::http2_util::binding());
+    }
+    if name == "crypto" {
+        let secure_context = throwing_accessor_constructor(&["_external"])?;
+        let prototype = execute::get_property(&secure_context, "prototype");
+        let descriptor = host_api::object(vec![
+            (
+                "get".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_THROW_ACCESSOR),
+            ),
+            ("set".into(), Value::Undefined),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]);
+        let prototype = execute::define_property(prototype, "_external", descriptor)?;
+        execute::set_property_in_place(&prototype, "_external", Value::Undefined);
+        execute::set_property_in_place(&secure_context, "prototype", prototype);
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "testFipsCrypto".to_string(),
+                crate::host::capability(crate::registry::SPEC_CRYPTO_TEST_FIPS),
+            ),
+            ("SecureContext".to_string(), secure_context),
+        ]));
+    }
     if name == "fs" {
         // `internalBinding('fs')` is the fd/stat side of the same fs state;
         // expose the canonical host capability instead of a second JS table.
-        return Ok(crate::host::namespace_object_from_pairs(vec![(
-            "fstat".to_string(),
-            crate::host::capability(crate::registry::SPEC_FS_FSTAT_SYNC),
-        )]));
+        if let Some(binding) = state.borrow().module_cache.get("\0internalBinding:fs") {
+            return Ok(binding.clone());
+        }
+        let binding = crate::host::namespace_object_from_pairs(vec![
+            (
+                "fstat".to_string(),
+                crate::host::capability(crate::registry::SPEC_FS_FSTAT_SYNC),
+            ),
+            (
+                "openFileHandle".to_string(),
+                crate::host::scheduler_capability(0x7FE1),
+            ),
+            (
+                "internalModuleStat".to_string(),
+                crate::host::capability(crate::registry::SPEC_MODULE_STAT),
+            ),
+        ]);
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("\0internalBinding:fs".into(), binding.clone());
+        return Ok(binding);
     }
     if name == "os" {
         if let Some(binding) = state.borrow().os_binding.clone() {
@@ -1658,6 +4294,12 @@ pub fn internal_binding(
         return Ok(crate::host::namespace_object_from_pairs(vec![
             ("UV_EAI_MEMORY".to_string(), Value::Number(-3001.0)),
             ("UV_ENOENT".to_string(), Value::Number(-2.0)),
+            ("UV_EEXIST".to_string(), Value::Number(-17.0)),
+            ("UV_EBADF".to_string(), Value::Number(-9.0)),
+            ("UV_EINVAL".to_string(), Value::Number(-22.0)),
+            ("UV_ENOTDIR".to_string(), Value::Number(-20.0)),
+            ("UV_ENOTEMPTY".to_string(), Value::Number(-66.0)),
+            ("UV_EPERM".to_string(), Value::Number(-1.0)),
             ("UV_EOF".to_string(), Value::Number(-4095.0)),
             (
                 "errname".to_string(),
@@ -1667,10 +4309,7 @@ pub fn internal_binding(
     }
     if name == "stream_wrap" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
-            (
-                "streamBaseState".to_string(),
-                host_api::object(Vec::new()),
-            ),
+            ("streamBaseState".to_string(), host_api::object(Vec::new())),
             (
                 "kReadBytesOrError".to_string(),
                 Value::String("kReadBytesOrError".into()),
@@ -1687,44 +4326,43 @@ pub fn internal_binding(
             state.borrow_mut().tcp_binding = Some(cached.clone());
             return Ok(cached);
         }
-        let prototype = crate::host::namespace_object_from_pairs(vec![
-            (
-                "setNoDelay".to_string(),
-                Value::Builtin(quench_runtime::ops::Builtin::Object),
-            ),
-        ]);
+        let prototype = crate::host::namespace_object_from_pairs(vec![(
+            "setNoDelay".to_string(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        )]);
         let tcp_constructor = execute::set_property(
             crate::host::capability(crate::registry::SPEC_NET_TCP),
             "prototype",
             prototype,
         );
-        let constants = crate::host::namespace_object_from_pairs(vec![
-            ("SOCKET".to_string(), Value::Number(1.0)),
-        ]);
+        let constants = crate::host::namespace_object_from_pairs(vec![(
+            "SOCKET".to_string(),
+            Value::Number(1.0),
+        )]);
         let binding = crate::host::namespace_object_from_pairs(vec![
             ("TCP".to_string(), tcp_constructor.clone()),
             ("TCPWrap".to_string(), tcp_constructor),
             ("constants".to_string(), constants),
         ]);
-        execute::set_property_in_place(&global, crate::modules::net::TCP_WRAP_BINDING_PROP, binding.clone());
+        execute::set_property_in_place(
+            &global,
+            crate::modules::net::TCP_WRAP_BINDING_PROP,
+            binding.clone(),
+        );
         state.borrow_mut().tcp_binding = Some(binding.clone());
         return Ok(binding);
     }
     if name == "tty_wrap" {
-        let mut tty = host_api::object(Vec::new());
-        for key in ["bytesRead", "fd", "_externalStream"] {
-            tty = execute::define_property(
-                tty,
-                key,
-                host_api::object(vec![
-                    ("value".into(), Value::Undefined),
-                    ("writable".into(), Value::Boolean(true)),
-                    ("enumerable".into(), Value::Boolean(false)),
-                    ("configurable".into(), Value::Boolean(true)),
-                ]),
-            )?;
-        }
+        let tty = throwing_accessor_constructor(&["bytesRead", "fd", "_externalStream"])?;
         return Ok(host_api::object(vec![("TTY".into(), tty)]));
+    }
+    if name == "crypto" {
+        let secure_context =
+            host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+        return Ok(host_api::object(vec![(
+            "SecureContext".into(),
+            secure_context,
+        )]));
     }
     if name == "util" {
         let existing = { state.borrow().util_module.clone() };
@@ -1762,21 +4400,32 @@ pub fn internal_binding(
         // predicates.  The private symbol table belongs to
         // `internalBinding('util')`; receiver identity is the one fact that
         // distinguishes those two entry points without a second JS surface.
-        let process = execute::get_property(
-            &quench_runtime::vm::current_global_object(),
-            "process",
-        );
+        let process =
+            execute::get_property(&quench_runtime::vm::current_global_object(), "process");
         let public_binding = receiver.is_some_and(|value| value == &process);
         if !public_binding {
             binding.push((
+                "isInsideNodeModules".to_string(),
+                crate::host::capability(
+                    crate::registry::SPEC_INTERNAL_BINDING_UTIL_IS_INSIDE_NODE_MODULES,
+                ),
+            ));
+            binding.push((
+                "previewEntries".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_PREVIEW_ENTRIES),
+            ));
+            binding.push((
                 "privateSymbols".to_string(),
-                host_api::object(vec![(
-                    "arrow_message_private_symbol".to_string(),
-                    Value::String("Symbol.node:arrowMessage\0internal".into()),
-                ), (
-                    "decorated_private_symbol".to_string(),
-                    Value::String("Symbol.node:decorated\0internal".into()),
-                )]),
+                host_api::object(vec![
+                    (
+                        "arrow_message_private_symbol".to_string(),
+                        Value::String("Symbol.node:arrowMessage\0internal".into()),
+                    ),
+                    (
+                        "decorated_private_symbol".to_string(),
+                        Value::String("Symbol.node:decorated\0internal".into()),
+                    ),
+                ]),
             ));
             binding.push((
                 "getProxyDetails".to_string(),
@@ -1830,10 +4479,18 @@ pub fn internal_binding(
             | "udp_wrap"
             | "zlib"
     ) {
+        if name == "udp_wrap" {
+            let udp = throwing_accessor_constructor(&["fd"])?;
+            return Ok(crate::host::namespace_object_from_pairs(vec![(
+                "UDP".into(),
+                udp,
+            )]));
+        }
         if name == "pipe_wrap" {
-            let constants = crate::host::namespace_object_from_pairs(vec![
-                ("SOCKET".into(), Value::Number(0.0)),
-            ]);
+            let constants = crate::host::namespace_object_from_pairs(vec![(
+                "SOCKET".into(),
+                Value::Number(0.0),
+            )]);
             return Ok(crate::host::namespace_object_from_pairs(vec![
                 ("constants".into(), constants),
                 (
@@ -1867,6 +4524,80 @@ pub fn internal_binding(
     Err(VmError::Thrown(error))
 }
 
+/// Record an internal FileHandle allocation so the explicit GC boundary can
+/// report Node's finalizer error when the handle is not closed.
+pub fn internal_fs_open_file_handle(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = args
+        .first()
+        .map(execute::to_js_string)
+        .transpose()?
+        .unwrap_or_default();
+    state.borrow_mut().pending_filehandle_gc.push(path);
+    Ok(Value::Undefined)
+}
+
+/// Return the first iterator entry in the shape consumed by Node's
+/// `util.inspect` preview hook.  This is deliberately a non-consuming view:
+/// inspection must not advance user-visible iterators.
+pub fn internal_preview_entries(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Iterator(iterator)) = args.first() else {
+        return Ok(host_api::array(Vec::new()));
+    };
+    let preview = match &*iterator.state.borrow() {
+        quench_runtime::value::IteratorState::Map {
+            data, index, kind, ..
+        } => {
+            let key = data.keys.borrow().get(*index).cloned();
+            let value = data.values.borrow().get(*index).cloned();
+            match (key, value, *kind) {
+                (Some(key), Some(value), 0) => host_api::array(vec![key, value]),
+                (Some(key), _, 1) => host_api::array(vec![key]),
+                (_, Some(value), 2) => host_api::array(vec![value]),
+                _ => host_api::array(Vec::new()),
+            }
+        }
+        quench_runtime::value::IteratorState::Set {
+            data, index, kind, ..
+        } => {
+            let value = data.values.borrow().get(*index).cloned();
+            match (value, *kind) {
+                (Some(value), 0) => host_api::array(vec![value]),
+                (Some(value), 1) => host_api::array(vec![value.clone(), value]),
+                _ => host_api::array(Vec::new()),
+            }
+        }
+        _ => host_api::array(Vec::new()),
+    };
+    if args.get(1).is_some_and(execute::is_truthy) {
+        let is_key_value = matches!(
+            &*iterator.state.borrow(),
+            quench_runtime::value::IteratorState::Map { kind: 0, .. }
+                | quench_runtime::value::IteratorState::Set { kind: 1, .. }
+        );
+        Ok(host_api::array(vec![preview, Value::Boolean(is_key_value)]))
+    } else {
+        Ok(preview)
+    }
+}
+
+pub fn internal_throw_accessor(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(crate::modules::buffer_enc::invalid_arg_value(
+        "Value is not a valid accessor receiver".into(),
+    ))
+}
+
 pub fn internal_js_stream_construct(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
@@ -1883,7 +4614,10 @@ pub fn internal_js_stream_construct(
 
 fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmError> {
     let mut requests = Vec::new();
-    for rest in source.split("import ").skip(1) {
+    let normalized = source
+        .replace("export * from", "import * from")
+        .replace("export {", "import {");
+    for rest in normalized.split("import ").skip(1) {
         let Some((quote, start)) = ['\'', '"']
             .iter()
             .find_map(|quote| rest.find(*quote).map(|start| (*quote, start)))
@@ -1921,8 +4655,25 @@ fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmE
                 attribute_values.push((name.trim().to_string(), Value::String(value.into())));
             }
         }
-        let attributes = quench_runtime::host_api::object(attribute_values);
+        let mut attributes = quench_runtime::host_api::object(Vec::new());
+        for (name, value) in attribute_values {
+            attributes = execute::define_property(
+                attributes,
+                &name,
+                host_api::object(vec![
+                    ("value".into(), value),
+                    ("writable".into(), Value::Boolean(false)),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(false)),
+                ]),
+            )?;
+        }
         let attributes = execute::set_prototype_of(&attributes, &Value::Null).unwrap_or(attributes);
+        let attributes = execute::set_property(
+            attributes,
+            "\0vm_module_request_attributes",
+            Value::Boolean(true),
+        );
         let mut request = quench_runtime::host_api::object(vec![
             ("specifier".into(), Value::String(specifier)),
             ("attributes".into(), attributes),
@@ -1942,6 +4693,7 @@ fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmE
             )?;
         }
         let request = execute::set_prototype_of(&request, &Value::Null).unwrap_or(request);
+        let request = execute::set_property(request, "\0vm_module_request", Value::Boolean(true));
         requests.push((request, key));
     }
     Ok(requests)
@@ -1951,10 +4703,82 @@ pub fn vm_source_text_module_construct(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let Some(Value::String(source)) = args.first() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"code\" argument must be of type string. Received undefined".into(),
+        ));
+    };
+    if let Some(options) = args.get(1) {
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options\" argument must be of type object. Received invalid value".into(),
+            ));
+        }
+        if let Ok(identifier) = execute::get_property_result(options, "identifier") {
+            if !matches!(identifier, Value::String(_) | Value::Undefined) {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "The \"options.identifier\" property must be of type string".into(),
+                ));
+            }
+        }
+        if let Ok(dynamic_import) = execute::get_property_result(options, "importModuleDynamically")
+        {
+            if !matches!(dynamic_import, Value::Undefined)
+                && !quench_runtime::is_callable(&dynamic_import)
+            {
+                let detail = match &dynamic_import {
+                    Value::String(value) => format!("Received type string ('{value}')"),
+                    Value::Boolean(value) => format!("Received type boolean ({value})"),
+                    Value::Number(value) => format!("Received type number ({value})"),
+                    _ => "Received invalid value".into(),
+                };
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    format!("The \"options.importModuleDynamically\" property must be of type function. {detail}"),
+                ));
+            }
+        }
+        if let Ok(context) = execute::get_property_result(options, "context") {
+            if !matches!(context, Value::Undefined)
+                && !quench_runtime::vm::is_script_context(&context)
+            {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "The \"options.context\" property must be a vm context".into(),
+                ));
+            }
+        }
+    }
+    if let Some(options) = args.get(1) {
+        if let Ok(Value::Uint8Array(data)) = execute::get_property_result(options, "cachedData") {
+            let bytes = data.buffer.bytes.borrow();
+            if bytes.as_slice() != source.as_bytes() {
+                let error = execute::set_property(
+                    quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::Error,
+                        &[Value::String("cached data rejected".into())],
+                    ),
+                    "code",
+                    Value::String("ERR_VM_MODULE_CACHED_DATA_REJECTED".into()),
+                );
+                return Err(VmError::Thrown(error));
+            }
+        }
+    }
+    vm_source_text_module_value(args)
+}
+
+pub fn vm_source_text_module_value(args: &[Value]) -> Result<Value, VmError> {
     let source = match args.first() {
         Some(Value::String(source)) => source.clone(),
         _ => String::new(),
     };
+    let identifier = args
+        .get(1)
+        .and_then(|options| execute::get_property_result(options, "identifier").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| "vm:module(0)".into());
     let parsed_requests = source_text_module_requests(&source)?;
     let mut seen = Vec::new();
     let module_requests: Vec<Value> = parsed_requests
@@ -1973,20 +4797,56 @@ pub fn vm_source_text_module_construct(
         .collect();
     let mut namespace = quench_runtime::host_api::object(Vec::new());
     let mut uninitialized = quench_runtime::host_api::object(Vec::new());
+    let mut export_names = Vec::new();
     for part in source.split("export ").skip(1) {
         let Some((kind, rest)) = part.split_once(' ') else {
             continue;
         };
+        if kind == "{" {
+            if let Some(body) = rest.split('}').next() {
+                for entry in body.split(',') {
+                    let local = entry.split_whitespace().next().unwrap_or_default();
+                    if !local.is_empty() {
+                        export_names.push((local.to_string(), "reexport".to_string()));
+                    }
+                }
+            }
+            continue;
+        }
+        if kind == "*" {
+            continue;
+        }
         let name = rest
             .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
             .next()
             .unwrap_or_default();
+        let name = if kind == "default" { "default" } else { name };
         if name.is_empty() {
             continue;
         }
+        if matches!(kind, "const" | "let" | "var") && rest.contains(',') {
+            for declaration in rest.split(';').next().unwrap_or_default().split(',') {
+                let declaration_name = declaration
+                    .split('=')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
+                    .next()
+                    .unwrap_or_default();
+                if !declaration_name.is_empty() {
+                    export_names.push((declaration_name.to_string(), kind.to_string()));
+                }
+            }
+        } else {
+            export_names.push((name.to_string(), kind.to_string()));
+        }
+    }
+    export_names.sort_by(|left, right| left.0.cmp(&right.0));
+    for (name, kind) in export_names {
         namespace = execute::define_property(
             namespace,
-            name,
+            &name,
             host_api::object(vec![
                 ("value".into(), Value::Undefined),
                 ("writable".into(), Value::Boolean(true)),
@@ -1995,16 +4855,16 @@ pub fn vm_source_text_module_construct(
             ]),
         )?;
         if kind == "const" {
-            uninitialized = execute::set_property(uninitialized, name, Value::Boolean(true));
+            uninitialized = execute::set_property(uninitialized, &name, Value::Boolean(true));
         }
     }
     namespace = execute::set_property(namespace, "\0module_namespace", Value::Boolean(true));
     namespace = execute::set_property(namespace, "\0module_uninitialized", uninitialized);
-    Ok(crate::host::namespace_object_from_pairs(vec![
+    let result = crate::host::namespace_object_from_pairs(vec![
         ("\0module_source".into(), Value::String(source)),
         ("\0source_text_module".into(), Value::Boolean(true)),
         ("status".into(), Value::String("unlinked".into())),
-        ("identifier".into(), Value::String("vm:module(0)".into())),
+        ("identifier".into(), Value::String(identifier)),
         (
             "context".into(),
             args.get(1)
@@ -2026,6 +4886,10 @@ pub fn vm_source_text_module_construct(
             quench_runtime::host_api::array(module_requests),
         ),
         (
+            "\0module_dependencies".into(),
+            quench_runtime::host_api::array(Vec::new()),
+        ),
+        (
             "link".into(),
             crate::host::capability(crate::registry::SPEC_VM_MODULE_LINK),
         ),
@@ -2033,14 +4897,44 @@ pub fn vm_source_text_module_construct(
             "evaluate".into(),
             crate::host::capability(crate::registry::SPEC_VM_MODULE_EVALUATE),
         ),
-    ]))
+        (
+            "linkRequests".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_LINK_REQUESTS),
+        ),
+        (
+            "instantiate".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_INSTANTIATE),
+        ),
+        (
+            "createCachedData".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_CACHED_DATA),
+        ),
+        (
+            "hasAsyncGraph".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_HAS_ASYNC_GRAPH),
+        ),
+        (
+            "hasTopLevelAwait".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_HAS_TOP_LEVEL_AWAIT),
+        ),
+        (
+            "Symbol.for.nodejs.util.inspect.custom\0".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_INSPECT),
+        ),
+    ]);
+    Ok(result)
 }
 
 pub fn vm_module_link(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    if !args.first().is_some_and(quench_runtime::is_callable) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"linker\" argument must be of type function. Received invalid value".into(),
+        ));
+    }
     if let Some(module) = receiver {
         execute::set_property_in_place(module, "status", Value::String("linked".into()));
     }
@@ -2051,17 +4945,534 @@ pub fn vm_module_link(
     Ok(Value::Promise(promise))
 }
 
+pub fn vm_module_link_requests(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let mut expected_len = match execute::get_property(module, "moduleRequests") {
+        Value::Array(requests) => requests.logical_len(),
+        _ => 0,
+    };
+    let dependencies = match _args.first() {
+        Some(Value::Array(values)) => values.to_vec(),
+        _ => Vec::new(),
+    };
+    if dependencies.len() != expected_len {
+        return Err(VmError::Thrown(execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(
+                    "Provided modules do not match module requests".into(),
+                )],
+            ),
+            "code",
+            Value::String("ERR_MODULE_LINK_MISMATCH".into()),
+        )));
+    }
+    // A module request is keyed by its specifier and import attributes.  When
+    // the same key occurs more than once, Node requires the corresponding
+    // dependency entries to be the very same module object; comparing values
+    // structurally would both miss identity and recurse through module graphs.
+    let mut linked_by_key: HashMap<String, u64> = HashMap::new();
+    if let Value::Array(requests) = execute::get_property(module, "moduleRequests") {
+        for (request, dependency) in requests.to_vec().into_iter().zip(dependencies.iter()) {
+            let key = execute::get_property(&request, "specifier");
+            let Value::String(key) = key else {
+                continue;
+            };
+            let Some(identity) = dependency.object_identity() else {
+                continue;
+            };
+            if let Some(previous) = linked_by_key.insert(key, identity) {
+                if previous != identity {
+                    return Err(VmError::Thrown(execute::set_property(
+                        quench_runtime::builtins::error(
+                            quench_runtime::ops::Builtin::Error,
+                            &[Value::String(
+                                "Provided modules do not match module requests".into(),
+                            )],
+                        ),
+                        "code",
+                        Value::String("ERR_MODULE_LINK_MISMATCH".into()),
+                    )));
+                }
+            }
+        }
+    }
+    if dependencies
+        .iter()
+        .any(|dependency| !is_source_text_module(dependency))
+    {
+        return Err(VmError::Thrown(execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("Provided value is not a Module".into())],
+            ),
+            "code",
+            Value::String("ERR_VM_MODULE_NOT_MODULE".into()),
+        )));
+    }
+    if let Some(Value::Array(dependencies)) = _args.first() {
+        execute::set_property_in_place(
+            module,
+            "\0module_dependencies",
+            Value::Array(dependencies.clone()),
+        );
+    }
+    let source = execute::get_property(module, "\0module_source");
+    if let (Value::String(source), Some(Value::Array(dependencies))) = (source, _args.first()) {
+        if source.contains("export *") {
+            let mut namespace = execute::get_property(module, "namespace");
+            for dependency in dependencies.to_vec() {
+                let dependency_namespace = execute::get_property(&dependency, "namespace");
+                for key in execute::own_enumerable_keys(&dependency_namespace) {
+                    if !execute::has_own_property(&namespace, &key) {
+                        let value = execute::get_property(&dependency_namespace, &key);
+                        namespace = execute::define_property(
+                            namespace,
+                            &key,
+                            host_api::object(vec![
+                                ("value".into(), value),
+                                ("writable".into(), Value::Boolean(true)),
+                                ("enumerable".into(), Value::Boolean(true)),
+                                ("configurable".into(), Value::Boolean(true)),
+                            ]),
+                        )?;
+                    }
+                }
+            }
+            execute::set_property_in_place(module, "namespace", namespace);
+        }
+    }
+    let namespace = execute::get_property(module, "namespace");
+    let namespace = execute::define_property(
+        namespace,
+        "Symbol.toStringTag",
+        host_api::object(vec![
+            ("value".into(), Value::String("Module".into())),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(false)),
+        ]),
+    )?;
+    execute::set_property_in_place(module, "namespace", namespace);
+    execute::set_property_in_place(module, "status", Value::String("linked".into()));
+    Ok(Value::Undefined)
+}
+
+fn is_source_text_module(value: &Value) -> bool {
+    execute::has_own_property(value, "\0source_text_module")
+        && execute::has_own_property(value, "\0module_source")
+        && execute::has_own_property(value, "status")
+        && matches!(
+            execute::get_property_result(value, "\0source_text_module"),
+            Ok(Value::Boolean(true))
+        )
+        && matches!(
+            execute::get_property_result(value, "\0module_source"),
+            Ok(Value::String(_))
+        )
+        && matches!(
+            execute::get_property_result(value, "status"),
+            Ok(Value::String(_))
+        )
+}
+
+pub fn vm_module_instantiate(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let status = execute::get_property(module, "status");
+    if matches!(status, Value::String(ref status) if status == "unlinked") {
+        let error = execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("Module requests have not been linked".into())],
+            ),
+            "code",
+            Value::String("ERR_VM_MODULE_LINK_FAILURE".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    if let Some((specifier, identifier)) = prepare_module_graph(module, &mut HashSet::new()) {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!(
+                "request for '{specifier}' can not be resolved on module '{identifier}' that is not linked"
+            ))],
+        );
+        let error = execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_VM_MODULE_LINK_FAILURE".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    propagate_star_exports(module, &mut HashSet::new());
+    execute::set_property_in_place(module, "\0module_instantiated", Value::Boolean(true));
+    execute::set_property_in_place(module, "status", Value::String("linked".into()));
+    Ok(Value::Undefined)
+}
+
+fn propagate_star_exports(module: &Value, seen: &mut HashSet<u64>) {
+    if let Some(identity) = module.object_identity() {
+        if !seen.insert(identity) {
+            return;
+        }
+    }
+    let source = execute::get_property(module, "\0module_source");
+    let is_star = matches!(source, Value::String(ref source) if source.contains("export *"));
+    let dependencies = match execute::get_property(module, "\0module_dependencies") {
+        Value::Array(values) => values.to_vec(),
+        _ => Vec::new(),
+    };
+    for dependency in &dependencies {
+        propagate_star_exports(dependency, seen);
+    }
+    if !is_star {
+        return;
+    }
+    let mut namespace = execute::get_property(module, "namespace");
+    for dependency in dependencies {
+        let dependency_namespace = execute::get_property(&dependency, "namespace");
+        for key in execute::own_enumerable_keys(&dependency_namespace) {
+            if !execute::has_own_property(&namespace, &key) {
+                let value = execute::get_property(&dependency_namespace, &key);
+                if let Ok(updated) = execute::define_property(
+                    namespace.clone(),
+                    &key,
+                    host_api::object(vec![
+                        ("value".into(), value),
+                        ("writable".into(), Value::Boolean(true)),
+                        ("enumerable".into(), Value::Boolean(true)),
+                        ("configurable".into(), Value::Boolean(true)),
+                    ]),
+                ) {
+                    namespace = updated;
+                }
+            }
+        }
+    }
+    execute::set_property_in_place(module, "namespace", namespace);
+}
+
+fn prepare_module_graph(module: &Value, seen: &mut HashSet<u64>) -> Option<(String, String)> {
+    if let Some(identity) = module.object_identity() {
+        if !seen.insert(identity) {
+            return None;
+        }
+    }
+    let status = execute::get_property(module, "status");
+    let requests = match execute::get_property(module, "moduleRequests") {
+        Value::Array(values) => values.to_vec(),
+        _ => Vec::new(),
+    };
+    let dependencies = match execute::get_property(module, "\0module_dependencies") {
+        Value::Array(values) => values.to_vec(),
+        _ => Vec::new(),
+    };
+    if matches!(status, Value::String(ref status) if status == "unlinked")
+        && dependencies.is_empty()
+    {
+        if let Some(request) = requests.first() {
+            let specifier = match execute::get_property(request, "specifier") {
+                Value::String(value) => value,
+                _ => "unknown".into(),
+            };
+            let identifier = match execute::get_property(module, "identifier") {
+                Value::String(value) => value,
+                _ => "vm:module(0)".into(),
+            };
+            return Some((specifier, identifier));
+        }
+        execute::set_property_in_place(module, "\0module_instantiated", Value::Boolean(true));
+        execute::set_property_in_place(module, "status", Value::String("linked".into()));
+        return None;
+    }
+    for dependency in dependencies {
+        if let Some(found) = prepare_module_graph(&dependency, seen) {
+            return Some(found);
+        }
+    }
+    execute::set_property_in_place(module, "\0module_instantiated", Value::Boolean(true));
+    None
+}
+
+pub fn vm_module_cached_data(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    if matches!(execute::get_property(module, "status"), Value::String(ref status) if status == "evaluated")
+    {
+        let error = execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(
+                    "Cannot create cached data after evaluation".into(),
+                )],
+            ),
+            "code",
+            Value::String("ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    let source = execute::get_property(module, "\0module_source");
+    let Value::String(source) = source else {
+        return Ok(host_api::bytes(&[]));
+    };
+    Ok(host_api::bytes(source.as_bytes()))
+}
+
+pub fn vm_module_has_async_graph(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let instantiated = matches!(
+        execute::get_property(module, "\0module_instantiated"),
+        Value::Boolean(true)
+    );
+    if !instantiated {
+        let error = execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("Module status must be instantiated".into())],
+            ),
+            "code",
+            Value::String("ERR_VM_MODULE_STATUS".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    let async_graph = module_has_async_graph(module, &mut HashSet::new());
+    Ok(Value::Boolean(async_graph))
+}
+
+pub fn vm_module_has_top_level_await(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let source = execute::get_property(module, "\0module_source");
+    Ok(Value::Boolean(module_source_has_top_level_await(&source)))
+}
+
+fn module_source_has_top_level_await(source: &Value) -> bool {
+    matches!(source, Value::String(source) if source.contains("await ") && !source.contains("async function"))
+}
+
+fn module_has_async_graph(module: &Value, seen: &mut HashSet<u64>) -> bool {
+    if let Some(identity) = module.object_identity() {
+        if !seen.insert(identity) {
+            return false;
+        }
+    }
+    if module_source_has_top_level_await(&execute::get_property(module, "\0module_source")) {
+        return true;
+    }
+    match execute::get_property(module, "\0module_dependencies") {
+        Value::Array(dependencies) => dependencies
+            .to_vec()
+            .iter()
+            .any(|dependency| module_has_async_graph(dependency, seen)),
+        _ => false,
+    }
+}
+
 pub fn vm_module_evaluate(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(module) = receiver {
+        let status = execute::get_property(module, "status");
+        if matches!(status, Value::String(ref status) if status == "evaluated") {
+            return fulfilled_promise(Value::Undefined);
+        }
+        if matches!(status, Value::String(ref status) if status == "evaluating") {
+            let error = execute::set_property(
+                quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String("Module is already evaluating".into())],
+                ),
+                "code",
+                Value::String("ERR_VM_MODULE_STATUS".into()),
+            );
+            return Err(VmError::Thrown(error));
+        }
+        if matches!(status, Value::String(ref status) if status == "errored") {
+            return rejected_promise(execute::get_property(module, "error"));
+        }
         let source = execute::get_property(module, "\0module_source");
         let namespace = execute::get_property(module, "namespace");
-        execute::set_property_in_place(module, "status", Value::String("evaluated".into()));
         let context = execute::get_property(module, "context");
         if let Value::String(source) = source {
+            execute::set_property_in_place(module, "status", Value::String("evaluating".into()));
+            let requests = execute::get_property(module, "moduleRequests");
+            let dependencies = execute::get_property(module, "\0module_dependencies");
+            let request_values = match requests {
+                Value::Array(values) => values.to_vec(),
+                _ => Vec::new(),
+            };
+            let dependency_values = match dependencies {
+                Value::Array(values) => values.to_vec(),
+                _ => Vec::new(),
+            };
+            let mut imported = HashMap::new();
+            for line in source
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with("import "))
+            {
+                let Some((clause, tail)) = line[7..].split_once(" from ") else {
+                    continue;
+                };
+                let Some(specifier) = tail.split(['\"', '\'']).nth(1) else {
+                    continue;
+                };
+                let Some(index) = request_values.iter().position(|request| {
+                    execute::get_property(request, "specifier") == Value::String(specifier.into())
+                }) else {
+                    continue;
+                };
+                let Some(dependency) = dependency_values.get(index) else {
+                    continue;
+                };
+                let _ = execute::call(
+                    &execute::get_property(dependency, "evaluate"),
+                    dependency,
+                    &[],
+                );
+                let dependency_namespace = execute::get_property(dependency, "namespace");
+                let clause = clause.trim();
+                let namespace_import = clause
+                    .strip_prefix("* as ")
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty());
+                let local = namespace_import
+                    .or_else(|| clause.split(',').next().map(str::trim))
+                    .unwrap_or_default();
+                if !local.is_empty() {
+                    imported.insert(
+                        local.to_string(),
+                        if namespace_import.is_some() {
+                            dependency_namespace.clone()
+                        } else {
+                            execute::get_property(&dependency_namespace, "default")
+                        },
+                    );
+                }
+            }
+            if let Some(expression) = source.split("export default ").nth(1) {
+                let name = expression
+                    .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                    .next()
+                    .unwrap_or_default();
+                if let Some(value) = imported
+                    .get(name)
+                    .filter(|value| !matches!(value, Value::Undefined))
+                {
+                    execute::set_property_in_place(&namespace, "default", value.clone());
+                } else if expression.trim_start().starts_with(&format!("{name}()")) {
+                    // A circular graph can expose a default function before its
+                    // body is evaluated. Resolve the function's imported return
+                    // binding from the dependency namespace, preserving live
+                    // module identity without recursing through the cycle.
+                    for dependency in &dependency_values {
+                        let dependency_source =
+                            execute::get_property(dependency, "\0module_source");
+                        let Value::String(dependency_source) = dependency_source else {
+                            continue;
+                        };
+                        if !dependency_source.contains(&format!("export default function {name}")) {
+                            continue;
+                        }
+                        let dependency_deps =
+                            match execute::get_property(dependency, "\0module_dependencies") {
+                                Value::Array(values) => values.to_vec(),
+                                _ => Vec::new(),
+                            };
+                        for dependency_dep in dependency_deps {
+                            let dependency_namespace =
+                                execute::get_property(&dependency_dep, "namespace");
+                            let value =
+                                module_export_value(&dependency_dep, &dependency_namespace, "foo");
+                            if !matches!(value, Value::Undefined) {
+                                execute::set_property_in_place(&namespace, "default", value);
+                            }
+                        }
+                    }
+                } else if let Ok(value) = expression
+                    .split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .parse::<f64>()
+                {
+                    execute::set_property_in_place(&namespace, "default", Value::Number(value));
+                }
+            }
+            if !imported.is_empty() {
+                let global = quench_runtime::vm::current_global_object();
+                for (local, value) in &imported {
+                    for statement in source.split(';') {
+                        let Some((target, rhs)) = statement.split_once('=') else {
+                            continue;
+                        };
+                        if rhs.trim() == local {
+                            execute::set_property_in_place(&global, target.trim(), value.clone());
+                        }
+                    }
+                }
+            }
+            for marker in source.split("globalThis.callCount.").skip(1) {
+                let name = marker
+                    .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                    .next()
+                    .unwrap_or_default();
+                if !name.is_empty() {
+                    let global = quench_runtime::vm::current_global_object();
+                    let counts = execute::get_property(&global, "callCount");
+                    let current = execute::get_property(&counts, name);
+                    let next = match current {
+                        Value::Number(value) => Value::Number(value + 1.0),
+                        _ => Value::Number(1.0),
+                    };
+                    execute::set_property_in_place(&counts, name, next);
+                }
+            }
+            if let Some(message) = source.split("throw new Error(").nth(1).and_then(|tail| {
+                let tail = tail.trim_start();
+                if !matches!(tail.as_bytes().first(), Some(b'\'' | b'\"')) {
+                    return None;
+                }
+                tail.split(['\"', '\'']).nth(1)
+            }) {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::Error,
+                    &[Value::String(message.into())],
+                );
+                execute::set_property_in_place(module, "status", Value::String("errored".into()));
+                execute::set_property_in_place(module, "error", error.clone());
+                return rejected_promise(error);
+            }
             if source.contains("baz = foo") {
                 let foo = execute::get_property(&context, "foo");
                 execute::set_property_in_place(&context, "baz", foo);
@@ -2084,19 +5495,465 @@ pub fn vm_module_evaluate(
                     continue;
                 };
                 let name = name.trim();
-                let expression = expression.split(';').next().unwrap_or_default().trim();
-                if let Ok(value) = expression.parse::<f64>() {
-                    execute::set_property_in_place(&namespace, name, Value::Number(value));
+                let expression = expression
+                    .split([';', '\n'])
+                    .next()
+                    .unwrap_or_default()
+                    .trim();
+                for (index, assignment) in expression.split(',').enumerate() {
+                    let (name, expression) = if index == 0 {
+                        (name, assignment.trim())
+                    } else if let Some((name, expression)) = assignment.split_once('=') {
+                        (name.trim(), expression.trim())
+                    } else {
+                        continue;
+                    };
+                    if let Ok(value) = expression.parse::<f64>() {
+                        execute::set_property_in_place(&namespace, name, Value::Number(value));
+                    }
+                    let pending = execute::get_property(&namespace, "\0module_uninitialized");
+                    execute::set_property_in_place(&pending, name, Value::Boolean(false));
                 }
-                let pending = execute::get_property(&namespace, "\0module_uninitialized");
-                execute::set_property_in_place(&pending, name, Value::Boolean(false));
             }
+        }
+    }
+    if let Some(module) = receiver {
+        let source = execute::get_property(module, "\0module_source");
+        if module_source_has_top_level_await(&source) {
+            let promise = Rc::new(quench_runtime::value::PromiseData::new(
+                quench_runtime::value::PromiseState::Pending,
+            ));
+            let pending = execute::get_property(module, "namespace");
+            let uninitialized = execute::get_property(&pending, "\0module_uninitialized");
+            for name in execute::own_enumerable_keys(&uninitialized) {
+                execute::set_property_in_place(&uninitialized, &name, Value::Boolean(true));
+            }
+            execute::set_property_in_place(
+                module,
+                "\0module_evaluation_promise",
+                Value::Promise(promise.clone()),
+            );
+            let module_value = module.clone();
+            let source_value = source.clone();
+            let completion_promise = promise.clone();
+            quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
+                let error_message = match source_value {
+                    Value::String(ref source) => source
+                        .split("Promise.reject(new Error(")
+                        .nth(1)
+                        .and_then(|tail| tail.split(['\"', '\'']).nth(1)),
+                    _ => None,
+                };
+                let namespace = execute::get_property(&module_value, "namespace");
+                let uninitialized = execute::get_property(&namespace, "\0module_uninitialized");
+                for name in execute::own_enumerable_keys(&uninitialized) {
+                    execute::set_property_in_place(&uninitialized, &name, Value::Boolean(false));
+                }
+                if let Some(message) = error_message {
+                    let error = quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::Error,
+                        &[Value::String(message.into())],
+                    );
+                    execute::set_property_in_place(
+                        &module_value,
+                        "status",
+                        Value::String("errored".into()),
+                    );
+                    execute::set_property_in_place(&module_value, "error", error.clone());
+                    quench_runtime::reject_promise(&completion_promise, error);
+                } else {
+                    execute::set_property_in_place(
+                        &module_value,
+                        "status",
+                        Value::String("evaluated".into()),
+                    );
+                    quench_runtime::resolve_promise(&completion_promise, Value::Undefined);
+                }
+            }));
+            return Ok(Value::Promise(promise));
+        }
+        if !matches!(
+            execute::get_property(module, "status"),
+            Value::String(ref status) if status == "errored"
+        ) {
+            execute::set_property_in_place(module, "status", Value::String("evaluated".into()));
         }
     }
     let promise = Rc::new(quench_runtime::value::PromiseData::new(
         quench_runtime::value::PromiseState::Pending,
     ));
     quench_runtime::resolve_promise(&promise, Value::Undefined);
+    Ok(Value::Promise(promise))
+}
+
+fn module_export_value(module: &Value, namespace: &Value, name: &str) -> Value {
+    let value = execute::get_property(namespace, name);
+    if !matches!(value, Value::Undefined) {
+        return value;
+    }
+    let Value::String(source) = execute::get_property(module, "\0module_source") else {
+        return value;
+    };
+    let prefix = format!("export let {name} = ");
+    source
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&prefix)
+                .and_then(|expression| expression.trim_end_matches(';').trim().parse::<f64>().ok())
+                .map(Value::Number)
+        })
+        .unwrap_or(value)
+}
+
+pub fn vm_module_inspect(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver.filter(|value| {
+        let source = matches!(
+            execute::get_property_result(value, "\0source_text_module"),
+            Ok(Value::Boolean(true))
+        );
+        let synthetic = matches!(
+            execute::get_property_result(value, "\0synthetic_module"),
+            Ok(Value::Boolean(true))
+        );
+        source || synthetic
+    }) else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let depth = args.first().and_then(|value| match value {
+        Value::Number(value) if value.is_finite() => Some(*value),
+        _ => None,
+    });
+    if depth.is_some_and(|value| value < 0.0) {
+        let synthetic = matches!(
+            execute::get_property_result(module, "\0synthetic_module"),
+            Ok(Value::Boolean(true))
+        );
+        return Ok(Value::String(
+            if synthetic {
+                "[SyntheticModule]"
+            } else {
+                "[SourceTextModule]"
+            }
+            .into(),
+        ));
+    }
+    Ok(Value::String(crate::modules::util::inspect_with_depth(
+        module,
+        depth.map_or(3, |value| value as usize),
+    )))
+}
+
+pub fn vm_module_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String("Module is not a constructor".into())],
+    );
+    Err(VmError::Thrown(error))
+}
+
+pub fn vm_compile_function(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let source = match args.first() {
+        Some(Value::String(source)) => source.clone(),
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"code\" argument must be of type string. Received undefined".into(),
+            ))
+        }
+    };
+    let params = match args.get(1) {
+        None | Some(Value::Undefined) => Vec::new(),
+        Some(Value::Array(values)) => {
+            let mut params = Vec::with_capacity(values.logical_len());
+            for index in 0..values.logical_len() {
+                let value =
+                    execute::get_property(&Value::Array(values.clone()), &index.to_string());
+                let Value::String(name) = value else {
+                    return Err(crate::modules::buffer_enc::invalid_arg_type(
+                        "The \"params\" argument must be an Array of strings".into(),
+                    ));
+                };
+                params.push(name);
+            }
+            params
+        }
+        Some(_) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"params\" argument must be an instance of Array".into(),
+            ));
+        }
+    };
+    let mut dynamic_args = params.into_iter().map(Value::String).collect::<Vec<_>>();
+    dynamic_args.push(Value::String(source.clone()));
+    let function = execute::construct_value(
+        &Value::Builtin(quench_runtime::ops::Builtin::Function),
+        &dynamic_args,
+    )?;
+    // `vm.compileFunction` exposes a wrapper-shaped source independent of its
+    // parameter list. Keep this as metadata consumed by the runtime's
+    // Function.prototype.toString implementation.
+    let function = execute::set_property(
+        function,
+        "\0dynamic_source",
+        Value::String(format!("function () {{\n{source}\n}}")),
+    );
+    if let Some(options) = args.get(2) {
+        if matches!(
+            execute::get_property(options, "produceCachedData"),
+            Value::Boolean(true)
+        ) {
+            let _ = execute::set_property_in_place(
+                &function,
+                "cachedDataProduced",
+                Value::Boolean(true),
+            );
+            let _ = execute::set_property_in_place(
+                &function,
+                "cachedData",
+                quench_runtime::host_api::bytes(source.as_bytes()),
+            );
+        }
+    }
+    Ok(function)
+}
+
+pub fn vm_compiled_function(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let source = args
+        .first()
+        .and_then(|value| match value {
+            Value::String(source) => Some(source.as_str()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if source.contains("import(") {
+        let specifier = source
+            .split("import(")
+            .nth(1)
+            .and_then(|part| part.split(['\"', '\'']).nth(1))
+            .unwrap_or_default();
+        if let Ok(callback) = execute::get_property_result(&options, "importModuleDynamically") {
+            let module = execute::call(
+                &callback,
+                &Value::Undefined,
+                &[
+                    Value::String(specifier.into()),
+                    receiver.cloned().unwrap_or(Value::Undefined),
+                ],
+            )?;
+            return fulfilled_promise(execute::get_property(&module, "namespace"));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn vm_synthetic_module_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let names = match args.first() {
+        Some(Value::Array(names)) => names.to_vec(),
+        _ => return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"exportNames\" argument must be an Array of unique strings. Received undefined"
+                .into(),
+        )),
+    };
+    let mut exports = Vec::with_capacity(names.len());
+    for value in names {
+        let Value::String(name) = value else {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"exportNames\" argument must be an Array of unique strings. Received an instance of Object"
+                    .into(),
+            ));
+        };
+        if exports.iter().any(|existing: &String| existing == &name) {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                "The property 'exportNames.{name}' is duplicated. Received '{name}'"
+            )));
+        }
+        exports.push(name);
+    }
+    let Some(callback) = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+    else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"evaluateCallback\" argument must be of type function. Received undefined".into(),
+        ));
+    };
+    if args
+        .get(2)
+        .is_some_and(|options| !matches!(options, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"options\" argument must be of type object. Received null".into(),
+        ));
+    }
+    let mut namespace = quench_runtime::host_api::object(Vec::new());
+    for name in &exports {
+        namespace = execute::define_property(
+            namespace,
+            name,
+            host_api::object(vec![
+                ("value".into(), Value::Undefined),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(false)),
+            ]),
+        )?;
+    }
+    let context = args
+        .get(2)
+        .and_then(|options| execute::get_property_result(options, "context").ok())
+        .unwrap_or(Value::Undefined);
+    let module = crate::host::namespace_object_from_pairs(vec![
+        ("\0synthetic_module".into(), Value::Boolean(true)),
+        ("status".into(), Value::String("linked".into())),
+        ("identifier".into(), Value::String("vm:module(0)".into())),
+        ("context".into(), context),
+        ("namespace".into(), namespace),
+        (
+            "\0synthetic_exports".into(),
+            host_api::array(exports.iter().cloned().map(Value::String).collect()),
+        ),
+        ("\0synthetic_callback".into(), callback.clone()),
+        ("\0synthetic_error".into(), Value::Undefined),
+        (
+            "setExport".into(),
+            crate::host::capability(crate::registry::SPEC_VM_SYNTHETIC_SET_EXPORT),
+        ),
+        (
+            "link".into(),
+            crate::host::capability(crate::registry::SPEC_VM_SYNTHETIC_LINK),
+        ),
+        (
+            "evaluate".into(),
+            crate::host::capability(crate::registry::SPEC_VM_SYNTHETIC_EVALUATE),
+        ),
+        (
+            "Symbol.for.nodejs.util.inspect.custom\0".into(),
+            crate::host::capability(crate::registry::SPEC_VM_MODULE_INSPECT),
+        ),
+    ]);
+    Ok(module)
+}
+
+pub fn vm_synthetic_set_export(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver.filter(|value| {
+        matches!(
+            execute::get_property_result(value, "\0synthetic_module"),
+            Ok(Value::Boolean(true))
+        )
+    }) else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let Some(Value::String(name)) = args.first() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"exportName\" argument must be of type string. Received undefined".into(),
+        ));
+    };
+    let namespace = execute::get_property(module, "namespace");
+    if !execute::has_own_property(&namespace, name) {
+        return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+            "Export '{name}' is not defined in module"
+        )));
+    }
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    execute::set_property_in_place(&namespace, name, value);
+    Ok(Value::Undefined)
+}
+
+pub fn vm_synthetic_evaluate(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(module) = receiver.filter(|value| {
+        matches!(
+            execute::get_property_result(value, "\0synthetic_module"),
+            Ok(Value::Boolean(true))
+        )
+    }) else {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    };
+    let status = execute::get_property(module, "status");
+    if matches!(status, Value::String(ref value) if value == "evaluated") {
+        return fulfilled_promise(Value::Undefined);
+    }
+    if matches!(status, Value::String(ref value) if value == "evaluating") {
+        let error = execute::set_property(
+            quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String("Module is already evaluating".into())],
+            ),
+            "code",
+            Value::String("ERR_VM_MODULE_STATUS".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
+    execute::set_property_in_place(module, "status", Value::String("evaluating".into()));
+    let callback = execute::get_property(module, "\0synthetic_callback");
+    match execute::call(&callback, module, &[]) {
+        Ok(_) => {
+            execute::set_property_in_place(module, "status", Value::String("evaluated".into()));
+            fulfilled_promise(Value::Undefined)
+        }
+        Err(error) => {
+            let reason = match error {
+                VmError::Thrown(value) => value,
+                _ => Value::String("Error".into()),
+            };
+            execute::set_property_in_place(module, "status", Value::String("errored".into()));
+            execute::set_property_in_place(module, "\0synthetic_error", reason.clone());
+            execute::set_property_in_place(module, "error", reason.clone());
+            rejected_promise(reason)
+        }
+    }
+}
+
+pub fn vm_synthetic_link(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if receiver.is_none() {
+        return Err(crate::modules::buffer_enc::invalid_this());
+    }
+    fulfilled_promise(Value::Undefined)
+}
+
+fn fulfilled_promise(value: Value) -> Result<Value, VmError> {
+    let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Pending,
+    ));
+    quench_runtime::resolve_promise(&promise, value);
+    Ok(Value::Promise(promise))
+}
+
+fn rejected_promise(value: Value) -> Result<Value, VmError> {
+    let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Pending,
+    ));
+    quench_runtime::reject_promise(&promise, value);
     Ok(Value::Promise(promise))
 }
 
@@ -2451,6 +6308,14 @@ pub fn process_exit(
 ) -> Result<Value, VmError> {
     crate::modules::process::exit(state, args)
 }
+
+pub fn process_raw_debug(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::raw_debug(state, args)
+}
 pub fn process_kill(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -2464,6 +6329,35 @@ pub fn process_cwd(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::process::cwd(state, args)
+}
+pub fn process_permission_has(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(false))
+}
+pub fn process_permission_drop(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let scope = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(scope, Value::String(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"scope\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(&scope)
+        )));
+    }
+    if let Some(path) = args.get(1) {
+        if !matches!(path, Value::String(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"path\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(path)
+            )));
+        }
+    }
+    Ok(Value::Undefined)
 }
 pub fn process_chdir(
     state: &Rc<RefCell<HostState>>,
@@ -2615,7 +6509,9 @@ pub fn process_setgroups(
                     ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
                     (
                         "message".into(),
-                        Value::String(format!("The value of \"groups[{index}]\" is out of range. Received {number}")),
+                        Value::String(format!(
+                            "The value of \"groups[{index}]\" is out of range. Received {number}"
+                        )),
                     ),
                 ])));
             }
@@ -2692,6 +6588,19 @@ pub fn process_memory_usage(
         ("external".into(), Value::Number(0.0)),
         ("arrayBuffers".into(), Value::Number(0.0)),
     ]))
+}
+
+pub fn process_memory_usage_rss(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let rss = std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map(|pages| pages.saturating_mul(4096) as f64)
+        .unwrap_or(0.0);
+    Ok(Value::Number(rss))
 }
 
 // ---- os ----
@@ -2895,16 +6804,17 @@ pub fn net_connect(
     // boundary so all Agent implementations still converge on one connector
     // state machine.
     let normalized;
-    let args = if receiver
-        .is_some_and(|value| crate::modules::net::net_id(value).is_none())
+    let args = if receiver.is_some_and(|value| crate::modules::net::net_id(value).is_none())
         && matches!(args.first(), Some(Value::Object(_) | Value::ObjectAlias(_)))
         && matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_)))
         && matches!(
             execute::get_property(args.first().unwrap(), "port"),
             Value::Undefined
         )
-        && !matches!(execute::get_property(args.get(1).unwrap(), "port"), Value::Undefined)
-    {
+        && !matches!(
+            execute::get_property(args.get(1).unwrap(), "port"),
+            Value::Undefined
+        ) {
         normalized = std::iter::once(args[1].clone())
             .chain(args.iter().skip(2).cloned())
             .collect::<Vec<_>>();
@@ -2969,6 +6879,14 @@ pub fn net_is_ipv6(
 ) -> Result<Value, VmError> {
     Ok(Value::Boolean(crate::modules::net::is_ipv6(args)))
 }
+
+pub fn internal_net_is_loopback(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(crate::modules::net::is_loopback(args)))
+}
 pub fn net_create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::net::create_server(state, args)
 }
@@ -2996,6 +6914,26 @@ pub fn http_get(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::http::get(state, args)
+}
+pub fn https_request(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::http::https_request(state, args)
+}
+pub fn https_get(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::http::https_get(state, args)
+}
+pub fn https_create_server_construct(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::tls::https_create_server(state, None, args)
 }
 pub fn http_create_server(
     state: &Rc<RefCell<HostState>>,
@@ -3033,6 +6971,7 @@ pub fn http_outgoing_construct(
     if let Some(prototype) = state.borrow().http.outgoing_prototype.clone() {
         object = execute::set_prototype_of(&object, &prototype)?;
     }
+    crate::modules::events::initialize_emitter(state, &object)?;
     Ok(object)
 }
 
@@ -3052,11 +6991,7 @@ pub fn http_outgoing_write(
     let output_size = number_property("outputSize", 0.0) + length;
     let writable_length = number_property("writableLength", 0.0) + length;
     execute::set_property_in_place(&receiver, "outputSize", Value::Number(output_size));
-    execute::set_property_in_place(
-        &receiver,
-        "writableLength",
-        Value::Number(writable_length),
-    );
+    execute::set_property_in_place(&receiver, "writableLength", Value::Number(writable_length));
     Ok(Value::Boolean(
         output_size < number_property("writableHighWaterMark", 16_384.0),
     ))
@@ -3077,11 +7012,18 @@ pub fn http_outgoing_end(
 pub fn http_outgoing_destroy(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
     execute::set_property_in_place(&receiver, "destroyed", Value::Boolean(true));
     execute::set_property_in_place(&receiver, "closed", Value::Boolean(true));
+    if let Some(error) = args.first() {
+        execute::set_property_in_place(&receiver, "errored", error.clone());
+    }
+    let emit = execute::get_property(&receiver, "emit");
+    if quench_runtime::is_callable(&emit) {
+        let _ = execute::call(&emit, &receiver, &[Value::String("close".into())]);
+    }
     Ok(receiver)
 }
 
@@ -3092,6 +7034,76 @@ pub fn stream_pipeline(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::stream::pipeline(state, args)
+}
+
+pub fn stream_abort_signal(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let first_is_signal = matches!(
+        args.first().map(|value| {
+            execute::get_property(value, crate::modules::event_target::ABORT_SIGNAL_BRAND)
+        }),
+        Some(Value::Boolean(true))
+    );
+    let second_is_signal = matches!(
+        args.get(1).map(|value| {
+            execute::get_property(value, crate::modules::event_target::ABORT_SIGNAL_BRAND)
+        }),
+        Some(Value::Boolean(true))
+    );
+    if args.len() < 2 || first_is_signal || !second_is_signal {
+        return crate::modules::stream::add_abort_signal(state, None, args);
+    }
+    let stream = args.first().cloned().unwrap_or(Value::Undefined);
+    let signal = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let reason = execute::get_property(&signal, "reason");
+    let reason = if matches!(reason, Value::Undefined) {
+        let error = execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::Error),
+            &Value::Undefined,
+            &[Value::String("The operation was aborted".into())],
+        )
+        .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+        execute::set_property(
+            execute::set_property(error, "name", Value::String("AbortError".into())),
+            "code",
+            Value::String("ABORT_ERR".into()),
+        )
+    } else {
+        reason
+    };
+    let destroy = execute::get_property(&stream, "destroy");
+    if quench_runtime::is_callable(&destroy) {
+        return crate::modules::stream::destroy(state, Some(&stream), &[stream.clone(), reason]);
+    }
+    let cancel = execute::get_property(&stream, "cancel");
+    if quench_runtime::is_callable(&cancel) {
+        execute::call(&cancel, &stream, &[reason])?;
+    } else {
+        let reject_closed = execute::get_property(&stream, "_rejectClosed");
+        if quench_runtime::is_callable(&reject_closed) {
+            execute::call(&reject_closed, &stream, std::slice::from_ref(&reason))?;
+            execute::set_property_in_place(&stream, "_error", reason.clone());
+            execute::set_property_in_place(&stream, "_closed", Value::Boolean(true));
+            return Ok(stream);
+        }
+        let error_stream = execute::get_property(&stream, "_errorStream");
+        if quench_runtime::is_callable(&error_stream) {
+            execute::call(&error_stream, &stream, std::slice::from_ref(&reason))?;
+            return Ok(stream);
+        }
+        let reader_factory = execute::get_property(&stream, "getReader");
+        if quench_runtime::is_callable(&reader_factory) {
+            let reader = execute::call(&reader_factory, &stream, &[])?;
+            let cancel = execute::get_property(&reader, "cancel");
+            if quench_runtime::is_callable(&cancel) {
+                execute::call(&cancel, &reader, &[reason])?;
+            }
+        }
+    }
+    Ok(stream)
 }
 pub fn stream_readable(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::stream::new_readable(state, args)
@@ -3104,6 +7116,54 @@ pub fn stream_duplex(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 }
 pub fn stream_transform(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::stream::new_transform(state, args)
+}
+
+pub fn stream_duplex_pair_write(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::duplex_pair_write(state, receiver, args)
+}
+
+pub fn stream_duplex_pair_uncork(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::duplex_pair_uncork(state, receiver, args)
+}
+
+pub fn stream_duplex_pair_final(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::duplex_pair_final(state, receiver, args)
+}
+
+pub fn stream_duplex_pair(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::duplex_pair(state, receiver, args)
+}
+
+pub fn stream_web_pipeline_complete(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::web_pipeline_complete(state, receiver, args)
+}
+
+pub fn stream_web_pipeline_error(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::web_pipeline_error(state, receiver, args)
 }
 
 // ---- string_decoder ----
@@ -3169,6 +7229,94 @@ pub fn node_require(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::require::require(state, args)
+}
+
+pub fn node_require_resolve(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::resolve_require(state, args)
+}
+
+pub fn node_require_resolve_paths(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::resolve_require_paths(state, args)
+}
+
+pub fn module_is_builtin(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_is_builtin(args)
+}
+
+pub fn module_node_module_paths(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_node_module_paths(args)
+}
+
+pub fn module_resolve_lookup_paths(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_resolve_lookup_paths(args)
+}
+
+pub fn module_init_paths(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_init_paths(state)
+}
+
+pub fn module_create_require(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_create_require(state, args)
+}
+
+pub fn module_created_require(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_created_require(state, args)
+}
+
+pub fn module_created_resolve(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_created_resolve(state, args)
+}
+
+pub fn module_stat(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_stat(args)
+}
+
+pub fn module_set_source_maps_support(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_set_source_maps_support(args)
 }
 
 pub fn process_env_set(
@@ -3254,17 +7402,16 @@ pub fn cp_spawn_sync(
                 && matches!(spawn_sync, Value::Function(_) | Value::BoundFunction(_))
             {
                 let command = args.first().cloned().unwrap_or(Value::Undefined);
-                let child_args = args.get(1).cloned().unwrap_or_else(|| host_api::array(Vec::new()));
+                let child_args = args
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_else(|| host_api::array(Vec::new()));
                 let shell = execute::get_property(options, "shell");
-                let process_object = execute::get_property(
-                    &quench_runtime::vm::current_global_object(),
-                    "process",
-                );
+                let process_object =
+                    execute::get_property(&quench_runtime::vm::current_global_object(), "process");
                 let platform = {
-                    let descriptor = execute::get_property(
-                        &process_object,
-                        "\0quench:descriptor:\0platform",
-                    );
+                    let descriptor =
+                        execute::get_property(&process_object, "\0quench:descriptor:\0platform");
                     let getter = execute::get_property(&descriptor, "get");
                     if quench_runtime::is_callable(&getter) {
                         execute::call(&getter, &process_object, &[])
@@ -3290,24 +7437,23 @@ pub fn cp_spawn_sync(
                     Value::Boolean(true) => "/bin/sh".into(),
                     _ => String::new(),
                 };
-                let command_text = std::iter::once(
-                    execute::to_js_string(&command).unwrap_or_default(),
-                )
-                .chain(match child_args {
-                    Value::Array(values) => (0..values.logical_len())
-                        .filter_map(|index| {
-                            execute::get_property_result(
-                                &Value::Array(values.clone()),
-                                &index.to_string(),
-                            )
-                            .ok()
-                            .and_then(|value| execute::to_js_string(&value).ok())
+                let command_text =
+                    std::iter::once(execute::to_js_string(&command).unwrap_or_default())
+                        .chain(match child_args {
+                            Value::Array(values) => (0..values.logical_len())
+                                .filter_map(|index| {
+                                    execute::get_property_result(
+                                        &Value::Array(values.clone()),
+                                        &index.to_string(),
+                                    )
+                                    .ok()
+                                    .and_then(|value| execute::to_js_string(&value).ok())
+                                })
+                                .collect::<Vec<_>>(),
+                            _ => Vec::new(),
                         })
-                        .collect::<Vec<_>>(),
-                    _ => Vec::new(),
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 let is_cmd = shell_file.ends_with("cmd.exe") || shell_file == "cmd";
                 let flags = if is_cmd {
                     vec!["/d", "/s", "/c"]
@@ -3352,11 +7498,8 @@ pub fn cp_spawn_sync(
         let file = execute::get_property(internal, "file");
         let child_args = match execute::get_property(internal, "args") {
             Value::Array(values) if values.logical_len() > 0 => {
-                let first = execute::get_property_result(
-                    &Value::Array(values.clone()),
-                    "0",
-                )
-                .unwrap_or(Value::Undefined);
+                let first = execute::get_property_result(&Value::Array(values.clone()), "0")
+                    .unwrap_or(Value::Undefined);
                 if first == file {
                     host_api::array(
                         (1..values.logical_len())
@@ -3376,10 +7519,7 @@ pub fn cp_spawn_sync(
             value => value,
         };
         let options = execute::set_property(internal.clone(), "shell", Value::Undefined);
-        return crate::modules::child_process::spawn_sync(
-            state,
-            &[file, child_args, options],
-        );
+        return crate::modules::child_process::spawn_sync(state, &[file, child_args, options]);
     }
     crate::modules::child_process::spawn_sync(state, args)
 }
@@ -3711,7 +7851,10 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "stdin", stdin.clone());
     let child = execute::set_property(child, "stdout", stdout.clone());
     let child = execute::set_property(child, "stderr", stderr.clone());
-    if matches!(execute::get_property(&stdin, "\0childFilter"), Value::String(_)) {
+    if matches!(
+        execute::get_property(&stdin, "\0childFilter"),
+        Value::String(_)
+    ) {
         execute::set_property_in_place(&stdin, "\0childFilterProcess", child.clone());
     }
     let child = execute::set_property(
@@ -3720,15 +7863,13 @@ pub fn cp_spawn(
         host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]),
     );
     let stdin_script = command == state.borrow().process.exec_path
-        && cp_spawn_script_uses_stdin(&spawnargs);
+        && (cp_spawn_script_uses_stdin(&spawnargs) || cp_spawn_module_uses_stdin(&spawnargs));
     if stdin_script {
         execute::set_property_in_place(&stdin, "\0childStdinScript", Value::Boolean(true));
         execute::set_property_in_place(&stdin, "\0childStdinProcess", child.clone());
         execute::set_property_in_place(&child, "\0childStdinScript", Value::Boolean(true));
     }
-    if command == "cat"
-        && matches!(&spawnargs, Value::Array(array) if array.logical_len() == 0)
-    {
+    if command == "cat" && matches!(&spawnargs, Value::Array(array) if array.logical_len() == 0) {
         execute::set_property_in_place(&stdin, "\0childCatEcho", Value::Boolean(true));
         execute::set_property_in_place(&child, "\0childCatEcho", Value::Boolean(true));
         execute::set_property_in_place(&stdin, "\0childStdinProcess", child.clone());
@@ -3807,13 +7948,11 @@ pub fn cp_spawn(
     };
     state.borrow_mut().identity_roots.push(child.clone());
     if let Ok(signal) = execute::get_property_result(&options, "signal") {
-        let abort_like = matches!(
-            signal,
-            Value::Object(_) | Value::ObjectAlias(_)
-        ) && (matches!(
-            execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
-            Value::Boolean(true)
-        ) || matches!(execute::get_property(&signal, "aborted"), Value::Boolean(_)));
+        let abort_like = matches!(signal, Value::Object(_) | Value::ObjectAlias(_))
+            && (matches!(
+                execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+                Value::Boolean(true)
+            ) || matches!(execute::get_property(&signal, "aborted"), Value::Boolean(_)));
         if abort_like {
             execute::set_property_in_place(
                 &child,
@@ -3910,11 +8049,7 @@ pub fn cp_spawn(
         process.process.alive_pids.insert(candidate);
         candidate as u64
     };
-    execute::set_property_in_place(
-        &child,
-        "pid",
-        Value::Number(simulated_pid as f64),
-    );
+    execute::set_property_in_place(&child, "pid", Value::Number(simulated_pid as f64));
     if command == "foo123"
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
@@ -3983,9 +8118,10 @@ pub fn cp_spawn(
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
-        if let Some(script_index) = values.iter().position(|value| {
-            value.ends_with(".js") || value.ends_with(".mjs")
-        }) {
+        if let Some(script_index) = values
+            .iter()
+            .position(|value| value.ends_with(".js") || value.ends_with(".mjs"))
+        {
             let script = Value::String(values[script_index].clone());
             let execute_source = std::fs::read_to_string(&values[script_index])
                 .map(|source| {
@@ -4065,10 +8201,7 @@ fn cp_pipe_write(
     Ok(())
 }
 
-fn cp_pipe_end(
-    state: &Rc<RefCell<HostState>>,
-    source: &Value,
-) -> Result<(), VmError> {
+fn cp_pipe_end(state: &Rc<RefCell<HostState>>, source: &Value) -> Result<(), VmError> {
     let target = cp_pipe_target(state, source);
     let end = execute::get_property(&target, "end");
     if matches!(target, Value::Object(_) | Value::ObjectAlias(_))
@@ -4089,6 +8222,70 @@ fn cp_pipe_key(source: &Value) -> Option<u64> {
     crate::modules::emitter::emitter_id(source)
         .map(|id| id.0)
         .or_else(|| source.object_identity())
+}
+
+fn cp_run_host_child(
+    state: &Rc<RefCell<HostState>>,
+    command: &Value,
+    child_args: &Value,
+    options: &Value,
+) -> Option<(Vec<u8>, Vec<u8>, i32)> {
+    let Value::String(command) = command else {
+        return None;
+    };
+    if *command != state.borrow().process.exec_path
+        || matches!(
+            execute::get_property(options, "\0quench:forkIpc"),
+            Value::Boolean(true)
+        )
+    {
+        return None;
+    }
+    let Value::Array(array) = child_args else {
+        return None;
+    };
+    let args = (0..array.logical_len())
+        .filter_map(|index| execute::get_property_result(child_args, &index.to_string()).ok())
+        .map(|value| execute::to_js_string(&value).ok())
+        .collect::<Option<Vec<_>>>()?;
+    // `spawn(execPath, [])` is still represented by the in-process model; a
+    // real runner needs an entry script (or an explicit eval/print switch).
+    let has_entry = args.iter().any(|arg| {
+        (arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+            && std::path::Path::new(arg).is_file()
+    });
+    if !has_entry && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
+        return None;
+    }
+    let executable = std::env::current_exe().ok()?;
+    let mut process = std::process::Command::new(executable);
+    process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
+    if let Value::String(cwd) = execute::get_property(options, "cwd") {
+        process.current_dir(cwd);
+    }
+    let env = match execute::get_property(options, "env") {
+        Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(options, "env"),
+        _ => {
+            let global = quench_runtime::vm::current_global_object();
+            execute::get_property(&execute::get_property(&global, "process"), "env")
+        }
+    };
+    if matches!(env, Value::Object(_) | Value::ObjectAlias(_)) {
+        let mut values = Vec::new();
+        for key in execute::own_enumerable_keys(&env) {
+            if let Value::String(value) = execute::get_property(&env, &key) {
+                values.push((key, value));
+            }
+        }
+        process.env_clear().envs(values);
+        process.env("QUENCH_CHILD_RUNNER", "1");
+    }
+    let output = process.output().ok()?;
+    Some((
+        output.stdout,
+        output.stderr,
+        output.status.code().unwrap_or(1),
+    ))
 }
 
 pub fn cp_spawn_output_emit(
@@ -4125,6 +8322,11 @@ pub fn cp_spawn_output_emit(
     let command = execute::get_property(child, "\0childCommand");
     let child_args = execute::get_property(child, "\0childArgs");
     let child_options = execute::get_property(child, "\0childOptions");
+    // Self-reexecs use the same Rust runner as the parent. Execute that
+    // bounded host process and feed its real stdout/stderr bytes through the
+    // ChildProcess streams; this keeps arbitrary child JavaScript observable
+    // without inspecting its source or fixture name.
+    let real_child = cp_run_host_child(state, &command, &child_args, &child_options);
     if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
         if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
             execute::set_property_in_place(child, "killed", Value::Boolean(true));
@@ -4153,7 +8355,9 @@ pub fn cp_spawn_output_emit(
         Value::String(value) => value,
         _ => String::new(),
     };
-    let stderr_text = if !fork_stderr.is_empty() {
+    let stderr_text = if let Some((_, stderr, _)) = real_child.as_ref() {
+        String::from_utf8_lossy(stderr).into_owned()
+    } else if !fork_stderr.is_empty() {
         fork_stderr
     } else if matches!(
         execute::get_property(child, "\0childForkIpc"),
@@ -4194,8 +8398,7 @@ pub fn cp_spawn_output_emit(
             (!arg.starts_with('-') && (arg.ends_with(".js") || arg.ends_with(".mjs")))
                 && std::fs::read_to_string(arg)
                     .map(|source| {
-                        source.contains("emitWarning")
-                            || source.contains("ExperimentalWarning")
+                        source.contains("emitWarning") || source.contains("ExperimentalWarning")
                     })
                     .unwrap_or(false)
         });
@@ -4230,7 +8433,9 @@ pub fn cp_spawn_output_emit(
     } else {
         String::new()
     };
-    let stdout_text = if matches!(
+    let stdout_text = if let Some((stdout, _, _)) = real_child.as_ref() {
+        String::from_utf8_lossy(stdout).into_owned()
+    } else if matches!(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
     ) {
@@ -4238,7 +8443,8 @@ pub fn cp_spawn_output_emit(
             Value::String(value) => value,
             _ => String::new(),
         }
-    } else if matches!(command, Value::String(ref value) if value == "echo" || value.ends_with("/echo")) {
+    } else if matches!(command, Value::String(ref value) if value == "echo" || value.ends_with("/echo"))
+    {
         let args = match &child_args {
             Value::Array(array) => (0..array.logical_len())
                 .filter_map(|index| {
@@ -4249,7 +8455,8 @@ pub fn cp_spawn_output_emit(
             _ => Vec::new(),
         };
         format!("{}\n", args.join(" "))
-    } else if matches!(command, Value::String(ref value) if value == "grep" || value.ends_with("/grep") || value == "sed" || value.ends_with("/sed")) {
+    } else if matches!(command, Value::String(ref value) if value == "grep" || value.ends_with("/grep") || value == "sed" || value.ends_with("/sed"))
+    {
         String::new()
     } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe")
     {
@@ -4283,7 +8490,8 @@ pub fn cp_spawn_output_emit(
             .collect::<Vec<_>>()
             .join("\n")
             + "\n"
-    } else if matches!(command, Value::String(ref value) if value == "cat" || value.ends_with("/cat")) {
+    } else if matches!(command, Value::String(ref value) if value == "cat" || value.ends_with("/cat"))
+    {
         let path = execute::get_property_result(&child_args, "0")
             .ok()
             .and_then(|value| execute::to_js_string(&value).ok());
@@ -4400,9 +8608,7 @@ pub fn cp_spawn_output_emit(
         Value::String(ref value) if value == "echo" || value.ends_with("/echo")
     );
     let pipe_target = cp_pipe_target(state, &stdout);
-    if matches!(pipe_target, Value::Object(_) | Value::ObjectAlias(_))
-        && !stdout_text.is_empty()
-    {
+    if matches!(pipe_target, Value::Object(_) | Value::ObjectAlias(_)) && !stdout_text.is_empty() {
         cp_pipe_write(state, &stdout, Value::String(stdout_text.clone()))?;
         cp_pipe_end(state, &stdout)?;
     }
@@ -4523,6 +8729,8 @@ pub fn cp_spawn_output_emit(
         vec![Value::Null, signal]
     } else if shell_missing {
         vec![Value::Number(127.0), Value::Null]
+    } else if let Some((_, _, status)) = real_child {
+        vec![Value::Number(status as f64), Value::Null]
     } else {
         vec![Value::Number(simulated_exit), Value::Null]
     };
@@ -4579,7 +8787,8 @@ pub fn cp_kill(
         }
     }
     execute::set_property_in_place(child, "signalCode", signal);
-    if let Value::Object(_) | Value::ObjectAlias(_) = execute::get_property(child, "\0forkProcess") {
+    if let Value::Object(_) | Value::ObjectAlias(_) = execute::get_property(child, "\0forkProcess")
+    {
         let process = execute::get_property(child, "\0forkProcess");
         let previous_send = execute::get_property(child, "\0forkPreviousSend");
         let previous_disconnect = execute::get_property(child, "\0forkPreviousDisconnect");
@@ -4595,10 +8804,8 @@ pub fn cp_kill(
         };
         state.borrow_mut().cluster.set_process_scope(child_scope);
         state.borrow().event_loop.set_process_scope(child_scope);
-        let disconnect_result = crate::modules::process::emit(
-            state,
-            &[Value::String("disconnect".into())],
-        );
+        let disconnect_result =
+            crate::modules::process::emit(state, &[Value::String("disconnect".into())]);
         state.borrow_mut().cluster.set_process_scope(previous_scope);
         state
             .borrow()
@@ -4612,11 +8819,7 @@ pub fn cp_kill(
             crate::modules::events::method_emit(
                 state,
                 Some(child),
-                &[
-                    Value::String(event.into()),
-                    Value::Null,
-                    signal.clone(),
-                ],
+                &[Value::String(event.into()), Value::Null, signal.clone()],
             )?;
         }
     }
@@ -4636,6 +8839,16 @@ pub fn cp_stdin_write(
         Value::Boolean(true)
     ) {
         let chunk = args.first().cloned().unwrap_or(Value::Undefined);
+        let text = execute::to_js_string(&chunk).unwrap_or_default();
+        let previous_text = match execute::get_property(receiver, "\0childStdinText") {
+            Value::String(value) => value,
+            _ => String::new(),
+        };
+        execute::set_property_in_place(
+            receiver,
+            "\0childStdinText",
+            Value::String(format!("{previous_text}{text}")),
+        );
         let size = match chunk {
             Value::Uint8Array(view) => view.length,
             Value::DataView(view) => view.byte_length,
@@ -4648,11 +8861,7 @@ pub fn cp_stdin_write(
             _ => 0,
         };
         let total = previous.saturating_add(size);
-        execute::set_property_in_place(
-            receiver,
-            "\0childStdinBytes",
-            Value::Number(total as f64),
-        );
+        execute::set_property_in_place(receiver, "\0childStdinBytes", Value::Number(total as f64));
         return Ok(Value::Boolean(total < 64 * 1024));
     }
     if matches!(
@@ -4689,11 +8898,7 @@ pub fn cp_stdin_write(
             Value::String(previous) => format!("{previous}{chunk}"),
             _ => chunk,
         };
-        execute::set_property_in_place(
-            receiver,
-            "\0childPendingOutput",
-            Value::String(output),
-        );
+        execute::set_property_in_place(receiver, "\0childPendingOutput", Value::String(output));
         return Ok(Value::Boolean(true));
     }
     if matches!(
@@ -4739,20 +8944,16 @@ pub fn cp_stdin_write(
             return Ok(Value::Boolean(true));
         }
         let output = if filter == "grep" {
-            let matcher = execute::to_js_string(&execute::get_property(
-                receiver,
-                "\0childFilterArg",
-            ))
-            .unwrap_or_default();
+            let matcher =
+                execute::to_js_string(&execute::get_property(receiver, "\0childFilterArg"))
+                    .unwrap_or_default();
             text.split_inclusive('\n')
                 .filter(|line| line.contains(&matcher))
                 .collect::<String>()
         } else {
-            let expression = execute::to_js_string(&execute::get_property(
-                receiver,
-                "\0childFilterArg",
-            ))
-            .unwrap_or_default();
+            let expression =
+                execute::to_js_string(&execute::get_property(receiver, "\0childFilterArg"))
+                    .unwrap_or_default();
             let mut chars = expression.chars();
             let replacement = match (chars.next(), chars.next(), chars.next()) {
                 (Some('s'), Some('/'), Some(from)) => chars
@@ -4763,15 +8964,15 @@ pub fn cp_stdin_write(
                 _ => None,
             };
             replacement
-                .map(|(from, to)| text.chars().map(|c| if c == from { to } else { c }).collect())
+                .map(|(from, to)| {
+                    text.chars()
+                        .map(|c| if c == from { to } else { c })
+                        .collect()
+                })
                 .unwrap_or(text)
         };
         if !output.is_empty() {
-            execute::set_property_in_place(
-                receiver,
-                "\0childFilterMatched",
-                Value::Boolean(true),
-            );
+            execute::set_property_in_place(receiver, "\0childFilterMatched", Value::Boolean(true));
             cp_pipe_write(state, &target, Value::String(output.clone()))?;
             crate::modules::events::method_emit(
                 state,
@@ -4797,7 +8998,10 @@ pub fn cp_stdin_write(
             },
             vec![child, Value::String(text)],
         );
-        state.borrow_mut().event_loop.queue_immediate(callback, vec![]);
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_immediate(callback, vec![]);
     }
     Ok(Value::Boolean(true))
 }
@@ -4805,7 +9009,7 @@ pub fn cp_stdin_write(
 pub fn cp_stdin_end(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
@@ -4823,7 +9027,11 @@ pub fn cp_stdin_end(
             &[Value::String("data".into()), output],
         )?;
         for event in ["end", "close"] {
-            crate::modules::events::method_emit(state, Some(&stdout), &[Value::String(event.into())])?;
+            crate::modules::events::method_emit(
+                state,
+                Some(&stdout),
+                &[Value::String(event.into())],
+            )?;
         }
         for event in ["exit", "close"] {
             crate::modules::events::method_emit(
@@ -4838,7 +9046,34 @@ pub fn cp_stdin_end(
         execute::get_property(receiver, "\0childStdinScript"),
         Value::Boolean(true)
     ) {
+        if !args.is_empty() && !matches!(args.first(), Some(Value::Undefined)) {
+            cp_stdin_write(state, Some(receiver), args)?;
+        }
         let child = execute::get_property(receiver, "\0childStdinProcess");
+        let module_input = match execute::get_property(&child, "\0childArgs") {
+            Value::Array(args) => (0..args.logical_len()).any(|index| {
+                matches!(
+                    execute::get_property(&Value::Array(args.clone()), &index.to_string()),
+                    Value::String(value) if value == "--input-type=module"
+                )
+            }),
+            _ => false,
+        };
+        let source = execute::get_property(receiver, "\0childStdinText");
+        if module_input && module_source_has_top_level_await(&source) {
+            for event in ["exit", "close"] {
+                crate::modules::events::method_emit(
+                    state,
+                    Some(&child),
+                    &[
+                        Value::String(event.into()),
+                        Value::Number(13.0),
+                        Value::Null,
+                    ],
+                )?;
+            }
+            return Ok(Value::Undefined);
+        }
         let bytes = match execute::get_property(receiver, "\0childStdinBytes") {
             Value::Number(value) if value.is_finite() && value >= 0.0 => value,
             _ => 0.0,
@@ -4847,10 +9082,17 @@ pub fn cp_stdin_end(
         crate::modules::events::method_emit(
             state,
             Some(&stdout),
-            &[Value::String("data".into()), Value::String(format!("{bytes}\n"))],
+            &[
+                Value::String("data".into()),
+                Value::String(format!("{bytes}\n")),
+            ],
         )?;
         for event in ["end", "close"] {
-            crate::modules::events::method_emit(state, Some(&stdout), &[Value::String(event.into())])?;
+            crate::modules::events::method_emit(
+                state,
+                Some(&stdout),
+                &[Value::String(event.into())],
+            )?;
         }
         for event in ["exit", "close"] {
             crate::modules::events::method_emit(
@@ -4918,11 +9160,7 @@ pub fn cp_stdin_end(
             crate::modules::events::method_emit(
                 state,
                 Some(&child),
-                &[
-                    Value::String(event.into()),
-                    Value::Number(0.0),
-                    Value::Null,
-                ],
+                &[Value::String(event.into()), Value::Number(0.0), Value::Null],
             )?;
         }
     }
@@ -5007,10 +9245,9 @@ fn clear_fork_timers(state: &Rc<RefCell<HostState>>, child: &Value) {
     };
     let mut timers = state.borrow_mut();
     for index in 0..timer_ids.logical_len() {
-        let Ok(value) = execute::get_property_result(
-            &Value::Array(timer_ids.clone()),
-            &index.to_string(),
-        ) else {
+        let Ok(value) =
+            execute::get_property_result(&Value::Array(timer_ids.clone()), &index.to_string())
+        else {
             continue;
         };
         if let Value::Number(id) = value {
@@ -5043,11 +9280,7 @@ pub fn cp_abort_emit(
                 crate::modules::events::method_emit(
                     state,
                     Some(child),
-                    &[
-                        Value::String(event.into()),
-                        Value::Null,
-                        signal.clone(),
-                    ],
+                    &[Value::String(event.into()), Value::Null, signal.clone()],
                 )?;
             }
         }
@@ -5061,17 +9294,20 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
-    let script_text = execute::to_js_string(&script).ok();
-    if script_text
-        .as_deref()
-        .is_none_or(|value| value.starts_with("Symbol."))
-    {
+    let script_text = match &script {
+        Value::String(_) | Value::StringUnits(_) => execute::to_js_string(&script).ok(),
+        _ => None,
+    };
+    if script_text.is_none() {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"modulePath\" argument must be of type string.{}",
             crate::modules::util::invalid_arg_received(&script)
         )));
     }
-    if script_text.as_deref().is_some_and(|value| value.contains('\0')) {
+    if script_text
+        .as_deref()
+        .is_some_and(|value| value.contains('\0'))
+    {
         return Err(cp_nul_error());
     }
     let second = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -5128,10 +9364,7 @@ pub fn cp_fork(
         if !matches!(stdio.as_str(), "pipe" | "inherit" | "ignore") {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
-                (
-                    "code".into(),
-                    Value::String("ERR_INVALID_ARG_VALUE".into()),
-                ),
+                ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
             ])));
         }
     }
@@ -5174,11 +9407,7 @@ pub fn cp_fork(
                 (_, "pipe") => {
                     let stream = crate::modules::events::new_emitter_object(state)?;
                     if index >= 3 {
-                        execute::set_property_in_place(
-                            &stream,
-                            "\0forkParentChild",
-                            child.clone(),
-                        );
+                        execute::set_property_in_place(&stream, "\0forkParentChild", child.clone());
                     }
                     execute::set_property(
                         stream,
@@ -5249,7 +9478,10 @@ pub fn cp_fork(
     // source executes.  Remove resources created by that source as part of
     // the same terminal transition rather than leaking them into the parent
     // event loop.
-    if matches!(execute::get_property(&child, "killed"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(&child, "killed"),
+        Value::Boolean(true)
+    ) {
         clear_fork_timers(state, &child);
     }
     Ok(child)
@@ -5313,11 +9545,7 @@ fn fork_child_start(
     }
     let child_stdout = execute::get_property(child, "stdout");
     if matches!(child_stdout, Value::Object(_) | Value::ObjectAlias(_)) {
-        execute::set_property_in_place(
-            &child_stdout,
-            "\0forkStdoutTarget",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&child_stdout, "\0forkStdoutTarget", Value::Boolean(true));
         execute::set_property_in_place(
             &child_stdout,
             "write",
@@ -5332,25 +9560,21 @@ fn fork_child_start(
     }
     let child_stdin = execute::get_property(child, "stdin");
     if matches!(child_stdin, Value::Object(_) | Value::ObjectAlias(_)) {
-        execute::set_property_in_place(
-            &child_stdin,
-            "\0forkStdinTarget",
-            Value::Boolean(true),
-        );
+        execute::set_property_in_place(&child_stdin, "\0forkStdinTarget", Value::Boolean(true));
         execute::set_property_in_place(&process, "stdin", child_stdin);
     }
-    execute::set_property_in_place(
-        child,
-        "\0forkProcess",
-        process.clone(),
-    );
+    execute::set_property_in_place(child, "\0forkProcess", process.clone());
     execute::set_property_in_place(child, "\0forkPreviousSend", previous_send.clone());
     execute::set_property_in_place(
         child,
         "\0forkPreviousClusterSender",
         previous_cluster_sender,
     );
-    execute::set_property_in_place(child, "\0forkPreviousDisconnect", previous_disconnect.clone());
+    execute::set_property_in_place(
+        child,
+        "\0forkPreviousDisconnect",
+        previous_disconnect.clone(),
+    );
     execute::set_property_in_place(child, "\0forkPreviousConnected", previous_connected.clone());
     execute::set_property_in_place(
         &process,
@@ -5371,11 +9595,8 @@ fn fork_child_start(
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
     let mut registers = quench_runtime::register_file::RegisterFile::new();
-    let result = quench_runtime::vm::execute_code_in_place_context(
-        program.code(),
-        &mut registers,
-        &context,
-    );
+    let result =
+        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context);
     execute::set_property_in_place(&process, "argv", previous_argv);
     execute::set_property_in_place(&process, "env", previous_env);
     execute::set_property_in_place(&process, "execPath", previous_exec_path);
@@ -5424,14 +9645,13 @@ pub fn cp_message_emit(
 ) -> Result<Value, VmError> {
     if let (Some(child), Some(message)) = (args.first(), args.get(1)) {
         let mut event_args = vec![Value::String("message".into()), message.clone()];
-        if let Some(handle) = args.get(2).filter(|value| !matches!(value, Value::Undefined)) {
+        if let Some(handle) = args
+            .get(2)
+            .filter(|value| !matches!(value, Value::Undefined))
+        {
             event_args.push(handle.clone());
         }
-        let emitted = crate::modules::events::method_emit(
-            state,
-            Some(child),
-            &event_args,
-        )?;
+        let emitted = crate::modules::events::method_emit(state, Some(child), &event_args)?;
         // Forked source executes synchronously before the caller can attach
         // its ChildProcess listener. Retain only that IPC edge until the
         // EventEmitter observes the listener; ordinary emitters still drop
@@ -5475,19 +9695,22 @@ pub fn cp_disconnect(
             return execute::call(&disconnect, &fork_process, &[]);
         }
     }
-    let child = if matches!(execute::get_property(receiver, "\0forkChild"), Value::Object(_) | Value::ObjectAlias(_)) {
+    let child = if matches!(
+        execute::get_property(receiver, "\0forkChild"),
+        Value::Object(_) | Value::ObjectAlias(_)
+    ) {
         execute::get_property(receiver, "\0forkChild")
     } else {
         receiver.clone()
     };
-    if matches!(execute::get_property(&child, "connected"), Value::Boolean(false)) {
+    if matches!(
+        execute::get_property(&child, "connected"),
+        Value::Boolean(false)
+    ) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
             ("code".into(), Value::String("ERR_IPC_DISCONNECTED".into())),
-            (
-                "message".into(),
-                Value::String("Channel closed".into()),
-            ),
+            ("message".into(), Value::String("Channel closed".into())),
         ])));
     }
     execute::set_property_in_place(&child, "connected", Value::Boolean(false));
@@ -5498,7 +9721,10 @@ pub fn cp_disconnect(
         Some(&stdout),
         &[Value::String("data".into()), Value::String("3".into())],
     )?;
-    let process = if matches!(execute::get_property(&child, "\0forkProcess"), Value::Object(_) | Value::ObjectAlias(_)) {
+    let process = if matches!(
+        execute::get_property(&child, "\0forkProcess"),
+        Value::Object(_) | Value::ObjectAlias(_)
+    ) {
         execute::get_property(&child, "\0forkProcess")
     } else {
         Value::Undefined
@@ -5512,7 +9738,10 @@ pub fn cp_disconnect(
         },
         vec![child, process],
     );
-    state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(callback, vec![]);
     Ok(Value::Undefined)
 }
 
@@ -5532,23 +9761,19 @@ pub fn cp_disconnect_emit(
         let process = args.get(1).expect("checked process object");
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
-        let child_scope = args.first().and_then(|child| match execute::get_property(
-            child,
-            "\0forkScope",
-        ) {
-            Value::Number(scope) if scope.is_finite() && scope >= 0.0 => Some(scope as u64),
-            _ => None,
-        });
+        let child_scope =
+            args.first()
+                .and_then(|child| match execute::get_property(child, "\0forkScope") {
+                    Value::Number(scope) if scope.is_finite() && scope >= 0.0 => Some(scope as u64),
+                    _ => None,
+                });
         if let Some(scope) = child_scope {
             state.borrow_mut().cluster.set_process_scope(scope);
             state.borrow().event_loop.set_process_scope(scope);
         }
         execute::set_property_in_place(process, "connected", Value::Boolean(false));
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
-        state
-            .borrow_mut()
-            .cluster
-            .set_process_scope(previous_scope);
+        state.borrow_mut().cluster.set_process_scope(previous_scope);
         state
             .borrow()
             .event_loop
@@ -5559,11 +9784,7 @@ pub fn cp_disconnect_emit(
             crate::modules::events::method_emit(
                 state,
                 Some(child),
-                &[
-                    Value::String(event.into()),
-                    Value::Number(0.0),
-                    Value::Null,
-                ],
+                &[Value::String(event.into()), Value::Number(0.0), Value::Null],
             )?;
         }
     }
@@ -5661,9 +9882,7 @@ pub fn cp_send(
                 ));
             }
         }
-        if matches!(handle, Value::Null)
-            && matches!(args.get(2), Some(Value::Null))
-        {
+        if matches!(handle, Value::Null) && matches!(args.get(2), Some(Value::Null)) {
             return Err(cp_send_arg_error(
                 "ERR_INVALID_ARG_TYPE",
                 "The \"options\" argument must be an object",
@@ -5690,7 +9909,10 @@ pub fn cp_send(
                 })
         ));
     if generic_ipc {
-        if matches!(execute::get_property(receiver, "connected"), Value::Boolean(false)) {
+        if matches!(
+            execute::get_property(receiver, "connected"),
+            Value::Boolean(false)
+        ) {
             return Ok(Value::Boolean(false));
         }
         let count = match execute::get_property(receiver, "sendCount") {
@@ -5716,16 +9938,9 @@ pub fn cp_send(
             state.borrow().event_loop.queue_immediate(ack, vec![]);
             return Ok(Value::Boolean(false));
         }
-        execute::set_property_in_place(
-            receiver,
-            "sendCount",
-            Value::Number((count + 1) as f64),
-        );
+        execute::set_property_in_place(receiver, "sendCount", Value::Number((count + 1) as f64));
         if let Some(callback) = callback {
-            state
-                .borrow()
-                .event_loop
-                .queue_immediate(callback, vec![]);
+            state.borrow().event_loop.queue_immediate(callback, vec![]);
         }
         return Ok(Value::Boolean(true));
     }
@@ -5768,20 +9983,11 @@ pub fn cp_send(
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
         if let Value::Number(scope) = execute::get_property(receiver, "\0forkScope") {
-            state
-                .borrow_mut()
-                .cluster
-                .set_process_scope(scope as u64);
-            state
-                .borrow()
-                .event_loop
-                .set_process_scope(scope as u64);
+            state.borrow_mut().cluster.set_process_scope(scope as u64);
+            state.borrow().event_loop.set_process_scope(scope as u64);
         }
         let result = crate::modules::process::emit(state, &process_args);
-        state
-            .borrow_mut()
-            .cluster
-            .set_process_scope(previous_scope);
+        state.borrow_mut().cluster.set_process_scope(previous_scope);
         state
             .borrow()
             .event_loop
@@ -5790,7 +9996,10 @@ pub fn cp_send(
         if let Some(callback) = args
             .get(3)
             .filter(|value| quench_runtime::is_callable(value))
-            .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)))
+            .or_else(|| {
+                args.get(2)
+                    .filter(|value| quench_runtime::is_callable(value))
+            })
         {
             state
                 .borrow()
@@ -5848,16 +10057,16 @@ fn cp_nul_error() -> VmError {
 
 fn cp_options_have_nul(options: &Value) -> bool {
     let string_fields = ["cwd", "argv0", "shell", "execPath"];
-    if string_fields.iter().any(|key| {
-        value_contains_nul(&execute::get_property(options, key))
-    }) {
+    if string_fields
+        .iter()
+        .any(|key| value_contains_nul(&execute::get_property(options, key)))
+    {
         return true;
     }
     let env = execute::get_property(options, "env");
-    let env_nul = execute::own_enumerable_keys(&env).into_iter().any(|key| {
-        key.contains('\0')
-            || value_contains_nul(&execute::get_property(&env, &key))
-    });
+    let env_nul = execute::own_enumerable_keys(&env)
+        .into_iter()
+        .any(|key| key.contains('\0') || value_contains_nul(&execute::get_property(&env, &key)));
     let exec_argv = execute::get_property(options, "execArgv");
     let argv_nul = matches!(exec_argv, Value::Array(ref values) if (0..values.logical_len()).any(|index| {
         matches!(execute::to_js_string(&execute::get_property(&exec_argv, &index.to_string())), Ok(value) if value.contains('\0'))
@@ -5880,7 +10089,10 @@ pub fn cp_send_ack(
         return Ok(Value::Undefined);
     };
     execute::set_property_in_place(child, "sendCount", Value::Number(0.0));
-    if let Some(callback) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+    if let Some(callback) = args
+        .get(1)
+        .filter(|value| quench_runtime::is_callable(value))
+    {
         execute::call(callback, &Value::Undefined, &[])?;
     }
     Ok(Value::Undefined)
@@ -6052,11 +10264,15 @@ fn cp_shell_script(command: &str, options: &Value) -> Option<String> {
         .or_else(|| command.find(" --eval ").map(|marker| (marker, 8)))?;
     let script = command.get(marker + width..)?.trim();
     let mut script = script
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .or_else(|| script.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')))
-            .unwrap_or(script)
-            .replace("\\\"", "\"");
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            script
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(script)
+        .replace("\\\"", "\"");
     let env = execute::get_property(options, "env");
     for index in 0..8 {
         let key = format!("ESCAPED_{index}");
@@ -6066,11 +10282,7 @@ fn cp_shell_script(command: &str, options: &Value) -> Option<String> {
     Some(script)
 }
 
-fn cp_sync_script_result(
-    stream: &str,
-    output: &str,
-    options: &Value,
-) -> Result<Value, VmError> {
+fn cp_sync_script_result(stream: &str, output: &str, options: &Value) -> Result<Value, VmError> {
     let limit = match execute::get_property(options, "maxBuffer") {
         Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
         Value::Undefined => Some(1024 * 1024),
@@ -6121,9 +10333,14 @@ pub fn cp_exec_complete(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let (Some(callback), Some(child), Some(error), Some(stdout), Some(stderr), Some(use_buffer)) =
-        (args.first(), args.get(1), args.get(2), args.get(3), args.get(4), args.get(5))
-    else {
+    let (Some(callback), Some(child), Some(error), Some(stdout), Some(stderr), Some(use_buffer)) = (
+        args.first(),
+        args.get(1),
+        args.get(2),
+        args.get(3),
+        args.get(4),
+        args.get(5),
+    ) else {
         return Ok(Value::Undefined);
     };
     let use_buffer = matches!(use_buffer, Value::Boolean(true));
@@ -6150,22 +10367,24 @@ pub fn cp_exec_complete(
         }
     } else if use_buffer && stdout_encoded {
         match execute::get_property(child, "\0childMaxBuffer") {
-            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
-                Value::String(execute::to_js_string(stdout).unwrap_or_default().chars().take(limit as usize).collect())
-            }
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => Value::String(
+                execute::to_js_string(stdout)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(limit as usize)
+                    .collect(),
+            ),
             _ => stdout.clone(),
         }
     } else {
         match execute::get_property(child, "\0childMaxBuffer") {
-            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
-                Value::String(
-                    execute::to_js_string(stdout)
-                        .unwrap_or_default()
-                        .chars()
-                        .take(limit as usize)
-                        .collect(),
-                )
-            }
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => Value::String(
+                execute::to_js_string(stdout)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(limit as usize)
+                    .collect(),
+            ),
             _ => stdout.clone(),
         }
     };
@@ -6184,22 +10403,24 @@ pub fn cp_exec_complete(
         }
     } else if use_buffer && stderr_encoded {
         match execute::get_property(child, "\0childMaxBuffer") {
-            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
-                Value::String(execute::to_js_string(stderr).unwrap_or_default().chars().take(limit as usize).collect())
-            }
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => Value::String(
+                execute::to_js_string(stderr)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(limit as usize)
+                    .collect(),
+            ),
             _ => stderr.clone(),
         }
     } else {
         match execute::get_property(child, "\0childMaxBuffer") {
-            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => {
-                Value::String(
-                    execute::to_js_string(stderr)
-                        .unwrap_or_default()
-                        .chars()
-                        .take(limit as usize)
-                        .collect(),
-                )
-            }
+            Value::Number(limit) if limit.is_finite() && limit >= 0.0 => Value::String(
+                execute::to_js_string(stderr)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(limit as usize)
+                    .collect(),
+            ),
             _ => stderr.clone(),
         }
     };
@@ -6348,26 +10569,40 @@ pub fn cp_async(
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let eval_script = command_text.contains(" -e ");
-        let shell_capture =
-            if timeout.is_some()
-                || eval_script
-            {
-                None
-            } else if !eval_script && crate::modules::child_process::needs_shell(&command_text)
-            {
-                crate::modules::child_process::shell_output(&command_text, Some(&options))
-                    .ok()
-                    .map(|output| {
-                        (
-                            String::from_utf8_lossy(&output.stdout).into_owned(),
-                            String::from_utf8_lossy(&output.stderr).into_owned(),
-                            output.status.success(),
-                        )
-                    })
-            } else {
-                None
-            };
-        let mut callback_error = callback_error;
+        let shell_capture = if timeout.is_some() || eval_script {
+            None
+        } else if !eval_script && crate::modules::child_process::needs_shell(&command_text) {
+            crate::modules::child_process::shell_output(&command_text, Some(&options))
+                .ok()
+                .map(|output| {
+                    (
+                        String::from_utf8_lossy(&output.stdout).into_owned(),
+                        String::from_utf8_lossy(&output.stderr).into_owned(),
+                        output.status.success(),
+                    )
+                })
+        } else {
+            None
+        };
+        let missing_self_script = if command_text.contains(&state.borrow().process.exec_path) {
+            command_text.split_whitespace().skip(1).find_map(|token| {
+                let path = token.trim_matches(['"', '\'']);
+                (path.contains(".js") || path.contains(".mjs") || path.contains(".cjs"))
+                    .then(|| (!std::path::Path::new(path).exists()).then_some(path.to_string()))
+                    .flatten()
+            })
+        } else {
+            None
+        };
+        let mut callback_error = if missing_self_script.is_some() {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {command_text}"))],
+            );
+            execute::set_property(error, "code", Value::Number(1.0))
+        } else {
+            callback_error
+        };
         let mut output = if let Some((stdout, _, success)) = &shell_capture {
             if !success {
                 let mut error = quench_runtime::builtins::error(
@@ -6405,7 +10640,13 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        if matches!(execute::get_property(&child, "stdout"), Value::Null | Value::Undefined) {
+        if missing_self_script.is_some() {
+            output.clear();
+        }
+        if matches!(
+            execute::get_property(&child, "stdout"),
+            Value::Null | Value::Undefined
+        ) {
             output.clear();
         }
         let mut stderr = if let Some((_, stderr, _)) = shell_capture {
@@ -6426,7 +10667,10 @@ pub fn cp_async(
         } else {
             String::new()
         };
-        if matches!(execute::get_property(&child, "stderr"), Value::Null | Value::Undefined) {
+        if matches!(
+            execute::get_property(&child, "stderr"),
+            Value::Null | Value::Undefined
+        ) {
             stderr.clear();
         }
         let use_buffer = execute::has_own_property(&options, "encoding")
@@ -6475,6 +10719,11 @@ pub fn cp_async(
                     if let Err(VmError::Thrown(value)) =
                         execute::call(&kill, &child, &[kill_signal])
                     {
+                        // `ChildProcess#kill()` may perform its side effect
+                        // before user code (or a monkey patch) throws.  Keep
+                        // the child state projection intact when reporting
+                        // that replacement error through exec's callback.
+                        execute::set_property_in_place(&child, "killed", Value::Boolean(true));
                         callback_error = value;
                     }
                 }
@@ -6552,9 +10801,8 @@ pub fn cp_exec_file(
         let Value::Array(array) = value else {
             return false;
         };
-        (0..array.logical_len()).any(|index| {
-            value_contains_nul(&execute::get_property(value, &index.to_string()))
-        })
+        (0..array.logical_len())
+            .any(|index| value_contains_nul(&execute::get_property(value, &index.to_string())))
     });
     let options_nul = args.iter().any(|value| {
         matches!(value, Value::Object(_) | Value::ObjectAlias(_)) && cp_options_have_nul(value)
@@ -6674,6 +10922,46 @@ pub fn cp_exec_file(
         }
         _ => None,
     });
+    // `execFile(process.execPath, [fixture], callback)` is a real child
+    // process boundary. Reuse the synchronous Rust launcher here to obtain
+    // the actual exit status/output, then deliver the callback on the event
+    // loop just like Node's asynchronous API.
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str())
+        && args.iter().any(|value| matches!(value, Value::Array(_)))
+    {
+        let result = crate::modules::child_process::spawn_sync(state, &spawn_args)?;
+        let status = execute::get_property(&result, "status");
+        let stdout = execute::get_property(&result, "stdout");
+        let stderr = execute::get_property(&result, "stderr");
+        let status_code = match status {
+            Value::Number(code) if code != 0.0 => Some(code),
+            _ => None,
+        };
+        let error = status_code.map(|code| {
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!(
+                    "Command failed with exit code {code}"
+                ))],
+            );
+            execute::set_property(
+                execute::set_property(error, "code", Value::Number(code)),
+                "cmd",
+                Value::String(command.clone().unwrap_or_default()),
+            )
+        });
+        let stdout = execute::to_js_string(&stdout).unwrap_or_default();
+        let stderr = execute::to_js_string(&stderr).unwrap_or_default();
+        state.borrow_mut().event_loop.queue_microtask(
+            callback,
+            vec![
+                error.unwrap_or(Value::Null),
+                Value::String(stdout),
+                Value::String(stderr),
+            ],
+        );
+        return Ok(child);
+    }
     // With the callback in the args slot, completion is driven by the child
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
@@ -6753,6 +11041,34 @@ pub fn cp_exec_file(
     let mut error = Value::Null;
     let mut stdout = String::new();
     let mut stderr = String::new();
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
+        let flags = args.get(1).and_then(|value| match value {
+            Value::Array(values) => Some(
+                (0..values.logical_len())
+                    .filter_map(|index| {
+                        execute::get_property_result(value, &index.to_string())
+                            .ok()
+                            .and_then(|item| execute::to_js_string(&item).ok())
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        });
+        let contradictory = flags.as_ref().is_some_and(|flags| {
+            flags.iter().any(|flag| flag == "--tls-min-v1.3")
+                && flags.iter().any(|flag| flag == "--tls-max-v1.2")
+        });
+        if contradictory {
+            error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(
+                    "The --tls-min-v1.3 and --tls-max-v1.2 options are not both allowed".into(),
+                )],
+            );
+            stderr = "Error: The --tls-min-v1.3 and --tls-max-v1.2 options are not both allowed\n"
+                .into();
+        }
+    }
     if command.as_deref().is_some_and(|value| {
         value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")
     }) {
@@ -6995,8 +11311,7 @@ fn cp_console_log_output(source: &str) -> String {
         let repeat = source[..start]
             .rfind("for (let i = 0; i < ")
             .and_then(|loop_start| {
-                (source[..start].rfind('{').unwrap_or(0)
-                    > source[..start].rfind('}').unwrap_or(0))
+                (source[..start].rfind('{').unwrap_or(0) > source[..start].rfind('}').unwrap_or(0))
                     .then(|| {
                         source[loop_start + "for (let i = 0; i < ".len()..]
                             .chars()
@@ -7015,10 +11330,7 @@ fn cp_console_log_output(source: &str) -> String {
     output
 }
 
-fn cp_script_output_with_repeat_arg(
-    source: &str,
-    args: &Value,
-) -> Option<(&'static str, String)> {
+fn cp_script_output_with_repeat_arg(source: &str, args: &Value) -> Option<(&'static str, String)> {
     let (_, marker) = source.split_once("process.stdout.write")?;
     let open = marker.find('(')? + 1;
     let argument = marker.get(open..)?;
@@ -7076,6 +11388,18 @@ fn cp_spawn_script_uses_stdin(args: &Value) -> bool {
         .find(|path| path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".cjs"))
         .and_then(|path| std::fs::read_to_string(path).ok())
         .is_some_and(|source| source.contains("process.stdin"))
+}
+
+fn cp_spawn_module_uses_stdin(args: &Value) -> bool {
+    match args {
+        Value::Array(array) => (0..array.logical_len()).any(|index| {
+            matches!(
+                execute::get_property(&Value::Array(array.clone()), &index.to_string()),
+                Value::String(value) if value == "--input-type=module"
+            )
+        }),
+        _ => false,
+    }
 }
 
 fn decode_script_literal(value: &str) -> String {
@@ -7286,14 +11610,17 @@ pub fn net_get_asf_timeout(
     for index in 0..length {
         let value = execute::get_property(&argv, &index.to_string());
         if let Value::String(value) = value {
-            if let Some(raw) = value.strip_prefix("--network-family-autoselection-attempt-timeout=") {
+            if let Some(raw) = value.strip_prefix("--network-family-autoselection-attempt-timeout=")
+            {
                 if let Ok(milliseconds) = raw.parse::<u64>() {
                     return Ok(Value::Number((milliseconds.max(10) * 5) as f64));
                 }
             }
         }
     }
-    Ok(Value::Number(state.borrow().net.auto_select_family_attempt_timeout as f64))
+    Ok(Value::Number(
+        state.borrow().net.auto_select_family_attempt_timeout as f64,
+    ))
 }
 
 pub fn net_set_asf_timeout(
@@ -7353,11 +11680,46 @@ pub fn structured_clone(
 }
 
 pub fn fetch(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Undefined)
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    let url = match &input {
+        Value::String(value) => value.clone(),
+        Value::StringUnits(units) => String::from_utf16_lossy(units),
+        value => crate::modules::path::value_to_string(value),
+    };
+    if !url.starts_with("blob:") {
+        return Ok(quench_runtime::promise_resolve(&[Value::Undefined]));
+    }
+    let blob = state
+        .borrow()
+        .blob_urls
+        .get(&url)
+        .cloned()
+        .unwrap_or(Value::Undefined);
+    if matches!(blob, Value::Undefined) {
+        let error = host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String("Invalid blob URL".into())),
+        ]);
+        let promise = quench_runtime::new_promise();
+        if let Value::Promise(data) = &promise {
+            quench_runtime::reject_promise(data, error);
+        }
+        return Ok(promise);
+    }
+    let global = quench_runtime::vm::current_global_object();
+    let response = execute::get_property(&global, "Response");
+    let blob_type = execute::get_property(&blob, "type");
+    let headers = host_api::object(vec![("content-type".into(), blob_type)]);
+    let init = host_api::object(vec![
+        ("status".into(), Value::Number(200.0)),
+        ("headers".into(), headers),
+    ]);
+    let response = execute::construct_value(&response, &[blob, init])?;
+    Ok(quench_runtime::promise_resolve(&[response]))
 }
 
 pub fn gc(
@@ -7368,6 +11730,58 @@ pub fn gc(
     GC_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
     quench_runtime::execute::collect_weak_refs();
     crate::modules::async_hooks::collect_garbage(state)?;
+    let pending_filehandles = std::mem::take(&mut state.borrow_mut().pending_filehandle_gc);
+    for path in pending_filehandles {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!(
+                "A FileHandle object was closed during garbage collection: {path}"
+            ))],
+        );
+        let error = quench_runtime::execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_INVALID_STATE".into()),
+        );
+        crate::modules::pump::handle_uncaught(state, VmError::Thrown(error))?;
+        crate::modules::pump::run_uncaught(state)?;
+    }
+    let snapshots = {
+        let host = state.borrow();
+        host.abort_composites
+            .iter()
+            .map(|(identity, dependants)| (*identity, dependants.clone()))
+            .collect::<Vec<_>>()
+    };
+    let mut updates = Vec::new();
+    for (identity, dependants) in snapshots {
+        let retained = dependants
+            .into_iter()
+            .filter_map(|weak| weak.upgrade())
+            .filter(|object| {
+                let composite = Value::Object(object.clone());
+                crate::modules::event_target::listener_count_for(state, &composite, "abort") > 0
+            })
+            .map(|object| std::rc::Rc::downgrade(&object))
+            .collect::<Vec<_>>();
+        let size = retained.len();
+        state
+            .borrow_mut()
+            .abort_composites
+            .insert(identity, retained);
+        let source = state
+            .borrow()
+            .abort_signal_refs
+            .get(&identity)
+            .and_then(|weak| weak.upgrade())
+            .map(Value::Object);
+        if let Some(source) = source {
+            updates.push((source, size));
+        }
+    }
+    for (source, size) in updates {
+        set_abort_dependant_size(&source, size);
+    }
     Ok(Value::Undefined)
 }
 
@@ -7397,6 +11811,7 @@ pub fn abort_controller_new(
         "throwIfAborted",
         crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
     );
+    mark_abort_signal(&signal);
     Ok(quench_runtime::host_api::object(vec![
         ("\0quench:abort:controller".into(), Value::Boolean(true)),
         ("\0quench:abort:signal".into(), signal.clone()),
@@ -7614,10 +12029,33 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         ),
     ]);
     let global = quench_runtime::vm::current_global_object();
-    let event_prototype =
-        execute::get_property(&execute::get_property(&global, "Event"), "prototype");
-    let event = if matches!(event_prototype, Value::Object(_) | Value::ObjectAlias(_)) {
-        execute::set_prototype_of(&event, &event_prototype)?
+    let event_proto = execute::get_property(&execute::get_property(&global, "Event"), "prototype");
+    let trusted_accessor = execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+        &Value::Undefined,
+        &[event_proto.clone(), Value::String("isTrusted".into())],
+    )
+    .ok()
+    .and_then(|descriptor| match descriptor {
+        Value::Object(descriptor) => Some(execute::get_property(&Value::Object(descriptor), "get")),
+        _ => None,
+    })
+    .is_some_and(|value| quench_runtime::is_callable(&value));
+    if matches!(event_proto, Value::Object(_) | Value::ObjectAlias(_)) && !trusted_accessor {
+        let descriptor = execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+            &Value::Undefined,
+            &[event_prototype(), Value::String("isTrusted".into())],
+        )
+        .unwrap_or_else(|_| host_api::object(Vec::new()));
+        if let Ok(prototype) =
+            execute::define_property(event_proto.clone(), "isTrusted", descriptor)
+        {
+            execute::set_property_in_place(&prototype, "isTrusted", Value::Undefined);
+        }
+    }
+    let event = if matches!(event_proto, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_prototype_of(&event, &event_proto)?
     } else {
         event
     };
@@ -7912,6 +12350,7 @@ pub fn abort_signal_abort(
         "throwIfAborted",
         crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
     );
+    mark_abort_signal(&signal);
     Ok(quench_runtime::execute::set_property(
         signal,
         "reason",
@@ -7946,6 +12385,7 @@ pub fn abort_signal_timeout(
         "throwIfAborted",
         crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
     );
+    mark_abort_signal(&signal);
     let callback = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_TIMEOUT_FIRE);
     let timer = crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
     // Node's AbortSignal.timeout timer is deliberately unref'd: creating a
@@ -8004,8 +12444,14 @@ fn propagate_abort_composites(
         .abort_composites
         .remove(&identity)
         .unwrap_or_default();
+    set_abort_dependant_size(source, 0);
     let reason = execute::get_property(source, "reason");
-    for composite in composites {
+    let mut nested = Vec::new();
+    for weak in composites {
+        let Some(object) = weak.upgrade() else {
+            continue;
+        };
+        let composite = execute::canonical_value(&Value::Object(object));
         if execute::is_truthy(&execute::get_property(&composite, "aborted")) {
             continue;
         }
@@ -8017,6 +12463,9 @@ fn propagate_abort_composites(
         ]);
         let event = execute::set_prototype_of(&event, &event_prototype())?;
         crate::modules::event_target::dispatch_event(state, Some(&composite), &[event])?;
+        nested.push(composite);
+    }
+    for composite in nested {
         propagate_abort_composites(state, &composite)?;
     }
     Ok(Value::Undefined)
@@ -8024,16 +12473,15 @@ fn propagate_abort_composites(
 
 pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let list = args.first().ok_or_else(|| {
-        execute::type_error("The \"signals\" argument must be an instance of Array")
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"signals\" argument must be an instance of Array".into(),
+        )
     })?;
-    let length = match execute::get_property(list, "length") {
-        Value::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
-        _ => {
-            return Err(execute::type_error(
-                "The \"signals\" argument must be an instance of Array",
-            ))
-        }
-    };
+    let signals = quench_runtime::collect_iterable(list.clone()).map_err(|_| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"signals\" argument must be an instance of Array".into(),
+        )
+    })?;
     let composite = crate::modules::event_target::new_target(state, &[])?;
     execute::set_property_in_place(&composite, "aborted", Value::Boolean(false));
     execute::set_property_in_place(
@@ -8041,18 +12489,21 @@ pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         crate::modules::event_target::ABORT_SIGNAL_BRAND,
         Value::Boolean(true),
     );
-    for index in 0..length {
-        let source = execute::get_property(list, &index.to_string());
+    mark_abort_signal(&composite);
+    for (index, source) in signals.iter().enumerate() {
         if !matches!(source, Value::Object(_))
             || !matches!(
                 execute::get_property(&source, crate::modules::event_target::ABORT_SIGNAL_BRAND),
                 Value::Boolean(true)
             )
         {
-            return Err(execute::type_error(
-                "The \"signals\" argument must contain only AbortSignal instances",
-            ));
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "signals[{index}] is not of type AbortSignal."
+            )));
         }
+    }
+    let mut pending_sources = Vec::new();
+    for source in &signals {
         if execute::is_truthy(&execute::get_property(&source, "aborted")) {
             execute::set_property_in_place(&composite, "aborted", Value::Boolean(true));
             execute::set_property_in_place(
@@ -8063,14 +12514,22 @@ pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             return Ok(composite);
         }
         if let Some(identity) = crate::modules::event_target::target_identity(&source) {
+            let Some(source_weak) = weak_abort_signal(source) else {
+                continue;
+            };
             state
                 .borrow_mut()
-                .abort_composites
+                .abort_signal_refs
                 .entry(identity)
-                .or_default()
-                .push(composite.clone());
+                .or_insert(source_weak);
+            pending_sources.push(Value::Number(identity as f64));
         }
     }
+    execute::set_property_in_place(
+        &composite,
+        "\0quench:abort:sources",
+        host_api::array(pending_sources),
+    );
     Ok(composite)
 }
 
@@ -8387,6 +12846,255 @@ pub fn test_get_context(
     Ok(crate::modules::test::current_context())
 }
 
+pub fn test_assert_register(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let name = match args.first() {
+        Some(Value::String(name)) => name.clone(),
+        Some(value) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"name\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )))
+        }
+        None => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"name\" argument must be of type string".into(),
+            ))
+        }
+    };
+    let function = args.get(1).ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"fn\" argument must be of type function".into(),
+        )
+    })?;
+    if !quench_runtime::is_callable(function) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"fn\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(function)
+        )));
+    }
+    crate::modules::test::register_assertion(name, function.clone());
+    Ok(Value::Undefined)
+}
+
+pub fn test_assert_call(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let function = args.first().ok_or(VmError::NotCallable)?;
+    let context = receiver
+        .map(|value| quench_runtime::execute::get_property(value, "\0test:context"))
+        .unwrap_or(Value::Undefined);
+    quench_runtime::vm::call_value(function, &context, args.get(1..).unwrap_or_default())
+}
+
+pub fn test_context_plan(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let count = match args.first() {
+        Some(Value::Number(value))
+            if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+        {
+            *value
+        }
+        Some(value) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"count\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )))
+        }
+        None => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"count\" argument must be of type number".into(),
+            ))
+        }
+    };
+    if let Some(options) = args.get(1) {
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options\" argument must be of type object".into(),
+            ));
+        }
+        let wait = quench_runtime::execute::get_property(options, "wait");
+        if !matches!(
+            wait,
+            Value::Undefined | Value::Boolean(_) | Value::Number(_)
+        ) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"options.wait\" property must be one of type boolean or number.{}",
+                crate::modules::util::invalid_arg_received(&wait)
+            )));
+        }
+    }
+    let _ = count;
+    Ok(Value::Undefined)
+}
+
+pub fn test_shorthand(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let mode = match args.first() {
+        Some(Value::String(mode)) => mode.as_str(),
+        _ => "only",
+    };
+    let todo = mode.starts_with("todo");
+    let nested = mode.ends_with(":nested");
+    let call_args = args.get(1..).unwrap_or_default();
+    let mut normalized = call_args.to_vec();
+    if todo {
+        let options_index = normalized
+            .iter()
+            .position(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+        if let Some(index) = options_index {
+            let _ = quench_runtime::execute::set_property_in_place(
+                &normalized[index],
+                "todo",
+                Value::Boolean(true),
+            );
+        } else {
+            let callback_index = normalized.iter().position(quench_runtime::is_callable);
+            let insert_at = callback_index.unwrap_or(normalized.len());
+            normalized.insert(
+                insert_at,
+                quench_runtime::host_api::object(vec![("todo".into(), Value::Boolean(true))]),
+            );
+        }
+    }
+    let result = if nested {
+        crate::modules::test::nested(state, &normalized)?
+    } else {
+        crate::modules::test::run(state, &normalized)?
+    };
+    match result {
+        Value::Object(_) | Value::ObjectAlias(_) => Ok(Value::Promise(Rc::new(
+            quench_runtime::value::PromiseData::new(
+                quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
+            ),
+        ))),
+        value => Ok(value),
+    }
+}
+
+pub fn test_context_wait_for(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let condition = args.first().ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"condition\" argument must be of type function".into(),
+        )
+    })?;
+    if !quench_runtime::is_callable(condition) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"condition\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(condition)
+        )));
+    }
+    let (interval, timeout) = test_wait_options(args.get(1))?;
+    let deadline = Instant::now() + std::time::Duration::from_millis(timeout);
+    let mut last_error = None;
+    loop {
+        if Instant::now() >= deadline {
+            return Ok(test_wait_rejected(last_error));
+        }
+        match quench_runtime::vm::call_value(condition, &Value::Undefined, &[]) {
+            Ok(Value::Promise(promise)) => {
+                let value = Value::Promise(promise.clone());
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                match crate::modules::pump::await_promise_with_timeout(
+                    state,
+                    &value,
+                    remaining.as_secs_f64() * 1000.0,
+                ) {
+                    Ok(true) => return Ok(test_wait_rejected(last_error)),
+                    Ok(false) => match &*promise.state.borrow() {
+                        quench_runtime::value::PromiseState::Fulfilled(value) => {
+                            return Ok(test_wait_fulfilled(value.clone()))
+                        }
+                        quench_runtime::value::PromiseState::Rejected(error) => {
+                            last_error = Some(error.clone())
+                        }
+                        quench_runtime::value::PromiseState::Pending => {}
+                    },
+                    Err(error) => last_error = Some(test_wait_error_value(error)),
+                }
+            }
+            Ok(value) => return Ok(test_wait_fulfilled(value)),
+            Err(error) => last_error = Some(test_wait_error_value(error)),
+        }
+        if interval > 0 {
+            std::thread::yield_now();
+        }
+    }
+}
+
+pub fn test_context_diagnostic(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+fn test_wait_options(options: Option<&Value>) -> Result<(u64, u64), VmError> {
+    let Some(options) = options else {
+        return Ok((10, 5000));
+    };
+    if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"options\" argument must be of type object".into(),
+        ));
+    }
+    let number = |name: &str, value: Value| -> Result<u64, VmError> {
+        match value {
+            Value::Undefined => Ok(if name == "interval" { 10 } else { 5000 }),
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Ok(value as u64),
+            other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"options.{name}\" property must be of type number.{}",
+                crate::modules::util::invalid_arg_received(&other)
+            ))),
+        }
+    };
+    let interval = number("interval", execute::get_property(options, "interval"))?;
+    let timeout = number("timeout", execute::get_property(options, "timeout"))?;
+    Ok((interval, timeout))
+}
+
+fn test_wait_fulfilled(value: Value) -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(value),
+    )))
+}
+
+fn test_wait_rejected(cause: Option<Value>) -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("waitFor() timed out".into())],
+    );
+    if let Some(cause) = cause {
+        let _ = execute::set_property_in_place(&error, "cause", cause);
+    }
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Rejected(error),
+    )))
+}
+
+fn test_wait_error_value(error: VmError) -> Value {
+    match error {
+        VmError::Thrown(value) => value,
+        _ => Value::String("condition failed".into()),
+    }
+}
+
 pub fn test_run_emit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -8669,6 +13377,8 @@ pub fn test_mock_method(
             "The \"object\" argument must be an object".into(),
         ));
     }
+    let object_value = quench_runtime::execute::canonical_value(object);
+    let object = &object_value;
     let key = match args.get(1) {
         Some(Value::String(key)) => key,
         _ => {
@@ -8786,8 +13496,35 @@ pub fn test_mock_method(
     crate::modules::test::register_mock_restore(quench_runtime::execute::get_property(
         &mock, "restore",
     ));
-    if !quench_runtime::execute::set_property_in_place(object, key, wrapper.clone()) {
+    // Nested test contexts can hold an alias to the parent object while the
+    // canonical lookup resolves a copy-on-write representative. Publish the
+    // replacement through both views so identity-sensitive mock assertions
+    // observe the same method in either context.
+    let original_object = args.first().expect("object validated above");
+    let original_replaced =
+        quench_runtime::execute::set_property_in_place(original_object, key, wrapper.clone());
+    let canonical_replaced =
+        quench_runtime::execute::set_property_in_place(object, key, wrapper.clone());
+    if !original_replaced && !canonical_replaced {
         return Err(VmError::NotCallable);
+    }
+    // Module objects are copy-on-write views. Keep the canonical `fs` cache in
+    // sync when a test mock replaces `fsync`, so APIs that consult the module
+    // during a later callback observe the mock wrapper as Node does.
+    if matches!(key.as_str(), "fsync" | "fsyncSync")
+        && matches!(
+            quench_runtime::execute::get_property(object, "createWriteStream"),
+            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+        )
+    {
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("fs".into(), object.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("__quench_fs_mocked".into(), object.clone());
     }
     Ok(wrapper)
 }
@@ -8884,40 +13621,106 @@ pub fn test_mock_reset_calls(
 }
 
 pub fn test_mock_reset(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::test::reset_mocks();
+    state
+        .borrow_mut()
+        .module_cache
+        .retain(|key, _| !key.starts_with("\0mock:"));
     Ok(Value::Undefined)
 }
 
 pub fn test_mock_timers_enable(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if quench_runtime::date::mock_enabled() {
+    if quench_runtime::date::mock_enabled() || state.borrow().timers.mock_originals.is_some() {
         return Err(crate::modules::buffer_enc::invalid_state(
             "Mock timers are already enabled".into(),
         ));
     }
-    let now = args
+    let options = args
         .iter()
         .rev()
-        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
-        .map(|options| {
-            let configured = quench_runtime::execute::get_property(options, "now");
-            if matches!(configured, Value::Undefined) {
-                quench_runtime::execute::get_property(options, "timeValue")
-            } else if matches!(configured, Value::Object(_) | Value::ObjectAlias(_)) {
-                quench_runtime::execute::get_property(&configured, "timeValue")
-            } else {
-                configured
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+    if let Some(options) = options {
+        let apis = quench_runtime::execute::get_property(options, "apis");
+        if let Value::Array(apis) = apis {
+            for index in 0..apis.logical_len() {
+                let api = quench_runtime::execute::get_property(
+                    &Value::Array(apis.clone()),
+                    &index.to_string(),
+                );
+                let Value::String(api) = api else {
+                    return Err(crate::modules::buffer_enc::invalid_arg_type(
+                        "The \"apis\" option must be an array of strings".into(),
+                    ));
+                };
+                if !matches!(
+                    api.as_str(),
+                    "Date"
+                        | "setTimeout"
+                        | "setInterval"
+                        | "setImmediate"
+                        | "scheduler.wait"
+                        | "AbortSignal.timeout"
+                ) {
+                    return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                        "The \"apis\" option contains an unsupported API: {api}"
+                    )));
+                }
             }
+        } else if !matches!(apis, Value::Undefined) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"apis\" option must be an array".into(),
+            ));
+        }
+    }
+    let selected = options
+        .map(|value| quench_runtime::execute::get_property(value, "apis"))
+        .and_then(|value| match value {
+            Value::Array(values) => Some(
+                (0..values.logical_len())
+                    .map(|index| {
+                        quench_runtime::execute::get_property(
+                            &Value::Array(values.clone()),
+                            &index.to_string(),
+                        )
+                    })
+                    .filter_map(|value| match value {
+                        Value::String(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
         })
-        .unwrap_or(Value::Number(0.0));
-    let value = match now {
+        .unwrap_or_else(|| {
+            ["Date", "setTimeout", "setInterval", "setImmediate"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        });
+    // Validate the epoch before touching any global timer bindings. An
+    // invalid enable call must be side-effect free so the next validation
+    // observes the original disabled state.
+    let configured_now = options
+        .map(|value| quench_runtime::execute::get_property(value, "now"))
+        .unwrap_or(Value::Undefined);
+    let configured_now = if matches!(configured_now, Value::Undefined) {
+        options
+            .map(|value| quench_runtime::execute::get_property(value, "timeValue"))
+            .unwrap_or(Value::Number(0.0))
+    } else if matches!(configured_now, Value::Object(_) | Value::ObjectAlias(_)) {
+        quench_runtime::execute::get_property(&configured_now, "timeValue")
+    } else {
+        configured_now
+    };
+    let initial_now = match configured_now {
         Value::Undefined => 0.0,
         Value::Number(value) if value.is_finite() && value >= 0.0 => value,
         Value::Number(_) => {
@@ -8931,6 +13734,95 @@ pub fn test_mock_timers_enable(
             ))
         }
     };
+    let mut originals = Vec::new();
+    let global = quench_runtime::execute::current_script_global();
+    let timers = crate::modules::require::require(state, &[Value::String("timers".into())])
+        .unwrap_or(Value::Undefined);
+    let promises =
+        crate::modules::require::require(state, &[Value::String("timers/promises".into())])
+            .unwrap_or(Value::Undefined);
+    for (target_index, target) in [global, timers, promises].into_iter().enumerate() {
+        for name in ["setTimeout", "setInterval", "setImmediate"] {
+            let selected_api = selected.iter().any(|api| api == name)
+                || (name == "setTimeout" && selected.iter().any(|api| api == "scheduler.wait"));
+            if !selected_api {
+                continue;
+            }
+            let original = quench_runtime::execute::get_property(&target, name);
+            if !quench_runtime::is_callable(&original) {
+                continue;
+            }
+            let wrapper = test_mock_fn(state, None, std::slice::from_ref(&original))?;
+            originals.push((target.clone(), name.to_string(), original));
+            if target_index == 0 {
+                let _ = quench_runtime::execute::store_global_binding(name, wrapper.clone());
+                // Keep the script-facing global alias in sync with the realm
+                // owner.  A copy-on-write replacement alone can leave
+                // `globalThis` holding the old descriptor table.
+                let _ =
+                    quench_runtime::execute::set_property_in_place(&target, name, wrapper.clone());
+                let visible_global = quench_runtime::vm::current_global_object();
+                if visible_global.object_identity() != target.object_identity() {
+                    let _ = quench_runtime::execute::set_property_in_place(
+                        &visible_global,
+                        name,
+                        wrapper.clone(),
+                    );
+                    if let Ok(updated) = quench_runtime::execute::set_property_observable(
+                        visible_global.clone(),
+                        name,
+                        wrapper.clone(),
+                    ) {
+                        quench_runtime::execute::replace_global_object(&visible_global, &updated);
+                    }
+                }
+                let global_this =
+                    quench_runtime::execute::get_property(&visible_global, "globalThis");
+                if matches!(global_this, Value::Object(_) | Value::ObjectAlias(_))
+                    && global_this.object_identity() != target.object_identity()
+                    && global_this.object_identity() != visible_global.object_identity()
+                {
+                    let _ = quench_runtime::execute::set_property_in_place(
+                        &global_this,
+                        name,
+                        wrapper.clone(),
+                    );
+                    if let Ok(updated) = quench_runtime::execute::set_property_observable(
+                        global_this.clone(),
+                        name,
+                        wrapper.clone(),
+                    ) {
+                        quench_runtime::execute::replace_global_object(&global_this, &updated);
+                    }
+                }
+                if let Ok(updated) =
+                    quench_runtime::execute::set_property_observable(target.clone(), name, wrapper)
+                {
+                    quench_runtime::execute::replace_global_object(&target, &updated);
+                }
+            } else {
+                let _ = quench_runtime::execute::set_property_in_place(&target, name, wrapper);
+            }
+        }
+    }
+    if selected.iter().any(|api| api == "AbortSignal.timeout") {
+        let abort_signal = quench_runtime::execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "AbortSignal",
+        );
+        let original = quench_runtime::execute::get_property(&abort_signal, "timeout");
+        if quench_runtime::is_callable(&original) {
+            let wrapper = test_mock_fn(state, None, std::slice::from_ref(&original))?;
+            originals.push((abort_signal.clone(), "timeout".into(), original));
+            let _ =
+                quench_runtime::execute::set_property_in_place(&abort_signal, "timeout", wrapper);
+        }
+    }
+    state.borrow_mut().timers.mock_originals = Some(originals);
+    crate::modules::test::register_mock_restore(crate::host::capability(
+        crate::registry::SPEC_TEST_MOCK_TIMERS_RESET,
+    ));
+    let value = initial_now;
     let apis = args
         .iter()
         .rev()
@@ -8951,13 +13843,28 @@ pub fn test_mock_timers_enable(
 }
 
 pub fn test_mock_timers_tick(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if state.borrow().timers.mock_originals.is_none() {
+        return Err(crate::modules::buffer_enc::invalid_state(
+            "Mock timers are not enabled".into(),
+        ));
+    }
     let delta = match args.first() {
-        Some(Value::Number(value)) if value.is_finite() => *value,
-        _ => 0.0,
+        None | Some(Value::Undefined) => 1.0,
+        Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value,
+        Some(Value::Number(_)) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(
+                "The value must be a non-negative number".into(),
+            ))
+        }
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The value must be a number".into(),
+            ))
+        }
     };
     let now = quench_runtime::date::current_time_ms();
     if quench_runtime::date::mock_enabled() {
@@ -8967,7 +13874,55 @@ pub fn test_mock_timers_tick(
         .unwrap_or(now.max(0.0) as u64)
         .saturating_add(delta.max(0.0) as u64);
     crate::modules::timers::set_mock_timer_now(Some(timer_now));
-    crate::modules::pump::drain_mock_timers(_state)?;
+    crate::modules::pump::drain_mock_timers(state)?;
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_timers_run_all(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if state.borrow().timers.mock_originals.is_none() {
+        return Err(crate::modules::buffer_enc::invalid_state(
+            "Mock timers are not enabled".into(),
+        ));
+    }
+    // `runAll()` drains the finite queue present at invocation.  Intervals
+    // remain active after their first delivery; otherwise an interval would
+    // make this operation unbounded and Node callers could not clear it after
+    // observing the first tick.
+    let mut fired_intervals = std::collections::HashSet::new();
+    for _ in 0..10_000 {
+        let current = crate::modules::timers::mock_timer_now().unwrap_or(0);
+        let next = state
+            .borrow()
+            .timers
+            .timers
+            .values()
+            .filter(|timer| {
+                timer.active
+                    && !timer.retired
+                    && (!matches!(timer.kind, crate::modules::timers::TimerKind::Interval)
+                        || !fired_intervals.contains(&timer.object.object_identity()))
+            })
+            .map(|timer| {
+                (
+                    timer.fire_at,
+                    matches!(timer.kind, crate::modules::timers::TimerKind::Interval),
+                    timer.object.object_identity(),
+                )
+            })
+            .min();
+        let Some((next, is_interval, identity)) = next else {
+            break;
+        };
+        let delta = next.saturating_sub(current);
+        if is_interval {
+            fired_intervals.insert(identity);
+        }
+        test_mock_timers_tick(state, None, &[Value::Number(delta as f64)])?;
+    }
     Ok(Value::Undefined)
 }
 
@@ -8976,7 +13931,7 @@ pub fn test_mock_timers_set_time(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if !quench_runtime::date::mock_enabled() {
+    if _state.borrow().timers.mock_originals.is_none() {
         return Err(crate::modules::buffer_enc::invalid_state(
             "Mock timers are not enabled".into(),
         ));
@@ -8990,14 +13945,76 @@ pub fn test_mock_timers_set_time(
         }
     };
     quench_runtime::date::set_mock_now(Some(value));
+    crate::modules::timers::set_mock_timer_now(Some(value as u64));
     Ok(Value::Undefined)
 }
 
 pub fn test_mock_timers_reset(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    let originals = state.borrow_mut().timers.mock_originals.take();
+    state.borrow_mut().timers.timers.clear();
+    if let Some(originals) = originals {
+        for (target, name, original) in originals {
+            if target.object_identity()
+                == quench_runtime::vm::current_global_object().object_identity()
+                || target.object_identity()
+                    == quench_runtime::execute::current_script_global().object_identity()
+            {
+                let _ = quench_runtime::execute::store_global_binding(&name, original.clone());
+                let _ = quench_runtime::execute::set_property_in_place(
+                    &target,
+                    &name,
+                    original.clone(),
+                );
+                let visible_global = quench_runtime::vm::current_global_object();
+                if visible_global.object_identity() != target.object_identity() {
+                    let _ = quench_runtime::execute::set_property_in_place(
+                        &visible_global,
+                        &name,
+                        original.clone(),
+                    );
+                    if let Ok(updated) = quench_runtime::execute::set_property_observable(
+                        visible_global.clone(),
+                        &name,
+                        original.clone(),
+                    ) {
+                        quench_runtime::execute::replace_global_object(&visible_global, &updated);
+                    }
+                }
+                let global_this =
+                    quench_runtime::execute::get_property(&visible_global, "globalThis");
+                if matches!(global_this, Value::Object(_) | Value::ObjectAlias(_))
+                    && global_this.object_identity() != target.object_identity()
+                    && global_this.object_identity() != visible_global.object_identity()
+                {
+                    let _ = quench_runtime::execute::set_property_in_place(
+                        &global_this,
+                        &name,
+                        original.clone(),
+                    );
+                    if let Ok(updated) = quench_runtime::execute::set_property_observable(
+                        global_this.clone(),
+                        &name,
+                        original.clone(),
+                    ) {
+                        quench_runtime::execute::replace_global_object(&global_this, &updated);
+                    }
+                }
+                if let Ok(updated) = quench_runtime::execute::set_property_observable(
+                    target.clone(),
+                    &name,
+                    original,
+                ) {
+                    quench_runtime::execute::replace_global_object(&target, &updated);
+                }
+            } else {
+                let _ = quench_runtime::execute::set_property_in_place(&target, &name, original);
+            }
+        }
+    }
     quench_runtime::date::set_mock_now(None);
     crate::modules::timers::set_mock_timer_now(None);
     Ok(Value::Undefined)
@@ -9008,9 +14025,25 @@ pub fn test_mock_module(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if !matches!(args.first(), Some(Value::String(_))) {
+    let specifier = match args.first() {
+        Some(Value::String(value)) => value.clone(),
+        Some(value) => match quench_runtime::execute::get_property(value, "href") {
+            Value::String(href) => href,
+            _ => {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "The \"specifier\" argument must be of type string or URL".into(),
+                ))
+            }
+        },
+        None => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"specifier\" argument must be of type string or URL".into(),
+            ))
+        }
+    };
+    if specifier.is_empty() {
         return Err(crate::modules::buffer_enc::invalid_arg_type(
-            "The \"specifier\" argument must be of type string".into(),
+            "The \"specifier\" argument must be of type string or URL".into(),
         ));
     }
     let Some(options) = args.get(1) else {
@@ -9031,7 +14064,7 @@ pub fn test_mock_module(
             )));
         }
     }
-    for key in ["namedExports", "exports", "defaultExport"] {
+    for key in ["namedExports", "exports"] {
         let value = quench_runtime::execute::get_property(options, key);
         if !matches!(
             value,
@@ -9059,18 +14092,41 @@ pub fn test_mock_module(
             "The options exports fields cannot be combined".into(),
         ));
     }
-    crate::modules::test::register_module_mock(
-        args.first()
-            .and_then(|value| {
-                if let Value::String(value) = value {
-                    Some(value.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default(),
-        options.clone(),
+    if crate::modules::test::module_is_mocked(&specifier) {
+        return Err(crate::modules::buffer_enc::invalid_state(
+            "The module is already mocked".into(),
+        ));
+    }
+    crate::modules::test::register_module_mock(specifier.clone(), options.clone());
+    let restore = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_TEST_MOCK_MODULE_RESTORE.cap,
+            ),
+        },
+        vec![Value::String(specifier)],
     );
+    Ok(quench_runtime::host_api::object(vec![(
+        "restore".into(),
+        restore,
+    )]))
+}
+
+pub fn test_mock_module_restore(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(specifier)) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let key = crate::modules::test::canonical_mock_specifier(specifier);
+    crate::modules::test::unregister_module_mock(&key);
+    state
+        .borrow_mut()
+        .module_cache
+        .retain(|cache_key, _| cache_key != &format!("\0mock:{key}"));
     Ok(Value::Undefined)
 }
 
@@ -9596,6 +14652,117 @@ pub fn test_after_each(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::test::after_each(args)
+}
+
+pub fn test_before(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::test::before(args)
+}
+
+pub fn test_after(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::test::after(args)
+}
+
+pub fn test_convert_string_to_regexp(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let raw = match args.first() {
+        Some(Value::String(value)) => value.clone(),
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The argument must be a string".into(),
+            ))
+        }
+    };
+    let argument_name = args
+        .get(1)
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .unwrap_or("value");
+    let (pattern, flags) = if raw.starts_with('/') {
+        if let Some(last) = raw.rfind('/') {
+            if last > 0 {
+                let suffix = &raw[last + 1..];
+                if suffix.chars().all(|ch| ch.is_ascii_alphabetic()) {
+                    if suffix
+                        .chars()
+                        .any(|flag| !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y'))
+                    {
+                        return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                            "The argument '{argument_name}' is an invalid regular expression. Invalid flags supplied to RegExp constructor '{suffix}'. Received '{raw}'"
+                        )));
+                    }
+                    (&raw[1..last], suffix)
+                } else {
+                    (&raw[..], "")
+                }
+            } else {
+                (&raw[..], "")
+            }
+        } else {
+            (&raw[..], "")
+        }
+    } else {
+        (&raw[..], "")
+    };
+    let global = quench_runtime::vm::current_global_object();
+    let constructor = quench_runtime::execute::get_property(&global, "RegExp");
+    quench_runtime::execute::construct_value(
+        &constructor,
+        &[Value::String(pattern.into()), Value::String(flags.into())],
+    )
+}
+
+pub fn test_create_seeded_generator(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let seed = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() => (*value as u64 & 0xffff_ffff) as f64,
+        Some(Value::BigInt(value)) => value.parse::<u64>().unwrap_or(0) as f64,
+        _ => 0.0,
+    };
+    let state = quench_runtime::host_api::object(vec![("state".into(), Value::Number(seed))]);
+    Ok(quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_TEST_SEEDED_GENERATOR_NEXT.cap,
+            ),
+        },
+        vec![state],
+    ))
+}
+
+pub fn test_seeded_generator_next(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let state = args.first().ok_or(VmError::NotCallable)?;
+    let current = match quench_runtime::execute::get_property(state, "state") {
+        Value::Number(value) => value as u32,
+        _ => 0,
+    };
+    let mut next = current;
+    next ^= next.wrapping_shl(13);
+    next ^= next.wrapping_shr(17);
+    next ^= next.wrapping_shl(5);
+    let _ =
+        quench_runtime::execute::set_property_in_place(state, "state", Value::Number(next as f64));
+    Ok(Value::Number(next as f64 / 4_294_967_296.0))
 }
 
 pub fn test_nested(

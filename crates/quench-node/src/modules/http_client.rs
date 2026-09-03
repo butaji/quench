@@ -4018,6 +4018,7 @@ pub fn res_end_handler(
             );
             net::emit(state, &request, "close", Vec::new())?;
             set_response_property(&res, "destroyed", Value::Boolean(true));
+            set_response_property(&res, "closed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
             let resource = execute::get_property(&request, CLIENT_ASYNC_RESOURCE_PROP);
             crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
@@ -4213,6 +4214,7 @@ fn abort_incomplete_response(
     if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
         req.response_closed = true;
     }
+    set_response_property(response, "closed", Value::Boolean(true));
     net::emit(state, response, "close", Vec::new())?;
     Ok(Value::Undefined)
 }
