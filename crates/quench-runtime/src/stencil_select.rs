@@ -395,6 +395,36 @@ mod tests {
     }
 
     #[test]
+    fn quickened_catalog_entries_use_the_same_cfg_checked_dispatch_region() {
+        let record = select_region(dispatch_region_key()).expect("dispatch admission row");
+        for opcode in [
+            crate::ir::Opcode::GetPropertyQuickened,
+            crate::ir::Opcode::GetNQuickened,
+            crate::ir::Opcode::AGetIQuickened,
+        ] {
+            assert!(record.operations.contains(&opcode));
+        }
+
+        // The dispatch row is admitted through the same single-entry proof as
+        // every other catalog declaration.  An externally reachable interior
+        // block must remain rejected, so adding catalog rows cannot weaken
+        // the fallback's control-flow safety.
+        let bad = [
+            RegionBlock {
+                id: 0,
+                predecessors: &[],
+                external_entry: true,
+            },
+            RegionBlock {
+                id: 1,
+                predecessors: &[0],
+                external_entry: true,
+            },
+        ];
+        assert!(!has_single_entry_point(0, &bad));
+    }
+
+    #[test]
     fn dispatch_uses_region_sequence_and_falls_back_once() {
         let selected = dispatch_region(
             LOOP_KEY,

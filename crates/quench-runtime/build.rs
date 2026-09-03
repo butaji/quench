@@ -127,6 +127,9 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "StoreLocalChecked",
             "InitLocal",
             "StoreLocal",
+            "GetPropertyQuickened",
+            "GetNQuickened",
+            "AGetIQuickened",
         ],
         // movabs rax, <bridge>; jmp rax. The context pointer remains the
         // platform ABI's first argument and is supplied for every invocation.

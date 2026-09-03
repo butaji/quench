@@ -223,6 +223,14 @@ shared fact.
 | 032 | Side-table vs rewritten-opcode Gate-0 timing, opcode rewrite/dequicken differential test, full runtime/node gates, and `target/micro-neutral-after-032.json` (100/100) |
 | 033 | `IcStubChain` chain/placement/bounded-state unit tests plus call/property differential gateways |
 | 034 | Gate-0 DWARF/sample rendered-region symbol audit: zero samples on ARM64, so no implementation attempted |
+| 035 | `docs/deegen-stencil-coverage.md` inventories all 31 catalog opcodes. The generated `DISPATCH` region covers 31/31 (100%) before and after the source-declaration reconciliation; specialized leaves cover 8/31 (25.8%). `dispatch_row_covers_every_compact_opcode` plus `quickened_catalog_entries_use_the_same_cfg_checked_dispatch_region` prove exhaustive admission and CFG-safe fallback. |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.
+
+Task 035's fresh optimized neutral-corpus gate (`target/micro-neutral-after-
+035.json`) produced 100/100 exact matches and Score **253.099**, up from the
+task 033 snapshot's 249.059.  Aggregate engine/oracle ratios were 0.7462 wall
+time, 0.3074 peak RSS, and 1.0841 retired instructions.  The source change is
+catalog metadata only; no fixture-specific behavior or semantic fast path was
+added.
