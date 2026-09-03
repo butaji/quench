@@ -35,10 +35,15 @@ pub(crate) fn execute_with_context(
         None => crate::execute::is_truthy(&crate::execute::read_register(registers, *condition)?),
     };
     let selected = if truthy { then_ops } else { else_ops };
-    let Some(selected) = selected.code() else {
+    let Some(selected_code) = selected.code() else {
         return missing_return();
     };
-    crate::vm::execute_code_completion_with_context(selected, registers, context)
+    crate::vm::execute_function_code_completion_with_context(
+        selected,
+        selected_code,
+        registers,
+        context,
+    )
 }
 
 #[cfg(test)]
@@ -91,6 +96,29 @@ mod tests {
         let op = Op::Return { src: 0 };
 
         assert_eq!(execute(&mut registers, &op), Err(VmError::MissingReturn));
+    }
+
+    #[test]
+    fn nested_branch_body_retains_its_tier_owner() {
+        let then_ops = crate::machine::FunctionCode::from_ops(vec![Op::Return { src: 1 }]);
+        then_ops.set_tier_threshold_for_test(2);
+        let else_ops = crate::machine::FunctionCode::from_ops(vec![Op::Return { src: 2 }]);
+        let op = Op::Branch {
+            condition: 0,
+            then_ops: then_ops.clone(),
+            else_ops,
+        };
+        for _ in 0..3 {
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                Value::Boolean(true),
+                Value::Number(1.0),
+            ]);
+            assert!(matches!(
+                execute(&mut registers, &op),
+                Ok(Completion::Return(_))
+            ));
+        }
+        assert_eq!(then_ops.tier(), crate::machine::ExecutionTier::Baseline);
     }
 }
 

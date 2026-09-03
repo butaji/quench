@@ -165,10 +165,7 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
                 continue;
             }
         }
-        if next >= '4'
-            && next < '8'
-            && (next as usize - '0' as usize) > capture_count
-        {
+        if next >= '4' && next < '8' && (next as usize - '0' as usize) > capture_count {
             let mut end = index + 2;
             if end < chars.len() && chars[end] >= '0' && chars[end] < '8' {
                 end += 1;
@@ -222,7 +219,27 @@ fn pattern_capture_count(chars: &[char]) -> usize {
 
 fn legacy_identity_target(ch: char) -> bool {
     ch.is_ascii_alphabetic()
-        && !matches!(ch, 'b' | 'B' | 'c' | 'd' | 'D' | 'f' | 'k' | 'n' | 'p' | 'P' | 'r' | 's' | 'S' | 't' | 'u' | 'v' | 'w' | 'W' | 'x')
+        && !matches!(
+            ch,
+            'b' | 'B'
+                | 'c'
+                | 'd'
+                | 'D'
+                | 'f'
+                | 'k'
+                | 'n'
+                | 'p'
+                | 'P'
+                | 'r'
+                | 's'
+                | 'S'
+                | 't'
+                | 'u'
+                | 'v'
+                | 'w'
+                | 'W'
+                | 'x'
+        )
 }
 
 fn append_decoded_group_name(output: &mut String, name: &[char]) {
@@ -909,9 +926,7 @@ pub fn has_regexp_internal_slot(value: &Value) -> bool {
     let Value::Object(properties) = value else {
         return false;
     };
-    properties
-        .iter()
-        .any(|(name, v)| name == "\0regexp" && matches!(v, Value::Boolean(true)))
+    properties.has_regexp_internal_slot()
 }
 
 pub(crate) fn is_current_realm(value: &Value) -> bool {

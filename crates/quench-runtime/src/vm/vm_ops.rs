@@ -31,11 +31,14 @@ pub fn execute_call(
     // result.  A miss falls through to the ordinary continuation path, which
     // preserves all dynamic call/throw/suspend semantics.
     if let Value::Function(function) = &callee_value {
-        if let Some(value) = crate::functions::try_execute_specialized(
-            function,
-            &receiver_value,
-            &arguments,
-        )? {
+        if let Some(value) =
+            crate::functions::try_execute_specialized(function, &receiver_value, &arguments)?
+        {
+            super::write_value(registers, dst, value);
+            return Ok(crate::completion::Completion::Normal);
+        }
+        if crate::functions::direct_call_eligible(function) {
+            let value = crate::functions::execute_direct(function, &receiver_value, &arguments)?;
             super::write_value(registers, dst, value);
             return Ok(crate::completion::Completion::Normal);
         }
@@ -110,9 +113,7 @@ fn execute_call_continuation_inner(
         Fallback(crate::completion::CallContinuation),
         Error(VmError, crate::completion::CallContinuation),
     }
-    fn start(
-        continuation: crate::completion::CallContinuation,
-    ) -> StartedCall {
+    fn start(continuation: crate::completion::CallContinuation) -> StartedCall {
         let Value::Function(function) = &continuation.callee else {
             return StartedCall::Fallback(continuation);
         };
@@ -156,6 +157,10 @@ fn execute_call_continuation_inner(
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
+        // Account at the function-entry tier boundary. Once hot, the
+        // immutable body is paired with a predecoded baseline plan; no
+        // semantic handler or fallback is duplicated by that plan.
+        let _ = function.code.enter_invocation();
         StartedCall::Active(ActiveCall {
             code: function.code.clone(),
             continuation,
@@ -196,13 +201,38 @@ fn execute_call_continuation_inner(
     let context = crate::vm::current_context_or_default();
     let value = loop {
         let code = current.code.code().ok_or(VmError::MissingReturn)?;
-        let (completion, next) = match crate::vm::execute_code_from(
-            code,
-            current.pc,
-            &mut current.registers,
-            &context,
-            current.environment.clone(),
+        let execution = if let (Some(optimizing), Some(baseline)) = (
+            current.code.executable_optimizing_plan(),
+            current.code.baseline_plan(),
         ) {
+            crate::vm::execute_optimized_code_step_from(
+                code,
+                &optimizing,
+                &baseline,
+                current.pc,
+                &mut current.registers,
+                &context,
+            )
+        } else if let Some(plan) = current.code.baseline_plan() {
+            crate::vm::execute_baseline_code_from(
+                code,
+                &plan,
+                current.pc,
+                &mut current.registers,
+                &context,
+                current.environment.clone(),
+            )
+        } else {
+            crate::vm::execute_function_code_from(
+                code,
+                &current.code,
+                current.pc,
+                &mut current.registers,
+                &context,
+                current.environment.clone(),
+            )
+        };
+        let (completion, next) = match execution {
             Ok(step) => step,
             Err(error) => {
                 if let crate::execute::VmError::Thrown(value) = error {

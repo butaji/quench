@@ -174,7 +174,8 @@ impl EnvironmentGuard {
                 .as_ref()
                 .map_or(std::ptr::null(), Rc::as_ptr)
         });
-        let previous_pointer = CURRENT_ENVIRONMENT_PTR.with(|pointer| pointer.replace(current_pointer));
+        let previous_pointer =
+            CURRENT_ENVIRONMENT_PTR.with(|pointer| pointer.replace(current_pointer));
         // Slot zero is the global object binding.  Install it before any
         // identifier/property resolution so host values attached to the
         // running context are observed through the actual global object.

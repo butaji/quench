@@ -383,6 +383,9 @@ fn update_machine_frame(
         if push_initial_try_frames(generator)? {
             return Ok(());
         }
+        if push_initial_loop_frame(generator, state)? {
+            return Ok(());
+        }
     }
     if push_nested_frame(generator, state)? {
         return Ok(());
@@ -403,6 +406,90 @@ fn update_machine_frame(
             destination: *dst,
         },
     )
+}
+
+fn push_initial_loop_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+) -> Result<bool, VmError> {
+    let index = machine_pc(generator)
+        .checked_sub(1)
+        .ok_or(VmError::MissingReturn)?;
+    let Some(Op::Loop {
+        label,
+        body,
+        test,
+        update,
+        post_test,
+        dst,
+        ..
+    }) = generator
+        .function
+        .code
+        .code()
+        .and_then(|code| code.cold_at(index))
+    else {
+        return Ok(false);
+    };
+    let Some((body_resume, yield_dst)) = find_yield_in_function(body) else {
+        return Ok(false);
+    };
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Loop {
+            label: label.clone(),
+            body: body.range,
+            test: test.range,
+            update: update.range,
+            body_resume,
+            resume: parent_resume_range(generator, state),
+            dst: *dst,
+            yield_dst,
+            post_test: *post_test,
+        },
+    )?;
+    Ok(true)
+}
+
+fn find_yield_in_function(
+    function: &crate::machine::FunctionCode,
+) -> Option<(crate::machine::CodeRange, u16)> {
+    let range = function.range;
+    function.code().and_then(|code| {
+        for (index, op) in code.cold_ops() {
+            if let Op::Yield { src } = op {
+                return Some((
+                    crate::machine::CodeRange {
+                        code: range.code,
+                        start: range.start.saturating_add(index as u32 + 1),
+                        end: range.end,
+                    },
+                    *src,
+                ));
+            }
+            let nested = match op {
+                Op::Try { body, .. }
+                | Op::Loop { body, .. }
+                | Op::ForOf { body, .. }
+                | Op::ForIn { body, .. } => Some(body),
+                Op::Conditional {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    if let Some(found) = find_yield_in_function(consequent) {
+                        return Some(found);
+                    }
+                    Some(alternate)
+                }
+                _ => None,
+            };
+            if let Some(found) = nested.and_then(find_yield_in_function) {
+                return Some(found);
+            }
+        }
+        None
+    })
 }
 
 fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {

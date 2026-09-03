@@ -3,6 +3,9 @@
 //! Instructions contain only integer operands. Constants and uncommon source
 //! information live in pools owned by `Program`, so dispatch never walks AST.
 
+use crate::facts::{
+    ControlFlow, OperationEffect, OperationGuard, OperationSpec, ResultShape, WordKind,
+};
 use crate::ops::Constant;
 use std::collections::HashMap;
 
@@ -10,64 +13,283 @@ pub type Register = u16;
 pub const MAX_REGISTER_ID: Register = u16::MAX;
 pub type ConstantId = u16;
 pub const GETN_GLOBAL_FLAG: u8 = 1;
-macro_rules! instruction_set {
-    ($($name:ident = $id:literal / $width:literal),+ $(,)?) => {
+pub const GETN_LENGTH_FLAG: u8 = 1 << 1;
+/// `AddConst` keeps the source register in `b` and the pool entry in `c`.
+/// This bit records whether the pool entry was the left operand in the
+/// canonical `Binary(Add)` operation.  It is physical lowering metadata, not
+/// a second arithmetic semantic.
+pub const ADD_CONST_LEFT_FLAG: u8 = 1;
+
+/// Operand roles derived from an operation's control fact.
+///
+/// The compact instruction keeps its canonical three-word shape; this view
+/// gives the interpreter the semantic role of those words without a second
+/// opcode/control table.  `Loop` intentionally preserves all three words for
+/// the future loop residual, rather than guessing a physical convention.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlOperands {
+    Next,
+    Branch { condition: Register, target: u16 },
+    Jump { target: u16 },
+    Return { source: Register },
+    Loop { a: u16, b: u16, c: u16 },
+}
+
+/// Uniform signature for generated compact dispatch handlers.
+pub(crate) type CompactHandler =
+    for<'a> fn(
+        crate::machine::CodeView<'a>,
+        usize,
+        Instruction,
+        &mut crate::register_file::RegisterFile,
+        &crate::vm::VmContext,
+    ) -> Result<crate::vm::DispatchTransition, crate::vm::VmError>;
+
+macro_rules! vm_op {
+    ($($name:ident = $id:literal / $width:literal => [$($effect:ident),*] / $fallback:ident / $result:ident / $control:ident / [$($guard:ident),*] / $handler:ident $(/ $operator:ident)?),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         #[repr(u8)]
         pub enum Opcode { $($name = $id),+ }
 
         impl Opcode {
-            pub const COUNT: u8 = instruction_set!(@last $($id),+);
+            pub const COUNT: u8 = vm_op!(@last $($id),+);
+
+            /// Canonical opcode sequence generated from this declaration.
+            /// Consumers that need exhaustive coverage (for example the
+            /// physical dispatch catalog) borrow this view instead of
+            /// maintaining a second runtime list.
+            pub const ALL: &'static [Self] = &[$(Self::$name),+];
 
             pub const fn from_u8(value: u8) -> Option<Self> {
                 match value { $($id => Some(Self::$name),)+ _ => None }
             }
 
             pub const fn operand_width(self) -> u8 {
-                match self { $(Self::$name => $width),+ }
+                self.spec().operand_width
+            }
+
+            pub const fn compact_len(self) -> usize {
+                2 + self.spec().operand_width as usize * 2
+            }
+
+            pub const fn operands_are_canonical(self, operands: [u16; 3]) -> bool {
+                match self.spec().operand_width {
+                    0 => operands[0] == 0 && operands[1] == 0 && operands[2] == 0,
+                    1 => operands[1] == 0 && operands[2] == 0,
+                    2 => operands[2] == 0,
+                    _ => true,
+                }
+            }
+
+            /// Decode exactly this operation's declared operand payload.
+            pub fn decode_operands(self, bytes: &[u8]) -> Result<[u16; 3], &'static str> {
+                let expected = usize::from(self.spec().operand_width) * 2;
+                if bytes.len() != expected {
+                    return Err("compact instruction has invalid operand width");
+                }
+                let mut operands = [0u16; 3];
+                let mut index = 0;
+                while index < usize::from(self.spec().operand_width) {
+                    let start = index * 2;
+                    operands[index] = u16::from_le_bytes([bytes[start], bytes[start + 1]]);
+                    index += 1;
+                }
+                Ok(operands)
+            }
+
+            /// Return the generated semantic facts for this operation.
+            pub const fn spec(self) -> &'static OperationSpec {
+                &OPERATION_SPECS[self as usize - 1]
             }
 
             pub const fn name(self) -> &'static str {
-                match self { $(Self::$name => stringify!($name)),+ }
+                self.spec().name
             }
+
+            pub const fn effects(self) -> &'static [OperationEffect] {
+                self.spec().effects
+            }
+
+            pub const fn fallback(self) -> &'static str {
+                self.spec().fallback
+            }
+
+            pub const fn has_effect(self, effect: OperationEffect) -> bool {
+                self.spec().has_effect(effect)
+            }
+
+            pub const fn result_shape(self) -> ResultShape {
+                self.spec().result
+            }
+
+            pub const fn control_flow(self) -> ControlFlow {
+                self.spec().control
+            }
+
+            /// Decode control operand roles from the same catalog row that
+            /// supplies [`control_flow`](Self::control_flow).
+            pub const fn control_operands(self, instruction: Instruction) -> ControlOperands {
+                match self {
+                    $(Self::$name => vm_op!(@control $control, instruction)),+
+                }
+            }
+
+            pub const fn guards(self) -> &'static [OperationGuard] {
+                self.spec().guards
+            }
+
+            pub const fn has_guard(self, guard: OperationGuard) -> bool {
+                self.spec().has_guard(guard)
+            }
+
+            pub const fn result_word_kind(self) -> WordKind {
+                self.spec().result_word_kind()
+            }
+
+            pub const fn guarded_word_kind(self, guard: OperationGuard) -> Option<WordKind> {
+                self.spec().guarded_word_kind(guard)
+            }
+
+            pub(crate) const fn handler(self) -> CompactHandler {
+                match self {
+                    $(Self::$name => crate::vm::$handler),+
+                }
+            }
+
+            /// Generated direct dispatch for the interpreter hot loop.
+            ///
+            /// The same opcode facts still own the handler mapping; this
+            /// direct view avoids an indirect function-pointer call at every
+            /// retired instruction and lets LLVM inline eligible handlers.
+            #[inline(always)]
+            pub(crate) fn dispatch<'a>(
+                self,
+                code: crate::machine::CodeView<'a>,
+                pc: usize,
+                instruction: Instruction,
+                registers: &mut crate::register_file::RegisterFile,
+                context: &crate::vm::VmContext,
+            ) -> Result<crate::vm::DispatchTransition, crate::vm::VmError> {
+                match self {
+                    $(Self::$name => crate::vm::$handler(
+                        code, pc, instruction, registers, context,
+                    )),+
+                }
+            }
+
+            pub const fn handler_name(self) -> &'static str {
+                match self {
+                    $(Self::$name => stringify!($handler)),+
+                }
+            }
+
+            pub const fn is_quickenable(self) -> bool {
+                self.spec().is_quickenable()
+            }
+
+            /// Canonical certainty consumed by region-key derivation.  The
+            /// stencil tier does not maintain a second eligibility table.
+            pub const fn stencil_certainty(self) -> crate::facts::Certainty {
+                if self.guards().is_empty() {
+                    crate::facts::Certainty::Proven
+                } else {
+                    // Observable effects describe semantic behavior, not
+                    // fact uncertainty. A guarded operation remains guarded;
+                    // its complete fallback still owns those effects.
+                    crate::facts::Certainty::Guarded
+                }
+            }
+
+            pub const fn builder(self) -> CompactInstructionBuilder {
+                CompactInstructionBuilder::new(self)
+            }
+
+            /// Numeric operators are derived from the same declaration as
+            /// opcode IDs and effects. Non-arithmetic operations return None.
+            pub const fn numeric_operator(self) -> Option<crate::ops::BinaryOp> {
+                match self {
+                    $(Self::$name => vm_op!(@operator $($operator)?)),+
+                }
+            }
+
         }
 
         const DISPATCH_TABLE: [u8; Opcode::COUNT as usize + 1] =
             [0, $($id),+];
+
+        /// Generated view of the operation facts.  The opcode declaration is
+        /// the only source for names, widths, effects, and fallback labels.
+        pub const OPERATION_SPECS: &[OperationSpec] = &[
+            $(OperationSpec {
+                opcode: $id,
+                name: stringify!($name),
+                operand_width: $width,
+                effects: &[$(OperationEffect::$effect),*],
+                fallback: stringify!($fallback),
+                result: ResultShape::$result,
+                control: ControlFlow::$control,
+                guards: &[$(OperationGuard::$guard),*],
+            }),+
+        ];
+
+        const _: () = {
+            let mut index = 0;
+            while index < OPERATION_SPECS.len() {
+                assert!(OPERATION_SPECS[index].validate());
+                assert!(OPERATION_SPECS[index].opcode == (index as u8) + 1);
+                assert!(OPERATION_SPECS[index].operand_width <= 3);
+                index += 1;
+            }
+        };
     };
-    (@last $head:literal, $($tail:literal),+) => { instruction_set!(@last $($tail),+) };
+    (@last $head:literal, $($tail:literal),+) => { vm_op!(@last $($tail),+) };
     (@last $last:literal) => { $last };
+    (@operator $operator:ident) => { Some(crate::ops::BinaryOp::$operator) };
+    (@operator) => { None };
+    (@control Next, $instruction:ident) => { ControlOperands::Next };
+    (@control Branch, $instruction:ident) => {
+        ControlOperands::Branch { condition: $instruction.a, target: $instruction.b }
+    };
+    (@control Jump, $instruction:ident) => {
+        ControlOperands::Jump { target: $instruction.a }
+    };
+    (@control Return, $instruction:ident) => {
+        ControlOperands::Return { source: $instruction.a }
+    };
+    (@control Loop, $instruction:ident) => {
+        ControlOperands::Loop { a: $instruction.a, b: $instruction.b, c: $instruction.c }
+    };
 }
 
-instruction_set! {
-    LoadConst = 1 / 2,
-    Move = 2 / 2,
-    Add = 3 / 3,
-    AddConst = 4 / 3,
-    JumpIfFalse = 5 / 2,
-    Return = 6 / 1,
-    Slow = 7 / 1,
-    LoadLocal = 8 / 2,
-    Sub = 9 / 3,
-    Mul = 10 / 3,
-    Div = 11 / 3,
-    GetProperty = 12 / 3,
-    Call = 13 / 3,
-    Jump = 14 / 1,
-    IncI = 15 / 2,
-    ForI = 16 / 3,
-    AGetI = 17 / 3,
-    ASetI = 18 / 3,
-    AGetIInc = 19 / 3,
-    GetN = 20 / 3,
-    SetN = 21 / 3,
-    CallN = 22 / 3,
-    UpdateLocal = 23 / 3,
-    LoadLocalChecked = 24 / 2,
-    Binary = 25 / 3,
-    StoreLocalChecked = 26 / 2,
-    InitLocal = 27 / 2,
-    StoreLocal = 28 / 2,
+vm_op! {
+    LoadConst = 1 / 2 => [Pure] / load_const / Value / Next / [] / run_load_const,
+    Move = 2 / 2 => [Pure] / move / Value / Next / [] / run_move,
+    Add = 3 / 3 => [MayThrow] / add / Value / Next / [Number] / run_arithmetic / Add,
+    AddConst = 4 / 3 => [MayThrow] / add_const / Value / Next / [Number] / run_compact_add_const / Add,
+    JumpIfFalse = 5 / 2 => [MayThrow, Control] / jump_if_false / None / Branch / [] / run_instruction_fallback,
+    Return = 6 / 1 => [Control] / return_value / Value / Return / [] / run_return,
+    Slow = 7 / 1 => [MayThrow, Observable] / slow / Value / Next / [] / run_instruction_fallback,
+    LoadLocal = 8 / 2 => [Pure] / load_local / Value / Next / [] / run_local,
+    Sub = 9 / 3 => [MayThrow] / subtract / Value / Next / [Number] / run_arithmetic / Subtract,
+    Mul = 10 / 3 => [MayThrow] / multiply / Value / Next / [Number] / run_arithmetic / Multiply,
+    Div = 11 / 3 => [MayThrow] / divide / Value / Next / [Number] / run_arithmetic / Divide,
+    GetProperty = 12 / 3 => [ReadHeap, MayThrow, Observable] / get_property / Value / Next / [Shape] / run_compact_get_property,
+    Call = 13 / 3 => [ReadHeap, MayThrow, Observable] / call / Value / Next / [Callable] / run_compact_call,
+    Jump = 14 / 1 => [Control] / jump / None / Jump / [] / run_instruction_fallback,
+    IncI = 15 / 2 => [MayThrow] / increment_integer / Value / Next / [] / run_compact_numeric_update,
+    ForI = 16 / 3 => [Control] / for_integer / None / Loop / [] / run_instruction_fallback,
+    AGetI = 17 / 3 => [ReadHeap, MayThrow, Observable] / get_element / Value / Next / [Shape] / run_compact_get_index,
+    ASetI = 18 / 3 => [WriteHeap, MayThrow, Observable] / set_element / None / Next / [Shape] / run_compact_set_index,
+    AGetIInc = 19 / 3 => [ReadHeap, WriteHeap, MayThrow, Observable] / get_element_increment / Value / Next / [Shape] / run_compact_get_index_inc,
+    GetN = 20 / 3 => [ReadHeap, MayThrow, Observable] / get_named / Value / Next / [Shape] / run_compact_get_named,
+    SetN = 21 / 3 => [WriteHeap, MayThrow, Observable] / set_named / None / Next / [Shape] / run_compact_set_named,
+    CallN = 22 / 3 => [ReadHeap, MayThrow, Observable] / call_named / Value / Next / [Shape, Callable] / run_compact_call_named,
+    UpdateLocal = 23 / 3 => [Pure] / update_local / Value / Next / [] / run_update_local,
+    LoadLocalChecked = 24 / 2 => [MayThrow] / load_local_checked / Value / Next / [] / run_load_local_checked,
+    Binary = 25 / 3 => [MayThrow] / binary / Value / Next / [] / run_binary_instruction,
+    StoreLocalChecked = 26 / 2 => [MayThrow] / store_local_checked / None / Next / [] / run_store_local_checked,
+    InitLocal = 27 / 2 => [Pure] / init_local / None / Next / [] / run_init_local,
+    StoreLocal = 28 / 2 => [Pure] / store_local / None / Next / [] / run_store_local,
 }
 
 macro_rules! compact_binary_operators {
@@ -245,6 +467,56 @@ const fn operand_width(opcode: Opcode) -> u8 {
     opcode.operand_width()
 }
 
+/// Catalog-backed builder for the fixed-width instruction record.
+///
+/// Frontends can construct mechanical bytecode through this type without
+/// copying opcode widths or inventing a second instruction representation.
+/// Semantic fallback selection remains owned by the operation catalog and the
+/// ordinary interpreter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompactInstructionBuilder {
+    opcode: Opcode,
+    flags: u8,
+    operands: [u16; 3],
+}
+
+impl CompactInstructionBuilder {
+    pub const fn new(opcode: Opcode) -> Self {
+        Self {
+            opcode,
+            flags: 0,
+            operands: [0; 3],
+        }
+    }
+
+    pub const fn flags(mut self, flags: u8) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    pub const fn operands(mut self, a: u16, b: u16, c: u16) -> Self {
+        self.operands = [a, b, c];
+        self
+    }
+
+    pub const fn build(self) -> Result<Instruction, &'static str> {
+        let width = self.opcode.operand_width();
+        if width > 3 {
+            return Err("operation declares too many operands");
+        }
+        if !self.opcode.operands_are_canonical(self.operands) {
+            return Err("unused operand must be zero");
+        }
+        Ok(Instruction {
+            opcode: self.opcode,
+            flags: self.flags,
+            a: self.operands[0],
+            b: self.operands[1],
+            c: self.operands[2],
+        })
+    }
+}
+
 impl Instruction {
     pub const BYTE_WIDTH: usize = 8;
 
@@ -347,6 +619,29 @@ impl Instruction {
             c: constant,
         }
     }
+
+    pub const fn add_const_left(dst: Register, src: Register, constant: ConstantId) -> Self {
+        Self {
+            opcode: Opcode::AddConst,
+            flags: ADD_CONST_LEFT_FLAG,
+            a: dst,
+            b: src,
+            c: constant,
+        }
+    }
+
+    pub fn add_const_is_left(self) -> bool {
+        self.opcode == Opcode::AddConst && self.flags & ADD_CONST_LEFT_FLAG != 0
+    }
+    pub const fn inc_i(dst: Register, src: Register, decrement: bool) -> Self {
+        Self {
+            opcode: Opcode::IncI,
+            flags: decrement as u8,
+            a: dst,
+            b: src,
+            c: 0,
+        }
+    }
     pub const fn ret(src: Register) -> Self {
         Self {
             opcode: Opcode::Return,
@@ -444,10 +739,10 @@ impl Instruction {
             c: key,
         }
     }
-    pub const fn get_named(dst: Register, object: Register) -> Self {
+    pub const fn get_named(dst: Register, object: Register, length: bool) -> Self {
         Self {
             opcode: Opcode::GetN,
-            flags: 0,
+            flags: if length { GETN_LENGTH_FLAG } else { 0 },
             a: dst,
             b: object,
             c: 0,
@@ -478,6 +773,15 @@ impl Instruction {
             a: object,
             b: key,
             c: src,
+        }
+    }
+    pub const fn array_get_index_inc(dst: Register, object: Register, index: Register) -> Self {
+        Self {
+            opcode: Opcode::AGetIInc,
+            flags: 0,
+            a: dst,
+            b: object,
+            c: index,
         }
     }
     pub const fn call_zero_args(dst: Register, callee: Register) -> Self {
@@ -547,7 +851,7 @@ impl Instruction {
     /// an interchange/measurement format; execution retains the fixed-width
     /// [`Instruction`] record and therefore the slow path remains authoritative.
     pub fn encode_compact(self) -> Vec<u8> {
-        let width = usize::from(operand_width(self.opcode));
+        let width = usize::from(self.opcode.operand_width());
         let mut bytes = Vec::with_capacity(2 + width * 2);
         bytes.push(self.opcode as u8);
         bytes.push(self.flags);
@@ -564,16 +868,10 @@ impl Instruction {
             return Err("compact instruction missing opcode and flags");
         }
         let opcode = Opcode::from_u8(bytes[0]).ok_or("unknown compact opcode")?;
-        let width = usize::from(operand_width(opcode));
-        let expected = 2 + width * 2;
-        if bytes.len() != expected {
+        if bytes.len() != opcode.compact_len() {
             return Err("compact instruction has invalid width");
         }
-        let mut operands = [0u16; 3];
-        for (index, operand) in operands.iter_mut().enumerate().take(width) {
-            let start = 2 + index * 2;
-            *operand = u16::from_le_bytes([bytes[start], bytes[start + 1]]);
-        }
+        let operands = opcode.decode_operands(&bytes[2..])?;
         Ok(Self {
             opcode,
             flags: bytes[1],
@@ -648,7 +946,9 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
         Op::GetPropertyDynamic { dst, object, key } => {
             Some(Instruction::binary(Opcode::AGetI, *dst, *object, *key))
         }
-        Op::GetProperty { dst, object, .. } => Some(Instruction::get_named(*dst, *object)),
+        Op::GetProperty { dst, object, key } => {
+            Some(Instruction::get_named(*dst, *object, key == "length"))
+        }
         Op::ResolveName { dst, key } if crate::globals::builtin(key).is_some() => {
             Some(Instruction::get_global_named(*dst))
         }
@@ -878,7 +1178,12 @@ pub struct Program {
 impl Program {
     pub fn load_constant(&mut self, dst: Register, value: Constant) {
         let id = self.constants.intern(value);
-        self.instructions.push(Instruction::load_const(dst, id));
+        let instruction = Opcode::LoadConst
+            .builder()
+            .operands(dst, id, 0)
+            .build()
+            .expect("generated LoadConst operation must remain representable");
+        self.instructions.push(instruction);
     }
     /// Append the fixed-width form when representable; callers retain the
     /// canonical Op for the slow path when this returns false.
@@ -901,11 +1206,17 @@ impl Program {
                 && self.instructions[i + 1].opcode == Opcode::Add
                 && self.instructions[i].flags == 0
                 && self.instructions[i + 1].flags == 0
-                && self.instructions[i].a == self.instructions[i + 1].b
+                && (self.instructions[i].a == self.instructions[i + 1].b
+                    || self.instructions[i].a == self.instructions[i + 1].c)
             {
                 let load = self.instructions[i];
                 let add = self.instructions[i + 1];
-                out.push(Instruction::add_const(add.a, add.c, load.b));
+                let fused = if load.a == add.b {
+                    Instruction::add_const_left(add.a, add.c, load.b)
+                } else {
+                    Instruction::add_const(add.a, add.b, load.b)
+                };
+                out.push(fused);
                 keep.push(true);
                 keep.push(false);
                 i += 2;
@@ -923,6 +1234,13 @@ impl Program {
             return Err("rare metadata is not aligned with instructions");
         }
         for instruction in &self.instructions {
+            if !instruction.opcode.operands_are_canonical([
+                instruction.a,
+                instruction.b,
+                instruction.c,
+            ]) {
+                return Err("instruction has non-canonical unused operands");
+            }
             match instruction.opcode {
                 Opcode::LoadConst if self.constants.get(instruction.b).is_none() => {
                     return Err("instruction references missing constant");
@@ -933,6 +1251,9 @@ impl Program {
                 Opcode::JumpIfFalse if usize::from(instruction.b) >= self.instructions.len() => {
                     return Err("conditional jump target is out of range");
                 }
+                Opcode::Jump if usize::from(instruction.a) >= self.instructions.len() => {
+                    return Err("jump target is out of range");
+                }
                 _ => {}
             }
         }
@@ -941,8 +1262,10 @@ impl Program {
 }
 impl Program {
     /// Execute the validated fixed-width subset with caller-owned registers.
-    /// Unsupported instructions deliberately fail rather than creating a
-    /// second semantic model; the Op VM remains the slow-path authority.
+    /// This is a test-only wire-format helper. Production execution uses the
+    /// catalog-backed VM handler table; keeping this out of release builds
+    /// avoids a second semantic interpreter.
+    #[cfg(test)]
     pub fn execute(
         &self,
         registers: &mut crate::register_file::RegisterFile,
@@ -974,16 +1297,21 @@ impl Program {
                     registers.write(dst, value);
                 }
                 Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div | Opcode::AddConst => {
-                    let left = read(instruction.b)?;
-                    let right = if instruction.opcode == Opcode::AddConst {
-                        (&self
+                    let source = read(instruction.b)?;
+                    let (left, right) = if instruction.opcode == Opcode::AddConst {
+                        let constant: crate::value::Value = (&self
                             .constants
                             .get(instruction.c)
                             .cloned()
                             .ok_or(crate::vm::VmError::EvalError("missing constant".into()))?)
-                            .into()
+                            .into();
+                        if instruction.add_const_is_left() {
+                            (constant, source)
+                        } else {
+                            (source, constant)
+                        }
                     } else {
-                        read(instruction.c)?
+                        (source, read(instruction.c)?)
                     };
                     let (crate::value::Value::Number(lhs), crate::value::Value::Number(rhs)) =
                         (left, right)
@@ -1064,6 +1392,83 @@ mod tests {
     fn opcodes_remain_compact_byte_identifiers() {
         assert_eq!(Opcode::COUNT, Opcode::StoreLocal as u8);
         assert!(Opcode::Slow.is_compact());
+    }
+
+    #[test]
+    fn generated_operation_facts_are_the_opcode_source_of_truth() {
+        assert_eq!(OPERATION_SPECS.len(), usize::from(Opcode::COUNT));
+        let get_property = Opcode::GetProperty.spec();
+        assert_eq!(get_property.opcode, Opcode::GetProperty as u8);
+        assert_eq!(
+            get_property.operand_width,
+            Opcode::GetProperty.operand_width()
+        );
+        assert_eq!(get_property.fallback, "get_property");
+        assert_eq!(Opcode::GetProperty.fallback(), "get_property");
+        assert_eq!(
+            Opcode::GetProperty.result_shape(),
+            crate::facts::ResultShape::Value
+        );
+        assert_eq!(Opcode::Jump.control_flow(), crate::facts::ControlFlow::Jump);
+        assert_eq!(Opcode::ForI.control_flow(), crate::facts::ControlFlow::Loop);
+        assert_eq!(Opcode::ForI.fallback(), "for_integer");
+        assert_eq!(
+            Opcode::Jump.control_operands(Instruction::jump(9)),
+            ControlOperands::Jump { target: 9 }
+        );
+        assert_eq!(
+            Opcode::JumpIfFalse.control_operands(Instruction::jump_if_false(2, 11)),
+            ControlOperands::Branch {
+                condition: 2,
+                target: 11,
+            }
+        );
+        assert_eq!(
+            Opcode::Return.control_operands(Instruction::ret(4)),
+            ControlOperands::Return { source: 4 }
+        );
+        assert!(Opcode::GetProperty.has_guard(crate::facts::OperationGuard::Shape));
+        assert!(!Opcode::Move.has_guard(crate::facts::OperationGuard::Shape));
+        assert!(get_property
+            .effects
+            .contains(&crate::facts::OperationEffect::MayThrow));
+        assert!(get_property.is_observable());
+        assert!(Opcode::GetProperty.has_effect(crate::facts::OperationEffect::ReadHeap));
+        assert!(!Opcode::Move.spec().is_observable());
+        assert!(Opcode::Jump.spec().is_control());
+        assert!(Opcode::GetProperty.is_quickenable());
+        assert!(!Opcode::Move.is_quickenable());
+        assert!(!Opcode::Jump.is_quickenable());
+        assert_eq!(Opcode::Add.handler_name(), "run_arithmetic");
+        assert_eq!(
+            Opcode::GetProperty.handler_name(),
+            "run_compact_get_property"
+        );
+        assert_eq!(
+            Opcode::Add.numeric_operator(),
+            Some(crate::ops::BinaryOp::Add)
+        );
+        assert_eq!(
+            Opcode::AddConst.numeric_operator(),
+            Some(crate::ops::BinaryOp::Add)
+        );
+        assert_eq!(Opcode::Move.numeric_operator(), None);
+
+        let built = Opcode::Add
+            .builder()
+            .flags(0)
+            .operands(3, 1, 2)
+            .build()
+            .expect("catalog width admits three operands");
+        assert_eq!(built, Instruction::add(3, 1, 2));
+    }
+
+    #[test]
+    fn generated_builder_rejects_noncanonical_unused_operands() {
+        assert_eq!(
+            Opcode::Return.builder().operands(7, 1, 0).build(),
+            Err("unused operand must be zero")
+        );
     }
 
     #[test]
@@ -1252,7 +1657,7 @@ mod tests {
         p.load_constant(0, Constant::Number(2.0));
         p.instructions.push(Instruction::add(2, 0, 1));
         p.fuse_load_const_add();
-        assert_eq!(p.instructions, vec![Instruction::add_const(2, 1, 0)]);
+        assert_eq!(p.instructions, vec![Instruction::add_const_left(2, 1, 0)]);
     }
 
     #[test]
@@ -1281,6 +1686,33 @@ mod tests {
         p.load_constant(0, Constant::Undefined);
         p.instructions[0].b = 0;
         assert_eq!(p.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_unreachable_jump_targets() {
+        let mut p = Program::default();
+        p.instructions.push(Instruction::jump(2));
+        assert_eq!(p.validate(), Err("jump target is out of range"));
+
+        p.instructions.push(Instruction::ret(0));
+        p.instructions.push(Instruction::ret(0));
+        assert_eq!(p.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_noncanonical_unused_operands() {
+        let mut p = Program::default();
+        p.instructions.push(Instruction {
+            opcode: Opcode::Return,
+            flags: 0,
+            a: 0,
+            b: 1,
+            c: 0,
+        });
+        assert_eq!(
+            p.validate(),
+            Err("instruction has non-canonical unused operands")
+        );
     }
 
     #[test]

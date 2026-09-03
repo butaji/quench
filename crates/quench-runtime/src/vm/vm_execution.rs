@@ -193,6 +193,39 @@ pub(crate) fn execute_code_completion_in_current_frame(
     drive_code_completion(code, registers, &context)
 }
 
+/// Execute a nested function-code fragment with its own tier profile.
+///
+/// Structured operations (branches, handlers, `with`, and binding bodies)
+/// are represented by `FunctionCode` ranges in the canonical store.  Passing
+/// only a `CodeView` through those gateways silently discarded the fragment's
+/// invocation counters, so hot nested bodies could never admit their own
+/// baseline plan.  Keep the owner attached at this boundary just as ordinary
+/// function calls do; the semantics and register frame remain unchanged.
+pub(crate) fn execute_function_code_completion_in_current_frame(
+    owner: &crate::machine::FunctionCode,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<crate::completion::Completion, VmError> {
+    let code = owner.code().ok_or(VmError::MissingReturn)?;
+    let context = current_context_or_default();
+    execute_function_code_completion_with_context(owner, code, registers, &context)
+}
+
+pub(crate) fn execute_function_code_completion_with_context(
+    owner: &crate::machine::FunctionCode,
+    code: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
+    let _ = owner.enter_invocation();
+    if let (Some(optimizing), Some(baseline)) = (owner.executable_optimizing_plan(), owner.baseline_plan()) {
+        drive_code_completion_with_optimizing_plan(code, registers, context, &optimizing, &baseline)
+    } else if let Some(plan) = owner.baseline_plan() {
+        drive_code_completion_with_plan(code, registers, context, &plan, Some(owner))
+    } else {
+        drive_code_completion_with_tier(code, registers, context, owner)
+    }
+}
+
 /// Execute residual compact code with a context already owned by the caller.
 /// Structured loops use this to avoid re-reading and cloning the same TLS
 /// context for every iteration.
@@ -204,14 +237,39 @@ pub(crate) fn execute_code_completion_with_context(
     drive_code_completion(code, registers, context)
 }
 
+/// Drive a compact fragment while retaining the [`FunctionCode`] that owns
+/// it. Counted-loop fragments use this entry so repeated iterations can tier
+/// up independently without reconstructing their code or reinstalling an
+/// environment guard around every instruction.
+pub(crate) fn execute_code_completion_with_owner(
+    code: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<crate::completion::Completion, VmError> {
+    let context = current_context_or_default();
+    if let (Some(optimizing), Some(baseline)) = (owner.executable_optimizing_plan(), owner.baseline_plan()) {
+        drive_code_completion_with_optimizing_plan(code, registers, &context, &optimizing, &baseline)
+    } else if let Some(plan) = owner.baseline_plan() {
+        drive_code_completion_with_plan(code, registers, &context, &plan, Some(owner))
+    } else {
+        drive_code_completion_with_tier(code, registers, &context, owner)
+    }
+}
+
 fn drive_completion(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
+    // Freeze the compact operation tree once for the whole drive. Rebuilding
+    // an ExecutableCode on every step would repeatedly lower and allocate the
+    // same bytecode, defeating the immutable-code/dispatch split used by the
+    // machine and making long ordinary functions pay an avoidable O(n²) cost.
+    let executable = crate::machine::ExecutableCode::from_ops(ops.to_vec());
+    let code = executable.code();
     let mut pc = 0;
     loop {
-        let step = run_ops_completion_step_from(ops, pc, registers, context)?;
+        let step = run_code_completion_step_from(code, pc, registers, context)?;
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
@@ -236,6 +294,141 @@ fn drive_code_completion(
         let step = run_code_completion_step_from(code, pc, registers, context)?;
         pc = step.next;
         match step.completion {
+            crate::completion::Completion::Call(continuation) => {
+                if let Err(VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok(crate::completion::Completion::Throw(value));
+                }
+            }
+            completion => return preserve_frame_completion(completion),
+        }
+    }
+}
+
+fn drive_code_completion_with_plan(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    plan: &crate::machine::BaselinePlan,
+    tier_owner: Option<&crate::machine::FunctionCode>,
+) -> Result<crate::completion::Completion, VmError> {
+    let mut pc = 0;
+    loop {
+        let step = if let Some(owner) = tier_owner {
+            let (completion, next) = crate::vm::execute_baseline_code_step_from_with_owner(
+                code, plan, pc, registers, context, owner,
+            )?;
+            crate::vm::CompletionStep { completion, next }
+        } else {
+            let (completion, next) = crate::vm::execute_baseline_code_step_from(
+                code, plan, pc, registers, context,
+            )?;
+            crate::vm::CompletionStep { completion, next }
+        };
+        pc = step.next;
+        match step.completion {
+            crate::completion::Completion::Call(continuation) => {
+                if let Err(VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok(crate::completion::Completion::Throw(value));
+                }
+                if let Some(owner) = tier_owner {
+                    if let (Some(optimizing), Some(baseline)) =
+                        (owner.executable_optimizing_plan(), owner.baseline_plan())
+                    {
+                        return drive_code_completion_with_optimizing_plan(
+                            code,
+                            registers,
+                            context,
+                            &optimizing,
+                            &baseline,
+                        );
+                    }
+                }
+            }
+            completion => {
+                if !matches!(completion, crate::completion::Completion::Normal) {
+                    return preserve_frame_completion(completion);
+                }
+                // The baseline step already drives ordinary fall-through and
+                // branches until it reaches a completion boundary.  At the
+                // end of the compact body, Normal is the completed fragment,
+                // not a request to re-enter at the out-of-range successor.
+                if pc >= code.len() {
+                    return Ok(crate::completion::Completion::Normal);
+                }
+                if let Some(owner) = tier_owner {
+                    if let (Some(optimizing), Some(baseline)) =
+                        (owner.executable_optimizing_plan(), owner.baseline_plan())
+                    {
+                        return drive_code_completion_with_optimizing_plan(
+                            code,
+                            registers,
+                            context,
+                            &optimizing,
+                            &baseline,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn drive_code_completion_with_optimizing_plan(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    optimizing: &crate::machine::OptimizingPlan,
+    baseline: &crate::machine::BaselinePlan,
+) -> Result<crate::completion::Completion, VmError> {
+    let mut pc = 0;
+    loop {
+        let (completion, next) = crate::vm::execute_optimized_code_step_from(
+            code,
+            optimizing,
+            baseline,
+            pc,
+            registers,
+            context,
+        )?;
+        pc = next;
+        match completion {
+            crate::completion::Completion::Call(continuation) => {
+                if let Err(VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok(crate::completion::Completion::Throw(value));
+                }
+            }
+            completion => return preserve_frame_completion(completion),
+        }
+    }
+}
+
+/// Drive one function body while retaining its tier owner.  The interpreter
+/// dispatcher counts each instruction and can therefore perform OSR at a hot
+/// back-edge; once the owner publishes a plan, the next step naturally uses
+/// the baseline driver with the same registers.
+fn drive_code_completion_with_tier(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    owner: &crate::machine::FunctionCode,
+) -> Result<crate::completion::Completion, VmError> {
+    let mut pc = 0;
+    loop {
+        let (completion, next) = crate::vm::execute_function_code_step_from(
+            code,
+            owner,
+            pc,
+            registers,
+            context,
+        )?;
+        pc = next;
+        match completion {
             crate::completion::Completion::Call(continuation) => {
                 if let Err(VmError::Thrown(value)) =
                     crate::vm::vm_ops::execute_call_continuation(registers, continuation)
@@ -382,9 +575,11 @@ pub(crate) fn execute_frame_completion(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let executable = crate::machine::ExecutableCode::from_ops(ops.to_vec());
+    let code = executable.code();
     let mut pc = 0;
     loop {
-        let step = run_ops_completion_step_from(ops, pc, registers, context)?;
+        let step = run_code_completion_step_from(code, pc, registers, context)?;
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
@@ -405,10 +600,74 @@ pub(crate) fn execute_code_frame_completion(
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<crate::completion::Completion, VmError> {
+    execute_code_frame_completion_with_plan(code, registers, context, environment, None)
+}
+
+pub(crate) fn execute_code_frame_completion_with_plan(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+    plan: Option<std::rc::Rc<crate::machine::BaselinePlan>>,
+) -> Result<crate::completion::Completion, VmError> {
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
-    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    drive_code_completion(code, registers, context)
+    let pooled = std::rc::Rc::clone(&environment);
+    let environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let result = if let Some(plan) = plan {
+        drive_code_completion_with_plan(code, registers, context, &plan, None)
+    } else {
+        drive_code_completion(code, registers, context)
+    };
+    drop(environment_guard);
+    if result
+        .as_ref()
+        .ok()
+        .is_some_and(|completion| !completion.is_suspension())
+    {
+        crate::environment::Environment::recycle_frame(pooled);
+    }
+    result
+}
+
+/// Function-owned frame entry used by ordinary synchronous calls.  It keeps
+/// the existing frame/environment lifecycle but supplies the owner needed for
+/// current-invocation OSR when no baseline plan exists yet.
+pub(crate) fn execute_code_frame_completion_with_owner(
+    code: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<crate::completion::Completion, VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let pooled = Rc::clone(&environment);
+    let environment_guard = crate::locals::EnvironmentGuard::install(environment.clone());
+    let result = if let (Some(optimizing), Some(baseline)) =
+        (owner.executable_optimizing_plan(), owner.baseline_plan())
+    {
+        drive_code_completion_with_optimizing_plan(
+            code,
+            registers,
+            context,
+            &optimizing,
+            &baseline,
+        )
+    } else if let Some(plan) = owner.baseline_plan() {
+        drive_code_completion_with_plan(code, registers, context, &plan, Some(owner))
+    } else {
+        drive_code_completion_with_tier(code, registers, context, owner)
+    };
+    drop(environment_guard);
+    if result
+        .as_ref()
+        .ok()
+        .is_some_and(|completion| !completion.is_suspension())
+    {
+        crate::environment::Environment::recycle_frame(pooled);
+    }
+    result
 }
 pub(crate) fn execute_indirect_eval(code: crate::machine::CodeView<'_>) -> Result<Value, VmError> {
     let context = CURRENT_CONTEXT
@@ -486,6 +745,29 @@ mod tests {
             crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("bounded ordinary calls run");
         assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn owner_baseline_step_retires_completed_fragment() {
+        let owner = crate::machine::FunctionCode::from_ops(vec![crate::ops::Op::Move {
+            dst: 0,
+            src: 0,
+        }]);
+        owner.set_tier_threshold_for_test(1);
+        owner.retire(1);
+        assert_eq!(
+            owner.enter_invocation(),
+            crate::machine::TierTransition::CompileBaseline
+        );
+        let code = owner.code().expect("materialized owner code");
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Number(7.0),
+        ]);
+        let completion = super::execute_code_completion_with_owner(code, &owner, &mut registers)
+            .expect("baseline fragment executes");
+        assert_eq!(completion, crate::completion::Completion::Normal);
+        assert_eq!(registers.read_number(0), Some(7.0));
+        assert_eq!(owner.tier_profile().retired, 2);
     }
 
     #[test]

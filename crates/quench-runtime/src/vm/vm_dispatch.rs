@@ -600,7 +600,7 @@ fn execute_array(
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    write_value(registers, dst, Value::array(values));
+    write_allocated_value(registers, dst, Value::array(values));
     Ok(())
 }
 include!("vm_array_build.rs");
@@ -614,7 +614,7 @@ fn execute_object(
         .iter()
         .map(|(key, index)| Ok((key.clone(), read_register(registers, *index)?)))
         .collect::<Result<Vec<_>, VmError>>()?;
-    write_value(
+    write_allocated_value(
         registers,
         dst,
         Value::Object(Rc::new(crate::value::ObjectData::new_property_names(
@@ -622,6 +622,14 @@ fn execute_object(
         ))),
     );
     Ok(())
+}
+
+fn write_allocated_value(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    value: Value,
+) {
+    write_value(registers, dst, value);
 }
 
 fn execute_global_object(

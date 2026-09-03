@@ -72,10 +72,7 @@ fn write_non_ordinary(
             kind,
             length,
             direct_constructor: function.1.facts().direct_constructor.clone(),
-            forward_construct_call: function.1.facts().forward_construct_call.clone(),
-            forward_then_call: function.1.facts().forward_then_call.clone(),
-            counted_method_loop: function.1.facts().counted_method_loop.clone(),
-            direct_method: function.1.facts().direct_method.clone(),
+            composed_constructor: function.1.facts().composed_constructor.clone(),
             strictness,
             is_async,
             mapped_arguments,
@@ -113,10 +110,7 @@ fn write_ordinary(
             mapped_arguments,
             length,
             direct_constructor: body.facts().direct_constructor.clone(),
-            forward_construct_call: body.facts().forward_construct_call.clone(),
-            forward_then_call: body.facts().forward_then_call.clone(),
-            counted_method_loop: body.facts().counted_method_loop.clone(),
-            direct_method: body.facts().direct_method.clone(),
+            composed_constructor: body.facts().composed_constructor.clone(),
         },
     );
 }

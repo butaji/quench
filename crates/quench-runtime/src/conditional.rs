@@ -69,10 +69,8 @@ pub(crate) fn execute(
     } else {
         alternate
     };
-    let Some(branch) = branch.code() else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
-    let completion = crate::vm::execute_code_completion_in_current_frame(branch, registers)?;
+    let completion =
+        crate::vm::execute_function_code_completion_in_current_frame(branch, registers)?;
     let crate::completion::Completion::Return(value) = completion else {
         return Ok(completion);
     };

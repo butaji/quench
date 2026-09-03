@@ -225,10 +225,7 @@ pub(crate) fn execute(
         return Ok(crate::completion::Completion::Normal);
     };
     for (_, body) in &cases[start..] {
-        let Some(body) = body.code() else {
-            return Err(crate::execute::VmError::MissingReturn);
-        };
-        match crate::vm::execute_code_completion_in_current_frame(body, registers)? {
+        match crate::vm::execute_function_code_completion_in_current_frame(body, registers)? {
             crate::completion::Completion::Normal => continue,
             crate::completion::Completion::Break { label: None, .. } => {
                 return Ok(crate::completion::Completion::Normal);
@@ -268,10 +265,7 @@ fn evaluate_case_test(
     test: &crate::machine::FunctionCode,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(ops) = test.code() else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
-    match crate::vm::execute_code_completion_in_current_frame(ops, registers)? {
+    match crate::vm::execute_function_code_completion_in_current_frame(test, registers)? {
         crate::completion::Completion::Return(value) => Ok(value),
         crate::completion::Completion::Normal => Ok(Value::Undefined),
         crate::completion::Completion::Throw(value) => Err(crate::execute::VmError::Thrown(value)),

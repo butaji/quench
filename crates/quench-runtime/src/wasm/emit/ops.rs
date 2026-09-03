@@ -1,9 +1,7 @@
 //! Numeric, convert, local-free operator maps.
 
 use crate::hir::Inst;
-use crate::native::{
-    BinF32, BinF64, BinI32, BinI64, ConvOp, SimdOp, UnF32, UnF64, UnI32, UnI64,
-};
+use crate::native::{BinF32, BinF64, BinI32, BinI64, ConvOp, SimdOp, UnF32, UnF64, UnI32, UnI64};
 use wasmparser::Operator;
 
 use super::Context;
@@ -185,10 +183,18 @@ fn un_i32(op: &Operator<'_>) -> Option<UnI32> {
 }
 
 fn bin_i32(op: &Operator<'_>) -> Option<BinI32> {
+    // The three basic arithmetic meanings are shared with the JavaScript
+    // operation catalog; only the physical Wasm opcode remains frontend-
+    // specific.
+    if let Some(shared) = match op {
+        Operator::I32Add => Some(crate::facts::SharedBinaryFact::Add),
+        Operator::I32Sub => Some(crate::facts::SharedBinaryFact::Subtract),
+        Operator::I32Mul => Some(crate::facts::SharedBinaryFact::Multiply),
+        _ => None,
+    } {
+        return Some(shared.to_wasm_i32());
+    }
     Some(match op {
-        Operator::I32Add => BinI32::Add,
-        Operator::I32Sub => BinI32::Sub,
-        Operator::I32Mul => BinI32::Mul,
         Operator::I32DivS => BinI32::DivS,
         Operator::I32DivU => BinI32::DivU,
         Operator::I32RemS => BinI32::RemS,

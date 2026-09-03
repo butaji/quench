@@ -312,14 +312,10 @@ fn warn_max_listeners(
     limit: usize,
 ) {
     let target_kind = target_id(target).and_then(|id| {
-        state
-            .borrow()
-            .targets
-            .get(id)
-            .map(|target| {
-                let target = target.borrow();
-                (target.node, target.message_port)
-            })
+        state.borrow().targets.get(id).map(|target| {
+            let target = target.borrow();
+            (target.node, target.message_port)
+        })
     });
     let label = if is_abort_signal(target) {
         "[AbortSignal]"

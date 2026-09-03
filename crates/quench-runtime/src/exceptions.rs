@@ -16,9 +16,6 @@ pub(crate) fn execute(
     else {
         return Err(VmError::MissingReturn);
     };
-    let Some(body) = body.code() else {
-        return Err(VmError::MissingReturn);
-    };
     let body_completion = execute_try_body(body, registers)?;
     if body_completion.is_suspension() {
         return Ok(body_completion);
@@ -26,12 +23,9 @@ pub(crate) fn execute(
     let completion = match body_completion {
         Completion::Throw(value) => match handler {
             Some(ops) => {
-                let Some(ops) = ops.code() else {
-                    return Err(VmError::MissingReturn);
-                };
                 let previous = bind_caught(value, *catch_slot, registers);
                 let completion =
-                    crate::vm::execute_code_completion_in_current_frame(ops, registers)?;
+                    crate::vm::execute_function_code_completion_in_current_frame(ops, registers)?;
                 if let Some((slot, cell)) = previous {
                     crate::locals::current().restore_slot(slot, cell);
                 }
@@ -68,10 +62,7 @@ fn run_finalizer(
     let Some(finalizer) = finalizer else {
         return Ok(None);
     };
-    let Some(finalizer) = finalizer.code() else {
-        return Err(VmError::MissingReturn);
-    };
-    match crate::vm::execute_code_completion_in_current_frame(finalizer, registers)? {
+    match crate::vm::execute_function_code_completion_in_current_frame(finalizer, registers)? {
         Completion::Normal => Ok(None),
         abrupt => Ok(Some(abrupt)),
     }
@@ -81,14 +72,14 @@ pub(crate) fn execute_ops(
     ops: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Completion, VmError> {
-    execute_try_body(ops, registers)
+    crate::vm::execute_code_completion_in_current_frame(ops, registers)
 }
 
 fn execute_try_body(
-    ops: crate::machine::CodeView<'_>,
+    ops: &crate::machine::FunctionCode,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Completion, VmError> {
-    crate::vm::execute_code_completion_in_current_frame(ops, registers)
+    crate::vm::execute_function_code_completion_in_current_frame(ops, registers)
 }
 
 fn bind_caught(

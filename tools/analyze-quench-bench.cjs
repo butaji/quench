@@ -19,16 +19,20 @@ const fixture = fixtureArg.endsWith(".js") ? fixtureArg : `${fixtureArg}.js`;
 const quench = path.resolve(root, option("--quench", "target/bench-throughput/quench-node"));
 const traceQuench = path.resolve(root, option("--trace-quench", "target-exec-trace/bench-throughput/quench-node"));
 const sampleQuench = path.resolve(root, option("--sample-quench", quench));
-const timeoutMs = Number(option("--timeout-ms", "180000"));
+const timeoutMs = Number(option("--timeout-ms", "120000"));
 const output = option("--out", null);
 const baselinePath = option("--baseline", null);
 const sampleSeconds = Number(option("--sample-seconds", "0"));
+const skipTrace = args.includes("--skip-trace");
+const dumpStderr = args.includes("--dump-stderr");
 const contractPath = option("--assert-profile", null);
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) usage("invalid timeout");
 
 const runner = `
 let __ok = true;
-const __print = typeof console !== "undefined" ? console.log : print;
+const __print = typeof console !== "undefined" && typeof console.log === "function"
+  ? console.log.bind(console)
+  : print;
 BenchmarkSuite.RunSuites({
   NotifyResult(name, result) { __print(name + ": " + result); },
   NotifyError(name, error) { __ok = false; __print(name + ": " + error); },
@@ -44,7 +48,10 @@ function usage(message) {
 function materialize() {
   const fixturePath = path.join(suite, fixture);
   if (!fs.existsSync(fixturePath)) usage(`unknown fixture: ${fixture}`);
-  const destination = path.join("/tmp", `quench-analysis-${fixture}`);
+  const destination = path.join(
+    "/tmp",
+    `quench-analysis-${process.pid}-${Date.now()}-${fixture}`
+  );
   fs.writeFileSync(destination, [
     fs.readFileSync(path.join(suite, "base.js"), "utf8"),
     fs.readFileSync(fixturePath, "utf8"),
@@ -143,11 +150,13 @@ async function sample(script) {
 
 async function main() {
   const script = materialize();
+  try {
   const scored = execute(quench, script, false);
-  const traced = execute(traceQuench, script, true);
-  const traceLine = (traced.result.stderr || "").split(/\n/).find((line) => line.startsWith("QUENCH_EXEC_TRACE "));
-  if (!traceLine) throw new Error(`missing VM trace; status=${traced.result.status}\n${traced.result.stderr || ""}`);
-  const vm = JSON.parse(traceLine.slice("QUENCH_EXEC_TRACE ".length));
+  if (dumpStderr && scored.result.stderr) process.stderr.write(scored.result.stderr);
+  const traced = skipTrace ? null : execute(traceQuench, script, true);
+  const traceLine = traced && (traced.result.stderr || "").split(/\n/).find((line) => line.startsWith("QUENCH_EXEC_TRACE "));
+  if (traced && !traceLine) throw new Error(`missing VM trace; status=${traced.result.status}\n${traced.result.stderr || ""}`);
+  const vm = traceLine ? JSON.parse(traceLine.slice("QUENCH_EXEC_TRACE ".length)) : {};
   const stdout = scored.result.stdout || "";
   const report = {
     lanes: vm.lanes,
@@ -158,7 +167,7 @@ async function main() {
     fixture,
     binary: quench,
     trace_binary: traceQuench,
-    valid: scored.result.status === 0 && traced.result.status === 0 && /(^|\n)Score:\s*[0-9.]+/m.test(stdout),
+    valid: scored.result.status === 0 && (!traced || traced.result.status === 0) && /(^|\n)Score:\s*[0-9.]+/m.test(stdout),
     score: Number(stdout.match(/(^|\n)Score:\s*([0-9.]+)/m)?.[2]) || null,
     host: {
       wall_ms: scored.wallMs,
@@ -184,6 +193,11 @@ async function main() {
   process.stdout.write(json);
   if (failures.length) console.error(formatViolations(fixture.replace(/\.js$/, ""), failures));
   if (!report.valid || failures.length) process.exitCode = 1;
+  } finally {
+    // A timeout, missing trace, or parse failure must not leave a source
+    // snapshot that a later analysis could accidentally consume.
+    fs.rmSync(script, { force: true });
+  }
 }
 
 main().catch((error) => {

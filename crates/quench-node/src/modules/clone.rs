@@ -55,12 +55,12 @@ pub fn deep_clone(value: Value) -> Value {
 
 fn is_dom_exception(value: &Value) -> bool {
     match value {
-        Value::Object(object) => object
-            .iter()
-            .any(|(key, _)| key == "\0domexception"),
-        Value::ObjectAlias(alias) => alias.0.borrow().upgrade().is_some_and(|object| {
-            object.iter().any(|(key, _)| key == "\0domexception")
-        }),
+        Value::Object(object) => object.iter().any(|(key, _)| key == "\0domexception"),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|object| object.iter().any(|(key, _)| key == "\0domexception")),
         _ => false,
     }
 }

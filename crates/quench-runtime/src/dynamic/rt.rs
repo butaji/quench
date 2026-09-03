@@ -58,39 +58,38 @@ impl Runtime {
             slots: Vec::new(),
             fast_array: None,
         });
-        JsValue::Ptr {
-            tag: super::jsvalue::Tag::Object,
-            id,
-        }
+        JsValue::ptr(super::jsvalue::Tag::Object, id)
     }
 
     pub fn new_string(&mut self, s: &str) -> JsValue {
         // QuickJS: 8-bit if every code point fits in Latin-1, else UTF-16.
         let latin1 = s.chars().all(|c| (c as u32) <= 0xff);
         let body = if latin1 {
-            JsString::Bytes(s.chars().map(|c| c as u8).collect::<Vec<_>>().into_boxed_slice())
+            JsString::Bytes(
+                s.chars()
+                    .map(|c| c as u8)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            )
         } else {
             JsString::Units(s.encode_utf16().collect::<Vec<_>>().into_boxed_slice())
         };
         let id = self.strings.len() as u32;
         self.strings.push(body);
-        JsValue::Ptr {
-            tag: super::jsvalue::Tag::String,
-            id,
-        }
+        JsValue::ptr(super::jsvalue::Tag::String, id)
     }
 
     pub fn dup(&mut self, v: &JsValue) {
-        if let JsValue::Ptr { id, .. } = v {
-            if let Some(obj) = self.objects.get_mut(*id as usize) {
+        if let Some((_, id)) = v.pointer() {
+            if let Some(obj) = self.objects.get_mut(id as usize) {
                 obj.header.ref_count += 1;
             }
         }
     }
 
     pub fn free(&mut self, v: &JsValue) {
-        if let JsValue::Ptr { id, .. } = v {
-            if let Some(obj) = self.objects.get_mut(*id as usize) {
+        if let Some((_, id)) = v.pointer() {
+            if let Some(obj) = self.objects.get_mut(id as usize) {
                 obj.header.ref_count -= 1;
             }
         }
@@ -134,6 +133,14 @@ mod tests {
         assert_eq!(ctx.global.tag(), Tag::Object);
         assert_eq!(rt.objects.len(), 1);
         assert_eq!(rt.objects[0].header.ref_count, 1);
+        assert_eq!(std::mem::size_of::<JsValue>(), 16);
+        rt.objects[0].slots.push(JsValue::Int(7));
+        rt.objects[0].fast_array = Some(vec![JsValue::Bool(true)]);
+        assert_eq!(rt.objects[0].slots[0], JsValue::Int(7));
+        assert_eq!(
+            rt.objects[0].fast_array.as_ref().unwrap()[0],
+            JsValue::Bool(true)
+        );
     }
 
     #[test]
@@ -154,9 +161,9 @@ mod tests {
         let s = rt.new_string("hi");
         assert_eq!(s.tag(), Tag::String);
         assert!(matches!(rt.strings[0], super::JsString::Bytes(_)));
-        let w = rt.new_string("é");
+        let _w = rt.new_string("é");
         assert!(matches!(rt.strings[1], super::JsString::Bytes(_)));
-        let wide = rt.new_string("🙂");
+        let _wide = rt.new_string("🙂");
         assert!(matches!(rt.strings[2], super::JsString::Units(_)));
     }
 }

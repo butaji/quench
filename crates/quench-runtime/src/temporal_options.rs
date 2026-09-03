@@ -48,12 +48,16 @@ pub(crate) fn disambiguation(options: Option<&Value>) -> Result<String, VmError>
         return Ok(DISAMBIGUATION_VALUES[0].to_string());
     }
     if crate::conversion::is_symbol(&value) {
-        return Err(crate::value::error::throw_type_error("Invalid disambiguation"));
+        return Err(crate::value::error::throw_type_error(
+            "Invalid disambiguation",
+        ));
     }
     let value = crate::conversion::to_string(&value)?;
     if DISAMBIGUATION_VALUES.contains(&value.as_str()) {
         Ok(value)
     } else {
-        Err(crate::value::error::throw_range_error("Invalid disambiguation"))
+        Err(crate::value::error::throw_range_error(
+            "Invalid disambiguation",
+        ))
     }
 }

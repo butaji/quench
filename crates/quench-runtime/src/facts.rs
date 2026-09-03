@@ -4,10 +4,275 @@ use oxc::span::Span;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Arithmetic operations whose semantics are shared by the JavaScript and
+/// Wasm frontends.  Frontends retain their physical instruction types, while
+/// this fact keeps the overlapping meaning declared exactly once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SharedBinaryFact {
+    Add,
+    Subtract,
+    Multiply,
+}
+
+impl SharedBinaryFact {
+    pub const fn from_js(operator: crate::ops::BinaryOp) -> Option<Self> {
+        match operator {
+            crate::ops::BinaryOp::Add => Some(Self::Add),
+            crate::ops::BinaryOp::Subtract => Some(Self::Subtract),
+            crate::ops::BinaryOp::Multiply => Some(Self::Multiply),
+            _ => None,
+        }
+    }
+
+    pub const fn to_js(self) -> crate::ops::BinaryOp {
+        match self {
+            Self::Add => crate::ops::BinaryOp::Add,
+            Self::Subtract => crate::ops::BinaryOp::Subtract,
+            Self::Multiply => crate::ops::BinaryOp::Multiply,
+        }
+    }
+
+    pub const fn to_wasm_i32(self) -> crate::native::BinI32 {
+        match self {
+            Self::Add => crate::native::BinI32::Add,
+            Self::Subtract => crate::native::BinI32::Sub,
+            Self::Multiply => crate::native::BinI32::Mul,
+        }
+    }
+}
+
+/// Observable effects attached to a generated VM operation.
+///
+/// This is deliberately a small, data-only vocabulary.  The interpreter may
+/// choose a physical implementation from these facts, but the facts never
+/// replace the complete semantic fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OperationEffect {
+    Pure,
+    ReadHeap,
+    WriteHeap,
+    Allocate,
+    MayThrow,
+    Control,
+    Observable,
+}
+
+/// Result shape emitted by an operation before completion wrapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResultShape {
+    None,
+    Value,
+}
+
+/// Physical word facts used by generated guarded views. `Any` means the
+/// register remains a canonical tagged word and may require the ordinary
+/// semantic decoder; the other variants name the cheap tag/identity probe that
+/// a guarded operation is allowed to use. `None` describes an absent result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WordKind {
+    None,
+    Any,
+    Number,
+    Boolean,
+    Object,
+    Array,
+    Callable,
+}
+
+/// Control-flow exit owned by an operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ControlFlow {
+    Next,
+    Branch,
+    Jump,
+    Return,
+    Loop,
+}
+
+impl ControlFlow {
+    pub const fn is_next(self) -> bool {
+        matches!(self, Self::Next)
+    }
+}
+
+/// A fact required before a physical variant may be selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OperationGuard {
+    Number,
+    Shape,
+    DenseArray,
+    Callable,
+}
+
+impl OperationGuard {
+    const fn code(self) -> u8 {
+        match self {
+            Self::Number => 0,
+            Self::Shape => 1,
+            Self::DenseArray => 2,
+            Self::Callable => 3,
+        }
+    }
+}
+
+/// Mechanical metadata generated alongside the canonical opcode enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationSpec {
+    pub opcode: u8,
+    pub name: &'static str,
+    pub operand_width: u8,
+    pub effects: &'static [OperationEffect],
+    pub fallback: &'static str,
+    pub result: ResultShape,
+    pub control: ControlFlow,
+    pub guards: &'static [OperationGuard],
+}
+
+impl OperationEffect {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Pure => 0,
+            Self::ReadHeap => 1,
+            Self::WriteHeap => 2,
+            Self::Allocate => 3,
+            Self::MayThrow => 4,
+            Self::Control => 5,
+            Self::Observable => 6,
+        }
+    }
+
+    pub const fn is_observable(self) -> bool {
+        matches!(self, Self::Observable | Self::MayThrow)
+    }
+}
+
+impl OperationSpec {
+    pub const fn validate(self) -> bool {
+        if self.opcode == 0
+            || self.name.is_empty()
+            || self.fallback.is_empty()
+            || self.operand_width > 3
+        {
+            return false;
+        }
+        if (!self.control.is_next()) != self.has_effect(OperationEffect::Control) {
+            return false;
+        }
+        self.effects_are_unique() && self.guards_are_unique()
+    }
+
+    const fn effects_are_unique(self) -> bool {
+        let mut left = 0;
+        while left < self.effects.len() {
+            let mut right = left + 1;
+            while right < self.effects.len() {
+                if self.effects[left].code() == self.effects[right].code() {
+                    return false;
+                }
+                right += 1;
+            }
+            left += 1;
+        }
+        true
+    }
+
+    const fn guards_are_unique(self) -> bool {
+        let mut left = 0;
+        while left < self.guards.len() {
+            let mut right = left + 1;
+            while right < self.guards.len() {
+                if self.guards[left].code() == self.guards[right].code() {
+                    return false;
+                }
+                right += 1;
+            }
+            left += 1;
+        }
+        true
+    }
+
+    pub const fn has_effect(self, effect: OperationEffect) -> bool {
+        let mut index = 0;
+        while index < self.effects.len() {
+            if self.effects[index].code() == effect.code() {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    pub const fn has_guard(self, guard: OperationGuard) -> bool {
+        let mut index = 0;
+        while index < self.guards.len() {
+            if self.guards[index].code() == guard.code() {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    pub const fn is_control(self) -> bool {
+        !self.control.is_next()
+    }
+
+    pub const fn is_observable(self) -> bool {
+        let mut index = 0;
+        while index < self.effects.len() {
+            if self.effects[index].is_observable() {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// An operation can use a bounded physical cache only when its declaration
+    /// names a runtime guard. The cache selects an implementation; its miss
+    /// edge remains the complete fallback.
+    pub const fn is_quickenable(self) -> bool {
+        !self.is_control() && !self.guards.is_empty()
+    }
+
+    /// The result remains a word even when its semantic value is dynamic. A
+    /// missing result is represented explicitly so generated consumers do not
+    /// infer it from an opcode name or handler.
+    pub const fn result_word_kind(self) -> WordKind {
+        match self.result {
+            ResultShape::None => WordKind::None,
+            ResultShape::Value => WordKind::Any,
+        }
+    }
+
+    /// Map a declared guard to the physical word probe it permits. The guard
+    /// is the source of truth; no second table may claim a stronger type.
+    pub const fn guarded_word_kind(self, guard: OperationGuard) -> Option<WordKind> {
+        if !self.has_guard(guard) {
+            return None;
+        }
+        Some(match guard {
+            OperationGuard::Number => WordKind::Number,
+            OperationGuard::Shape => WordKind::Object,
+            OperationGuard::DenseArray => WordKind::Array,
+            OperationGuard::Callable => WordKind::Callable,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DirectConstructorField {
     pub(crate) name: String,
     pub(crate) source: DirectConstructorSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ComposedConstructorStep {
+    Field(DirectConstructorField),
+    SuperCall {
+        owner_slot: u16,
+        arguments: Rc<[ForwardValueSource]>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +281,19 @@ pub(crate) enum DirectConstructorSource {
     Boolean(bool),
     Integer(i32),
     Null,
+    EmptyArray,
+    FalsyArgumentOrInteger {
+        argument: u16,
+        fallback: i32,
+    },
+    ConstructCapture {
+        constructor_slot: u16,
+        arguments: Rc<[ForwardValueSource]>,
+    },
+    CaptureProperty {
+        owner_slot: u16,
+        property: String,
+    },
     GuardedArray {
         length_slot: u16,
     },
@@ -29,94 +307,32 @@ pub(crate) enum DirectConstructorSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ForwardValueSource {
     Receiver,
+    ReceiverProperty(String),
     Argument(u16),
     Integer(i32),
     Capture(u16),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ForwardConstructCallFact {
-    pub(crate) method: String,
-    pub(crate) constructor_slot: u16,
-    pub(crate) forwarded_arguments: Rc<[u16]>,
-    pub(crate) constructor_arguments: Rc<[ForwardValueSource]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ForwardThenCallFact {
-    pub(crate) first_method: String,
-    pub(crate) nested_property: String,
-    pub(crate) nested_method: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CountedMethodLoopFact {
-    Visit {
-        length_method: String,
-        element_method: String,
-        body_method: String,
-    },
-    Filter {
-        determining_property: String,
-        collection_property: String,
-        length_method: String,
-        element_method: String,
-        predicate_method: String,
-        append_method: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DirectMethodFact {
-    Noop,
-    CopyMethodProperty {
-        target_method: String,
-        source_method: String,
-        property: String,
-    },
-    PropertyLoad {
-        property: String,
-    },
-    PropertyNotEqualCapture {
-        property: String,
-        capture_slot: u16,
-        capture_property: String,
-    },
-    AppendArray {
-        property: String,
-    },
-    SlotDot3 {
-        receiver: [String; 3],
-        argument: [String; 3],
-    },
-    SelectUpdateCall {
-        input_method: String,
-        output_method: String,
-        namespace_slot: u16,
-        combine_method: String,
-        receiver_value: String,
-        input_value: String,
-        output_value: String,
-        input_flag: String,
-        output_flag: String,
-        extra_flag_objects: Vec<String>,
-        conditional_method: String,
-    },
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FunctionFacts {
     pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
-    pub(crate) forward_construct_call: Option<Rc<ForwardConstructCallFact>>,
-    pub(crate) forward_then_call: Option<Rc<ForwardThenCallFact>>,
-    pub(crate) counted_method_loop: Option<Rc<CountedMethodLoopFact>>,
-    pub(crate) direct_method: Option<Rc<DirectMethodFact>>,
+    pub(crate) composed_constructor: Rc<[ComposedConstructorStep]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fact<T> {
     Proven(T),
     Guarded { value: T, guard: Guard },
+    Unknown,
+}
+
+/// Certainty is the derived view used by physical execution policy. The
+/// payload and guard remain owned by [`Fact`], so certainty cannot drift into
+/// a second fact table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Certainty {
+    Proven,
+    Guarded,
     Unknown,
 }
 
@@ -185,6 +401,14 @@ impl<T> Fact<T> {
 
     pub fn is_known(&self) -> bool {
         !matches!(self, Self::Unknown)
+    }
+
+    pub const fn certainty(&self) -> Certainty {
+        match self {
+            Self::Proven(_) => Certainty::Proven,
+            Self::Guarded { .. } => Certainty::Guarded,
+            Self::Unknown => Certainty::Unknown,
+        }
     }
 }
 
@@ -385,7 +609,107 @@ pub enum Constant {
 
 #[cfg(test)]
 mod tests {
-    use super::{Epochs, FactSiteId, ReduceContext};
+    use super::{
+        Certainty, ControlFlow, Epochs, Fact, FactSiteId, Guard, OperationEffect, OperationSpec,
+        ReduceContext, ResultShape, SharedBinaryFact, WordKind,
+    };
+
+    #[test]
+    fn shared_binary_fact_adapts_js_and_wasm_without_duplicate_meaning() {
+        for (js, wasm) in [
+            (crate::ops::BinaryOp::Add, crate::native::BinI32::Add),
+            (crate::ops::BinaryOp::Subtract, crate::native::BinI32::Sub),
+            (crate::ops::BinaryOp::Multiply, crate::native::BinI32::Mul),
+        ] {
+            let fact = SharedBinaryFact::from_js(js).expect("shared arithmetic fact");
+            assert_eq!(fact.to_js(), js);
+            assert_eq!(fact.to_wasm_i32(), wasm);
+        }
+    }
+
+    #[test]
+    fn certainty_is_derived_from_the_single_fact_record() {
+        assert_eq!(Fact::Proven(1).certainty(), Certainty::Proven);
+        assert_eq!(
+            Fact::Guarded {
+                value: 1,
+                guard: Guard::Number,
+            }
+            .certainty(),
+            Certainty::Guarded
+        );
+        assert_eq!(Fact::<i32>::Unknown.certainty(), Certainty::Unknown);
+    }
+
+    #[test]
+    fn word_kinds_are_derived_from_result_and_guard_facts() {
+        let get = crate::ir::Opcode::GetProperty.spec();
+        assert_eq!(get.result_word_kind(), WordKind::Any);
+        assert_eq!(
+            get.guarded_word_kind(super::OperationGuard::Shape),
+            Some(WordKind::Object)
+        );
+        assert_eq!(
+            crate::ir::Opcode::Call.guarded_word_kind(super::OperationGuard::Callable),
+            Some(WordKind::Callable)
+        );
+        assert_eq!(crate::ir::Opcode::Jump.result_word_kind(), WordKind::None);
+        assert_eq!(
+            crate::ir::Opcode::Move.guarded_word_kind(super::OperationGuard::Shape),
+            None
+        );
+    }
+
+    #[test]
+    fn operation_spec_validation_rejects_duplicate_effects_bad_widths_and_inconsistent_control() {
+        let duplicate = OperationSpec {
+            opcode: 1,
+            name: "duplicate",
+            operand_width: 1,
+            effects: &[OperationEffect::Pure, OperationEffect::Pure],
+            fallback: "fallback",
+            result: ResultShape::None,
+            control: ControlFlow::Next,
+            guards: &[],
+        };
+        assert!(!duplicate.validate());
+
+        let too_wide = OperationSpec {
+            opcode: 1,
+            name: "wide",
+            operand_width: 4,
+            effects: &[OperationEffect::Pure],
+            fallback: "fallback",
+            result: ResultShape::None,
+            control: ControlFlow::Next,
+            guards: &[],
+        };
+        assert!(!too_wide.validate());
+
+        let inconsistent_control = OperationSpec {
+            opcode: 1,
+            name: "branch",
+            operand_width: 1,
+            effects: &[OperationEffect::Pure],
+            fallback: "fallback",
+            result: ResultShape::None,
+            control: ControlFlow::Branch,
+            guards: &[],
+        };
+        assert!(!inconsistent_control.validate());
+
+        let duplicate_guard = OperationSpec {
+            opcode: 1,
+            name: "guarded",
+            operand_width: 1,
+            effects: &[OperationEffect::Control],
+            fallback: "fallback",
+            result: ResultShape::None,
+            control: ControlFlow::Branch,
+            guards: &[super::OperationGuard::Shape, super::OperationGuard::Shape],
+        };
+        assert!(!duplicate_guard.validate());
+    }
 
     #[test]
     fn epochs_are_independent_invalidation_dimensions() {

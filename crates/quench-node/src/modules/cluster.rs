@@ -262,14 +262,10 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             .other_handlers
             .iter()
             .any(|(event, _, _)| event == "message")
-            || guard
-                .cluster
-                .workers
-                .get(&id)
-                .is_some_and(|worker| {
-                    worker.child_listeners.contains_key("message")
-                        || !worker.pending_messages.is_empty()
-                });
+            || guard.cluster.workers.get(&id).is_some_and(|worker| {
+                worker.child_listeners.contains_key("message")
+                    || !worker.pending_messages.is_empty()
+            });
         (!waits_for_ipc && !net_work).then_some(0)
     });
     state.borrow_mut().process.exit_code = parent_exit_code;

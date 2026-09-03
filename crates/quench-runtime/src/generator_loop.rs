@@ -46,6 +46,16 @@ fn resume_loop_frame(
         return Ok(None);
     };
     if !matches!(input, crate::completion::Completion::Normal) {
+        // A throw/return injected at a yield inside a structured try must
+        // enter that try's handler before the loop is unwound. Materialize
+        // the nested continuation frame on demand; ordinary next() resumes
+        // continue through the compact loop path below.
+        if matches!(input, crate::completion::Completion::Throw(_))
+            && crate::generator::suspended_try(generator, state).is_some()
+        {
+            crate::generator::push_try_frame(generator, state)?;
+            return crate::generator::resume_try_frame(generator, state, input);
+        }
         generator.machine.borrow_mut().pop_frame();
         return Ok(Some(input));
     }
@@ -75,6 +85,10 @@ fn run_loop_after_yield(
                 update_loop_body_resume(generator, body, step.pc, src)?;
                 return Ok(step.completion);
             }
+            if let Some((resume, src)) = nested_loop_yield_resume(generator, body) {
+                update_loop_body_resume_at(generator, resume, src)?;
+                return Ok(step.completion);
+            }
             return Err(VmError::MissingReturn);
         }
         match step.completion {
@@ -97,6 +111,54 @@ fn run_loop_after_yield(
         }
         body = frame.body;
     }
+}
+
+fn nested_loop_yield_resume(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+) -> Option<(crate::machine::CodeRange, u16)> {
+    let store = generator.machine.borrow().store.clone()?;
+    let code = store.code(range)?;
+    find_loop_yield_resume(code, range)
+}
+
+fn find_loop_yield_resume(
+    code: crate::machine::CodeView<'_>,
+    range: crate::machine::CodeRange,
+) -> Option<(crate::machine::CodeRange, u16)> {
+    for (index, op) in code.cold_ops() {
+        if let crate::ops::Op::Yield { src } = op {
+            return Some((crate::machine::CodeRange {
+                code: range.code,
+                start: range.start.saturating_add(index as u32 + 1),
+                end: range.end,
+            }, *src));
+        }
+        let branch = match op {
+            crate::ops::Op::Try { body, .. }
+            | crate::ops::Op::Loop { body, .. }
+            | crate::ops::Op::ForOf { body, .. }
+            | crate::ops::Op::ForIn { body, .. } => Some(body),
+            crate::ops::Op::Conditional { consequent, alternate, .. } => {
+                if let Some(found) = find_loop_yield_in_function(consequent) {
+                    return Some(found);
+                }
+                Some(alternate)
+            }
+            _ => None,
+        };
+        if let Some(branch) = branch.and_then(find_loop_yield_in_function) {
+            return Some(branch);
+        }
+    }
+    None
+}
+
+fn find_loop_yield_in_function(
+    function: &crate::machine::FunctionCode,
+) -> Option<(crate::machine::CodeRange, u16)> {
+    let range = function.range;
+    function.code().and_then(|code| find_loop_yield_resume(code, range))
 }
 
 fn execute_loop_body_range(
@@ -187,6 +249,25 @@ fn update_loop_body_resume(
         start: range.start.saturating_add(next as u32),
         end: range.end,
     };
+    let machine = generator.machine.borrow_mut();
+    let Some(crate::machine::Frame::Loop {
+        body_resume,
+        yield_dst: destination,
+        ..
+    }) = machine.frames.frames.last_mut()
+    else {
+        return Err(VmError::MissingReturn);
+    };
+    *body_resume = resume;
+    *destination = yield_dst;
+    Ok(())
+}
+
+fn update_loop_body_resume_at(
+    generator: &GeneratorData,
+    resume: crate::machine::CodeRange,
+    yield_dst: u16,
+) -> Result<(), VmError> {
     let machine = generator.machine.borrow_mut();
     let Some(crate::machine::Frame::Loop {
         body_resume,

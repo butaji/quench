@@ -297,10 +297,7 @@ fn dynamic_value(
             is_async,
             mapped_arguments: true,
             direct_constructor: std::rc::Rc::default(),
-            forward_construct_call: None,
-            forward_then_call: None,
-            counted_method_loop: None,
-            direct_method: None,
+            composed_constructor: std::rc::Rc::default(),
         },
     );
     if let Value::Function(function) = &value {

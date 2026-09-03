@@ -44,7 +44,9 @@ impl RunOutcome {
 /// Run `source` as a CJS module at `script`, printing console output
 /// to stdout.
 pub fn run_script(script: &Path, script_args: &[String], source: &str) -> RunOutcome {
-    let sink: OutputSink = Arc::new(|line| println!("{line}"));
+    // OutputSink carries raw stream chunks.  `process.stdout.write` may omit
+    // a newline, so adding one here would change observable Node behavior.
+    let sink: OutputSink = Arc::new(|chunk| print!("{chunk}"));
     run_script_with_sink(script, script_args, source, sink)
 }
 

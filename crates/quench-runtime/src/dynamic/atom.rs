@@ -34,11 +34,32 @@ pub struct AtomTable {
 }
 
 impl AtomTable {
+    /// Construct an intern table with storage sized for an expected atom
+    /// vocabulary.  Both directions remain hash/index views of one identity
+    /// fact; reserving here only avoids repeated growth rehashes.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            by_str: HashMap::with_capacity(capacity),
+            by_id: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_id.len()
+    }
+
     pub fn intern(&mut self, s: &str) -> Atom {
         if let Some(atom) = self.by_str.get(s) {
             return *atom;
         }
-        let id = (self.by_id.len() as u32) + 1;
+        // Keep interned IDs below the immediate-integer half of the atom
+        // space.  Exhaustion is an explicit resource error rather than an
+        // accidental wrap that could alias an existing atom.
+        let id = u32::try_from(self.by_id.len())
+            .ok()
+            .and_then(|length| length.checked_add(1))
+            .filter(|id| *id < Atom::IMMEDIATE)
+            .expect("atom table exhausted");
         let atom = Atom(id);
         let owned: Box<str> = s.into();
         self.by_str.insert(owned.clone(), atom);
@@ -50,7 +71,9 @@ impl AtomTable {
         if atom.as_u32().is_some() {
             return None;
         }
-        self.by_id.get(atom.0.wrapping_sub(1) as usize).map(|s| &**s)
+        self.by_id
+            .get(atom.0.wrapping_sub(1) as usize)
+            .map(|s| &**s)
     }
 }
 
@@ -72,5 +95,16 @@ mod tests {
         let a = Atom::from_u32(12).unwrap();
         assert_eq!(a.as_u32(), Some(12));
         assert_ne!(a, Atom::NULL);
+    }
+
+    #[test]
+    fn capacity_and_len_are_identity_views() {
+        let mut t = AtomTable::with_capacity(8);
+        assert_eq!(t.len(), 0);
+        let first = t.intern("first");
+        let second = t.intern("second");
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.get(first), Some("first"));
+        assert_eq!(t.get(second), Some("second"));
     }
 }

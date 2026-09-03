@@ -388,7 +388,7 @@ pub(crate) fn calendar_reference_iso_year_for_code(
     if matches!(calendar, "chinese" | "dangi") {
         // ICU cannot reverse-project every documented lunisolar reference
         // month (notably the rare 30-day leap months and post-1972 months),
-        // so retain the Test262/Temporal reference-year table as data.
+        // so retain the standards reference-year table as data.
         let year = match (code, day) {
             ("M03L", 30) => 1955,
             ("M04L", 30) => 1944,
