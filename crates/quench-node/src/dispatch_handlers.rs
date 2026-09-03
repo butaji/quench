@@ -8257,7 +8257,19 @@ fn cp_run_host_child(
     if !has_entry && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
         return None;
     }
-    let executable = std::env::current_exe().ok()?;
+    // `process.execPath` points at the compatibility runner selected by the
+    // parent (often `run-compat`), while a child must use the script runner
+    // binary that accepts `-e`/entry-file arguments.  Keep the executable
+    // choice a host fact shared with spawnSync rather than letting the
+    // runner's CLI reject the child's JavaScript source.
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.parent()
+                .map(|dir| dir.join("run"))
+                .filter(|runner| runner.is_file())
+                .or(Some(path))
+        })?;
     let mut process = std::process::Command::new(executable);
     process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
