@@ -339,7 +339,11 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
         )
     );
     if let Resume::Next(input) = resume {
-        install_resume_input(generator, &mut state, input);
+        if let Some(spec) = state.async_for_of.as_ref() {
+            crate::execute::write_value(&mut registers_mut(generator), spec.await_dst, input);
+        } else {
+            install_resume_input(generator, &mut state, input);
+        }
     }
     if !direct_suspension {
         match resume_suspended_contexts(generator, &mut state, &completion) {
@@ -609,7 +613,12 @@ fn resume_suspended_contexts(
         .iter()
         .rev()
         .nth(1)
-        .is_some_and(|frame| matches!(frame, crate::machine::Frame::Loop { .. }))
+        .is_some_and(|frame| {
+            matches!(
+                frame,
+                crate::machine::Frame::Loop { .. } | crate::machine::Frame::Iterator { .. }
+            )
+        })
     {
         generator.machine.borrow_mut().pop_await_frame();
     }

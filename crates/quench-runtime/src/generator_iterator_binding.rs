@@ -338,7 +338,7 @@ fn resume_nested_code(
 
 fn op_contains_yield(op: &Op) -> bool {
     match op {
-        Op::Yield { .. } | Op::YieldStar { .. } => true,
+        Op::Yield { .. } | Op::YieldStar { .. } | Op::Await { .. } => true,
         Op::Conditional {
             consequent,
             alternate,
