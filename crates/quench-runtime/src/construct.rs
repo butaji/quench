@@ -436,7 +436,25 @@ fn construct_bound(
         // clones object data when the host retains an Rc and breaks JS object
         // identity. Host dispatch already carries the capability realm.
         if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
-            return Ok(value);
+            // A host constructor's `newTarget` is normally the same bound
+            // function as `target`.  The ordinary helper intentionally skips
+            // that identity case, but host-created objects still need the
+            // constructor's explicit prototype: it owns the observable
+            // method surface (for example EventTarget's dispatch methods).
+            let prototype_target = if matches!(
+                new_target,
+                Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) {
+                // BoundFunction [[Construct]] replaces an identical
+                // newTarget with its bound target.  Preserve the bound
+                // function for GetPrototypeFromConstructor so custom host
+                // constructors retain their declared prototype.
+                Value::BoundFunction(std::rc::Rc::new(bound.clone()))
+            } else {
+                new_target.clone()
+            };
+            let prototype = crate::execute::get_property_result(&prototype_target, "prototype")?;
+            return apply_new_target_prototype(value, target, &prototype_target, prototype);
         }
         let value = crate::builtins::set_property(
             value,
