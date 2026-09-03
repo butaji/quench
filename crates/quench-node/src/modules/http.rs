@@ -20,7 +20,11 @@ const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 pub(crate) const REQ_ASYNC_RESOURCE_PROP: &str = "\0quench:http:req:async-resource";
 pub(crate) const REQ_CLOSE_PROP: &str = "\0quench:http:req:close";
 pub(crate) const HTTP_SERVER_SOCKET_PROP: &str = "\0quench:http:server-socket";
+const CONNECTIONS_CHECKING_INTERVAL_PROP: &str = "\0quench:http:connections-checking-interval";
 pub(crate) const INCOMING_CLOSE_PENDING_PROP: &str = "\0quench:http:incoming:close-pending";
+/// Hidden response transition bit; `ServerResponse` emits `close` once after
+/// `end()` even when the HTTP/1.1 socket remains keep-alive.
+pub(crate) const RESPONSE_CLOSE_PENDING_PROP: &str = "\0quench:http:response:close-pending";
 const REQUIRE_HOST_HEADER_PROP: &str = "\0quench:http:require-host";
 const SERVER_RESPONSE_PROP: &str = "\0quench:http:server-response";
 const SERVER_REQUEST_PROP: &str = "\0quench:http:server-request";
@@ -87,6 +91,7 @@ pub struct Res {
     pub headers_sent: bool,
     pub sent_body: usize,
     pub chunked: bool,
+    pub ended: bool,
 }
 
 impl Default for HttpState {
@@ -204,6 +209,21 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
         REQUIRE_HOST_HEADER_PROP,
         Value::Boolean(require_host_header),
     );
+    // Node exposes the private connection-check timer through
+    // `_http_server.kConnectionsCheckingInterval`. Keep the key sourced from
+    // the realm's single bootstrap symbol so Rust and JS observe one identity.
+    let interval = host_api::object(vec![("_destroyed".into(), Value::Boolean(false))]);
+    execute::set_property_in_place(
+        &object,
+        CONNECTIONS_CHECKING_INTERVAL_PROP,
+        interval.clone(),
+    );
+    let global = quench_runtime::vm::current_global_object();
+    if let Value::String(key) =
+        execute::get_property(&global, "__nodeHttpConnectionsCheckingInterval")
+    {
+        let _ = execute::set_property_in_place(&object, &key, interval);
+    }
     if let Some(cb) = callback {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
@@ -285,6 +305,19 @@ pub fn connection_handler(
 /// Stop keep-alive reuse for established HTTP connections when the server is
 /// closing. Existing responses still drain, then `res.end` closes the socket.
 pub(crate) fn server_close(state: &Rc<RefCell<HostState>>, server: &Value) {
+    let interval = execute::get_property(server, CONNECTIONS_CHECKING_INTERVAL_PROP);
+    if matches!(interval, Value::Object(_) | Value::ObjectAlias(_)) {
+        let _ = execute::set_property_in_place(&interval, "_destroyed", Value::Boolean(true));
+    }
+    let global = quench_runtime::vm::current_global_object();
+    if let Value::String(key) =
+        execute::get_property(&global, "__nodeHttpConnectionsCheckingInterval")
+    {
+        let interval = execute::get_property(server, &key);
+        if matches!(interval, Value::Object(_) | Value::ObjectAlias(_)) {
+            let _ = execute::set_property_in_place(&interval, "_destroyed", Value::Boolean(true));
+        }
+    }
     let mut guard = state.borrow_mut();
     let server_id = net::net_id(server);
     let socket_ids: std::collections::HashSet<u64> = guard
@@ -306,6 +339,21 @@ pub(crate) fn server_close(state: &Rc<RefCell<HostState>>, server: &Value) {
         if net::net_id(&response.socket).is_some_and(|id| socket_ids.contains(&id)) {
             response.keep_alive = false;
         }
+    }
+    let idle_sockets = guard
+        .http
+        .res
+        .values()
+        .filter(|response| {
+            response.ended
+                && net::net_id(&response.socket)
+                    .is_some_and(|id| socket_ids.contains(&id))
+        })
+        .map(|response| response.socket.clone())
+        .collect::<Vec<_>>();
+    drop(guard);
+    for socket in idle_sockets {
+        let _ = net::socket_destroy(state, Some(&socket), &[]);
     }
 }
 
@@ -331,7 +379,10 @@ pub(crate) fn connection_close(
         .map(|conn| conn.requests.clone())
         .unwrap_or_default();
     for request in requests {
-        if matches!(execute::get_property(&request, REQ_CLOSE_PROP), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&request, REQ_CLOSE_PROP),
+            Value::Boolean(true)
+        ) {
             continue;
         }
         execute::set_property_in_place(&request, REQ_CLOSE_PROP, Value::Boolean(true));
@@ -340,6 +391,31 @@ pub(crate) fn connection_close(
         crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
     state.borrow_mut().http.conns.remove(&socket_id);
+    Ok(())
+}
+
+/// Finish deferred `IncomingMessage.destroy()` transport teardown after the
+/// queued message listeners have run. A close listener may still produce a
+/// half-open response, so the socket decision belongs to this post-dispatch
+/// edge rather than the destroy method itself.
+pub(crate) fn finalize_destroyed_requests(
+    state: &Rc<RefCell<HostState>>,
+) -> Result<(), VmError> {
+    let sockets = state
+        .borrow()
+        .http
+        .conns
+        .values()
+        .filter(|conn| {
+            conn.req.as_ref().is_some_and(|request| {
+                matches!(execute::get_property(request, "destroyed"), Value::Boolean(true))
+            }) && !conn.response_done
+        })
+        .map(|conn| conn.socket.clone())
+        .collect::<Vec<_>>();
+    for socket in sockets {
+        net::socket_destroy(state, Some(&socket), &[])?;
+    }
     Ok(())
 }
 
@@ -594,11 +670,10 @@ fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<
         if conn.req.is_none() || conn.body_done {
             return Ok(());
         }
-        let mut data = Vec::new();
+        let mut chunks = Vec::new();
         let mut done = false;
         loop {
-            let Some(line_end) = conn.buffer.windows(2).position(|pair| pair == b"\r\n")
-            else {
+            let Some(line_end) = conn.buffer.windows(2).position(|pair| pair == b"\r\n") else {
                 break;
             };
             let Ok(size) = usize::from_str_radix(
@@ -714,17 +789,28 @@ fn emit_request(
         res_end(state, Some(&res), &[])?;
         return Ok(Value::Undefined);
     }
-    let expect_continue = String::from_utf8_lossy(head).lines().skip(1).any(|line| {
-        line.split_once(':').is_some_and(|(name, value)| {
-            name.trim().eq_ignore_ascii_case("expect")
-                && value.trim().eq_ignore_ascii_case("100-continue")
-        })
-    });
-    let event = if expect_continue {
-        "checkContinue"
-    } else {
-        "request"
-    };
+    let expect = headers_value(&req, "expect");
+    if let Some(expect) = expect
+        .as_ref()
+        .filter(|value| !value.eq_ignore_ascii_case("100-continue"))
+    {
+        let has_listener = crate::modules::emitter::emitter_id(&server)
+            .and_then(|id| state.borrow().emitters.get(id))
+            .is_some_and(|emitter| !emitter.borrow().listeners_of("checkExpectation").is_empty());
+        if has_listener {
+            net::emit(state, &server, "checkExpectation", vec![req.clone(), res])?;
+        } else {
+            execute::set_property_in_place(&res, "statusCode", Value::Number(417.0));
+            execute::set_property_in_place(
+                &res,
+                "statusMessage",
+                Value::String("Expectation Failed".into()),
+            );
+            res_end(state, Some(&res), &[])?;
+        }
+        return Ok(Value::Undefined);
+    }
+    let event = expect.is_some().then_some("checkContinue").unwrap_or("request");
     net::emit(state, &server, event, vec![req.clone(), res])?;
     let body_done = state
         .borrow()
@@ -761,6 +847,45 @@ fn emit_request(
     Ok(Value::Undefined)
 }
 
+/// Report one inbound HTTP request through the shared performance bridge.
+/// The bridge owns observer delivery; Rust supplies the exact request/response
+/// identities and descriptors already exposed by this module.
+pub(crate) fn record_http_entry(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    req: Value,
+    res: Value,
+) {
+    let Some(record) = state.borrow().net.performance_record.clone() else {
+        return;
+    };
+    if !quench_runtime::is_callable(&record) {
+        return;
+    }
+    if matches!(execute::get_property(&res, "headers"), Value::Undefined) {
+        execute::set_property_in_place(&res, "headers", host_api::object(Vec::new()));
+    }
+    if matches!(execute::get_property(&res, "statusCode"), Value::Undefined) {
+        execute::set_property_in_place(&res, "statusCode", Value::Number(200.0));
+    }
+    if matches!(
+        execute::get_property(&res, "statusMessage"),
+        Value::Undefined
+    ) {
+        execute::set_property_in_place(&res, "statusMessage", Value::String("OK".into()));
+    }
+    let detail = host_api::object(vec![("req".into(), req), ("res".into(), res)]);
+    let _ = execute::call(
+        &record,
+        &Value::Undefined,
+        &[
+            Value::String("http".into()),
+            detail,
+            Value::String(name.into()),
+        ],
+    );
+}
+
 fn build_req_res(
     state: &Rc<RefCell<HostState>>,
     socket_id: u64,
@@ -779,7 +904,9 @@ fn build_req_res(
                         .net
                         .servers
                         .iter()
-                        .find(|(_, server)| execute::same_identity(&server.borrow().js, &conn.server))
+                        .find(|(_, server)| {
+                            execute::same_identity(&server.borrow().js, &conn.server)
+                        })
                         .and_then(|(id, _)| guard.http.server_requests.get(id).cloned())
                 }
             }
@@ -828,7 +955,9 @@ fn build_req_res(
                         .net
                         .servers
                         .iter()
-                        .find(|(_, server)| execute::same_identity(&server.borrow().js, &conn.server))
+                        .find(|(_, server)| {
+                            execute::same_identity(&server.borrow().js, &conn.server)
+                        })
                         .and_then(|(id, _)| guard.http.server_responses.get(id).cloned())
                 }
             }
@@ -904,6 +1033,10 @@ fn build_req(
                 execute::set_prototype_of(&host_api::object(headers), &Value::Null)?,
             ),
             (
+                "pause".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_RESUME),
+            ),
+            (
                 "resume".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_RESUME),
             ),
@@ -915,9 +1048,15 @@ fn build_req(
                 "destroy".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_DESTROY),
             ),
+            (
+                "pipe".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_RES_PIPE),
+            ),
             ("signal".to_string(), new_http_signal(state)?),
+            ("readable".to_string(), Value::Boolean(true)),
             ("aborted".to_string(), Value::Boolean(false)),
             ("complete".to_string(), Value::Boolean(false)),
+            ("destroyed".to_string(), Value::Boolean(false)),
             (REQ_CLOSE_PROP.to_string(), Value::Boolean(false)),
             (REQ_ASYNC_RESOURCE_PROP.to_string(), async_resource),
         ],
@@ -928,13 +1067,16 @@ fn build_req(
 }
 
 fn headers_value(request: &Value, key: &str) -> Option<String> {
-    execute::to_js_string(&execute::get_property(&execute::get_property(request, "headers"), key))
-        .ok()
+    let value = execute::get_property(&execute::get_property(request, "headers"), key);
+    if matches!(value, Value::Undefined | Value::Null) {
+        return None;
+    }
+    execute::to_js_string(&value).ok()
 }
 
-/// `req.destroy([error])` — abort the server-side request without tearing
-/// down the response socket. The error/close pair is queued so listeners
-/// attached immediately after the call observe Node's asynchronous ordering.
+/// `req.destroy([error])` — abort the server-side message. Its half-open
+/// response socket remains available for a handler that writes a response;
+/// the error/close pair is queued for Node's asynchronous ordering.
 pub fn request_destroy(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -943,7 +1085,7 @@ pub fn request_destroy(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some((_, req)) = state
+    let Some((socket_id, req, _socket)) = state
         .borrow()
         .http
         .conns
@@ -952,7 +1094,7 @@ pub fn request_destroy(
             conn.req
                 .as_ref()
                 .filter(|req| execute::same_identity(req, receiver))
-                .map(|req| (*socket_id, req.clone()))
+                .map(|req| (*socket_id, req.clone(), conn.socket.clone()))
         })
     else {
         return Ok(receiver.clone());
@@ -1038,6 +1180,7 @@ fn insert_response(
             headers_sent: false,
             sent_body: 0,
             chunked: false,
+            ended: false,
         },
     );
 }
@@ -1083,14 +1226,15 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
             if key == "connection" {
                 connection = value.to_lowercase();
             }
-            if key == "cookie" {
-                if let Some((_, Value::String(existing))) =
-                    headers.iter_mut().find(|(name, _)| name == &key)
-                {
-                    existing.push_str("; ");
-                    existing.push_str(value);
+            if let Some((_, Value::String(existing))) =
+                headers.iter_mut().find(|(name, _)| name == &key)
+            {
+                if forbidden_duplicate_header(&key) {
                     continue;
                 }
+                existing.push_str(if key == "cookie" { "; " } else { ", " });
+                existing.push_str(value);
+                continue;
             }
             headers.push((key, Value::String(value.to_string())));
         }
@@ -1107,6 +1251,24 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
         headers,
         content_length,
         keep_alive,
+    )
+}
+
+fn forbidden_duplicate_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-length"
+            | "content-type"
+            | "user-agent"
+            | "referer"
+            | "host"
+            | "authorization"
+            | "proxy-authorization"
+            | "if-modified-since"
+            | "if-unmodified-since"
+            | "from"
+            | "location"
+            | "max-forwards"
     )
 }
 
@@ -1151,6 +1313,14 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             res_cap(crate::registry::SPEC_HTTP_RES_WRITE_CONTINUE),
         ),
         (
+            "writeInformation".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE_INFORMATION),
+        ),
+        (
+            "writeProcessing".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE_PROCESSING),
+        ),
+        (
             "end".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_END),
         ),
@@ -1175,6 +1345,10 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         ("writableNeedDrain".to_string(), Value::Boolean(false)),
         ("writableHighWaterMark".to_string(), Value::Number(16_384.0)),
         ("sendDate".to_string(), Value::Boolean(true)),
+        ("finished".to_string(), Value::Boolean(false)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("writableEnded".to_string(), Value::Boolean(false)),
+        ("destroyed".to_string(), Value::Boolean(false)),
         ("statusCode".to_string(), Value::Number(200.0)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
     ] {
@@ -1188,11 +1362,11 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 }
 
 // Response methods live in `http_res`; re-exported here for dispatch.
-pub use crate::modules::http_res::{res_destroy, res_flush_headers};
 pub use crate::modules::http_res::{
     res_cork, res_end, res_remove_header, res_set_header, res_set_headers, res_uncork, res_write,
-    res_write_continue, res_write_head,
+    res_write_continue, res_write_head, res_write_information, res_write_processing,
 };
+pub use crate::modules::http_res::{res_destroy, res_flush_headers};
 
 /// Construct an IncomingMessage with the same signal/destroy state used by
 /// network-created messages. This keeps the public constructor useful for
@@ -1240,17 +1414,12 @@ pub fn incoming_destroy(
     let client_response = matches!(
         execute::get_property(receiver, "__httpClientResponse"),
         Value::Boolean(true)
-    ) || state
-        .borrow()
-        .http
-        .clientreqs
-        .values()
-        .any(|request| {
-            request
-                .res
-                .as_ref()
-                .is_some_and(|response| execute::same_identity(response, receiver))
-        });
+    ) || state.borrow().http.clientreqs.values().any(|request| {
+        request
+            .res
+            .as_ref()
+            .is_some_and(|response| execute::same_identity(response, receiver))
+    });
     let response_complete = matches!(
         execute::get_property(receiver, "complete"),
         Value::Boolean(true)
@@ -1315,8 +1484,28 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     crate::modules::http_client::get(state, args)
 }
 
+pub fn https_request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    crate::modules::http_client::https_request(state, args)
+}
+
+pub fn https_get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    crate::modules::http_client::https_get(state, args)
+}
+
 /// The `http` module namespace.
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
+    if let Some(cached) = state.borrow().module_cache.get("http") {
+        return cached.clone();
+    }
+    if state.borrow().net.performance_record.is_none() {
+        let record = execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "__nodePerformanceRecord",
+        );
+        if quench_runtime::is_callable(&record) {
+            state.borrow_mut().net.performance_record = Some(record);
+        }
+    }
     let agent = crate::host::capability(crate::registry::SPEC_HTTP_AGENT);
     let agent_prototype = host_api::object(vec![
         (
@@ -1344,9 +1533,12 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let agent = quench_runtime::execute::set_property(agent, "prototype", agent_prototype);
     let global_agent = crate::modules::http_client::agent_construct(
         state,
-        &[host_api::object(vec![("keepAlive".into(), Value::Boolean(true))])],
+        &[host_api::object(vec![(
+            "keepAlive".into(),
+            Value::Boolean(true),
+        )])],
     )
-        .unwrap_or(Value::Undefined);
+    .unwrap_or(Value::Undefined);
     state.borrow_mut().http.global_agent = Some(global_agent.clone());
     let client_request_prototype = host_api::object(vec![
         (
@@ -1362,6 +1554,38 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_HEADER),
         ),
         (
+            "getHeader".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_GET_HEADER),
+        ),
+        (
+            "getHeaders".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_GET_HEADERS),
+        ),
+        (
+            "getHeaderNames".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_GET_HEADER_NAMES),
+        ),
+        (
+            "hasHeader".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_HAS_HEADER),
+        ),
+        (
+            "removeHeader".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_REMOVE_HEADER),
+        ),
+        (
+            "setNoDelay".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_NO_DELAY),
+        ),
+        (
+            "setSocketKeepAlive".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_KEEP_ALIVE),
+        ),
+        (
+            "setSocketTimeout".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_TIMEOUT_SOCKET),
+        ),
+        (
             "setTimeout".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_TIMEOUT),
         ),
@@ -1373,8 +1597,14 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             "destroy".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_REQ_CLIENT_DESTROY),
         ),
-        ("cork".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-        ("uncork".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        (
+            "cork".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_CORK),
+        ),
+        (
+            "uncork".into(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_UNCORK),
+        ),
     ]);
     state.borrow_mut().http.client_request_prototype = Some(client_request_prototype);
     let client_request = quench_runtime::execute::set_property(
@@ -1406,20 +1636,14 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
             "request",
             crate::host::capability(crate::registry::SPEC_HTTP_REQUEST),
         ),
-        (
-            "ClientRequest",
-            client_request,
-        ),
+        ("ClientRequest", client_request),
         (
             "get",
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
         ),
         ("Agent", agent),
         ("globalAgent", global_agent),
-        (
-            "IncomingMessage",
-            incoming,
-        ),
+        ("IncomingMessage", incoming),
         (
             "OutgoingMessage",
             crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING),
@@ -1494,5 +1718,9 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         "METHODS",
         quench_runtime::host_api::array(values),
     );
+    state
+        .borrow_mut()
+        .module_cache
+        .insert("http".into(), module.clone());
     module
 }
