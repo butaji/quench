@@ -84,6 +84,7 @@ pub struct Res {
     pub status: u16,
     pub text: String,
     pub headers: Vec<(String, String)>,
+    pub trailers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub socket: Value,
     pub keep_alive: bool,
@@ -1173,6 +1174,7 @@ fn insert_response(
             status: 200,
             text: "OK".to_string(),
             headers: Vec::new(),
+            trailers: Vec::new(),
             body: Vec::new(),
             socket,
             keep_alive,
@@ -1290,6 +1292,10 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             res_cap(crate::registry::SPEC_HTTP_RES_SET_HEADERS),
         ),
         (
+            "addTrailers".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_ADD_TRAILERS),
+        ),
+        (
             "removeHeader".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_REMOVE_HEADER),
         ),
@@ -1365,7 +1371,7 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 
 // Response methods live in `http_res`; re-exported here for dispatch.
 pub use crate::modules::http_res::{
-    res_cork, res_end, res_remove_header, res_set_header, res_set_headers, res_uncork, res_write,
+    res_add_trailers, res_cork, res_end, res_remove_header, res_set_header, res_set_headers, res_uncork, res_write,
     res_write_continue, res_write_head, res_write_information, res_write_processing,
 };
 pub use crate::modules::http_res::{res_destroy, res_flush_headers};
