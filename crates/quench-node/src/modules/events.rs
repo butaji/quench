@@ -1498,22 +1498,42 @@ pub fn build() -> Value {
           const onEvent = (...args) => push(args);
           const onError = (error) => finish(error);
           const onAbort = () => finish(Object.assign(new Error("The operation was aborted"), { name: "AbortError", code: "ABORT_ERR" }));
+          const updateSignalEvents = () => {
+            if (!options.signal) return;
+            let events = options.signal.__quenchAbortEvents;
+            if (!events || typeof events.get !== "function") {
+              events = new Map([["abort", { size: 0 }]]);
+              options.signal.__quenchAbortEvents = events;
+            }
+            options.signal["Symbol.for.quench.event_target.events\0"] = events;
+            const abort = events.get("abort");
+            if (abort) abort.size = options.signal.__quenchAbortEventCount || 0;
+          };
           const cleanup = () => {
             if (target) {
               emitter.removeListener?.(event, onEvent);
               emitter.removeListener?.("error", onError);
             } else emitter.removeEventListener?.(event, onEvent);
             options.signal?.removeEventListener?.("abort", onAbort);
+            if (options.signal && options.signal.__quenchAbortEventCount) {
+              options.signal.__quenchAbortEventCount--;
+            }
+            updateSignalEvents();
           };
           if (target) { emitter.on(event, onEvent); if (event !== "error") emitter.on("error", onError); }
           else emitter.addEventListener(event, onEvent);
           if (options.signal?.aborted) onAbort();
-          else options.signal?.addEventListener?.("abort", onAbort, { once: true });
+          else if (options.signal) {
+            options.signal.__quenchAbortEventCount =
+              (options.signal.__quenchAbortEventCount || 0) + 1;
+            updateSignalEvents();
+            options.signal.addEventListener?.("abort", onAbort, { once: true });
+          }
           const iterator = {
             next() {
               if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
-              if (done) return Promise.resolve({ value: undefined, done: true });
               if (failure) return Promise.reject(failure);
+              if (done) return Promise.resolve({ value: undefined, done: true });
               const promise = new Promise((resolve, reject) => {
                 waiters[nextWaiter++] = { resolve, reject };
                 waiterCount++;
@@ -1531,7 +1551,7 @@ pub fn build() -> Value {
                 throw error;
               }
               finish(reason);
-              return undefined;
+              return Promise.reject(reason);
             },
             [Symbol.asyncIterator]() { return this; }
           };
