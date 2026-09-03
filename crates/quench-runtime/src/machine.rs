@@ -2358,11 +2358,14 @@ impl FunctionCode {
         self.tier.borrow().optimizing.clone()
     }
 
-    /// The optimized view is safe on every target: architecture-specific
-    /// native leaves are admitted by their own stencil records, while the
-    /// plan's direct canonical handlers remain the complete fallback.
+    /// The optimizing view is currently validated only for the x86-64
+    /// stencil ABI. Keep the plan available for inspection/tests on every
+    /// host, but admit it to execution only where its physical assumptions
+    /// are true; other targets retain complete baseline semantics.
     pub(crate) fn executable_optimizing_plan(&self) -> Option<Rc<OptimizingPlan>> {
-        self.optimizing_plan()
+        cfg!(target_arch = "x86_64")
+            .then(|| self.optimizing_plan())
+            .flatten()
     }
 
     pub fn tier_profile(&self) -> TierProfile {
