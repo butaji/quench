@@ -618,6 +618,7 @@
 
     unshift(chunk) {
       const st = this._readableState;
+      if (this.destroyed) return false;
       if (chunk === null) return false;
       if (!st.objectMode && typeof chunk !== "string" &&
           !(chunk && typeof chunk.byteLength === "number" &&
