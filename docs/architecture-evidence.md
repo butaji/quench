@@ -65,6 +65,14 @@ matches (2.358x wall time, 0.710x peak RSS, 4.466x instructions, and 3.143x
 cycles relative to Bun). Node and Bun are measurement oracles only; neither
 result enables workload-specific runtime behavior.
 
+Task 028's OSR wiring change was remeasured with the same optimized artifact
+and command: 100/100 exact matches, 0.759x wall time, 0.294x peak RSS, 1.040x
+retired instructions, 0.740x cycles, overall index 262.71. The unit test
+`hot_back_edge_osr_transfers_live_frame_into_baseline` records one actual
+interpreter-to-baseline transfer and compares it with a threshold-disabled
+cold run; `structured_fori_is_not_an_osr_back_edge` records the intentional
+structured-loop exclusion.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
