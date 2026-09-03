@@ -25,7 +25,9 @@ fn decode(op: &Operator<'_>) -> Option<(AtomicOp, Option<MemArg>, u8, bool, usiz
         Operator::I32AtomicStore { memarg } => (AtomicOp::Store, Some(memarg), 4, false, 2, false),
         Operator::I64AtomicStore { memarg } => (AtomicOp::Store, Some(memarg), 8, true, 2, false),
         Operator::I32AtomicStore8 { memarg } => (AtomicOp::Store, Some(memarg), 1, false, 2, false),
-        Operator::I32AtomicStore16 { memarg } => (AtomicOp::Store, Some(memarg), 2, false, 2, false),
+        Operator::I32AtomicStore16 { memarg } => {
+            (AtomicOp::Store, Some(memarg), 2, false, 2, false)
+        }
         Operator::I64AtomicStore8 { memarg } => (AtomicOp::Store, Some(memarg), 1, true, 2, false),
         Operator::I64AtomicStore16 { memarg } => (AtomicOp::Store, Some(memarg), 2, true, 2, false),
         Operator::I64AtomicStore32 { memarg } => (AtomicOp::Store, Some(memarg), 4, true, 2, false),
@@ -66,11 +68,19 @@ fn decode(op: &Operator<'_>) -> Option<(AtomicOp, Option<MemArg>, u8, bool, usiz
         Operator::I64AtomicRmw32XorU { memarg } => (AtomicOp::Xor, Some(memarg), 4, true, 2, true),
         Operator::I32AtomicRmwXchg { memarg } => (AtomicOp::Xchg, Some(memarg), 4, false, 2, true),
         Operator::I64AtomicRmwXchg { memarg } => (AtomicOp::Xchg, Some(memarg), 8, true, 2, true),
-        Operator::I32AtomicRmw8XchgU { memarg } => (AtomicOp::Xchg, Some(memarg), 1, false, 2, true),
-        Operator::I32AtomicRmw16XchgU { memarg } => (AtomicOp::Xchg, Some(memarg), 2, false, 2, true),
+        Operator::I32AtomicRmw8XchgU { memarg } => {
+            (AtomicOp::Xchg, Some(memarg), 1, false, 2, true)
+        }
+        Operator::I32AtomicRmw16XchgU { memarg } => {
+            (AtomicOp::Xchg, Some(memarg), 2, false, 2, true)
+        }
         Operator::I64AtomicRmw8XchgU { memarg } => (AtomicOp::Xchg, Some(memarg), 1, true, 2, true),
-        Operator::I64AtomicRmw16XchgU { memarg } => (AtomicOp::Xchg, Some(memarg), 2, true, 2, true),
-        Operator::I64AtomicRmw32XchgU { memarg } => (AtomicOp::Xchg, Some(memarg), 4, true, 2, true),
+        Operator::I64AtomicRmw16XchgU { memarg } => {
+            (AtomicOp::Xchg, Some(memarg), 2, true, 2, true)
+        }
+        Operator::I64AtomicRmw32XchgU { memarg } => {
+            (AtomicOp::Xchg, Some(memarg), 4, true, 2, true)
+        }
         Operator::I32AtomicRmwCmpxchg { memarg } => {
             (AtomicOp::Cmpxchg, Some(memarg), 4, false, 3, true)
         }

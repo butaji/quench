@@ -89,10 +89,7 @@ fn complete_suspended_try(
     let Some(finalizer) = finalizer else {
         return Ok(completion);
     };
-    let Some(finalizer) = finalizer.code() else {
-        return Err(VmError::MissingReturn);
-    };
-    match crate::vm::execute_code_completion_in_current_frame(finalizer, registers)? {
+    match crate::vm::execute_function_code_completion_in_current_frame(finalizer, registers)? {
         crate::completion::Completion::Normal => Ok(completion),
         abrupt => Ok(abrupt),
     }
@@ -113,10 +110,7 @@ fn handle_suspended_throw(
     if let Some(slot) = catch_slot {
         crate::locals::write(slot, value);
     }
-    let Some(handler) = handler.code() else {
-        return Err(VmError::MissingReturn);
-    };
-    crate::vm::execute_code_completion_in_current_frame(handler, registers)
+    crate::vm::execute_function_code_completion_in_current_frame(handler, registers)
 }
 
 fn throw_and_finish(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {

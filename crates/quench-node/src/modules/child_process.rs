@@ -781,10 +781,7 @@ fn run_print_eval(source: &str) -> Result<Value, VmError> {
         }
     });
     let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
-    let output = lines
-        .lock()
-        .map(|lines| lines.iter().map(|line| format!("{line}\n")).collect())
-        .unwrap_or_default();
+    let output = lines.lock().map(|lines| lines.concat()).unwrap_or_default();
     let (status, stderr) = match outcome.error {
         Some(error) => (1.0, error),
         None => (0.0, String::new()),

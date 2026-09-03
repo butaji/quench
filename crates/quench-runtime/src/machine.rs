@@ -15,7 +15,9 @@ use crate::{
     ops::{Constant, Op},
     value::Value,
 };
-use std::{rc::Rc, sync::OnceLock};
+use std::{cell::RefCell, rc::Rc, sync::OnceLock};
+
+const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -30,6 +32,9 @@ pub struct InstructionMeta {
     pub name: Option<Rc<str>>,
     pub flags: u16,
     pub operand_window: u32,
+    /// Index into the code-range quickening table, or `u32::MAX` when the
+    /// opcode has no generated physical guard site.
+    pub quickening_site: u32,
     pub named_cache: std::cell::Cell<u64>,
 }
 
@@ -40,6 +45,7 @@ impl InstructionMeta {
             name: None,
             flags: 0,
             operand_window: u32::MAX,
+            quickening_site: u32::MAX,
             named_cache: std::cell::Cell::new(0),
         }
     }
@@ -128,6 +134,7 @@ pub struct CodeArena {
     parameter_ends: Vec<Option<u32>>,
     constants: Vec<ConstantPool>,
     metadata: Vec<Vec<InstructionMeta>>,
+    quickening_sites: Vec<Vec<crate::quickening::QuickeningSite<4>>>,
     operand_windows: Vec<Vec<Rc<[u16]>>>,
     catch_ranges: Vec<Vec<CatchRange>>,
     pending_catches: Vec<CatchRange>,
@@ -153,7 +160,8 @@ fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
         | Op::ResolveStrictName { key: name, .. }
         | Op::ResolveName { key: name, .. }
         | Op::GetProperty { key: name, .. }
-        | Op::SetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
+        | Op::SetProperty { key: name, .. }
+        | Op::CallMethod { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
         _ => None,
     };
     InstructionMeta {
@@ -161,8 +169,61 @@ fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
         name,
         flags: u16::from(matches!(op, Op::CheckInitialized { .. })),
         operand_window: u32::MAX,
+        quickening_site: u32::MAX,
         named_cache: std::cell::Cell::new(0),
     }
+}
+
+/// Lower the common constant-specialized addition variants from the canonical
+/// operation sequence. The write performed by `Const` is immediately consumed
+/// by `Binary(Add)` at the same register, so the compact form can carry the
+/// immutable pool ID directly.  The operand-order bit is retained because the
+/// fallback may observe coercion order for strings, objects, and user code.
+fn lower_const_add(ops: &[Op], constants: &ConstantPool) -> Option<crate::ir::Instruction> {
+    let [Op::Const {
+        dst: constant_dst,
+        value,
+    }, Op::Binary {
+        dst,
+        operator: crate::ops::BinaryOp::Add,
+        lhs,
+        rhs,
+    }, ..] = ops
+    else {
+        return None;
+    };
+    let constant = constants.id(value)?;
+    if constant_dst == lhs {
+        Some(crate::ir::Instruction::add_const_left(*dst, *rhs, constant))
+    } else if constant_dst == rhs {
+        Some(crate::ir::Instruction::add_const(*dst, *lhs, constant))
+    } else {
+        None
+    }
+}
+
+/// Derive one disposable physical site for each guarded instruction. The
+/// instruction stream and operation catalog remain canonical; this table is
+/// only mutable state for quickening decisions.
+fn attach_quickening_sites(
+    instructions: &[crate::ir::Instruction],
+    metadata: &mut [InstructionMeta],
+) -> Vec<crate::quickening::QuickeningSite<4>> {
+    let mut sites = Vec::new();
+    for (meta, instruction) in metadata.iter_mut().zip(instructions.iter()) {
+        if instruction.opcode.is_quickenable()
+            && (instruction
+                .opcode
+                .has_guard(crate::facts::OperationGuard::Shape)
+                || instruction
+                    .opcode
+                    .has_guard(crate::facts::OperationGuard::Callable))
+        {
+            meta.quickening_site = sites.len() as u32;
+            sites.push(crate::quickening::QuickeningSite::new(instruction.opcode));
+        }
+    }
+    sites
 }
 
 /// Canonical register storage for the active frame.
@@ -438,6 +499,12 @@ impl CodeArena {
                 cursor = next;
                 continue;
             }
+            if let Some(instruction) = lower_const_add(&body[cursor..], &constants) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor + 1], source));
+                cursor += 2;
+                continue;
+            }
             let op = &body[cursor];
             let mut meta = metadata_for(op, source);
             let instruction = match op {
@@ -472,7 +539,13 @@ impl CodeArena {
             metadata.push(meta);
             cursor += 1;
         }
+        let instruction_end = start as usize + metadata.len();
+        let quickening_sites = attach_quickening_sites(
+            &self.instructions[start as usize..instruction_end],
+            &mut metadata,
+        );
         self.metadata.push(metadata);
+        self.quickening_sites.push(quickening_sites);
         self.operand_windows.push(operand_windows);
         self.catch_ranges
             .push(std::mem::take(&mut self.pending_catches));
@@ -511,7 +584,8 @@ impl CodeArena {
         let jump = self.instructions.len();
         self.instructions.push(crate::ir::Instruction::jump(0));
         metadata.push(InstructionMeta::empty());
-        let else_pc = u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+        let else_pc =
+            u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
         self.instructions[jif].b = else_pc;
         self.encode_linear(
             else_ops,
@@ -522,7 +596,8 @@ impl CodeArena {
             source,
             dst,
         );
-        let end_pc = u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+        let end_pc =
+            u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
         self.instructions[jump].a = end_pc;
     }
 
@@ -549,6 +624,12 @@ impl CodeArena {
                 ternary_dst,
             ) {
                 cursor = next;
+                continue;
+            }
+            if let Some(instruction) = lower_const_add(&body[cursor..], constants) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor + 1], source));
+                cursor += 2;
                 continue;
             }
             if let (Some(dst), Op::Return { src }) = (ternary_dst, &body[cursor]) {
@@ -975,6 +1056,19 @@ impl CodeArena {
             parameter_ends: self.parameter_ends.into_boxed_slice().into(),
             constants: self.constants.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
+            quickening_sites: self
+                .quickening_sites
+                .into_iter()
+                .map(|sites| {
+                    sites
+                        .into_iter()
+                        .map(std::cell::RefCell::new)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice()
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+                .into(),
             operand_windows: self.operand_windows.into_boxed_slice().into(),
             catch_ranges: self.catch_ranges.into_boxed_slice().into(),
         })
@@ -1150,6 +1244,7 @@ pub struct CodeStore {
     parameter_ends: Rc<[Option<u32>]>,
     constants: Rc<[ConstantPool]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
+    quickening_sites: Rc<[Box<[std::cell::RefCell<crate::quickening::QuickeningSite<4>>]>]>,
     operand_windows: Rc<[Vec<Rc<[u16]>>]>,
     catch_ranges: Rc<[Vec<CatchRange>]>,
 }
@@ -1181,6 +1276,688 @@ impl CodeStore {
 pub struct CodeView<'a> {
     store: &'a CodeStore,
     range: CodeRange,
+}
+
+/// Execution tier selected for one immutable function body.
+///
+/// The tier is mutable metadata, not a second semantic representation: every
+/// baseline entry still points at the canonical compact instruction and uses
+/// the ordinary handler on a miss or unsupported operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionTier {
+    Interpreter,
+    Baseline,
+    Optimizing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TierTransition {
+    Cold,
+    CompileBaseline,
+    Baseline,
+    CompileOptimizing,
+    Optimizing,
+}
+
+/// Observable, bounded profile for one function body.  This is a snapshot of
+/// admission facts, not a second execution representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TierProfile {
+    pub tier: ExecutionTier,
+    pub invocations: u32,
+    pub retired: u64,
+    pub baseline_instructions: usize,
+    pub optimizing_instructions: usize,
+    pub osr_entries: usize,
+}
+
+/// Optional machine-code leaf for generated Number binary-operation stencils.
+/// It is deliberately narrow: any non-number input or stencil failure returns
+/// to the ordinary handler, so this cannot create an alternate JS semantics.
+pub(crate) struct NativeBinaryPlan {
+    // Mapping is lazy: compiling a baseline plan only records the admitted
+    // leaf.  The disposable executable arena is created on first proven
+    // numeric execution, so a cold function cannot allocate native code for
+    // every arithmetic instruction it happens to contain.
+    arena: Option<crate::stencil_arena::StencilArena>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    // Numeric leaves currently have no dynamic holes, but retaining one site
+    // keeps the patch-value view stable and avoids constructing a fresh cache
+    // object on every native execution.
+    site: crate::quickening::QuickeningSite<4>,
+    opcode: crate::ir::Opcode,
+}
+
+impl NativeBinaryPlan {
+    fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        let opcode = instruction.opcode;
+        opcode.numeric_operator()?;
+        // The AddConst stencil has a fixed machine operand order (source in
+        // xmm0, embedded constant in xmm1).  Constant-left addition is
+        // observationally distinct for signed zero, so keep that variant on
+        // the canonical Rust arithmetic handler instead of silently swapping
+        // the operands in native code.
+        if opcode == crate::ir::Opcode::AddConst && instruction.add_const_is_left() {
+            return None;
+        }
+        let key = crate::stencil_select::numeric_region_key(opcode)?;
+        // Build-generated rows are the sole executable admission fact.  On
+        // non-x86 targets the catalog intentionally marks numeric bytes as
+        // data-only, so do not even allocate a native plan there.
+        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        Some(Self {
+            arena: None,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            site: crate::quickening::QuickeningSite::new(opcode),
+            opcode,
+        })
+    }
+
+    pub(crate) fn execute(
+        &mut self,
+        lhs: f64,
+        rhs: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        let values = (self.opcode == crate::ir::Opcode::AddConst)
+            .then(|| values.with_constant_bits(rhs.to_bits()))
+            .unwrap_or(values);
+        let Some(key) = crate::stencil_select::numeric_region_key(self.opcode) else {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        };
+        // Check the generated admission row before mapping any pages.  This
+        // makes the ARM/non-executable path allocation-free and leaves the
+        // canonical Rust handler as the only semantic implementation.
+        if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable) {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if self.lifecycle.observe_site(&self.site, key, true)
+            == crate::stencil_lifecycle::StencilState::Retired
+        {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if self.arena.is_none() {
+            match crate::stencil_arena::StencilArena::new(4096) {
+                Ok(arena) => self.arena = Some(arena),
+                Err(error) => {
+                    self.lifecycle.reset();
+                    return Err(error);
+                }
+            }
+        }
+        // The allocation above is fallible and has been stored only after it
+        // succeeds, so the executable leaf always retains the ordinary
+        // fallback on mapping failure instead of panicking.
+        let result = {
+            let arena = self
+                .arena
+                .as_mut()
+                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+            arena.render_selected_f64(&mut self.cache, key, &values, lhs, rhs, || {
+                Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+            })
+        };
+        if result.is_err() {
+            // Any failed render/protection/patch leaves no installed physical
+            // view. Drop the disposable mapping, cache, and lifecycle state
+            // instead of retrying into stale writable/exhausted storage; the
+            // caller then takes the complete Rust semantic fallback.
+            self.arena.take();
+            self.cache.clear();
+            self.lifecycle.reset();
+        }
+        result
+    }
+}
+
+impl std::fmt::Debug for NativeBinaryPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeBinaryPlan")
+            .field("opcode", &self.opcode)
+            .field(
+                "used_bytes",
+                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+            )
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
+/// Optional native leaf for a pure register-word move. The machine code only
+/// copies the canonical eight-byte word; the Rust destination write performs
+/// the retain/release edge, so pointer-backed values remain ownership-safe.
+pub(crate) struct NativeMovePlan {
+    arena: Option<crate::stencil_arena::StencilArena>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    site: crate::quickening::QuickeningSite<4>,
+    opcode: crate::ir::Opcode,
+}
+
+impl NativeMovePlan {
+    fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        if instruction.opcode != crate::ir::Opcode::Move || instruction.flags != 0 {
+            return None;
+        }
+        let key = crate::stencil_select::move_region_key();
+        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        Some(Self {
+            arena: None,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            site: crate::quickening::QuickeningSite::new(instruction.opcode),
+            opcode: instruction.opcode,
+        })
+    }
+
+    pub(crate) fn execute(
+        &mut self,
+        source: *const crate::tagged_value::TaggedValue,
+    ) -> Result<u64, crate::stencil_arena::ArenaError> {
+        let key = crate::stencil_select::move_region_key();
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
+            || self.lifecycle.observe(key, true) == crate::stencil_lifecycle::StencilState::Retired
+        {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if self.arena.is_none() {
+            match crate::stencil_arena::StencilArena::new(4096) {
+                Ok(arena) => self.arena = Some(arena),
+                Err(error) => {
+                    self.lifecycle.reset();
+                    return Err(error);
+                }
+            }
+        }
+        let result = (|| {
+            let arena = self
+                .arena
+                .as_mut()
+                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+            let record = crate::stencil_select::select_region(key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let offset = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
+            arena.make_executable()?;
+            let address = arena
+                .address(offset)
+                .ok_or(crate::stencil_arena::ArenaError::Exhausted)?;
+            arena.execute_tagged_word(address, source)
+        })();
+        if result.is_err() {
+            self.arena.take();
+            self.cache.clear();
+            self.lifecycle.reset();
+        }
+        result
+    }
+}
+
+impl std::fmt::Debug for NativeMovePlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeMovePlan")
+            .field("opcode", &self.opcode)
+            .field(
+                "used_bytes",
+                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+            )
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
+/// Optional native leaf for a named plain-own property read.  The shape site
+/// proves the slot and descriptor facts; this leaf only performs the physical
+/// word load, while `RegisterFile` owns the retain/release edge afterward.
+pub(crate) struct NativePropertyPlan {
+    arena: Option<crate::stencil_arena::StencilArena>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    opcode: crate::ir::Opcode,
+}
+
+impl NativePropertyPlan {
+    fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        let opcode = instruction.opcode;
+        (opcode == crate::ir::Opcode::GetN).then_some(())?;
+        let key = crate::stencil_select::property_region_key();
+        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        Some(Self {
+            arena: None,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            opcode,
+        })
+    }
+
+    pub(crate) fn execute(
+        &mut self,
+        slot: *const crate::register_file::SlotWord,
+        site: &crate::quickening::QuickeningSite<4>,
+    ) -> Result<u64, crate::stencil_arena::ArenaError> {
+        let key = crate::stencil_select::property_region_key();
+        let values = crate::stencil_fact::PatchValues::from_site(site);
+        if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
+            || self.lifecycle.observe_site(site, key, true)
+                == crate::stencil_lifecycle::StencilState::Retired
+        {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if self.arena.is_none() {
+            match crate::stencil_arena::StencilArena::new(4096) {
+                Ok(arena) => self.arena = Some(arena),
+                Err(error) => {
+                    self.lifecycle.reset();
+                    return Err(error);
+                }
+            }
+        }
+        let result = (|| {
+            let arena = self
+                .arena
+                .as_mut()
+                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+            let record = crate::stencil_select::select_region(key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let offset = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
+            arena.make_executable()?;
+            let address = arena
+                .address(offset)
+                .ok_or(crate::stencil_arena::ArenaError::Exhausted)?;
+            arena.execute_word(address, slot)
+        })();
+        if result.is_err() {
+            self.arena.take();
+            self.cache.clear();
+            self.lifecycle.reset();
+        }
+        result
+    }
+}
+
+impl std::fmt::Debug for NativePropertyPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativePropertyPlan")
+            .field("opcode", &self.opcode)
+            .field(
+                "used_bytes",
+                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+            )
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
+/// Executable baseline entry for every compact opcode.  This is deliberately
+/// a trampoline rather than a second implementation of an operation: the
+/// generated bytes receive an opaque context and tail-call the canonical Rust
+/// handler bridge. Specialized leaves above can still bypass this gateway;
+/// every miss, throw, call, and control transition remains authoritative in
+/// `run_baseline_instruction`.
+pub(crate) struct NativeDispatchPlan {
+    arena: Option<crate::stencil_arena::StencilArena>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    site: crate::quickening::QuickeningSite<4>,
+    opcode: crate::ir::Opcode,
+}
+
+#[derive(Debug)]
+pub(crate) enum NativeDispatchError {
+    /// The physical trampoline could not be selected, rendered, protected,
+    /// or entered. The caller may retry the canonical Rust handler.
+    Physical(String),
+    /// The canonical handler itself produced a VM error. Retrying it would
+    /// duplicate observable effects, so this edge must be propagated.
+    Semantic(crate::vm::VmError),
+}
+
+impl NativeDispatchPlan {
+    fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        let key = crate::stencil_select::dispatch_region_key();
+        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        Some(Self {
+            arena: None,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            site: crate::quickening::QuickeningSite::new(instruction.opcode),
+            opcode: instruction.opcode,
+        })
+    }
+
+    pub(crate) fn execute(
+        &mut self,
+        code: CodeView<'_>,
+        pc: usize,
+        entry: BaselineEntry,
+        registers: &mut crate::register_file::RegisterFile,
+        context: &crate::vm::VmContext,
+    ) -> Result<crate::vm::DispatchTransition, NativeDispatchError> {
+        let key = crate::stencil_select::dispatch_region_key();
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_pointer_bits(crate::vm::native_dispatch_bridge as *const () as usize);
+        if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
+            || self.lifecycle.observe_site(&self.site, key, true)
+                == crate::stencil_lifecycle::StencilState::Retired
+        {
+            return Err(NativeDispatchError::Physical(
+                "native baseline entry unavailable".into(),
+            ));
+        }
+        if self.arena.is_none() {
+            match crate::stencil_arena::StencilArena::new(4096) {
+                Ok(arena) => self.arena = Some(arena),
+                Err(error) => {
+                    self.lifecycle.reset();
+                    return Err(NativeDispatchError::Physical(format!(
+                        "native baseline mapping failed: {error:?}"
+                    )));
+                }
+            }
+        }
+        let result = (|| {
+            let arena = self.arena.as_mut().ok_or_else(|| {
+                NativeDispatchError::Physical("native baseline arena missing".into())
+            })?;
+            let record = crate::stencil_select::select_region(key).ok_or_else(|| {
+                NativeDispatchError::Physical("native baseline stencil missing".into())
+            })?;
+            let offset = arena
+                .render_or_get(&mut self.cache, key, &record.stencil, &values)
+                .map_err(|error| {
+                    NativeDispatchError::Physical(format!(
+                        "native baseline render failed: {error:?}"
+                    ))
+                })?;
+            arena.make_executable().map_err(|error| {
+                NativeDispatchError::Physical(format!(
+                    "native baseline protection failed: {error:?}"
+                ))
+            })?;
+            let address = arena.address(offset).ok_or_else(|| {
+                NativeDispatchError::Physical("native baseline entry address unavailable".into())
+            })?;
+            let mut dispatch =
+                crate::vm::NativeDispatchContext::new(code, pc, entry, registers, context);
+            let status = arena
+                .execute_dispatch(
+                    address,
+                    (&mut dispatch as *mut crate::vm::NativeDispatchContext<'_>)
+                        .cast::<std::ffi::c_void>(),
+                )
+                .map_err(|error| {
+                    NativeDispatchError::Physical(format!(
+                        "native baseline execution failed: {error:?}"
+                    ))
+                })?;
+            dispatch.finish(status)
+        })();
+        if matches!(result, Err(NativeDispatchError::Physical(_))) {
+            // The trampoline carries no persistent semantic state. If mapping,
+            // protection, or the bridge fails, discard the physical view and
+            // make the caller use the complete ordinary path next time.
+            self.arena.take();
+            self.cache.clear();
+            self.lifecycle.reset();
+        }
+        result
+    }
+}
+
+impl std::fmt::Debug for NativeDispatchPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeDispatchPlan")
+            .field("opcode", &self.opcode)
+            .field(
+                "used_bytes",
+                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+            )
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
+/// Build-time/runtime boundary for the baseline tier.  Decoding and control
+/// facts are computed once when a function becomes hot; values, effects, and
+/// exception behavior remain owned by the canonical VM handlers.
+#[derive(Debug, Clone)]
+pub(crate) struct BaselinePlan {
+    entries: Rc<[BaselineEntry]>,
+    osr_entries: Rc<[u32]>,
+    /// One optional machine-code leaf per canonical instruction.  The vector
+    /// is an admission map only; each leaf still executes through the same
+    /// complete handler on a failed numeric guard or unsupported platform.
+    native_binary: Rc<[Option<Rc<RefCell<NativeBinaryPlan>>>]>,
+    native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
+    native_property: Rc<[Option<Rc<RefCell<NativePropertyPlan>>>]>,
+    native_dispatch: Rc<[Option<Rc<RefCell<NativeDispatchPlan>>>]>,
+}
+
+impl PartialEq for BaselinePlan {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries && self.osr_entries == other.osr_entries
+    }
+}
+
+impl Eq for BaselinePlan {}
+
+/// One build-time-lowered baseline entry.  The instruction remains canonical;
+/// handler/control facts are the mechanical consequences cached beside it.
+#[derive(Clone, Copy)]
+pub(crate) struct BaselineEntry {
+    pub(crate) instruction: crate::ir::Instruction,
+    pub(crate) handler: crate::ir::CompactHandler,
+    pub(crate) control: crate::ir::ControlOperands,
+}
+
+impl std::fmt::Debug for BaselineEntry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BaselineEntry")
+            .field("instruction", &self.instruction)
+            .field("control", &self.control)
+            .finish()
+    }
+}
+
+impl PartialEq for BaselineEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.instruction == other.instruction && self.control == other.control
+    }
+}
+
+impl Eq for BaselineEntry {}
+
+impl BaselinePlan {
+    fn compile(code: CodeView<'_>) -> Self {
+        let entries: Rc<[BaselineEntry]> = (0..code.len())
+            .filter_map(|pc| {
+                let instruction = code.instruction(pc)?;
+                Some(BaselineEntry {
+                    instruction,
+                    handler: instruction.opcode.handler(),
+                    control: instruction.opcode.control_operands(instruction),
+                })
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let osr_entries = (0..code.len())
+            .filter_map(|pc| {
+                let instruction = code.instruction(pc)?;
+                is_osr_candidate(pc, instruction).then_some(pc as u32)
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let native_binary = entries
+            .iter()
+            .map(|entry| {
+                NativeBinaryPlan::new(entry.instruction).map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let native_property = entries
+            .iter()
+            .map(|entry| {
+                NativePropertyPlan::new(entry.instruction)
+                    .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let native_move = entries
+            .iter()
+            .map(|entry| {
+                NativeMovePlan::new(entry.instruction).map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let native_dispatch = entries
+            .iter()
+            .map(|entry| {
+                NativeDispatchPlan::new(entry.instruction)
+                    .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
+        Self {
+            entries,
+            osr_entries,
+            native_binary,
+            native_move,
+            native_property,
+            native_dispatch,
+        }
+    }
+
+    pub(crate) fn instruction(&self, pc: usize) -> Option<crate::ir::Instruction> {
+        self.entries.get(pc).map(|entry| entry.instruction)
+    }
+
+    pub(crate) fn entry(&self, pc: usize) -> Option<BaselineEntry> {
+        self.entries.get(pc).copied()
+    }
+
+    pub(crate) fn native_binary_at(&self, pc: usize) -> Option<Rc<RefCell<NativeBinaryPlan>>> {
+        self.native_binary.get(pc).and_then(Clone::clone)
+    }
+
+    pub(crate) fn native_move_at(&self, pc: usize) -> Option<Rc<RefCell<NativeMovePlan>>> {
+        self.native_move.get(pc).and_then(Clone::clone)
+    }
+
+    pub(crate) fn native_property_at(&self, pc: usize) -> Option<Rc<RefCell<NativePropertyPlan>>> {
+        self.native_property.get(pc).and_then(Clone::clone)
+    }
+
+    pub(crate) fn native_dispatch_at(&self, pc: usize) -> Option<Rc<RefCell<NativeDispatchPlan>>> {
+        self.native_dispatch.get(pc).and_then(Clone::clone)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
+        self.osr_entries.binary_search(&(pc as u32)).is_ok()
+    }
+}
+
+/// Rust-native optimizing dispatch plan. This is a physical execution view,
+/// not a second semantic IR: every entry retains the canonical instruction,
+/// handler, and control facts while caching already-admitted leaves. Any
+/// unsupported operation still goes through the complete baseline handler.
+#[derive(Clone)]
+pub(crate) struct OptimizingPlan {
+    entries: Rc<[OptimizingEntry]>,
+}
+
+#[derive(Clone)]
+pub(crate) struct OptimizingEntry {
+    pub(crate) baseline: BaselineEntry,
+    pub(crate) native_binary: Option<Rc<RefCell<NativeBinaryPlan>>>,
+    pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
+    pub(crate) native_property: Option<Rc<RefCell<NativePropertyPlan>>>,
+    pub(crate) native_dispatch: Option<Rc<RefCell<NativeDispatchPlan>>>,
+}
+
+impl std::fmt::Debug for OptimizingPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OptimizingPlan")
+            .field("instructions", &self.entries.len())
+            .finish()
+    }
+}
+
+impl OptimizingPlan {
+    fn compile(baseline: &BaselinePlan) -> Self {
+        let entries = baseline
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(pc, entry)| OptimizingEntry {
+                baseline: *entry,
+                native_binary: baseline.native_binary.get(pc).and_then(Clone::clone),
+                native_move: baseline.native_move.get(pc).and_then(Clone::clone),
+                native_property: baseline.native_property.get(pc).and_then(Clone::clone),
+                native_dispatch: baseline.native_dispatch.get(pc).and_then(Clone::clone),
+            })
+            .collect::<Vec<_>>()
+            .into();
+        Self { entries }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn entry(&self, pc: usize) -> Option<&OptimizingEntry> {
+        self.entries.get(pc)
+    }
+}
+
+/// OSR is an admission edge for a hot loop, not a generic branch/return hook.
+/// The target is already a canonical compact operand, so the baseline plan can
+/// classify back-edges without retaining another control-flow representation.
+fn is_osr_candidate(pc: usize, instruction: crate::ir::Instruction) -> bool {
+    match instruction.opcode.control_operands(instruction) {
+        crate::ir::ControlOperands::Branch { target, .. }
+        | crate::ir::ControlOperands::Jump { target } => usize::from(target) <= pc,
+        // `ForI` is a structured-loop residual whose handler executes the
+        // complete canonical loop gateway. It has no bytecode back-edge to
+        // resume from, so treating it as an OSR entry would skip the loop by
+        // transferring to `pc + 1` after compilation.
+        crate::ir::ControlOperands::Loop { .. } => false,
+        _ => false,
+    }
+}
+
+#[derive(Debug)]
+struct TierState {
+    invocations: u32,
+    retired: u64,
+    threshold: u32,
+    tier: ExecutionTier,
+    plan: Option<Rc<BaselinePlan>>,
+    optimizing: Option<Rc<OptimizingPlan>>,
+}
+
+impl TierState {
+    fn new() -> Self {
+        Self {
+            invocations: 0,
+            retired: 0,
+            threshold: 32,
+            tier: ExecutionTier::Interpreter,
+            plan: None,
+            optimizing: None,
+        }
+    }
 }
 
 impl<'a> CodeView<'a> {
@@ -1249,6 +2026,15 @@ impl<'a> CodeView<'a> {
             .map(|value| (instruction.a, value))
     }
 
+    /// Read a constant from this code range's canonical pool.
+    #[inline]
+    pub fn constant(self, id: u16) -> Option<&'a Constant> {
+        self.store
+            .constants
+            .get(self.range.code.0 as usize)
+            .and_then(|pool| pool.get(id))
+    }
+
     #[inline]
     pub fn binary_at(self, pc: usize) -> Option<(u16, crate::ops::BinaryOp, u16, u16)> {
         let instruction = self.instruction(pc)?;
@@ -1271,6 +2057,20 @@ impl<'a> CodeView<'a> {
             .metadata
             .get(self.range.code.0 as usize)?
             .get(offset.checked_sub(range_start)?)
+    }
+
+    /// Access the generated quickening state for one guarded instruction.
+    #[inline]
+    pub(crate) fn quickening_site(
+        self,
+        pc: usize,
+    ) -> Option<&'a std::cell::RefCell<crate::quickening::QuickeningSite<4>>> {
+        let metadata = self.metadata_at(pc)?;
+        (metadata.quickening_site != u32::MAX).then_some(())?;
+        self.store
+            .quickening_sites
+            .get(self.range.code.0 as usize)?
+            .get(metadata.quickening_site as usize)
     }
 
     #[inline]
@@ -1342,6 +2142,7 @@ pub struct FunctionCode {
     source: Option<Rc<[Op]>>,
     capture_slots: Rc<[u16]>,
     facts: Rc<crate::facts::FunctionFacts>,
+    tier: Rc<RefCell<TierState>>,
 }
 
 impl FunctionCode {
@@ -1354,6 +2155,7 @@ impl FunctionCode {
             source: None,
             capture_slots,
             facts: Rc::default(),
+            tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
 
@@ -1369,6 +2171,7 @@ impl FunctionCode {
             source: Some(body.into_boxed_slice().into()),
             capture_slots,
             facts: Rc::default(),
+            tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
 
@@ -1398,6 +2201,7 @@ impl FunctionCode {
                 source: None,
                 capture_slots,
                 facts: Rc::default(),
+                tier: Rc::new(RefCell::new(TierState::new())),
             })
             .collect()
     }
@@ -1411,6 +2215,7 @@ impl FunctionCode {
             source: None,
             capture_slots: Rc::from([u16::MAX]),
             facts: Rc::default(),
+            tier: Rc::new(RefCell::new(TierState::new())),
         }
     }
 
@@ -1425,6 +2230,153 @@ impl FunctionCode {
 
     pub(crate) fn facts(&self) -> &crate::facts::FunctionFacts {
         &self.facts
+    }
+
+    /// Account one function entry and compile the baseline plan when prior
+    /// execution has crossed the bytecode-retirement threshold.  The paper's
+    /// profiler measures executed bytecodes rather than call frequency, so a
+    /// function is not promoted merely because it was invoked repeatedly.
+    /// Compilation is disposable metadata; the canonical CodeView and handler
+    /// remain the only semantic source of truth.
+    pub(crate) fn enter_invocation(&self) -> TierTransition {
+        let mut state = self.tier.borrow_mut();
+        state.invocations = state.invocations.saturating_add(1);
+        if state.tier == ExecutionTier::Optimizing {
+            return TierTransition::Optimizing;
+        }
+        if state.tier == ExecutionTier::Baseline {
+            // Admit optimization only after a bounded warmup beyond baseline.
+            // The existing profile is the sole admission source; the plan is
+            // disposable metadata over canonical instructions.
+            let optimization_threshold = state
+                .threshold
+                .saturating_mul(OPTIMIZATION_WARMUP_MULTIPLIER)
+                .max(1);
+            if state.invocations < optimization_threshold {
+                return TierTransition::Baseline;
+            }
+            let Some(plan) = state.plan.as_ref() else {
+                return TierTransition::Baseline;
+            };
+            state.optimizing = Some(Rc::new(OptimizingPlan::compile(plan)));
+            state.tier = ExecutionTier::Optimizing;
+            return TierTransition::CompileOptimizing;
+        }
+        if state.retired < u64::from(state.threshold) {
+            return TierTransition::Cold;
+        }
+        let Some(code) = self.code() else {
+            return TierTransition::Cold;
+        };
+        state.plan = Some(Rc::new(BaselinePlan::compile(code)));
+        state.tier = ExecutionTier::Baseline;
+        TierTransition::CompileBaseline
+    }
+
+    pub(crate) fn tier(&self) -> ExecutionTier {
+        self.tier.borrow().tier
+    }
+
+    pub(crate) fn baseline_plan(&self) -> Option<Rc<BaselinePlan>> {
+        self.tier.borrow().plan.clone()
+    }
+
+    pub(crate) fn optimizing_plan(&self) -> Option<Rc<OptimizingPlan>> {
+        self.tier.borrow().optimizing.clone()
+    }
+
+    /// The optimizing view is currently validated only for the x86-64
+    /// stencil ABI. Keep the plan available for inspection/tests on every
+    /// host, but admit it to execution only where its physical assumptions
+    /// are true; other targets retain complete baseline semantics.
+    pub(crate) fn executable_optimizing_plan(&self) -> Option<Rc<OptimizingPlan>> {
+        cfg!(target_arch = "x86_64")
+            .then(|| self.optimizing_plan())
+            .flatten()
+    }
+
+    pub fn tier_profile(&self) -> TierProfile {
+        let state = self.tier.borrow();
+        TierProfile {
+            tier: state.tier,
+            invocations: state.invocations,
+            retired: state.retired,
+            baseline_instructions: state.plan.as_ref().map_or(0, |plan| plan.len()),
+            optimizing_instructions: state.optimizing.as_ref().map_or(0, |plan| plan.len()),
+            osr_entries: state.plan.as_ref().map_or(0, |plan| plan.osr_entries.len()),
+        }
+    }
+
+    pub(crate) fn retire(&self, count: u64) {
+        let mut state = self.tier.borrow_mut();
+        state.retired = state.retired.saturating_add(count);
+        if state.tier != ExecutionTier::Baseline
+            || state.optimizing.is_some()
+            || state.retired
+                < u64::from(
+                    state
+                        .threshold
+                        .saturating_mul(OPTIMIZATION_WARMUP_MULTIPLIER)
+                        .max(1),
+                )
+        {
+            return;
+        }
+        let Some(plan) = state.plan.clone() else {
+            return;
+        };
+        state.optimizing = Some(Rc::new(OptimizingPlan::compile(&plan)));
+        state.tier = ExecutionTier::Optimizing;
+    }
+
+    /// Retire one interpreter operation and compile at a hot back-edge. This
+    /// is the OSR admission edge: it only installs a plan, while the next
+    /// dispatch transfers to the same body with the current registers intact.
+    pub(crate) fn retire_at(&self, pc: usize) -> TierTransition {
+        let should_compile = {
+            let mut state = self.tier.borrow_mut();
+            state.retired = state.retired.saturating_add(1);
+            state.tier == ExecutionTier::Interpreter
+                && state.retired >= u64::from(state.threshold)
+                && self
+                    .code()
+                    .and_then(|code| code.instruction(pc))
+                    .is_some_and(|instruction| is_osr_candidate(pc, instruction))
+        };
+        if !should_compile {
+            return if self.tier() == ExecutionTier::Baseline {
+                TierTransition::Baseline
+            } else {
+                TierTransition::Cold
+            };
+        }
+        let Some(code) = self.code() else {
+            return TierTransition::Cold;
+        };
+        let mut state = self.tier.borrow_mut();
+        if state.tier == ExecutionTier::Interpreter {
+            state.plan = Some(Rc::new(BaselinePlan::compile(code)));
+            state.tier = ExecutionTier::Baseline;
+            TierTransition::CompileBaseline
+        } else {
+            TierTransition::Baseline
+        }
+    }
+
+    pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
+        self.baseline_plan()
+            .is_some_and(|plan| plan.is_osr_entry(pc))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tier_counts(&self) -> (u32, u64) {
+        let state = self.tier.borrow();
+        (state.invocations, state.retired)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tier_threshold_for_test(&self, threshold: u32) {
+        self.tier.borrow_mut().threshold = threshold.max(1);
     }
 
     pub fn code_id(&self) -> CodeId {
@@ -2114,6 +3066,49 @@ mod tests {
             Some(crate::ir::Instruction::move_(1, 2))
         );
         assert!(code.cold_at(0).is_none());
+    }
+
+    #[test]
+    fn guarded_catalog_rows_receive_one_disposable_quickening_site() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::GetPropertyDynamic {
+            dst: 1,
+            object: 2,
+            key: 3,
+        }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0).map(|i| i.opcode),
+            Some(crate::ir::Opcode::AGetI)
+        );
+        assert!(code.quickening_site(0).is_some());
+
+        let (store, range) = {
+            let mut arena = super::CodeArena::new();
+            let range = arena.append_slice(&[super::Op::Move { dst: 1, src: 2 }]);
+            (arena.freeze(), range)
+        };
+        assert!(store.code(range).unwrap().quickening_site(0).is_none());
+    }
+
+    #[test]
+    fn callable_catalog_rows_receive_a_quickening_site() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            args: Vec::new(),
+            spreads: Vec::new(),
+        }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0).map(|instruction| instruction.opcode),
+            Some(crate::ir::Opcode::Call)
+        );
+        assert!(code.quickening_site(0).is_some());
     }
 
     #[cfg(feature = "execution-trace")]

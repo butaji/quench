@@ -697,35 +697,33 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         && duration_field(object, "years") != 0
         && duration_field(object, "months") == 0
         && duration_field(object, "weeks") == 0
-        && zoned_round_relative
-            .clone()
-            .is_some_and(|value| {
-                crate::execute::get_property_result(&value, "timeZoneId")
-                    .ok()
-                    .is_some_and(|timezone| {
-                        let Some(timezone) = crate::conversion::to_string(&timezone).ok() else {
-                            return false;
-                        };
-                        if timezone.starts_with(['+', '-']) {
-                            return false;
-                        }
-                        let Some(Value::BigInt(epoch)) =
-                            crate::execute::get_property_result(&value, "epochNanoseconds").ok()
-                        else {
-                            return true;
-                        };
-                        let Ok(epoch) = epoch.parse::<i128>() else {
-                            return true;
-                        };
-                        [1_i128, 2, 90, 180, 270, 365].into_iter().any(|days| {
-                            super::timezone_offset_nanos(&timezone, epoch)
-                                != super::timezone_offset_nanos(
-                                    &timezone,
-                                    epoch + days * 86_400_000_000_000,
-                                )
-                        })
+        && zoned_round_relative.clone().is_some_and(|value| {
+            crate::execute::get_property_result(&value, "timeZoneId")
+                .ok()
+                .is_some_and(|timezone| {
+                    let Some(timezone) = crate::conversion::to_string(&timezone).ok() else {
+                        return false;
+                    };
+                    if timezone.starts_with(['+', '-']) {
+                        return false;
+                    }
+                    let Some(Value::BigInt(epoch)) =
+                        crate::execute::get_property_result(&value, "epochNanoseconds").ok()
+                    else {
+                        return true;
+                    };
+                    let Ok(epoch) = epoch.parse::<i128>() else {
+                        return true;
+                    };
+                    [1_i128, 2, 90, 180, 270, 365].into_iter().any(|days| {
+                        super::timezone_offset_nanos(&timezone, epoch)
+                            != super::timezone_offset_nanos(
+                                &timezone,
+                                epoch + days * 86_400_000_000_000,
+                            )
                     })
-            })
+                })
+        })
     {
         let fields = [
             "years",
@@ -767,8 +765,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             && index == 4
         {
             let increment = rounding_increment(options, 4)?;
-            let hours = duration_epoch_delta(&duration, &relative)? as f64
-                / 3_600_000_000_000.0;
+            let hours = duration_epoch_delta(&duration, &relative)? as f64 / 3_600_000_000_000.0;
             let rounded = round_number(hours / increment, &rounding_mode(options)?) * increment;
             if let Some(length) = zoned_day_length_hours(&relative) {
                 let mut result = vec![Value::Number(0.0); 10];
@@ -813,8 +810,8 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             return zoned_round_days(object, &duration, &relative, options, index);
         }
         if !has_calendar && largest == 4 && requested_largest == Some(4) {
-            let mut hours = duration_epoch_delta(&duration, &relative)? as f64
-                / 3_600_000_000_000.0;
+            let mut hours =
+                duration_epoch_delta(&duration, &relative)? as f64 / 3_600_000_000_000.0;
             if has_smallest_option {
                 let increment = rounding_increment(options, 4)?;
                 hours = round_number(hours / increment, &rounding_mode(options)?) * increment;
@@ -824,13 +821,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             return construct(&result);
         }
     }
-    if index >= 4
-        && !has_calendar
-        && relative_is_zoned(options)
-        && largest >= 4
-    {
+    if index >= 4 && !has_calendar && relative_is_zoned(options) && largest >= 4 {
         if duration_field(object, "days") != 0 {
-            if let Some(relative) = relative_option(options).and_then(|value| zoned_relative_value(&value)) {
+            if let Some(relative) =
+                relative_option(options).and_then(|value| zoned_relative_value(&value))
+            {
                 let duration = construct(&duration_fields(object))?;
                 let actual = duration_epoch_delta(&duration, &relative)?;
                 let increment = rounding_increment(options, index)? as i128;
@@ -841,7 +836,8 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                     1_000_000,
                     1_000,
                     1,
-                ][index - 4] * increment;
+                ][index - 4]
+                    * increment;
                 let rounded = round_integer(actual, quantum, &rounding_mode(options)?) * quantum;
                 let largest_index = requested_largest.unwrap_or(index);
                 let scales = [
@@ -857,8 +853,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                     1_i128,
                 ];
                 let mut fields = vec![Value::Number(0.0); 10];
-                fields[largest_index] =
-                    Value::Number((rounded / scales[largest_index]) as f64);
+                fields[largest_index] = Value::Number((rounded / scales[largest_index]) as f64);
                 return construct(&fields);
             }
         }
@@ -1085,7 +1080,10 @@ fn normalize_round_options(options: Option<&Value>) -> Result<Option<Value>, VmE
 fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
     if matches!(value, Value::Proxy(_)) {
         let ((year, month, day), timezone) = proxy_relative_date_record(value)?;
-        if timezone.as_deref().is_some_and(|timezone| timezone.contains('/')) {
+        if timezone
+            .as_deref()
+            .is_some_and(|timezone| timezone.contains('/'))
+        {
             return crate::temporal::execute(
                 crate::ops::Builtin::TemporalZonedDateTimeFrom,
                 None,
@@ -1097,7 +1095,10 @@ fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
             crate::value::ObjectData::new(vec![
                 ("year".to_string(), Value::Number(year as f64)),
                 ("month".to_string(), Value::Number(month as f64)),
-                ("monthCode".to_string(), Value::String(format!("M{month:02}"))),
+                (
+                    "monthCode".to_string(),
+                    Value::String(format!("M{month:02}")),
+                ),
                 ("day".to_string(), Value::Number(day as f64)),
                 ("calendar".to_string(), Value::String("iso8601".to_string())),
             ]),

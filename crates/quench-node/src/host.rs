@@ -268,7 +268,7 @@ fn host_exec_path() -> String {
 }
 
 /// Same as `install`, but provides a host-side output sink that
-/// receives `console.log/info/...` lines.
+/// receives raw output chunks from `console` and process streams.
 pub fn install_with_sink(
     realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,

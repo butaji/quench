@@ -35,12 +35,7 @@ pub struct GcArray {
     pub desc: RefVal,
 }
 
-pub fn alloc_struct(
-    heap: &mut GcHeap,
-    type_idx: u32,
-    fields: Vec<Slot>,
-    desc: RefVal,
-) -> RefVal {
+pub fn alloc_struct(heap: &mut GcHeap, type_idx: u32, fields: Vec<Slot>, desc: RefVal) -> RefVal {
     let id = heap.structs.len() as u32;
     heap.structs.push(GcStruct {
         type_idx,
@@ -103,7 +98,11 @@ pub fn step(
             let r = alloc_struct(&mut vm.gc().borrow_mut(), type_idx, fields, desc);
             regs[dst as usize] = Slot::Native(Native::Ref(r));
         }
-        GcOp::StructGet { field, signed, pack } => {
+        GcOp::StructGet {
+            field,
+            signed,
+            pack,
+        } => {
             let id = obj(regs, args[0], true)?;
             let v = vm
                 .gc()
@@ -129,12 +128,7 @@ pub fn step(
             let fill = regs[args[0] as usize].clone();
             let n = i32_len(regs, args[1])?;
             let elem = array_elem(vm, type_idx)?;
-            let r = alloc_array(
-                &mut vm.gc().borrow_mut(),
-                type_idx,
-                elem,
-                vec![fill; n],
-            );
+            let r = alloc_array(&mut vm.gc().borrow_mut(), type_idx, elem, vec![fill; n]);
             regs[dst as usize] = Slot::Native(Native::Ref(r));
         }
         GcOp::ArrayNewDefault { type_idx } => {
@@ -146,7 +140,11 @@ pub fn step(
         }
         GcOp::ArrayNewFixed { type_idx, n } => {
             let elem = array_elem(vm, type_idx)?;
-            let elems: Vec<_> = args.iter().take(n as usize).map(|r| regs[*r as usize].clone()).collect();
+            let elems: Vec<_> = args
+                .iter()
+                .take(n as usize)
+                .map(|r| regs[*r as usize].clone())
+                .collect();
             let r = alloc_array(&mut vm.gc().borrow_mut(), type_idx, elem, elems);
             regs[dst as usize] = Slot::Native(Native::Ref(r));
         }
@@ -333,12 +331,7 @@ fn array_new_elem(
     Ok(())
 }
 
-fn array_init_data(
-    vm: &Instance,
-    args: &[u16],
-    regs: &[Slot],
-    data: u32,
-) -> Result<(), Failure> {
+fn array_init_data(vm: &Instance, args: &[u16], regs: &[Slot], data: u32) -> Result<(), Failure> {
     let id = arr(regs, args[0])?;
     let dest = i32_len(regs, args[1])?;
     let off = i32_len(regs, args[2])?;
@@ -354,12 +347,7 @@ fn array_init_data(
     write_array_range(vm, id, dest, &vals)
 }
 
-fn array_init_elem(
-    vm: &Instance,
-    args: &[u16],
-    regs: &[Slot],
-    elem: u32,
-) -> Result<(), Failure> {
+fn array_init_elem(vm: &Instance, args: &[u16], regs: &[Slot], elem: u32) -> Result<(), Failure> {
     let id = arr(regs, args[0])?;
     let dest = i32_len(regs, args[1])?;
     let off = i32_len(regs, args[2])?;
@@ -403,12 +391,14 @@ fn data_elems(
         .checked_mul(size)
         .ok_or(Failure::Trap(Trap::OutOfBounds))?;
     let slice = src
-        .get(start..start.checked_add(len).ok_or(Failure::Trap(Trap::OutOfBounds))?)
+        .get(
+            start
+                ..start
+                    .checked_add(len)
+                    .ok_or(Failure::Trap(Trap::OutOfBounds))?,
+        )
         .ok_or(Failure::Trap(Trap::OutOfBounds))?;
-    Ok(slice
-        .chunks(size)
-        .map(|c| decode_elem(c, elem))
-        .collect())
+    Ok(slice.chunks(size).map(|c| decode_elem(c, elem)).collect())
 }
 
 fn elem_slice(vm: &Instance, elem: u32, off: usize, n: usize) -> Result<Vec<Slot>, Failure> {
@@ -421,7 +411,10 @@ fn elem_slice(vm: &Instance, elem: u32, off: usize, n: usize) -> Result<Vec<Slot
     let slice = src
         .get(off..off.checked_add(n).ok_or(Failure::Trap(Trap::OutOfBounds))?)
         .ok_or(Failure::Trap(Trap::OutOfBounds))?;
-    Ok(slice.iter().map(|r| Slot::Native(Native::Ref(*r))).collect())
+    Ok(slice
+        .iter()
+        .map(|r| Slot::Native(Native::Ref(*r)))
+        .collect())
 }
 
 fn elem_bytes(s: GcStorage) -> usize {
@@ -438,7 +431,9 @@ fn elem_bytes(s: GcStorage) -> usize {
 fn decode_elem(bytes: &[u8], s: GcStorage) -> Slot {
     match s {
         GcStorage::I8 => Slot::Native(Native::I32(bytes[0] as i32)),
-        GcStorage::I16 => Slot::Native(Native::I32(i16::from_le_bytes([bytes[0], bytes[1]]) as i32)),
+        GcStorage::I16 => {
+            Slot::Native(Native::I32(i16::from_le_bytes([bytes[0], bytes[1]]) as i32))
+        }
         GcStorage::Val(crate::hir::Kind::I32) => Slot::Native(Native::I32(i32::from_le_bytes(
             bytes[..4].try_into().unwrap_or([0; 4]),
         ))),
@@ -462,7 +457,9 @@ fn decode_elem(bytes: &[u8], s: GcStorage) -> Slot {
 
 fn zeros(vm: &Instance, type_idx: u32) -> Result<Vec<Slot>, Failure> {
     match vm.gc_type(type_idx) {
-        Some(GcType::Struct { fields, .. }) => Ok(fields.iter().map(|s| zero_storage(*s)).collect()),
+        Some(GcType::Struct { fields, .. }) => {
+            Ok(fields.iter().map(|s| zero_storage(*s)).collect())
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -491,7 +488,9 @@ fn extend(v: Slot, signed: Option<bool>, pack: u8) -> Slot {
     match (v, signed, pack) {
         (Slot::Native(Native::I32(x)), Some(true), 8) => Slot::Native(Native::I32(x as i8 as i32)),
         (Slot::Native(Native::I32(x)), Some(false), 8) => Slot::Native(Native::I32(x as u8 as i32)),
-        (Slot::Native(Native::I32(x)), Some(true), 16) => Slot::Native(Native::I32(x as i16 as i32)),
+        (Slot::Native(Native::I32(x)), Some(true), 16) => {
+            Slot::Native(Native::I32(x as i16 as i32))
+        }
         (Slot::Native(Native::I32(x)), Some(false), 16) => {
             Slot::Native(Native::I32(x as u16 as i32))
         }
@@ -640,7 +639,12 @@ fn concrete_exact(vm: &Instance, r: RefVal, type_idx: Option<u32>) -> bool {
         None => return false,
     };
     let got = match r {
-        RefVal::Struct(id) => vm.gc().borrow().structs.get(id as usize).map(|s| s.type_idx),
+        RefVal::Struct(id) => vm
+            .gc()
+            .borrow()
+            .structs
+            .get(id as usize)
+            .map(|s| s.type_idx),
         RefVal::Array(id) => vm.gc().borrow().arrays.get(id as usize).map(|a| a.type_idx),
         RefVal::Func { inst, index } => {
             return func_ok(vm, inst, index, want, true);
@@ -704,7 +708,12 @@ fn concrete_ok(vm: &Instance, r: RefVal, type_idx: Option<u32>) -> bool {
         None => return false,
     };
     let got = match r {
-        RefVal::Struct(id) => vm.gc().borrow().structs.get(id as usize).map(|s| s.type_idx),
+        RefVal::Struct(id) => vm
+            .gc()
+            .borrow()
+            .structs
+            .get(id as usize)
+            .map(|s| s.type_idx),
         RefVal::Array(id) => vm.gc().borrow().arrays.get(id as usize).map(|a| a.type_idx),
         RefVal::Func { inst, index } => {
             return func_ok(vm, inst, index, want, false);

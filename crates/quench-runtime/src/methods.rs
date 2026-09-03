@@ -56,14 +56,51 @@ pub(crate) fn execute_named(
     instruction: crate::ir::Instruction,
     key: &str,
     cache: &std::cell::Cell<u64>,
+    site: Option<&std::cell::RefCell<crate::quickening::QuickeningSite<4>>>,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     crate::execution_trace::named_call(key);
-    if instruction.flags == 0 && execute_named_word(registers, instruction, cache).is_some() {
-        return Ok(None);
+    if instruction.flags <= 1 {
+        if let Some(outcome) = execute_named_word_fast(registers, instruction, key, cache)? {
+            crate::execution_trace::call_method(
+                usize::from(instruction.flags),
+                false,
+                true,
+                "Function",
+            );
+            match outcome {
+                NamedFunctionCall::Complete { value, specialized } => {
+                    if specialized {
+                        crate::execution_trace::kernel("CallKnown", false);
+                    }
+                    write_value(registers, instruction.a, value);
+                    return Ok(None);
+                }
+                NamedFunctionCall::Continue {
+                    function,
+                    receiver,
+                    argument,
+                } => {
+                    let mut arguments = crate::completion::CallArguments::new();
+                    arguments.extend(argument);
+                    return Ok(Some(crate::vm::vm_ops::take_call_continuation(
+                        registers,
+                        instruction.a,
+                        Value::Function(function),
+                        receiver,
+                        arguments,
+                    )));
+                }
+            }
+        }
     }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
-    let callee = named_known_callee(&receiver, cache)
-        .map_or_else(|| crate::vm::get_named_property_result(&receiver, key, cache), Ok)?;
+    let callee = named_known_callee(&receiver, key, cache).map_or_else(
+        || crate::vm::get_named_property_result(&receiver, key, cache),
+        Ok,
+    )?;
+    if observe_callable(site, &callee) {
+        crate::execution_trace::kernel("CallIC", false);
+    }
     let argument = (instruction.flags == 1)
         .then(|| read_register(registers, instruction.c))
         .transpose()?;
@@ -89,29 +126,73 @@ pub(crate) fn execute_named(
     )
 }
 
-fn execute_named_word(
+enum NamedFunctionCall {
+    Complete {
+        value: Value,
+        specialized: bool,
+    },
+    Continue {
+        function: std::rc::Rc<crate::value::FunctionValue>,
+        receiver: Value,
+        argument: Option<Value>,
+    },
+}
+
+fn execute_named_word_fast(
     registers: &mut crate::register_file::RegisterFile,
     instruction: crate::ir::Instruction,
+    key: &str,
     cache: &std::cell::Cell<u64>,
-) -> Option<()> {
-    let receiver = registers.read_object(usize::from(instruction.b))?;
-    let crate::vm::NamedCachedPayload::Word(slot) =
-        crate::vm::get_named_cached_payload(receiver, cache)?
-    else {
-        return None;
+) -> Result<Option<NamedFunctionCall>, VmError> {
+    let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
+    let Value::Object(object) = &receiver else {
+        return Ok(None);
     };
-    // SAFETY: receiver owns the method slot and the register owns receiver
-    // throughout this non-mutating call.
-    let function = unsafe { &*(&*slot).function_ptr()? };
-    let value = crate::functions::execute_shape_kernel_word(function, receiver)?;
-    crate::execution_trace::call_method(0, false, true, "Function");
-    crate::execution_trace::function_call_shape(
-        function.params,
-        function.code.capture_slots().len(),
-        function.code.code(),
-    );
-    registers.write_number(usize::from(instruction.a), value);
-    Some(())
+    let Some(crate::vm::NamedCachedPayload::Word(slot)) =
+        crate::vm::get_named_cached_payload(object, key, cache).or_else(|| {
+            crate::vm::proven_own_word(object, key)
+                .map(|slot| crate::vm::NamedCachedPayload::Word(std::ptr::from_ref(slot)))
+        })
+    else {
+        return Ok(None);
+    };
+    let Some(pointer) = (unsafe { (&*slot).function_ptr() }) else {
+        return Ok(None);
+    };
+    // The slot word roots the function for this call. Retain one temporary Rc
+    // so the direct-frame path can avoid an intermediate `Value::Function`
+    // decode while preserving ordinary call semantics.
+    unsafe { std::rc::Rc::increment_strong_count(pointer) };
+    let function = unsafe { std::rc::Rc::from_raw(pointer) };
+    let argument = (instruction.flags == 1)
+        .then(|| read_register(registers, instruction.c))
+        .transpose()?;
+    let arguments = argument
+        .as_ref()
+        .map(std::slice::from_ref)
+        .unwrap_or_default();
+    if crate::functions::direct_call_eligible(&function) {
+        // The named-property cache already guards the receiver layout and
+        // physical slot. Since this slot owns the callable identity, probing
+        // a second weak callable cache here only repeats the same proof.
+        let value = crate::functions::execute_direct(&function, &receiver, arguments)?;
+        return Ok(Some(NamedFunctionCall::Complete {
+            value,
+            specialized: false,
+        }));
+    }
+    if let Some(value) = crate::functions::try_execute_specialized(&function, &receiver, arguments)?
+    {
+        return Ok(Some(NamedFunctionCall::Complete {
+            value,
+            specialized: true,
+        }));
+    }
+    Ok(Some(NamedFunctionCall::Continue {
+        function,
+        receiver,
+        argument,
+    }))
 }
 
 pub(crate) fn execute_registered(
@@ -127,10 +208,12 @@ pub(crate) fn execute_registered(
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
+    if observe_callable(code.quickening_site(pc), &callee) {
+        crate::execution_trace::kernel("CallIC", false);
+    }
     if instruction.flags == 1 {
         if let Value::Builtin(
-            builtin @ (crate::ops::Builtin::StringCharAt
-            | crate::ops::Builtin::StringCharCodeAt),
+            builtin @ (crate::ops::Builtin::StringCharAt | crate::ops::Builtin::StringCharCodeAt),
         ) = callee
         {
             let argument = read_register(registers, first)?;
@@ -167,15 +250,34 @@ pub(crate) fn execute_registered(
     )
 }
 
-fn named_known_callee(
-    receiver: &Value,
-    cache: &std::cell::Cell<u64>,
-) -> Option<Value> {
+/// Record a callable identity only after the ordinary method/property gateway
+/// has produced the callee. This keeps accessors, proxies, and receiver
+/// effects on their complete semantic path while still feeding the site IC.
+#[inline(always)]
+fn observe_callable(
+    site: Option<&std::cell::RefCell<crate::quickening::QuickeningSite<4>>>,
+    callee: &Value,
+) -> bool {
+    let Value::Function(function) = callee else {
+        return false;
+    };
+    if !crate::functions::direct_call_eligible(function) {
+        return false;
+    }
+    site.is_some_and(|site| {
+        matches!(
+            site.borrow_mut().observe_callable(function),
+            crate::quickening::QuickeningDecision::GuardedCallHit
+        )
+    })
+}
+
+fn named_known_callee(receiver: &Value, key: &str, cache: &std::cell::Cell<u64>) -> Option<Value> {
     let Value::Object(object) = receiver else {
         return None;
     };
     let crate::vm::NamedCachedPayload::Word(slot) =
-        crate::vm::get_named_cached_payload(object, cache)?
+        crate::vm::get_named_cached_payload(object, key, cache)?
     else {
         return None;
     };
@@ -202,6 +304,11 @@ fn finish_named_call(
             crate::functions::try_execute_specialized(function, &receiver, arguments)?
         {
             crate::execution_trace::kernel("CallKnown", false);
+            write_value(registers, destination, value);
+            return Ok(None);
+        }
+        if crate::functions::direct_call_eligible(function) {
+            let value = crate::functions::execute_direct(function, &receiver, arguments)?;
             write_value(registers, destination, value);
             return Ok(None);
         }

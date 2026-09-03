@@ -1,333 +1,66 @@
 {
-  "schema": 1,
-  "title": "Fact-generated interpreter VM",
-  "source_of_truth": "tasks/index.json",
-  "constraints": [
-    "Interpreter-first; no JIT, executable memory, OSR, or deoptimization in this plan",
-    "quench-runtime owns JavaScript semantics; quench-node owns only the Node host boundary",
-    "Benchmark fixtures and workload-specific kernels are not production VM semantics",
-    "Every fact is Proven, Guarded, or Unknown and every fast path has complete fallback semantics",
-    "Generated code is derived from one declaration; handwritten code is limited to irreducible behavior",
-    "Every task belongs to exactly one theme; deegen_codegen, quickjs_perf, benchmark_integrity, and copy_patch_jit are the completed original plan's themes and may gain new themes for follow-on optimization work",
-    "Performance measurements are evidence: any optimization admitted here must generalize to any JavaScript program with the same runtime shape, not be sized to one fixture's numbers (see docs/benchmark-integrity.md)",
-    "copy_patch_jit tasks (021-025) were the sole exception to interpreter-first/no-JIT for the completed original plan; every stencil path must have a complete ordinary-interpreter fallback. See docs/copy-and-patch-jit.md."
-  ],
-  "implementation_state": {
-    "completed_slices": [
-      "001: neutral baseline, execution-seam inventory, and reproducible evidence index",
-      "002: workload-specific helpers, recognizers, lazy object-tree paths, and transaction-only hooks removed",
-      "003: canonical operation effects, results, controls, guards, fallbacks, and certainty facts",
-      "004-005: one vm_op! catalog generates IDs, metadata, builders, decoders, validation, and handlers",
-      "006: complete ordinary catalog dispatch, control transitions, ForI contract, and generator continuations",
-      "007: bounded catalog-backed shape/call quickening sites with complete fallback semantics",
-      "008: generic property, element, call, arithmetic, and branch paths use reusable catalog facts",
-      "009: JS/Wasm lowering shares exact-overlap SharedBinaryFact mappings; non-overlap stays frontend-specific",
-      "010: read-only architecture, feature-boundary, generation, complexity, and anti-cheating gates",
-      "011: Node/Bun neutral correctness and performance gates plus generator throw/catch coverage",
-      "012: consolidated interpreter-only architecture and acceptance documentation",
-      "013: callable-identity inline-cache observations with complete call fallback",
-      "014: bounded polymorphic/megamorphic cache tier with stable-hit re-arming",
-      "015: execution_trace quickening facts consumed for generic hot-entry probe ordering",
-      "016: cold, non-inlined ordinary fallback bodies with dispatch/layout evidence",
-      "017: fixed-width dynamic JsValue and one-word execute TaggedValue/register/GC boundary tests",
-      "018: hashed Shape/Atom lookup, memoized transitions, and neutral object-heavy evidence",
-      "019: every generated catalog handler returns explicit DispatchTransition next-pc/completion",
-      "019: explicit generated dispatch transitions with complete ordinary fallback",
-      "021: canonical region fact data shapes, full-sequence keys, and macro-derived boxing facts",
-      "022-025: build-time catalog, table selection, bounded arena/patch path, lifecycle, and memo fallback integration",
-      "026: callee-directed continuation dispatch with a bounded safepoint shim"
+    "schema": 1,
+    "title": "Fact-generated interpreter VM — full Deegen-paper alignment",
+    "source_of_truth": "tasks/index.json",
+    "constraints": [
+        "quench-runtime owns JavaScript semantics; quench-node owns only the Node host boundary",
+        "Benchmark fixtures and workload-specific kernels are not production VM semantics",
+        "Every fact is Proven, Guarded, or Unknown; every fast path (interpreter, IC, JIT) has complete fallback semantics",
+        "Generated code is derived from one declaration; handwritten code is limited to irreducible behavior",
+        "Every task belongs to exactly one theme",
+        "Performance measurements are evidence: any optimization admitted here must generalize to any JavaScript program with the same runtime shape, not be sized to one fixture's numbers (see docs/benchmark-integrity.md)",
+        "See docs/deegen-alignment.md for the paper-vs-implementation gap this plan closes",
+        "Speculative optimization (optimizing JIT, tier-up, OSR) is admitted only alongside its deoptimization safety net; no speculative tier ships without a working bailout path"
     ],
-    "remaining_slices": []
-  },
-  "themes": {
-    "deegen_codegen": {
-      "goal": "One vm_op! fact declaration mechanically generates every VM view: IDs, storage, decoders, the ordinary interpreter, and bounded guarded quickening/inline-cache state, following Deegen's single-source-of-truth principle of generating a VM's tiers from one bytecode semantics description (arXiv:2411.11469, abstract, §5.1) — without adopting Deegen's own JIT tiers.",
-      "plan": [
-        "001",
-        "003",
-        "004",
-        "005",
-        "006",
-        "007",
-        "008",
-        "009",
-        "013",
-        "014",
-        "015",
-        "016",
-        "019",
-        "026"
-      ]
+    "implementation_state": {
+        "completed_slices": [
+            "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence; superseded task files removed once this plan closed the gap in docs/deegen-alignment.md."
+        ],
+        "remaining_slices": [
+            "027", "028", "029", "030", "031"
+        ]
     },
-    "quickjs_perf": {
-      "goal": "Adopt QuickJS's representation-level performance techniques (compact tagged values, hashed shape/property/atom lookup) as lookup-cost and layout changes only, with unchanged observable semantics.",
-      "plan": [
-        "017",
-        "018"
-      ]
+    "themes": {
+        "deegen_full_jit": {
+            "goal": "Close the remaining gap between quench and the Deegen paper's (arXiv:2411.11469) full two-tier JIT-capable VM design: profiling-driven tier-up, OSR entry, deoptimization, and a real optimizing JIT tier built from the same vm_op! fact schema. See docs/deegen-alignment.md.",
+            "plan": ["027", "028", "029", "030", "031"]
+        }
     },
-    "benchmark_integrity": {
-      "goal": "Keep benchmark measurement code outside runtime semantics.",
-      "plan": [
-        "002",
-        "010",
-        "011",
-        "012"
-      ]
-    },
-    "copy_patch_jit": {
-      "goal": "Derive a copy-and-patch region-stencil tier from the same vm_op!/fact schema that already generates the interpreter and inline caches (see docs/copy-and-patch-jit.md): canonical RegionKey/Hole/Stencil/PatchValues/BoxingFact data (021), build-time region-fused stencils selected by one dispatch table with a named type-based optimization algorithm and a proven single-entry-point CFG check per fused region (022), a bump-pointer code arena with typed straight-line hole writers as the only edge effects (023), a named Cold/Rendered/Installed/Repatch/Retired lifecycle built on one shared idempotent-probe/effectful-apply interface that prefers patching data over code and reuses the existing quickening degrade-tier bound (024), and a RegionKey-memoized rendered-region cache so identical facts are never re-rendered, explicitly excluding any hotness-triggered tier-up policy (025). Depends on task 026 moving hot dispatch from a driver-owned loop to callee-directed tail transitions. Runtime only selects, allocates, copies, and patches; all instruction selection, register allocation, and CFG analysis happens at build time. Every stencil path keeps the complete ordinary interpreter as its fallback.",
-      "plan": [
-        "021",
-        "022",
-        "023",
-        "024",
-        "025",
-        "026"
-      ]
-    }
-  },
-  "items": [
-    {
-      "id": "001",
-      "file": "001.md",
-      "title": "Freeze the neutral baseline and inventory execution seams",
-      "theme": "deegen_codegen",
-      "depends_on": []
-    },
-    {
-      "id": "002",
-      "file": "002.md",
-      "title": "Remove workload-specific kernels from production execution",
-      "theme": "benchmark_integrity",
-      "depends_on": [
-        "001"
-      ]
-    },
-    {
-      "id": "003",
-      "file": "003.md",
-      "title": "Define the canonical operation fact schema",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "001",
-        "002"
-      ]
-    },
-    {
-      "id": "004",
-      "file": "004.md",
-      "title": "Implement the fact-to-VM macro DSL",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "003"
-      ]
-    },
-    {
-      "id": "005",
-      "file": "005.md",
-      "title": "Generate compact instruction storage and decoders",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "004"
-      ]
-    },
-    {
-      "id": "006",
-      "file": "006.md",
-      "title": "Generate the complete ordinary interpreter",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "005"
-      ]
-    },
-    {
-      "id": "007",
-      "file": "007.md",
-      "title": "Generate guarded quickening and inline-cache state",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "006"
-      ]
-    },
-    {
-      "id": "008",
-      "file": "008.md",
-      "title": "Migrate reusable generic fast paths",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "007"
-      ]
-    },
-    {
-      "id": "009",
-      "file": "009.md",
-      "title": "Unify JS and Wasm frontend lowering on the operation catalog",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "006"
-      ]
-    },
-    {
-      "id": "010",
-      "file": "010.md",
-      "title": "Enforce generated-architecture invariants",
-      "theme": "benchmark_integrity",
-      "depends_on": [
-        "004",
-        "005",
-        "006",
-        "007"
-      ]
-    },
-    {
-      "id": "011",
-      "file": "011.md",
-      "title": "Establish correctness and neutral performance gates",
-      "theme": "benchmark_integrity",
-      "depends_on": [
-        "008",
-        "009",
-        "010"
-      ]
-    },
-    {
-      "id": "012",
-      "file": "012.md",
-      "title": "Consolidate architecture documentation and retire stale task prose",
-      "theme": "benchmark_integrity",
-      "depends_on": [
-        "003",
-        "006",
-        "011"
-      ]
-    },
-    {
-      "id": "013",
-      "file": "013.md",
-      "title": "Wire call-site guard state to the declared Callable fact",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "007"
-      ]
-    },
-    {
-      "id": "014",
-      "file": "014.md",
-      "title": "Add a bounded megamorphic degrade tier to quickening sites",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "007",
-        "013"
-      ]
-    },
-    {
-      "id": "015",
-      "file": "015.md",
-      "title": "Feed execution_trace profile facts into quickening-site decisions",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "007",
-        "014"
-      ]
-    },
-    {
-      "id": "016",
-      "file": "016.md",
-      "title": "Outline cold ordinary-fallback bodies from guarded hot paths",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "006",
-        "007"
-      ]
-    },
-    {
-      "id": "017",
-      "file": "017.md",
-      "title": "Adopt a compact tagged JsValue representation",
-      "theme": "quickjs_perf",
-      "depends_on": [
-        "003"
-      ]
-    },
-    {
-      "id": "018",
-      "file": "018.md",
-      "title": "Hash shape transitions and property-slot lookup",
-      "theme": "quickjs_perf",
-      "depends_on": [
-        "003",
-        "007"
-      ]
-    },
-    {
-      "id": "019",
-      "file": "019.md",
-      "title": "Make the opcode transition an explicit return value, not loop-owned state",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "006"
-      ]
-    },
-    {
-      "id": "021",
-      "file": "021.md",
-      "title": "Define canonical stencil facts and data shapes",
-      "theme": "copy_patch_jit",
-      "depends_on": [
-        "011",
-        "016",
-        "019"
-      ]
-    },
-    {
-      "id": "022",
-      "file": "022.md",
-      "title": "Generate region stencils and a RegionKey -> Stencil dispatch table",
-      "theme": "copy_patch_jit",
-      "depends_on": [
-        "021"
-      ]
-    },
-    {
-      "id": "023",
-      "file": "023.md",
-      "title": "Bump-pointer code arena and typed-hole patch writers",
-      "theme": "copy_patch_jit",
-      "depends_on": [
-        "022",
-        "026"
-      ]
-    },
-    {
-      "id": "024",
-      "file": "024.md",
-      "title": "Wire the stencil lifecycle state machine to existing quickening state",
-      "theme": "copy_patch_jit",
-      "depends_on": [
-        "023",
-        "013",
-        "014"
-      ]
-    },
-    {
-      "id": "025",
-      "file": "025.md",
-      "title": "Memoize rendered regions by canonical RegionKey",
-      "theme": "copy_patch_jit",
-      "depends_on": [
-        "022",
-        "024"
-      ]
-    },
-    {
-      "id": "026",
-      "file": "026.md",
-      "title": "Move hot dispatch from a driver-owned loop to callee-directed tail transitions",
-      "theme": "deegen_codegen",
-      "depends_on": [
-        "019"
-      ]
-    }
-  ]
+    "items": [
+        {
+            "id": "027",
+            "file": "027.md",
+            "title": "Profiling counters and tier-up policy",
+            "theme": "deegen_full_jit",
+            "depends_on": []
+        },
+        {
+            "id": "028",
+            "file": "028.md",
+            "title": "OSR entry into a lower-tier-compiled loop",
+            "theme": "deegen_full_jit",
+            "depends_on": ["027"]
+        },
+        {
+            "id": "029",
+            "file": "029.md",
+            "title": "Deoptimization protocol and frame reconstruction",
+            "theme": "deegen_full_jit",
+            "depends_on": ["028"]
+        },
+        {
+            "id": "030",
+            "file": "030.md",
+            "title": "Cross-tier generic inline cache (λi/λe) shared by baseline and optimizing JIT",
+            "theme": "deegen_full_jit",
+            "depends_on": ["029"]
+        },
+        {
+            "id": "031",
+            "file": "031.md",
+            "title": "Optimizing JIT IR: instruction selection, register allocation, speculative type specialization",
+            "theme": "deegen_full_jit",
+            "depends_on": ["030"]
+        }
+    ]
 }

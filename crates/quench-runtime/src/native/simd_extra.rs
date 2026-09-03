@@ -71,40 +71,74 @@ pub fn apply(op: SimdOp, a: u128, b: u128, c: u128, lane: u8) -> u128 {
         SimdOp::I8x16LeU => zip8(a, b, |x, y| u8::from(x <= y).wrapping_neg()),
         SimdOp::I8x16GeS => zip8(a, b, |x, y| u8::from((x as i8) >= (y as i8)).wrapping_neg()),
         SimdOp::I8x16GeU => zip8(a, b, |x, y| u8::from(x >= y).wrapping_neg()),
-        SimdOp::I16x8LtS => zip16(a, b, |x, y| u16::from((x as i16) < (y as i16)).wrapping_neg()),
+        SimdOp::I16x8LtS => zip16(a, b, |x, y| {
+            u16::from((x as i16) < (y as i16)).wrapping_neg()
+        }),
         SimdOp::I16x8LtU => zip16(a, b, |x, y| u16::from(x < y).wrapping_neg()),
-        SimdOp::I16x8GtS => zip16(a, b, |x, y| u16::from((x as i16) > (y as i16)).wrapping_neg()),
+        SimdOp::I16x8GtS => zip16(a, b, |x, y| {
+            u16::from((x as i16) > (y as i16)).wrapping_neg()
+        }),
         SimdOp::I16x8GtU => zip16(a, b, |x, y| u16::from(x > y).wrapping_neg()),
-        SimdOp::I16x8LeS => zip16(a, b, |x, y| u16::from((x as i16) <= (y as i16)).wrapping_neg()),
+        SimdOp::I16x8LeS => zip16(a, b, |x, y| {
+            u16::from((x as i16) <= (y as i16)).wrapping_neg()
+        }),
         SimdOp::I16x8LeU => zip16(a, b, |x, y| u16::from(x <= y).wrapping_neg()),
-        SimdOp::I16x8GeS => zip16(a, b, |x, y| u16::from((x as i16) >= (y as i16)).wrapping_neg()),
+        SimdOp::I16x8GeS => zip16(a, b, |x, y| {
+            u16::from((x as i16) >= (y as i16)).wrapping_neg()
+        }),
         SimdOp::I16x8GeU => zip16(a, b, |x, y| u16::from(x >= y).wrapping_neg()),
-        SimdOp::I32x4LtS => zip32(a, b, |x, y| u32::from((x as i32) < (y as i32)).wrapping_neg()),
+        SimdOp::I32x4LtS => zip32(a, b, |x, y| {
+            u32::from((x as i32) < (y as i32)).wrapping_neg()
+        }),
         SimdOp::I32x4LtU => zip32(a, b, |x, y| u32::from(x < y).wrapping_neg()),
-        SimdOp::I32x4GtS => zip32(a, b, |x, y| u32::from((x as i32) > (y as i32)).wrapping_neg()),
+        SimdOp::I32x4GtS => zip32(a, b, |x, y| {
+            u32::from((x as i32) > (y as i32)).wrapping_neg()
+        }),
         SimdOp::I32x4GtU => zip32(a, b, |x, y| u32::from(x > y).wrapping_neg()),
-        SimdOp::I32x4LeS => zip32(a, b, |x, y| u32::from((x as i32) <= (y as i32)).wrapping_neg()),
+        SimdOp::I32x4LeS => zip32(a, b, |x, y| {
+            u32::from((x as i32) <= (y as i32)).wrapping_neg()
+        }),
         SimdOp::I32x4LeU => zip32(a, b, |x, y| u32::from(x <= y).wrapping_neg()),
-        SimdOp::I32x4GeS => zip32(a, b, |x, y| u32::from((x as i32) >= (y as i32)).wrapping_neg()),
+        SimdOp::I32x4GeS => zip32(a, b, |x, y| {
+            u32::from((x as i32) >= (y as i32)).wrapping_neg()
+        }),
         SimdOp::I32x4GeU => zip32(a, b, |x, y| u32::from(x >= y).wrapping_neg()),
-        SimdOp::I64x2Lt => zip64(a, b, |x, y| u64::from((x as i64) < (y as i64)).wrapping_neg()),
-        SimdOp::I64x2Gt => zip64(a, b, |x, y| u64::from((x as i64) > (y as i64)).wrapping_neg()),
-        SimdOp::I64x2Le => zip64(a, b, |x, y| u64::from((x as i64) <= (y as i64)).wrapping_neg()),
-        SimdOp::I64x2Ge => zip64(a, b, |x, y| u64::from((x as i64) >= (y as i64)).wrapping_neg()),
+        SimdOp::I64x2Lt => zip64(a, b, |x, y| {
+            u64::from((x as i64) < (y as i64)).wrapping_neg()
+        }),
+        SimdOp::I64x2Gt => zip64(a, b, |x, y| {
+            u64::from((x as i64) > (y as i64)).wrapping_neg()
+        }),
+        SimdOp::I64x2Le => zip64(a, b, |x, y| {
+            u64::from((x as i64) <= (y as i64)).wrapping_neg()
+        }),
+        SimdOp::I64x2Ge => zip64(a, b, |x, y| {
+            u64::from((x as i64) >= (y as i64)).wrapping_neg()
+        }),
         other => crate::native::simd_more::apply(other, a, b, c),
     }
 }
 
 fn trunc_sat_s(x: f32) -> u32 {
     if !x.is_finite() {
-        return if x.is_nan() { 0 } else if x.is_sign_positive() { i32::MAX as u32 } else { i32::MIN as u32 };
+        return if x.is_nan() {
+            0
+        } else if x.is_sign_positive() {
+            i32::MAX as u32
+        } else {
+            i32::MIN as u32
+        };
     }
     x as i32 as u32
 }
 
 fn trunc_sat_u(x: f32) -> u32 {
     if !x.is_finite() {
-        return if x.is_nan() || x.is_sign_negative() { 0 } else { u32::MAX };
+        return if x.is_nan() || x.is_sign_negative() {
+            0
+        } else {
+            u32::MAX
+        };
     }
     if x < 0.0 {
         0

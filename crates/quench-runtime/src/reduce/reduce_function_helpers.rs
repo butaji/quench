@@ -26,10 +26,7 @@ fn function_metadata(
         strictness, is_async: function.r#async,
         mapped_arguments: crate::function_parameters::is_simple(&function.params),
         direct_constructor: crate::functions::direct_constructor_fact(function, locals),
-        forward_construct_call: crate::functions::forward_construct_call_fact(function, locals),
-        forward_then_call: crate::functions::forward_then_call_fact(function),
-        counted_method_loop: crate::functions::counted_method_loop_fact(function),
-        direct_method: crate::functions::direct_method_fact(function, locals),
+        composed_constructor: crate::functions::composed_constructor_fact(function, locals),
     }
 }
 

@@ -9,14 +9,15 @@ than gating design space by policy.
 
 The design adopts one technique from Deegen (arXiv:2411.11469) — Copy-and-Patch
 code generation (Xu and Kjolstad, 2021) as used for Deegen's baseline JIT tier
-(§7) — without adopting the rest of Deegen's two-tier JIT-capable VM: no
-optimizing JIT, no profiling-triggered tier-up, no OSR-entry, no
-deoptimization protocol. Deegen's own baseline JIT design goal is stated as
-"to compile as quickly as possible" with code quality only "a secondary
-priority" (§7.1); this tier goes further and drops the "compile" step almost
-entirely by
-working from a build-time-derived, pre-rendered stencil catalog rather than a
-runtime code generator.
+(§7). This document covers only that tier. The project now targets Deegen's
+full two-tier JIT-capable VM — profiling-triggered tier-up, OSR entry,
+deoptimization, and an optimizing JIT — tracked separately in
+`docs/deegen-alignment.md` (tasks 027-031); this tier is that plan's
+prerequisite baseline, not its ceiling. Deegen's own baseline JIT design goal
+is stated as "to compile as quickly as possible" with code quality only "a
+secondary priority" (§7.1); this tier goes further and drops the "compile"
+step almost entirely by working from a build-time-derived, pre-rendered
+stencil catalog rather than a runtime code generator.
 
 ## Data model
 
@@ -84,7 +85,10 @@ These remain load-bearing for correctness even without a gate script:
    rule that governs every other guarded fast path in this project
    (see `docs/benchmark-integrity.md`).
 
-See `tasks/021.md`-`tasks/026.md` for the implementation breakdown.
+This tier's implementation breakdown (tasks 021-026) is closed; see git
+history for those task files. The remaining gap to the paper's full design —
+tier-up, OSR, deopt, and the optimizing JIT tier — is tracked in
+`docs/deegen-alignment.md` and `tasks/index.json` (tasks 027-031).
 
 ## Current implementation evidence
 

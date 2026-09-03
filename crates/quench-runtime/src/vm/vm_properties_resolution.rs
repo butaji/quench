@@ -1,6 +1,7 @@
 const GLOBAL_STATIC_SLOT: u32 = u32::MAX - 1;
 
 include!("vm_properties_virtual_cache.rs");
+use crate::value::PropertyEntries;
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
     // A materialized global binding can transiently leave the receiver nullish
@@ -25,14 +26,14 @@ pub(crate) fn get_named_property_result(
 ) -> Result<Value, VmError> {
     let retry_resolved = !matches!(value, Value::Object(object) if !object.has_replacement());
     if let Value::Object(object) = value {
-        if let Some(value) = get_named_cached_object(object, cache) {
+        if let Some(value) = get_named_cached_object(object, key, cache) {
             return Ok(value);
         }
     }
     let resolved = crate::locals::resolved_replacement(value.clone());
     if retry_resolved {
         if let Value::Object(object) = &resolved {
-            if let Some(value) = get_named_cached_object(object, cache) {
+            if let Some(value) = get_named_cached_object(object, key, cache) {
                 crate::execution_trace::named_get_miss_reason("unknown");
                 return Ok(value);
             }
@@ -73,7 +74,7 @@ pub(crate) fn get_global_named_property_result(
             return Ok(crate::vm::global_object_static_property(object, key));
         }
     }
-    if let Some(value) = get_named_cached_object(object, cache) {
+    if let Some(value) = get_named_cached_object(object, key, cache) {
         return Ok(global_placeholder_value(property_value(&value), key));
     }
     let result = get_property_result(value, key)?;
@@ -114,9 +115,10 @@ fn global_placeholder_value(value: Value, key: &str) -> Value {
 #[inline(always)]
 pub(crate) fn get_named_cached_object(
     object: &crate::value::ObjectData,
+    key: &str,
     cache: &std::cell::Cell<u64>,
 ) -> Option<Value> {
-    match get_named_cached_payload(object, cache)? {
+    match get_named_cached_payload(object, key, cache)? {
         NamedCachedPayload::Word(word) => Some(unsafe { &*word }.load().strong_function()),
         NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load().strong_function()),
         NamedCachedPayload::Value(value) => Some(value.strong_function()),
@@ -132,6 +134,7 @@ pub(crate) enum NamedCachedPayload {
 #[inline(always)]
 pub(crate) fn get_named_cached_payload(
     object: &crate::value::ObjectData,
+    key: &str,
     cache: &std::cell::Cell<u64>,
 ) -> Option<NamedCachedPayload> {
     if object.has_replacement() {
@@ -141,14 +144,30 @@ pub(crate) fn get_named_cached_payload(
     }
     let layout = object.semantic_layout_id();
     let cached = cache.get();
-    if let Some(payload) = virtual_builtin_cache_hit(object, layout, cached, cache as *const _ as usize)
-    {
+    let cache_kind = cached & (PROTOTYPE_CACHE_TAG | VIRTUAL_BUILTIN_CACHE_TAG);
+    if cache_kind == 0 {
+        let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cached) else {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedGetCacheEmpty);
+            crate::execution_trace::named_get_miss_reason("empty");
+            return None;
+        };
+        if layout != cached_layout {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedGetLayoutMismatch);
+            crate::execution_trace::named_get_miss_reason("layout");
+            return None;
+        }
+        let Some(word) = cached_plain_own_word(object, key, cached_layout, slot) else {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedGetSlotMissing);
+            crate::execution_trace::named_get_miss_reason("slot");
+            return None;
+        };
+        word.trace_named_payload("own");
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-        return Some(payload);
+        return Some(NamedCachedPayload::Word(word));
     }
-    if cached & PROTOTYPE_CACHE_TAG != 0 {
+    if cache_kind & PROTOTYPE_CACHE_TAG != 0 {
         if let Some(payload) =
-            prototype_cache_hit(object, layout, cached, cache as *const _ as usize)
+            prototype_cache_hit(object, key, layout, cached, cache as *const _ as usize)
         {
             crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
             return Some(payload);
@@ -157,24 +176,9 @@ pub(crate) fn get_named_cached_payload(
         crate::execution_trace::named_get_miss_reason("prototype");
         return None;
     }
-    let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cached) else {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetCacheEmpty);
-        crate::execution_trace::named_get_miss_reason("empty");
-        return None;
-    };
-    if layout != cached_layout {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetLayoutMismatch);
-        crate::execution_trace::named_get_miss_reason("layout");
-        return None;
-    }
-    let Some(word) = object.hot_properties().slot_word(slot as usize) else {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetSlotMissing);
-        crate::execution_trace::named_get_miss_reason("slot");
-        return None;
-    };
-    word.trace_named_payload("own");
+    let payload = virtual_builtin_cache_hit(object, layout, cached, cache as *const _ as usize)?;
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-    Some(NamedCachedPayload::Word(word))
+    Some(payload)
 }
 
 #[inline(always)]
@@ -191,9 +195,10 @@ fn named_cached_payload(value: &Value) -> NamedCachedPayload {
 #[inline(always)]
 pub(crate) fn get_named_cached_cell(
     object: &crate::value::ObjectData,
+    key: &str,
     cache: &std::cell::Cell<u64>,
 ) -> Option<*const crate::value::BindingCell> {
-    match get_named_cached_payload(object, cache)? {
+    match get_named_cached_payload(object, key, cache)? {
         NamedCachedPayload::Word(_) => None,
         NamedCachedPayload::Cell(cell) => Some(cell),
         NamedCachedPayload::Value(_) => None,
@@ -211,15 +216,21 @@ struct PrototypeLink {
 
 #[derive(Clone)]
 struct PrototypeNamedCache {
-    site: usize,
     receiver_layout: u32,
     depth: u8,
     links: [Option<PrototypeLink>; 4],
     value_slot: u32,
 }
 
+#[derive(Clone)]
+struct PrototypeNamedCacheSet {
+    site: usize,
+    entries: [Option<PrototypeNamedCache>; 8],
+    next_replace: u8,
+}
+
 thread_local! {
-    static PROTOTYPE_NAMED_CACHES: std::cell::RefCell<Vec<Option<PrototypeNamedCache>>> = const {
+    static PROTOTYPE_NAMED_CACHES: std::cell::RefCell<Vec<Option<Box<PrototypeNamedCacheSet>>>> = const {
         std::cell::RefCell::new(Vec::new())
     };
 }
@@ -228,6 +239,7 @@ const PROTOTYPE_CACHE_SLOTS: usize = 4096;
 
 fn prototype_cache_hit(
     receiver: &crate::value::ObjectData,
+    key: &str,
     receiver_layout: u32,
     cache: u64,
     site: usize,
@@ -238,43 +250,53 @@ fn prototype_cache_hit(
     let index = usize::try_from((cache & !PROTOTYPE_CACHE_TAG).checked_sub(1)?).ok()?;
     PROTOTYPE_NAMED_CACHES.with(|caches| {
         let caches = caches.borrow();
-        let entry = caches.get(index)?.as_ref()?;
-        if entry.site != site || entry.receiver_layout != receiver_layout {
+        let set = caches.get(index)?.as_ref()?;
+        if set.site != site {
             return None;
         }
-        let mut owners: [*const crate::value::ObjectData; 4] = [std::ptr::null(); 4];
-        for (depth, link) in entry.links[..usize::from(entry.depth)]
-            .iter()
-            .flatten()
-            .enumerate()
-        {
-            let owner = if depth == 0 {
-                receiver
-            } else {
-                // SAFETY: every pointer is owned by the preceding canonical
-                // prototype slot, rooted by `receiver` for this lookup.
-                unsafe { owners[depth - 1].as_ref()? }
-            };
-            let prototype = owner
-                .hot_properties()
-                .slot_word(link.prototype_slot as usize)?
-                .object_or_null_ptr()??;
-            if prototype != link.prototype.as_ptr()
-                || unsafe { &*prototype }.semantic_layout_id() != link.prototype_layout
-            {
-                return None;
-            }
-            owners[depth] = prototype;
-        }
-        // SAFETY: the validated chain above keeps this owner reachable from
-        // `receiver` until the returned word has been copied by the caller.
-        let owner = unsafe { owners[usize::from(entry.depth).checked_sub(1)?].as_ref()? };
-        let word = owner
-            .hot_properties()
-            .slot_word(entry.value_slot as usize)?;
-        word.trace_named_payload("prototype");
-        Some(NamedCachedPayload::Word(word))
+        let entry = set.entries.iter().flatten().find(|entry| {
+            entry.receiver_layout == receiver_layout
+        })?;
+        prototype_entry_hit(receiver, key, entry)
     })
+}
+
+fn prototype_entry_hit(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+    entry: &PrototypeNamedCache,
+) -> Option<NamedCachedPayload> {
+    let mut owners: [*const crate::value::ObjectData; 4] = [std::ptr::null(); 4];
+    for (depth, link) in entry.links[..usize::from(entry.depth)]
+        .iter()
+        .flatten()
+        .enumerate()
+    {
+        let owner = if depth == 0 {
+            receiver
+        } else {
+            unsafe { owners[depth - 1].as_ref()? }
+        };
+        let prototype = owner
+            .hot_properties()
+            .slot_word(link.prototype_slot as usize)?
+            .object_or_null_ptr()??;
+        if prototype != link.prototype.as_ptr()
+            || unsafe { &*prototype }.semantic_layout_id() != link.prototype_layout
+        {
+            return None;
+        }
+        owners[depth] = prototype;
+    }
+    let owner = unsafe { owners[usize::from(entry.depth).checked_sub(1)?].as_ref()? };
+    let owner_layout = entry.links[..usize::from(entry.depth)]
+        .iter()
+        .flatten()
+        .last()
+        .map(|link| link.prototype_layout)?;
+    let word = cached_plain_own_word(owner, key, owner_layout, entry.value_slot)?;
+    word.trace_named_payload("prototype");
+    Some(NamedCachedPayload::Word(word))
 }
 
 fn cacheable_immediate_prototype(
@@ -305,7 +327,6 @@ fn cacheable_immediate_prototype(
             cacheable_own_slot(&Value::Object(std::rc::Rc::clone(&prototype)), key)
         {
             return Some(PrototypeNamedCache {
-                site: 0,
                 receiver_layout: receiver.semantic_layout_id(),
                 depth: u8::try_from(depth + 1).ok()?,
                 links,
@@ -331,36 +352,55 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
         if caches.is_empty() {
             caches.resize_with(PROTOTYPE_CACHE_SLOTS, || None);
         }
-        let mut entry = entry;
-        entry.site = cache as *const _ as usize;
-        let start = entry.links[..usize::from(entry.depth)]
+        let site = cache as *const _ as usize;
+        let current = prototype_cache_index(cache.get()).filter(|index| {
+            caches.get(*index).and_then(Option::as_ref).is_some_and(|set| set.site == site)
+        });
+        let start = site.wrapping_mul(0x9e37_79b1) & (PROTOTYPE_CACHE_SLOTS - 1);
+        let index = current.unwrap_or_else(|| {
+            (0..PROTOTYPE_CACHE_SLOTS)
+                .map(|offset| (start + offset) & (PROTOTYPE_CACHE_SLOTS - 1))
+                .find(|index| caches[*index].as_ref().is_none_or(|set| set.site == site))
+                .unwrap_or(start)
+        });
+        let set = caches[index].get_or_insert_with(|| Box::new(PrototypeNamedCacheSet {
+            site,
+            entries: std::array::from_fn(|_| None),
+            next_replace: 0,
+        }));
+        if set.site != site {
+            **set = PrototypeNamedCacheSet {
+                site,
+                entries: std::array::from_fn(|_| None),
+                next_replace: 0,
+            };
+        }
+        let slot = set
+            .entries
             .iter()
-            .flatten()
-            .fold(entry.site ^ entry.receiver_layout as usize, |hash, link| {
-                hash.wrapping_mul(0x9e37_79b1)
-                    .wrapping_add(link.prototype.as_ptr() as usize)
-                    .wrapping_add(link.prototype_layout as usize)
-                    .wrapping_add((link.prototype_slot as usize) << 8)
-            })
-            .wrapping_add(entry.value_slot as usize)
-            & (PROTOTYPE_CACHE_SLOTS - 1);
-        let index = (0..PROTOTYPE_CACHE_SLOTS)
-            .map(|offset| (start + offset) & (PROTOTYPE_CACHE_SLOTS - 1))
-            .find(|index| {
-                caches[*index]
-                    .as_ref()
-                    .is_none_or(|cached| cached.site == entry.site)
-            })
-            .unwrap_or(start);
-        caches[index] = Some(entry);
+            .position(|cached| cached.as_ref().is_some_and(|cached| {
+                cached.receiver_layout == entry.receiver_layout
+            }))
+            .or_else(|| set.entries.iter().position(Option::is_none))
+            .unwrap_or_else(|| {
+                let slot = usize::from(set.next_replace) % set.entries.len();
+                set.next_replace = set.next_replace.wrapping_add(1);
+                slot
+            });
+        set.entries[slot] = Some(entry);
         cache.set(PROTOTYPE_CACHE_TAG | index as u64 + 1);
     });
 }
 
+fn prototype_cache_index(cache: u64) -> Option<usize> {
+    (cache & PROTOTYPE_CACHE_TAG != 0)
+        .then(|| usize::try_from((cache & !PROTOTYPE_CACHE_TAG).checked_sub(1)?).ok())?
+}
+
 #[cfg(test)]
 mod named_prototype_cache_tests {
-    use super::get_named_property_result;
-    use crate::value::{ObjectData, Value};
+    use super::{get_named_property_result, prototype_cache_index, PROTOTYPE_NAMED_CACHES};
+    use crate::value::{BindingCell, ObjectData, Value};
     use std::{cell::Cell, rc::Rc};
 
     fn receiver(prototype_value: f64) -> Value {
@@ -374,6 +414,17 @@ mod named_prototype_cache_tests {
         )])))
     }
 
+    fn marked_receiver(prototype_value: f64, marker: f64) -> Value {
+        let prototype = Rc::new(ObjectData::new(vec![(
+            "method".into(),
+            Value::Number(prototype_value),
+        )]));
+        Value::Object(Rc::new(ObjectData::new(vec![
+            ("marker".into(), Value::Number(marker)),
+            ("\0prototype".into(), Value::Object(prototype)),
+        ])))
+    }
+
     #[test]
     fn prototype_cache_guards_identity_when_receiver_layout_matches() {
         let cache = Cell::new(0);
@@ -385,6 +436,51 @@ mod named_prototype_cache_tests {
             get_named_property_result(&receiver(2.0), "method", &cache).unwrap(),
             Value::Number(2.0)
         );
+    }
+
+    #[test]
+    fn prototype_cache_retains_multiple_receiver_layouts_per_site() {
+        let cache = Cell::new(0);
+        let plain = receiver(1.0);
+        let marked = marked_receiver(2.0, 3.0);
+        assert_eq!(
+            get_named_property_result(&plain, "method", &cache).unwrap(),
+            Value::Number(1.0)
+        );
+        assert_eq!(
+            get_named_property_result(&marked, "method", &cache).unwrap(),
+            Value::Number(2.0)
+        );
+        let index = prototype_cache_index(cache.get()).expect("prototype cache set");
+        let variants = PROTOTYPE_NAMED_CACHES.with(|caches| {
+            caches.borrow()[index]
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .flatten()
+                .count()
+        });
+        assert_eq!(variants, 2);
+        assert_eq!(
+            get_named_property_result(&plain, "method", &cache).unwrap(),
+            Value::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn own_cache_does_not_admit_binding_cell_values() {
+        let cell = BindingCell::new(Value::Number(7.0));
+        let receiver = Value::Object(Rc::new(ObjectData::new(vec![(
+            "field".into(),
+            Value::BindingCell(cell),
+        )])));
+        let cache = Cell::new(0);
+        assert_eq!(
+            get_named_property_result(&receiver, "field", &cache).unwrap(),
+            Value::Number(7.0)
+        );
+        assert_eq!(cache.get(), 0);
     }
 }
 
@@ -409,6 +505,12 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
         }
     }
     let (slot, value) = own?;
+    // Binding cells and weak functions are internal indirections.  Their
+    // observable value must be materialized by the complete property gateway,
+    // never returned from a raw packed-slot cache hit.
+    if matches!(value, Value::BindingCell(_) | Value::WeakFunction(_)) {
+        return None;
+    }
     if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
@@ -429,6 +531,10 @@ fn cacheable_own_slot_with_placeholder(value: &Value, key: &str) -> Option<u32> 
         return None;
     }
     let slot = object.physical_slot_for_name(key)?;
+    let value = object.hot_properties().slot_value(slot)?;
+    if matches!(value, Value::BindingCell(_) | Value::WeakFunction(_)) {
+        return None;
+    }
     let descriptor_key = crate::builtins::descriptor_key(key);
     if object
         .physical_slot_for_name(&descriptor_key)
@@ -634,6 +740,68 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     Some(property_value(&own))
 }
 
+pub(crate) fn proven_function_own_data(
+    function: &crate::value::FunctionValue,
+    key: &str,
+) -> Option<Value> {
+    let properties = function.properties.borrow();
+    let mut own = None;
+    let mut metadata = None;
+    for (name, value) in properties.iter().rev() {
+        if crate::builtins::is_deleted_key_for(name, key) { return None; }
+        if own.is_none() && name == key { own = Some(value.clone()); }
+        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
+            metadata = Some(value.clone());
+        }
+    }
+    let own = own?;
+    if metadata.as_ref().is_some_and(accessor_descriptor) { return None; }
+    Some(property_value(&own))
+}
+
+/// Return the canonical physical slot for proven ordinary own data. The
+/// property vector remains authoritative through the deletion and descriptor
+/// checks; a failed proof must use the complete lookup path.
+#[inline(always)]
+pub(crate) fn proven_own_slot(
+    object: &crate::value::ObjectData,
+    key: &str,
+) -> Option<usize> {
+    if object.has_deleted_key(key) {
+        return None;
+    }
+    let slot = object.physical_slot_for_name(key)?;
+    if object
+        .descriptor_metadata_for_key(key)
+        .as_ref()
+        .is_some_and(accessor_descriptor)
+    {
+        return None;
+    }
+    let own = object.hot_properties().slot_word(slot)?;
+    let value = own.load();
+    // These are internal indirections, not observable property values.  The
+    // complete property gateway unwraps them (and preserves binding identity
+    // for writes); a raw cached slot must therefore never admit either form.
+    if matches!(
+        value,
+        Value::BindingCell(_) | Value::WeakFunction(_)
+    ) {
+        return None;
+    }
+    if key == "format"
+        && matches!(
+            value,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        return None;
+    }
+    Some(slot)
+}
+
 /// Return the canonical execute word for proven ordinary own data. This is
 /// the L0 projection of `proven_own_data`: callers inspect the tag in place
 /// and fall back before any accessor, descriptor, deletion, or cell semantics.
@@ -641,6 +809,12 @@ pub(crate) fn proven_own_word<'a>(
     object: &'a crate::value::ObjectData,
     key: &str,
 ) -> Option<&'a crate::register_file::SlotWord> {
+    if let Some(slot) = proven_own_slot(object, key) {
+        return object.hot_properties().slot_word(slot);
+    }
+
+    // Complete fallback for duplicate writes and metadata states which the
+    // derived layout cannot prove safe.
     let mut own = None;
     let mut metadata = None;
     for (slot, name) in object.hot_properties().names().enumerate().rev() {
@@ -655,6 +829,12 @@ pub(crate) fn proven_own_word<'a>(
         }
     }
     let own = own?;
+    // Internal indirections are only meaningful to the complete property
+    // gateway.  The raw-word projection must never expose them, even when a
+    // duplicate/metadata layout forced us through this conservative scan.
+    if matches!(own.load(), Value::BindingCell(_) | Value::WeakFunction(_)) {
+        return None;
+    }
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
         return None;
     }
@@ -678,6 +858,54 @@ fn accessor_descriptor(value: &Value) -> bool {
     fields
         .names()
         .any(|name| matches!(name.as_str(), "get" | "set"))
+}
+
+/// Validate the physical proof retained by an own/prototype cache entry.
+/// Layout identity and slot are necessary but not sufficient: a descriptor
+/// update can change a data property into an accessor without changing the
+/// property-name layout.  Keep the requested key and descriptor check at the
+/// cache boundary so every caller either gets the proven word or falls back to
+/// the complete property gateway.
+#[inline(always)]
+pub(crate) fn cached_plain_own_word<'a>(
+    object: &'a crate::value::ObjectData,
+    key: &str,
+    layout: u32,
+    slot: u32,
+) -> Option<&'a crate::register_file::SlotWord> {
+    (object.semantic_layout_id() == layout).then_some(())?;
+    if object.has_deleted_key(key) {
+        return None;
+    }
+    let slot = usize::try_from(slot).ok()?;
+    object
+        .hot_properties()
+        .name_at(slot)
+        .is_some_and(|name| name == key)
+        .then_some(())?;
+    if object
+        .descriptor_metadata_for_key(key)
+        .as_ref()
+        .is_some_and(accessor_descriptor)
+    {
+        return None;
+    }
+    let word = object.hot_properties().slot_word(slot)?;
+    let value = word.load();
+    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
+        return None;
+    }
+    if key == "format"
+        && matches!(
+            value,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    {
+        return None;
+    }
+    (!matches!(value, Value::BindingCell(_) | Value::WeakFunction(_))).then_some(word)
 }
 
 fn function_inherited_property_result(
@@ -1313,8 +1541,8 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
 
 #[cfg(test)]
 mod proven_own_data_tests {
-    use super::proven_own_data;
-    use crate::value::{ObjectData, Value};
+    use super::{get_named_cached_payload, get_named_property_result, proven_own_data, proven_own_slot};
+    use crate::value::{BindingCell, ObjectData, Value};
     use std::rc::Rc;
 
     fn object(entries: Vec<(String, Value)>) -> Value {
@@ -1342,5 +1570,48 @@ mod proven_own_data_tests {
             (crate::builtins::descriptor_key("field"), getter),
         ]);
         assert_eq!(proven_own_data(&accessor, "field"), None);
+    }
+
+    #[test]
+    fn slot_admission_rejects_internal_value_wrappers() {
+        let cell = BindingCell::new(Value::Number(7.0));
+        let value = object(vec![("field".into(), Value::BindingCell(cell))]);
+        let Value::Object(object) = value else {
+            unreachable!();
+        };
+        assert_eq!(proven_own_slot(&object, "field"), None);
+    }
+
+    #[test]
+    fn named_cache_rechecks_descriptor_objects_that_mutate_in_place() {
+        let descriptor = Rc::new(ObjectData::new(Vec::new()));
+        let receiver = Rc::new(ObjectData::new(vec![
+            ("field".into(), Value::Number(7.0)),
+            (
+                crate::builtins::descriptor_key("field"),
+                Value::Object(Rc::clone(&descriptor)),
+            ),
+        ]));
+        let value = Value::Object(Rc::clone(&receiver));
+        let cache = std::cell::Cell::new(0);
+        assert_eq!(
+            get_named_property_result(&value, "field", &cache).unwrap(),
+            Value::Number(7.0)
+        );
+        assert!(cache.get() != 0);
+
+        // Mutating the descriptor object changes accessor semantics without
+        // changing the receiver's property-name layout. A cached raw slot
+        // must therefore be rejected before it can expose the old value.
+        assert!(crate::execute::set_property_in_place(
+            &Value::Object(Rc::clone(&descriptor)),
+            "get",
+            Value::Undefined,
+        ));
+        assert!(get_named_cached_payload(&receiver, "field", &cache).is_none());
+        assert_eq!(
+            get_named_property_result(&value, "field", &cache).unwrap(),
+            Value::Undefined
+        );
     }
 }

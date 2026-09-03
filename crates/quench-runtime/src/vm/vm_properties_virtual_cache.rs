@@ -31,9 +31,7 @@ fn cacheable_virtual_builtin_method(
         || object
             .physical_slot_for_name(&crate::builtins::descriptor_key(key))
             .is_some()
-        || !object.iter().any(|(name, value)| {
-            name == "\0regexp" && matches!(value, crate::value::Value::Boolean(true))
-        })
+        || !object.has_regexp_internal_slot()
     {
         return None;
     }

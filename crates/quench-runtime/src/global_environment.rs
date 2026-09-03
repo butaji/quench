@@ -15,6 +15,20 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+pub(crate) fn binding_cells() -> Vec<Rc<crate::value::BindingCell>> {
+    GLOBAL_BINDINGS.with(|bindings| {
+        let mut seen = std::collections::HashSet::new();
+        bindings
+            .borrow()
+            .values()
+            .filter_map(|cell| {
+                seen.insert(Rc::as_ptr(cell) as usize)
+                    .then(|| Rc::clone(cell))
+            })
+            .collect()
+    })
+}
+
 pub(crate) fn store_global_binding(name: &str, value: Value) -> bool {
     let realm = crate::vm::current_context_or_default().realm();
     GLOBAL_BINDINGS.with(|bindings| {
@@ -190,10 +204,13 @@ fn create_function(
     let current = own_descriptor(name);
     let value = crate::locals::slot_cell(slot).borrow().clone();
     let cell = binding_cell(name, slot, Some(&value));
-    // Per spec, global function bindings are configurable when declared from eval
-    // bindings and non-configurable otherwise.
+    // A function declaration only creates a new enumerable property when the
+    // name is absent.  Eval-time Annex B declarations must preserve the
+    // descriptor of an existing configurable property (including a deliberate
+    // non-enumerable flag) while replacing its value.
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
+        Some(current) => descriptor_with_flags(cell, &current),
         _ => data_descriptor(cell, true, true, deletable),
     };
     define_global(registers, name, descriptor)

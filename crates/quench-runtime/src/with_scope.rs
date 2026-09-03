@@ -65,13 +65,10 @@ pub(crate) fn execute(
             "with object cannot be null or undefined",
         ));
     }
-    let Some(body) = body.code() else {
-        return Err(VmError::MissingReturn);
-    };
     OBJECTS.with(|objects| objects.borrow_mut().push(object));
     let _guard = ScopeGuard;
     Ok(
-        match crate::vm::execute_code_completion_in_current_frame(body, registers)? {
+        match crate::vm::execute_function_code_completion_in_current_frame(body, registers)? {
             crate::completion::Completion::Break { label, value: None } => {
                 crate::completion::Completion::Break {
                     label,

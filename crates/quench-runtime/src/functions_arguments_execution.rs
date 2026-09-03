@@ -33,9 +33,7 @@ pub(crate) fn function_builtin(
             crate::builtins::array_find_last_index(receiver, arguments)
         }
         crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
-        crate::ops::Builtin::ArrayToSorted => {
-            crate::builtins::array_to_sorted(receiver, arguments)
-        }
+        crate::ops::Builtin::ArrayToSorted => crate::builtins::array_to_sorted(receiver, arguments),
         crate::ops::Builtin::ArrayToSpliced => {
             crate::builtins::array_to_spliced(receiver, arguments)
         }
@@ -63,30 +61,6 @@ pub(crate) fn try_execute_specialized(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
-    if let Some(result) = execute_forward_construct_call(function, &receiver, arguments) {
-        return result.map(Some);
-    }
-    if let Some(result) = execute_forward_then_call(function, &receiver, arguments) {
-        return result.map(Some);
-    }
-    if let Some(result) = execute_slot_alu(function, &receiver, arguments) {
-        return Ok(Some(result));
-    }
-    if let Some(result) = execute_select_update_call(function, &receiver)? {
-        return Ok(Some(result));
-    }
-    if let Some(result) = execute_constraint_collection_loop(function, arguments)? {
-        return Ok(Some(result));
-    }
-    if let Some(result) = execute_plan_loop(function, &receiver)? {
-        return Ok(Some(result));
-    }
-    if let Some(result) = execute_counted_method_loop(function, &receiver)? {
-        return Ok(Some(result));
-    }
-    if let Some(result) = execute_shape_kernel(function, &receiver, arguments) {
-        return Ok(Some(result));
-    }
     if matches!(function.kind, FunctionKind::Generator) {
         return crate::generator::create(function, &receiver, arguments).map(Some);
     }
@@ -110,18 +84,35 @@ pub(crate) fn try_execute_specialized(
             completion, generator,
         )));
     }
-    // Compact numeric leaves stay on the ordinary proven-leaf path.
-    if function.code.code().is_some_and(|code| {
-        (0..code.len()).all(|pc| {
-            code.instruction(pc)
-                .is_some_and(|op| op.opcode != crate::ir::Opcode::Slow)
-        })
-    }) {
-        if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
-            return result.map(Some);
-        }
-    }
     Ok(None)
+}
+
+/// Admission fact shared by ordinary and named calls.  The continuation
+/// gateway remains authoritative for every function outside this compact
+/// synchronous shape.
+#[inline]
+pub(crate) fn direct_call_eligible(function: &crate::value::FunctionValue) -> bool {
+    !function.is_async
+        && !matches!(function.kind, crate::ops::FunctionKind::Generator)
+        && !crate::functions::is_class_constructor(function)
+        && function.with_captures.is_empty()
+        && !function.private_environment.has_names()
+        && !crate::with_scope::is_active()
+}
+
+/// Enter a function whose ordinary synchronous shape has already been
+/// established by a call-site guard. This preserves the same bounded stack
+/// reserve and interpreter completion driver as the generic gateway while
+/// avoiding a second specialized-function admission pass.
+#[inline(never)]
+pub(crate) fn execute_direct(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+        execute_interpreter(function, this_value, arguments)
+    })
 }
 
 #[inline(never)]
@@ -130,12 +121,14 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    if let Some(result) = try_execute_specialized(function, this_value, arguments)? {
-        return Ok(result);
+    let specialized = try_execute_specialized(function, this_value, arguments);
+    match specialized {
+        Ok(Some(result)) => Ok(result),
+        Ok(None) => stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+            execute_interpreter(function, this_value, arguments)
+        }),
+        Err(error) => Err(error),
     }
-    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
-        execute_interpreter(function, this_value, arguments)
-    })
 }
 
 fn execute_interpreter(
@@ -161,6 +154,7 @@ fn execute_interpreter(
     let mut receiver = receiver;
     let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
+        let _ = function.code.enter_invocation();
         let (mut registers, environment) =
             build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
@@ -168,11 +162,12 @@ fn execute_interpreter(
         );
         let _home = crate::super_scope::Guard::install(&function, &receiver);
         let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
-        let completion = crate::vm::execute_code_frame_completion(
+        let completion = crate::vm::execute_code_frame_completion_with_owner(
             function
                 .code
                 .code()
                 .ok_or(crate::execute::VmError::MissingReturn)?,
+            &function.code,
             &mut registers,
             &crate::vm::current_context(),
             environment,
@@ -202,6 +197,7 @@ fn execute_with_dynamic_scope(
     let mut receiver = receiver;
     let mut arguments = std::borrow::Cow::Borrowed(arguments);
     loop {
+        let _ = function.code.enter_invocation();
         let (registers, environment) =
             crate::functions::build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
@@ -210,11 +206,12 @@ fn execute_with_dynamic_scope(
         let _home = crate::super_scope::Guard::install(&function, &receiver);
         let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
         let mut registers = registers;
-        let completion = crate::vm::execute_code_frame_completion(
+        let completion = crate::vm::execute_code_frame_completion_with_owner(
             function
                 .code
                 .code()
                 .ok_or(crate::execute::VmError::MissingReturn)?,
+            &function.code,
             &mut registers,
             &crate::vm::current_context(),
             environment,
@@ -232,28 +229,5 @@ fn execute_with_dynamic_scope(
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
         arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
-    }
-}
-
-// Shared call-entry data for receiver-update paths.  Execution itself is
-// driven by `vm::execute_in_environment`; this record only keeps the
-// normalized receiver and argument slice together while installing guards.
-struct CallFrame {
-    function: std::rc::Rc<crate::value::FunctionValue>,
-    receiver: crate::value::Value,
-    arguments: Vec<crate::value::Value>,
-}
-
-impl CallFrame {
-    fn new(
-        function: std::rc::Rc<crate::value::FunctionValue>,
-        receiver: crate::value::Value,
-        arguments: Vec<crate::value::Value>,
-    ) -> Self {
-        Self {
-            receiver: crate::vm::bare_call_receiver(&function, &receiver),
-            function,
-            arguments,
-        }
     }
 }

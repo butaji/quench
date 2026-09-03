@@ -185,24 +185,9 @@ mod tests {
             page_size_log2: 16,
         });
         let types = [];
-        assert!(match_import(
-            &want,
-            &types,
-            ResolvedImport::Memory(memory(2, Some(3)))
-        )
-        .is_ok());
-        assert!(match_import(
-            &want,
-            &types,
-            ResolvedImport::Memory(memory(1, Some(4)))
-        )
-        .is_err());
-        assert!(match_import(
-            &want,
-            &types,
-            ResolvedImport::Memory(memory(1, None))
-        )
-        .is_err());
+        assert!(match_import(&want, &types, ResolvedImport::Memory(memory(2, Some(3)))).is_ok());
+        assert!(match_import(&want, &types, ResolvedImport::Memory(memory(1, Some(4)))).is_err());
+        assert!(match_import(&want, &types, ResolvedImport::Memory(memory(1, None))).is_err());
     }
 
     #[test]
@@ -218,12 +203,7 @@ mod tests {
             init: None,
         });
         let types = [];
-        assert!(match_import(
-            &want,
-            &types,
-            ResolvedImport::Table(table(2, Some(4)))
-        )
-        .is_ok());
+        assert!(match_import(&want, &types, ResolvedImport::Table(table(2, Some(4)))).is_ok());
         let wrong_ref = Rc::new(RefCell::new(Table {
             elems: vec![RefVal::Null],
             min: 1,
@@ -258,12 +238,7 @@ mod tests {
                 heap: HeapKind::Func,
             }),
         }));
-        assert!(match_import(
-            &want,
-            &types,
-            ResolvedImport::Global(matching)
-        )
-        .is_ok());
+        assert!(match_import(&want, &types, ResolvedImport::Global(matching)).is_ok());
         let nullable = Rc::new(RefCell::new(Global {
             value: Slot::Native(Native::Ref(RefVal::Null)),
             mutable: true,

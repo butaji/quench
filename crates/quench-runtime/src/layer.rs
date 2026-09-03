@@ -4,7 +4,7 @@
 //! payload lives. The store uses both: Native i32 is Arena; Native structref
 //! is GC. QuickJS (`dynamic::Runtime`) is the JS layer on top, not Storage.
 
-use crate::facts::Fact;
+use crate::facts::{Certainty, Fact};
 
 /// Store storage. Arena and GC both exist; neither is "the" layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -36,10 +36,10 @@ pub enum GuardKind {
 impl Layer {
     /// Facts `Proven` / `Guarded` / `Unknown` are this ladder, not a second one.
     pub fn of_fact<T>(fact: &Fact<T>) -> Self {
-        match fact {
-            Fact::Proven(_) => Self::Native,
-            Fact::Guarded { .. } => Self::Fast,
-            Fact::Unknown => Self::Dynamic,
+        match fact.certainty() {
+            Certainty::Proven => Self::Native,
+            Certainty::Guarded => Self::Fast,
+            Certainty::Unknown => Self::Dynamic,
         }
     }
 
@@ -51,7 +51,6 @@ impl Layer {
             _ => Self::Native,
         }
     }
-
 }
 
 #[cfg(test)]

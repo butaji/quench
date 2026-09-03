@@ -185,6 +185,18 @@ impl DenseElements {
         true
     }
 
+    fn set_existing_numeric_value(&self, index: usize, number: f64) -> bool {
+        match self {
+            Self::Numbers(_) => self.set_existing_number(index, number),
+            Self::Values(values) => {
+                let mut values = values.borrow_mut();
+                let Some(Value::Number(value)) = values.get_mut(index) else { return false };
+                *value = number;
+                true
+            }
+        }
+    }
+
     fn append_number(&mut self, number: f64) -> bool {
         let Self::Numbers(values) = self else {
             return false;
@@ -986,6 +998,66 @@ impl ArrayData {
         stored
     }
 
+    /// Mutate a preflighted ordinary own numeric element even when unrelated
+    /// sparse properties keep the array's monotonic kind at `Sparse`.
+    #[inline(always)]
+    pub(crate) fn set_proven_existing_f64(&self, index: usize, number: f64) -> bool {
+        let stored = self.has_plain_dense_index(index)
+            && self.values.set_existing_number(index, number);
+        if stored {
+            self.kind
+                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+        }
+        stored
+    }
+
+    /// Prove that an existing indexed value is ordinary numeric data, whether
+    /// it lives in the dense payload or the sparse own-property tail.
+    #[inline(always)]
+    pub(crate) fn has_kernel_numeric_index(&self, index: usize) -> bool {
+        if self.has_plain_dense_index(index) && self.dense_number_at(index).is_some() {
+            return true;
+        }
+        !self.arguments
+            && self.argument_live.is_none()
+            && self.indexed_descriptors_plain()
+            && index < self.logical_len()
+            && self.deleted.get(index) != Some(&true)
+            && self.mapped.get(index).and_then(Option::as_ref).is_none()
+            && matches!(self.property(&index.to_string()), Some(Value::Number(_)))
+    }
+
+    /// Store into a preflighted ordinary numeric index without changing array
+    /// structure. Sparse tails use the same single-threaded interior-mutation
+    /// rule as ordinary object data properties.
+    #[inline(always)]
+    pub(crate) fn set_kernel_existing_f64(
+        array: &Rc<Self>,
+        index: usize,
+        number: f64,
+    ) -> bool {
+        if !array.has_kernel_numeric_index(index) {
+            return false;
+        }
+        let stored = if array.has_plain_dense_index(index) {
+            array.values.set_existing_numeric_value(index, number)
+        } else {
+            let key = index.to_string();
+            // SAFETY: realm execution is single-threaded; admission proved an
+            // existing ordinary data property, and this changes only its value.
+            let array = unsafe { &mut *(Rc::as_ptr(array) as *mut Self) };
+            match array.properties.iter_mut().rev().find(|(name, _)| name == &key) {
+                Some((_, Value::Number(value))) => { *value = number; true }
+                _ => false,
+            }
+        };
+        if stored {
+            array.kind
+                .set(monotonic_kind(array.kind.get(), number_kind(number)));
+        }
+        stored
+    }
+
     /// Extend a pre-sized holey array in index order without cloning its
     /// identity. Structural uncertainty remains slow; this accepts only the
     /// next missing slot of the canonical numeric prefix.
@@ -1005,7 +1077,7 @@ impl ArrayData {
             && !self.arguments
             && self.argument_live.is_none();
         // A sequential append is the common ASetI shape (for example the
-        // RegExp harness builds million-code-point strings this way). Extend
+        // RegExp callers may build million-code-point strings this way). Extend
         // the canonical numeric store and logical length in O(1), preserving
         // array identity even when several VM words retain the same Rc.
         if plain && index == self.physical_len() && index == self.logical_len() {

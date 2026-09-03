@@ -81,9 +81,7 @@ pub(crate) fn execute_binary(
         }
         crate::execution_trace::event(crate::execution_trace::Event::EqualityWordMiss);
     }
-    if let Some((left, right)) =
-        registers.read_number_pair(usize::from(lhs), usize::from(rhs))
-    {
+    if let Some((left, right)) = registers.read_number_pair(usize::from(lhs), usize::from(rhs)) {
         use crate::ops::BinaryOp;
         let result = match operator {
             BinaryOp::Add => Some(left + right),
@@ -106,6 +104,28 @@ pub(crate) fn execute_binary(
     let left = read_register_unchecked(registers, lhs);
     let right = read_register_unchecked(registers, rhs);
     write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
+    Ok(())
+}
+
+/// Apply JavaScript's numeric update semantics to one register.
+///
+/// The compact `IncI` operation is only a physical spelling of `++`/`--`;
+/// coercion, BigInt handling, and exceptions remain owned by the canonical
+/// numeric-update helper below.
+#[inline]
+pub(crate) fn execute_numeric_update(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    src: u16,
+    decrement: bool,
+) -> Result<(), VmError> {
+    let value = read_register_unchecked(registers, src);
+    let operator = if decrement {
+        crate::ops::BinaryOp::NumericSubtract
+    } else {
+        crate::ops::BinaryOp::NumericAdd
+    };
+    write_value(registers, dst, numeric_update_value(&value, operator)?);
     Ok(())
 }
 

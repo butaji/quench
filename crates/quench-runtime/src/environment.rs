@@ -524,6 +524,15 @@ pub struct Environment {
     tdz_parent: Option<Rc<Self>>,
 }
 
+// Call frames are short-lived and overwhelmingly non-escaping. Retain a
+// small isolate-local pool of their containers so ordinary calls reuse the
+// same slot storage instead of asking the allocator for a fresh Rc, RefCell,
+// and SlotStore on every invocation. Escaping frames never re-enter this
+// pool because recycle requires a unique Rc owner.
+thread_local! {
+    static FRAME_POOL: RefCell<Vec<Rc<Environment>>> = const { RefCell::new(Vec::new()) };
+}
+
 impl Drop for Environment {
     fn drop(&mut self) {
         crate::execution_trace::environment_lifecycle(false);
@@ -541,6 +550,41 @@ fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Opt
 }
 
 impl Environment {
+    pub(crate) fn binding_cells(&self) -> Vec<Rc<crate::value::BindingCell>> {
+        fn collect(
+            environment: &Environment,
+            seen: &mut std::collections::HashSet<usize>,
+            output: &mut Vec<Rc<crate::value::BindingCell>>,
+        ) {
+            for index in 0..environment.captured_len() {
+                let Some(binding) = environment.slot(index as u16) else {
+                    continue;
+                };
+                let cell = binding.cell();
+                if seen.insert(Rc::as_ptr(&cell) as usize) {
+                    output.push(cell);
+                }
+            }
+            for names in [&environment.names, &environment.eval_names] {
+                if let Some(names) = names.borrow().as_ref() {
+                    for binding in names.values() {
+                        let cell = binding.cell();
+                        if seen.insert(Rc::as_ptr(&cell) as usize) {
+                            output.push(cell);
+                        }
+                    }
+                }
+            }
+            if let Some(caller) = &environment.caller {
+                collect(caller, seen, output);
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut output = Vec::new();
+        collect(self, &mut seen, &mut output);
+        output
+    }
+
     /// Borrow the immutable slot map without paying `RefCell`'s dynamic
     /// borrow check on every proven local read.  The VM is single-threaded;
     /// mutations still go through `slots.borrow_mut()` at the few semantic
@@ -656,8 +700,7 @@ impl Environment {
         let prefix = captures.slots_ref().shared_prefix();
         let prefix_len = captures.len();
         let suffix_len = store.len();
-        crate::execution_trace::environment_lifecycle(true);
-        let environment = Rc::new(Self {
+        let state = Self {
             slots: RefCell::new(SlotRefs {
                 prefix_len,
                 prefix,
@@ -673,6 +716,19 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
             tdz_parent: Some(Rc::clone(captures)),
+        };
+        let environment = FRAME_POOL.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            let Some(mut environment) = pool.pop() else {
+                crate::execution_trace::environment_lifecycle(true);
+                return Rc::new(state);
+            };
+            let Some(slot) = Rc::get_mut(&mut environment) else {
+                crate::execution_trace::environment_lifecycle(true);
+                return Rc::new(state);
+            };
+            *slot = state;
+            environment
         });
         environment
             .deleted_cells
@@ -681,6 +737,18 @@ impl Environment {
             .immutable_slots
             .replace(immutable_prefix(&captures.immutable_slots, prefix_len));
         environment
+    }
+
+    pub(crate) fn recycle_frame(environment: Rc<Self>) {
+        if Rc::strong_count(&environment) != 1 {
+            return;
+        }
+        FRAME_POOL.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            if pool.len() < 64 {
+                pool.push(environment);
+            }
+        });
     }
 
     pub(crate) fn in_place_child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
@@ -792,40 +860,6 @@ impl Environment {
         Some(crate::register_file::ImmediateCopyPlan::new(source, target))
     }
 
-    /// Resolve a proven one-argument numeric call to physical execute words.
-    /// Callee recognition happens once; the returned plan contains no
-    /// `Environment`, `BindingCell`, `Value`, or reference-count operation.
-    pub(crate) fn plan_word_add_constant(
-        &self,
-        function: u16,
-        argument: u16,
-        target: u16,
-        registers: &mut crate::register_file::RegisterFile,
-        result: u16,
-    ) -> Option<crate::register_file::ImmediateNumberCallPlan> {
-        let function = match self.get(function) {
-            Value::Function(function) => function,
-            _ => return None,
-        };
-        let constant = crate::functions::word_add_constant(&function)?;
-        let slots = self.slots_ref();
-        let argument = slots
-            .with_binding(usize::from(argument), SlotStore::immediate_word_ptr)
-            .flatten()?;
-        matches!(
-            unsafe { &*argument }.decode(),
-            crate::tagged_value::DecodedValue::Number(_)
-        )
-        .then_some(())?;
-        let target = slots
-            .with_binding(usize::from(target), SlotStore::immediate_word_ptr)
-            .flatten()?;
-        let result = registers.immediate_word_ptr(usize::from(result))?;
-        Some(crate::register_file::ImmediateNumberCallPlan::new(
-            argument, target, result, constant,
-        ))
-    }
-
     pub(crate) fn load_into_fixed<const N: usize>(
         &self,
         registers: &mut crate::register_file::FixedWordFile<N>,
@@ -854,7 +888,8 @@ impl Environment {
         registers: &crate::register_file::RegisterFile,
         source: u16,
     ) -> bool {
-        let copied = self.ensure_slot(slot).copy_from_register(registers, source);
+        let binding = self.ensure_slot(slot);
+        let copied = binding.copy_from_register(registers, source);
         if copied {
             self.initialize(slot);
         }

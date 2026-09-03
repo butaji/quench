@@ -11,10 +11,7 @@ pub(crate) fn execute_binding(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterator = read(registers, *iterator)?;
-    let Some(body) = body.code() else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
-    let completion = crate::vm::execute_code_completion_in_current_frame(body, registers)?;
+    let completion = crate::vm::execute_function_code_completion_in_current_frame(body, registers)?;
     if completion.is_suspension() {
         return Ok(completion);
     }

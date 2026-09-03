@@ -53,7 +53,7 @@ fn dispatch_host_capability(
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
-        HostCapabilityKind::Agent => Err(type_error("$262.agent is not callable")),
+        HostCapabilityKind::Agent => Err(type_error("agent is not callable")),
         HostCapabilityKind::AgentStart => agent_start(arguments),
         HostCapabilityKind::AgentBroadcast => agent_broadcast(arguments),
         HostCapabilityKind::AgentReport => agent_report(arguments),
@@ -73,7 +73,7 @@ fn dispatch_host_capability(
 
 fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(_)) = arguments.first() else {
-        return Err(type_error("$262.agent.start expects a string"));
+        return Err(type_error("agent.start expects a string"));
     };
     crate::atomics::begin_agent_callback();
     let result = run_eval_script(arguments);
@@ -84,9 +84,9 @@ fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
 fn agent_receive_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
     let callback = arguments
         .first()
-        .ok_or_else(|| type_error("$262.agent.receiveBroadcast expects a callback"))?;
+        .ok_or_else(|| type_error("agent.receiveBroadcast expects a callback"))?;
     if !crate::conversion::is_callable(callback) {
-        return Err(type_error("$262.agent.receiveBroadcast expects a callback"));
+        return Err(type_error("agent.receiveBroadcast expects a callback"));
     }
     AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().push(callback.clone()));
     Ok(Value::Undefined)
@@ -173,9 +173,9 @@ fn agent_set_timeout(arguments: &[Value]) -> Result<Value, VmError> {
     let callback = arguments
         .first()
         .cloned()
-        .ok_or_else(|| type_error("$262.agent.setTimeout expects a callback"))?;
+        .ok_or_else(|| type_error("agent.setTimeout expects a callback"))?;
     if !crate::conversion::is_callable(&callback) {
-        return Err(type_error("$262.agent.setTimeout expects a callback"));
+        return Err(type_error("agent.setTimeout expects a callback"));
     }
     let delay = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
     let delay = if delay.is_finite() && delay > 0.0 {

@@ -9,6 +9,7 @@ const os = require("node:os");
 const root = path.resolve(__dirname, "..");
 const benchmarkScript = path.join(root, "quench-bench", "run-quench-runtime.mjs");
 const args = process.argv.slice(2);
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 const parseArg = (name, fallback = null) => {
   const idx = args.indexOf(name);
@@ -26,6 +27,14 @@ const only = parseArg(
   "richards,deltablue,crypto,raytrace,earley-boyer,regexp,splay,navier-stokes"
 );
 const repeats = Math.max(1, Number.parseInt(parseArg("--repeat", "1"), 10) || 1);
+const timeoutMs = Number(parseArg("--timeout-ms", String(DEFAULT_TIMEOUT_MS)));
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  throw new Error("--timeout-ms must be a positive number");
+}
+const processTimeoutMs = Math.max(
+  DEFAULT_TIMEOUT_MS,
+  timeoutMs * Math.max(1, only.split(",").filter(Boolean).length) * 2 + 5_000,
+);
 
 const parseTimeMetric = (stderr, fallback = null) => {
   if (!stderr) {
@@ -97,7 +106,8 @@ const runSingle = (runLabel) => {
     os.tmpdir(),
     `quench-bench-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
   );
-  const timeArgs = [benchmarkScript, "--binary", binary, "--out", out, "--only", only];
+  const timeArgs = [benchmarkScript, "--binary", binary, "--out", out, "--only", only,
+    "--timeout-ms", String(timeoutMs)];
 
   const isDarwin = process.platform === "darwin";
   const proc = isDarwin
@@ -108,12 +118,16 @@ const runSingle = (runLabel) => {
           cwd: root,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
+          timeout: processTimeoutMs,
+          killSignal: "SIGKILL",
         }
       )
     : cp.spawnSync("/usr/bin/time", ["-f", "%M", process.execPath, ...timeArgs], {
         cwd: root,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: processTimeoutMs,
+        killSignal: "SIGKILL",
       });
 
   const stdout = proc.stdout || "";

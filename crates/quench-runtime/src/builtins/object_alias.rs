@@ -17,6 +17,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         } else {
             parent.properties.push((key.into(), parent_alias));
         }
+        parent.ensure_creation_order();
         record_created(&mut parent.created, key);
         return Value::Object(properties);
     }
@@ -28,6 +29,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         object.set_property_in_place(key, value);
         return Value::Object(properties);
     }
+    crate::execution_trace::kernel("object_alias_rebuild", false);
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
         // A subsequent define/set resurrects a property removed through the
@@ -55,7 +57,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         }
         sync_descriptor_value(&mut values, key);
         reattach_function_homes(&values, weak);
-        let mut created = properties.created.clone();
+        let mut created = properties.creation_order_values();
         record_created(&mut created, key);
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
@@ -81,6 +83,20 @@ pub(crate) fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool 
             })
         && !properties.has_replacement()
         && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
+}
+
+pub(crate) fn set_plain_index_number(
+    properties: &Rc<ObjectData>,
+    index: usize,
+    value: f64,
+) -> bool {
+    let key = index.to_string();
+    if !plain_index_write(properties, &key) {
+        return false;
+    }
+    let object = unsafe { &mut *(Rc::as_ptr(properties) as *mut ObjectData) };
+    object.set_property_in_place(&key, Value::Number(value));
+    true
 }
 
 fn value_targets(value: &Value, object: &Rc<ObjectData>) -> bool {

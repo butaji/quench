@@ -308,6 +308,60 @@ fn try_plain_index_dynamic_write(
     Ok(true)
 }
 
+/// Fast numeric indexed-write projection used by the compact ASetI handler.
+/// The shape site is probed before slot derivation; every miss retains the
+/// complete SetPropertyDynamic gateway as the semantic owner.  A successful
+/// write installs the post-write layout, which matters when an indexed write
+/// appends a new own property and changes the shape.
+pub(crate) fn execute_set_index_number_cached(
+    registers: &mut crate::register_file::RegisterFile,
+    object: u16,
+    index: usize,
+    number: f64,
+    site: Option<&std::cell::RefCell<crate::quickening::QuickeningSite<4>>>,
+) -> Result<bool, crate::execute::VmError> {
+    let Some(crate::value::Value::Object(object_data)) = registers.read(usize::from(object)) else {
+        return Ok(false);
+    };
+    if object_data.has_replacement()
+        || object_data.is_realm_global()
+        || object_data.is_script_global_view()
+        || crate::regexp::has_regexp_internal_slot(&crate::value::Value::Object(
+            std::rc::Rc::clone(&object_data),
+        ))
+    {
+        return Ok(false);
+    }
+    let key = index.to_string();
+    let target = crate::value::Value::Object(std::rc::Rc::clone(&object_data));
+    let shape = crate::identity::ShapeId(object_data.semantic_layout_id());
+    let property = crate::identity::property_key_id(&key);
+    if let Some(site) = site {
+        let cached_slot = site.borrow_mut().probe_shape(shape, property);
+        if let Some(slot) = cached_slot {
+            if let Some(word) = cached_plain_writable_slot(&object_data, &key, shape.0, slot) {
+                word.store_number(number);
+                return Ok(true);
+            }
+            site.borrow_mut().invalidate_shape(shape);
+        }
+    }
+    if !crate::builtins::object_alias::plain_index_write(&object_data, &key)
+        || rejects_new_property(&target, &key)
+    {
+        return Ok(false);
+    }
+    if !crate::builtins::object_alias::set_plain_index_number(&object_data, index, number) {
+        return Ok(false);
+    }
+    if let Some(site) = site {
+        if let Some(updated) = registers.read_object(usize::from(object)) {
+            install_named_shape_site(site, updated, &key);
+        }
+    }
+    Ok(true)
+}
+
 fn unwrap_assignment_value(value: &crate::value::Value) -> crate::value::Value {
     match value {
         crate::value::Value::BindingCell(cell) => unwrap_assignment_value(&cell.load()),
@@ -323,13 +377,67 @@ pub(crate) fn execute_set_named_cached(
     src: u16,
     strict: bool,
     cache: &std::cell::Cell<u64>,
+    site: Option<&std::cell::RefCell<crate::quickening::QuickeningSite<4>>>,
 ) -> Result<(), crate::execute::VmError> {
+    // The shape site is the polymorphic key/state cache used by the baseline
+    // path.  It is probed before any slot derivation; a failed proof falls
+    // through to the complete setter and may install a new state afterward.
+    if let Some(data) = registers.read_object(usize::from(object)) {
+        if !data.has_replacement()
+            && !data.has_regexp_internal_slot()
+            && assignment_source_is_direct(registers, src)
+        {
+            let shape = crate::identity::ShapeId(data.semantic_layout_id());
+            let property = crate::identity::property_key_id(key);
+            let cached_slot = site.and_then(|site| site.borrow_mut().probe_shape(shape, property));
+            if let Some(slot) = cached_slot {
+                if let Some(word) =
+                    cached_plain_writable_slot(data, key, data.semantic_layout_id(), slot)
+                {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedPropertySetHit,
+                    );
+                    word.store_from_register(registers, usize::from(src))
+                        .ok_or(crate::execute::VmError::MissingReturn)?;
+                    return Ok(());
+                }
+                if let Some(site) = site {
+                    site.borrow_mut().invalidate_shape(shape);
+                }
+            }
+        }
+    }
+    let cached = cache.get();
+    if cached & WRITE_TRANSITION_TAG == 0 {
+        if let Some(data) = registers.read_object(usize::from(object)) {
+            if !data.has_replacement()
+                && !data.has_regexp_internal_slot()
+                && assignment_source_is_direct(registers, src)
+            {
+                if let Some((layout, slot)) = crate::machine::unpack_named_cache(cached) {
+                    if let Some(word) = cached_plain_writable_slot(&data, key, layout, slot) {
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedPropertySetHit,
+                        );
+                        word.store_from_register(registers, usize::from(src))
+                            .ok_or(crate::execute::VmError::MissingReturn)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
     let target = crate::execute::read_register(registers, object)?;
     let regexp_target = crate::regexp::has_regexp_internal_slot(&target);
     if !regexp_target
         && transition_index(cache.get()).is_some()
         && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
+        if let Some(site) = site {
+            if let Some(data) = registers.read_object(usize::from(object)) {
+                install_named_shape_site(site, data, key);
+            }
+        }
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
         return Ok(());
     }
@@ -338,17 +446,19 @@ pub(crate) fn execute_set_named_cached(
             if data.has_replacement() {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
             } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-                if data.semantic_layout_id() != layout {
-                    crate::execution_trace::event(
-                        crate::execution_trace::Event::NamedSetLayoutMismatch,
-                    );
-                } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
+                if let Some(word) = cached_plain_writable_slot(data, key, layout, slot)
+                    .filter(|_| assignment_source_is_direct(registers, src))
+                {
                     crate::execution_trace::event(
                         crate::execution_trace::Event::NamedPropertySetHit,
                     );
                     word.store_from_register(registers, usize::from(src))
                         .ok_or(crate::execute::VmError::MissingReturn)?;
                     return Ok(());
+                } else if data.semantic_layout_id() != layout {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedSetLayoutMismatch,
+                    );
                 } else {
                     crate::execution_trace::event(
                         crate::execution_trace::Event::NamedSetSlotNotCell,
@@ -374,16 +484,24 @@ pub(crate) fn execute_set_named_cached(
     }
     let transition = named_write_source(&target, key);
     let updated = crate::execute::read_register(registers, object)?;
-    if install_named_write_transition(cache, transition, &updated, key) {
-        return Ok(());
+    let transition_installed = install_named_write_transition(cache, transition, &updated, key);
+    if !transition_installed {
+        if let crate::value::Value::Object(data) = &updated {
+            if let Some(slot) = cacheable_named_write_slot(data, key) {
+                cache.set(crate::machine::pack_named_cache(
+                    data.semantic_layout_id(),
+                    slot,
+                ));
+            }
+        }
     }
     if let crate::value::Value::Object(data) = &updated {
-        if let Some(slot) = cacheable_named_write_slot(data, key) {
-            cache.set(crate::machine::pack_named_cache(
-                data.semantic_layout_id(),
-                slot,
-            ));
+        if let Some(site) = site {
+            install_named_shape_site(site, data, key);
         }
+    }
+    if transition_installed {
+        return Ok(());
     }
     Ok(())
 }
@@ -404,9 +522,70 @@ fn cacheable_named_write_slot(data: &crate::value::ObjectData, key: &str) -> Opt
     if !plain_writable_own_data(data, key) {
         return None;
     }
+    let slot = data.hot_properties().position_rev(key)?;
+    // A binding cell is observable through closures and must be updated via
+    // the complete setter, not replaced by the source register's wrapper.
+    if matches!(
+        data.hot_properties().slot_value(slot),
+        Some(crate::value::Value::BindingCell(_))
+    ) {
+        return None;
+    }
+    u32::try_from(slot).ok()
+}
+
+#[inline(always)]
+fn install_named_shape_site(
+    site: &std::cell::RefCell<crate::quickening::QuickeningSite<4>>,
+    data: &crate::value::ObjectData,
+    key: &str,
+) {
+    let Some(slot) = cacheable_named_write_slot(data, key) else {
+        return;
+    };
+    let shape = crate::identity::ShapeId(data.semantic_layout_id());
+    let property = crate::identity::property_key_id(key);
+    let _ = site.borrow_mut().observe(shape, property, slot);
+}
+
+#[inline(always)]
+fn assignment_source_is_direct(
+    registers: &crate::register_file::RegisterFile,
+    source: u16,
+) -> bool {
+    !matches!(
+        registers.read(usize::from(source)),
+        Some(crate::value::Value::BindingCell(_)) | Some(crate::value::Value::WeakFunction(_))
+    )
+}
+
+/// Validate every fact required by the direct named-write projection.  The
+/// packed cache stores only layout and slot, so the canonical property vector
+/// and descriptor metadata remain the authority for key identity and
+/// writability.  Returning the physical word is safe only after those checks.
+#[inline(always)]
+fn cached_plain_writable_slot<'a>(
+    data: &'a crate::value::ObjectData,
+    key: &str,
+    layout: u32,
+    slot: u32,
+) -> Option<&'a crate::register_file::SlotWord> {
+    (data.semantic_layout_id() == layout).then_some(())?;
+    let slot = usize::try_from(slot).ok()?;
     data.hot_properties()
-        .position_rev(key)
-        .and_then(|slot| u32::try_from(slot).ok())
+        .name_at(slot)
+        .is_some_and(|name| name == key)
+        .then_some(())?;
+    if !plain_writable_own_data(data, key) {
+        return None;
+    }
+    if matches!(
+        data.hot_properties().slot_value(slot),
+        Some(crate::value::Value::BindingCell(_))
+    ) {
+        return None;
+    }
+    data.hot_properties().slot_word(slot)
 }
 
 fn finish_set_property(
@@ -967,6 +1146,101 @@ fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
 include!("properties_assign.rs");
 include!("properties_copy_data.rs");
 include!("properties_reflect_set.rs");
+
+#[cfg(test)]
+mod named_write_cache_tests {
+    use super::execute_set_named_cached;
+    use crate::{
+        machine,
+        register_file::RegisterFile,
+        value::{BindingCell, ObjectData, Value},
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    #[test]
+    fn cached_write_does_not_replace_a_binding_cell() {
+        let cell = BindingCell::new(Value::Number(1.0));
+        let object = Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::BindingCell(Rc::clone(&cell)),
+        )]));
+        let layout = object.semantic_layout_id();
+        let mut registers =
+            RegisterFile::from_values(vec![Value::Object(Rc::clone(&object)), Value::Number(9.0)]);
+        let cache = Cell::new(machine::pack_named_cache(layout, 0));
+
+        execute_set_named_cached(&mut registers, 0, "field", 1, false, &cache, None)
+            .expect("binding-cell write");
+
+        assert_eq!(cell.load(), Value::Number(9.0));
+        assert!(matches!(
+            object.hot_properties().slot_value(0),
+            Some(Value::BindingCell(_))
+        ));
+    }
+
+    #[test]
+    fn cached_write_unwraps_a_binding_cell_source() {
+        let object = Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::Number(1.0),
+        )]));
+        let layout = object.semantic_layout_id();
+        let source = BindingCell::new(Value::Number(9.0));
+        let mut registers = RegisterFile::from_values(vec![
+            Value::Object(Rc::clone(&object)),
+            Value::BindingCell(Rc::clone(&source)),
+        ]);
+        let cache = Cell::new(machine::pack_named_cache(layout, 0));
+
+        execute_set_named_cached(&mut registers, 0, "field", 1, false, &cache, None)
+            .expect("unwrapped source write");
+
+        assert_eq!(
+            object.hot_properties().slot_value(0),
+            Some(Value::Number(9.0))
+        );
+    }
+
+    #[test]
+    fn named_write_site_retains_bounded_polymorphic_shapes() {
+        let first = Rc::new(ObjectData::new(vec![(
+            "field".to_owned(),
+            Value::Number(1.0),
+        )]));
+        let second = Rc::new(ObjectData::new(vec![
+            ("other".to_owned(), Value::Number(2.0)),
+            ("field".to_owned(), Value::Number(3.0)),
+        ]));
+        let site = std::cell::RefCell::new(crate::quickening::QuickeningSite::<4>::new(
+            crate::ir::Opcode::SetN,
+        ));
+        let cache = Cell::new(0);
+        let mut registers =
+            RegisterFile::from_values(vec![Value::Object(Rc::clone(&first)), Value::Number(10.0)]);
+
+        execute_set_named_cached(&mut registers, 0, "field", 1, false, &cache, Some(&site))
+            .expect("first shape write");
+        registers.write(0, Value::Object(Rc::clone(&second)));
+        registers.write(1, Value::Number(20.0));
+        execute_set_named_cached(&mut registers, 0, "field", 1, false, &cache, Some(&site))
+            .expect("second shape write");
+
+        assert_eq!(site.borrow().cache_len(), 2);
+        registers.write(0, Value::Object(Rc::clone(&first)));
+        registers.write(1, Value::Number(30.0));
+        execute_set_named_cached(&mut registers, 0, "field", 1, false, &cache, Some(&site))
+            .expect("polymorphic hit");
+        assert_eq!(
+            first.hot_properties().slot_value(0),
+            Some(Value::Number(30.0))
+        );
+        assert_eq!(
+            second.hot_properties().slot_value(1),
+            Some(Value::Number(20.0))
+        );
+    }
+}
 
 include!("properties_delete.rs");
 include!("properties_methods.rs");

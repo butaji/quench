@@ -1,6 +1,13 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
@@ -32,6 +39,7 @@ BenchmarkSuite.RunSuites({
   },
 });
 `;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 function usage() {
   console.log(
@@ -49,7 +57,13 @@ if (process.argv.includes("--help")) {
 const node = arg("--node", process.execPath);
 const quench = arg("--quench", arg("--binary", runtime));
 const runs = Number(arg("--runs", "3"));
-const timeoutMs = Number(arg("--timeout-ms", "120000"));
+if (!Number.isInteger(runs) || runs <= 0) {
+  throw new Error("--runs must be a positive integer");
+}
+const timeoutMs = Number(arg("--timeout-ms", String(DEFAULT_TIMEOUT_MS)));
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  throw new Error("--timeout-ms must be a positive number");
+}
 const output = arg("--out", null);
 const selected = arg(
   "--only",
@@ -89,10 +103,21 @@ for (const fixture of selected) {
   const script = join(suite, fixture);
   const base = readFileSync(join(suite, "base.js"), "utf8");
   const source = base + "\n" + readFileSync(script, "utf8") + "\n" + runner;
-  const temp = join("/tmp", `quench-bench-${fixture}`);
-  writeFileSync(temp, source);
+  // Give every invocation a fresh scratch directory. A killed runner can
+  // leave its files behind, but a later run can never consume those bytes.
+  const scratch = mkdtempSync(join(tmpdir(), "quench-bench-"));
+  const temp = join(scratch, fixture);
+  try {
+    writeFileSync(temp, source);
+  } catch (error) {
+    rmSync(scratch, { recursive: true, force: true });
+    throw error;
+  }
   const nodeRuns = Array.from({ length: runs }, () => measure(node, temp));
   const quenchRuns = Array.from({ length: runs }, () => measure(quench, temp));
+  const outputEqual = nodeRuns.at(-1).stdout === quenchRuns.at(-1).stdout;
+  // Benchmark scores are engine-dependent; retain outputEqual as evidence but
+  // do not reject an otherwise successful scored run because timings differ.
   const valid = [...nodeRuns, ...quenchRuns].every(
     (sample) => sample.status === 0 && !sample.timedOut && sample.score !== null
   );
@@ -112,7 +137,11 @@ for (const fixture of selected) {
       wallNs,
       score
     })),
-    outputEqual: nodeRuns.at(-1).stdout === quenchRuns.at(-1).stdout
+    outputEqual,
+    diagnostics: valid ? undefined : {
+      node: nodeRuns.map(({ stdout, stderr }) => ({ stdout, stderr })),
+      quench: quenchRuns.map(({ stdout, stderr }) => ({ stdout, stderr }))
+    }
   };
   console.log(JSON.stringify(summary));
   results[fixture.slice(0, -3)] = {
@@ -121,5 +150,6 @@ for (const fixture of selected) {
     valid,
     output_equal: summary.outputEqual
   };
+  rmSync(scratch, { recursive: true, force: true });
 }
 if (output) writeFileSync(output, JSON.stringify({ results }, null, 2) + "\n");

@@ -5,6 +5,7 @@
 // /usr/bin/time supplies wall time and peak RSS while unavailable counters stay null.
 const cp = require("child_process");
 const fs = require("fs");
+const DEFAULT_TIMEOUT_MS = 120_000;
 // This tool collects evidence; it never authorizes speculative prefetch.
 const [command, ...args] = process.argv.slice(2);
 if (!command) {
@@ -12,7 +13,11 @@ if (!command) {
   process.exit(2);
 }
 const start = process.hrtime.bigint();
-const result = cp.spawnSync("/usr/bin/time", ["-l", command, ...args], { encoding: "utf8" });
+const result = cp.spawnSync("/usr/bin/time", ["-l", command, ...args], {
+  encoding: "utf8",
+  timeout: DEFAULT_TIMEOUT_MS,
+  killSignal: "SIGKILL",
+});
 const wallMs = Number(process.hrtime.bigint() - start) / 1e6;
 if (result.error) throw result.error;
 if (result.status !== 0) {

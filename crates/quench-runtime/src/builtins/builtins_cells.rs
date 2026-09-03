@@ -20,7 +20,7 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
         } else {
             values.push((key.into(), Value::BindingCell(Rc::clone(&cell))));
         }
-        let mut created = properties.created.clone();
+        let mut created = properties.creation_order_values();
         crate::builtins::object_alias::record_created(&mut created, key);
         let properties = Rc::new(ObjectData::with_creation_order(
             values,

@@ -3,6 +3,11 @@ name = "quench-node"
 version = "0.1.0"
 edition = "2021"
 autobins = false
+
+[[bin]]
+name = "quench-node"
+path = "src/main.rs"
+
 description = "Node.js-API compatibility host on top of quench-runtime"
 license = "MIT"
 
