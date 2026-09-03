@@ -272,6 +272,7 @@
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
     stream.readable = options.readable !== false;
+    stream.readableDidRead = false;
     stream.destroyed = false;
     stream.closed = false;
     stream.readableAborted = false;
@@ -338,6 +339,7 @@
         if (st.decoder && typeof chunk !== "string") chunk = st.decoder.write(chunk);
         if (chunk !== "") {
           st.needReadable = false;
+          stream.readableDidRead = true;
           stream._emitter.emit("data", chunk);
         }
         if (st.awaitDrainWriters &&
@@ -346,19 +348,27 @@
               : true)) {
           if (st.flowing) {
             st.flowing = false;
+            st.paused = true;
             stream._emitter.emit("pause");
           }
           break;
         }
       }
+      // A transform may defer its writable callback while its readable side
+      // is full. Once data listeners drain that side, release the deferred
+      // callback so the writable queue can advance and emit `drain`.
+      if (st.flowing && stream._transformBackpressure &&
+          stream.readableLength < st.highWaterMark) {
+        releaseTransform(stream);
+      }
     }
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
       st.reading = true;
       requestRead(stream);
-      // _read may synchronously refill the queue. Continue pulling in the
-      // same turn; flowScheduled is already set, so scheduling alone would
-      // otherwise strand the newly queued chunks until another event arrives.
-      if (st.buffer.length > 0 || st.ended) flowReadable(stream);
+      // _read may synchronously refill the queue. Defer the next pull so a
+      // producer that always pushes cannot recurse forever before destroy or
+      // close notifications get a turn.
+      if (st.buffer.length > 0 || st.ended) scheduleFlow(stream);
     }
     if (st.buffer.length === 0 && st.ended && st.decoder) {
       const tail = st.decoder.end();
@@ -371,13 +381,17 @@
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
         !st.endScheduled && (st.flowing ||
-          (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
+          (stream.listenerCount("data") === 0 &&
+           stream.listenerCount("readable") === 0 &&
+           stream.listenerCount("end") === 0))) {
       st.endScheduled = true;
       nextTick(() => nextTick(() => {
         st.endScheduled = false;
         if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
             (st.flowing ||
-              (stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0))) {
+              (stream.listenerCount("data") === 0 &&
+               stream.listenerCount("readable") === 0 &&
+               stream.listenerCount("end") === 0))) {
           st.endEmitted = true;
           st.needReadable = false;
           st.readingMore = false;
@@ -660,9 +674,15 @@
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          if (chunk === "" && !st.ended) {
+            if (!st.reading) requestRead(this);
+            releaseTransform(this);
+            return null;
+          }
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) {
+          if (chunk !== null && chunk !== undefined) this.readableDidRead = true;
           if (!st.ended && this.listenerCount("readable") > 0) st.reading = true;
           this._emitter.emit("data", chunk);
         }
@@ -678,6 +698,7 @@
           st.needReadable = Number.isFinite(requested) && requested <= buffered;
         }
         releaseTransform(this);
+        if (chunk !== null && chunk !== undefined) this.readableDidRead = true;
         return chunk;
       }
       if (st.buffer.length === 0 && st.reading && st.readRequests === 0) {
@@ -700,9 +721,15 @@
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          if (chunk === "" && !st.ended) {
+            if (!st.reading) requestRead(this);
+            releaseTransform(this);
+            return null;
+          }
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) {
+          if (chunk !== null && chunk !== undefined) this.readableDidRead = true;
           if (!st.ended && this.listenerCount("readable") > 0) st.reading = true;
           this._emitter.emit("data", chunk);
         }
@@ -718,6 +745,7 @@
           st.needReadable = Number.isFinite(requested) && requested <= buffered;
         }
         releaseTransform(this);
+        if (chunk !== null && chunk !== undefined) this.readableDidRead = true;
         return chunk;
       }
       finishIfEnded();
@@ -758,6 +786,13 @@
       const ondata = (chunk) => {
         if (dest.write(chunk) === false) {
           const state = source._readableState;
+          // A Transform may close its readable side from inside the current
+          // write. Node still admits the next queued chunk before applying
+          // backpressure, so retain one admission slot at that boundary.
+          if (dest._readableState?.ended && !source.__pipeEndedDestinationProbe) {
+            source.__pipeEndedDestinationProbe = true;
+            return;
+          }
           if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
           else if (state.awaitDrainWriters instanceof Set) state.awaitDrainWriters.add(dest);
           else if (state.awaitDrainWriters !== dest) {
@@ -772,7 +807,10 @@
               (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0);
             if (drained) {
               state.awaitDrainWriters = null;
-              source.resume();
+              // A destination that has already ended its readable side cannot
+              // make progress by draining; keep the source paused so a pipe
+              // observes the same backpressure boundary as Node.
+              if (!dest._readableState?.ended && dest.readable !== false) source.resume();
             }
           });
         }
@@ -810,6 +848,11 @@
       } else if (!dest) {
         pipes.length = 0;
       }
+      if (pipes.length === 0 && this.listenerCount("data") === 0) {
+        this._readableState.flowing = false;
+        this._readableState.readingMore = false;
+        this._readableState.reading = false;
+      }
       return this;
     }
   }
@@ -826,6 +869,11 @@
     let pending = false;
     let finished = false;
     const readable = new ReadableClass(Object.assign({}, options, {
+      // Install the iterator before the first read.  Otherwise the
+      // constructor's eager init consumes one source item before operators
+      // take ownership of `__quenchIterator`, producing an undefined hole
+      // under concurrent map/filter prefetch.
+      __quenchCompatConstruct: true,
       objectMode: options.objectMode !== false,
       read() {
         if (pending || finished) return;
@@ -916,16 +964,26 @@
       state.operatorError = error;
       state.ended = true;
     });
-    const pull = () => {
-      if (state.sourceDone) return null;
-      const step = source.next();
+    // An operator owns the source error edge.  Besides forwarding failures to
+    // the terminal consumer, this listener makes an error emitted by a mapper
+    // observable through the same output stream instead of becoming an
+    // unrelated uncaught EventEmitter exception.
+    if (stream && typeof stream.on === "function") {
+      stream.on("error", (error) => output._emitter.emit("error", error));
+    }
+      const pull = () => {
+        if (state.sourceDone) return null;
+        const step = source.next();
       const markDone = (value) => {
         if (!value || value.done) state.sourceDone = true;
         return value;
       };
-      return step && typeof step.then === "function"
-        ? step.then(markDone)
-        : markDone(step);
+      if (step && typeof step.then === "function") {
+        const pulled = step.then(markDone, (error) => { throw error; });
+        pulled.catch(() => {});
+        return pulled;
+      }
+      return markDone(step);
     };
     const enqueue = () => {
       const processStep = (step) => {
@@ -938,8 +996,12 @@
       }
       const task = { done: false, value: undefined };
       const complete = (value) => {
-        task.done = true;
         task.value = value;
+        // Publish the payload before the completion bit.  Consumers inspect
+        // `done` to leave their wait loop; publishing in the opposite order
+        // lets the VM observe a completed task while its value is still the
+        // initial `undefined` under dependent promise chains.
+        task.done = true;
         return value;
       };
       const flatten = (value) => {
@@ -957,24 +1019,62 @@
         return [value];
       };
       if (result && typeof result.then === "function") {
-        task.promise = Promise.resolve(result).then(flatten).then(complete);
+        // The operator adopts mapper promises; mark the source rejection as
+        // observed even if a later stream error short-circuits consumption.
+        result.catch(() => {});
+        // Resolve the task only after `complete` publishes its payload.  A
+        // chained `then` that returns another promise can settle one VM
+        // microtask before the inner reaction runs, allowing `next()` to
+        // observe an unfinished task and emit its initial undefined value.
+        task.promise = new Promise((resolve, reject) => {
+          result.then((value) => {
+            const flattened = flatten(value);
+            if (flattened && typeof flattened.then === "function") {
+              flattened.then((item) => {
+                complete(item);
+                resolve(item);
+              }, reject);
+            } else {
+              complete(flattened);
+              resolve(flattened);
+            }
+          }, reject);
+        });
       } else {
         const flattened = flatten(result);
-        task.promise = flattened && typeof flattened.then === "function"
-          ? flattened.then(complete)
-          : Promise.resolve(complete(flattened));
+        if (flattened && typeof flattened.then === "function") {
+          task.promise = new Promise((resolve, reject) => {
+            flattened.then((item) => {
+              complete(item);
+              resolve(item);
+            }, reject);
+          });
+        } else {
+          complete(flattened);
+          task.promise = Promise.resolve(flattened);
+        }
       }
+      // The operator owns this task promise; downstream `toArray()` may
+      // short-circuit after an emitted stream error, so retain an observer
+      // even when no later race consumes the rejection.
+      task.promise.catch(() => {});
       state.pending.push(task);
       return true;
       };
       const step = pull();
       return step && typeof step.then === "function"
-        ? step.then(processStep)
+        ? step.then(processStep, (error) => { throw error; })
         : processStep(step);
     };
     const fill = () => {
+      if (signal?.aborted) return null;
       const waiters = [];
-      let reserved = state.pending.slice(state.head).length;
+      const queued = state.pending.slice(state.head);
+      // Preserve one-item lookahead once the head is already complete, while
+      // reclaiming completed out-of-order slots when the head is blocked on a
+      // dependency. This is the Node scheduling rule for active concurrency.
+      const headPending = state.pending[state.head] && !state.pending[state.head].done;
+      let reserved = headPending ? queued.filter((task) => !task.done).length : queued.length;
       while (reserved < concurrency && !state.sourceDone) {
         const result = enqueue();
         reserved++;
@@ -986,7 +1086,7 @@
         ? Promise.race(waiters)
         : undefined;
     };
-    const next = async () => {
+    const nextImpl = async () => {
       if (state.operatorError) throw state.operatorError;
       if (state.ended) return { value: undefined, done: true };
       if (signal?.aborted) throw sliceAbortError();
@@ -999,11 +1099,23 @@
         state.ended = true;
         return { value: undefined, done: true };
       }
-      while (state.pending[state.head] && !state.pending[state.head].done) {
-        await Promise.race(state.pending.slice(state.head).filter((task) => !task.done).map((task) => task.promise));
+      const headTask = state.pending[state.head];
+      // Refill as soon as any active task settles, not only after the head
+      // task. A later mapper may intentionally resolve a dependency needed by
+      // the current head task. Recursive suspension keeps this condition
+      // intact across the VM's await continuation.
+      const waitForHead = async () => {
+        if (!headTask || headTask.done) return;
+        const waiters = state.pending.slice(state.head)
+          .filter((task) => !task.done)
+          .map((task) => task.promise);
+        if (waiters.length) await Promise.race(waiters);
+        else await new Promise((resolve) => setImmediate(resolve));
         const refill = fill();
         if (refill) await refill;
-      }
+        return waitForHead();
+      };
+      await waitForHead();
       const task = state.pending[state.head++];
       if (!task) {
         state.ended = true;
@@ -1016,20 +1128,20 @@
         if (state.outputQueue.length) {
           return { value: state.outputQueue.shift(), done: false };
         }
-        return next();
+        return nextImpl();
       }
-      if (filtering && !value.keep) return next();
+      if (filtering && !value.keep) return nextImpl();
       return { value: filtering ? value.value : value, done: false };
     };
+    const next = nextImpl;
     output.__quenchIterator = { next, return() { state.ended = true; return Promise.resolve({ value: undefined, done: true }); } };
-    output.__debugState = state;
     output.__quenchIterator[Symbol.asyncIterator] = function () { return this; };
     output[Symbol.asyncIterator] = function () { return output.__quenchIterator; };
     output.toArray = function () {
       const collect = (values) => output.__quenchIterator.next().then((step) => {
         if (step.done) return values;
         return collect(values.concat([step.value]));
-      });
+      }, (error) => { throw error; });
       return collect([]);
     };
     return output;
@@ -1064,18 +1176,42 @@
     let started = hasInitial;
     let found;
     let decided = false;
-    const operator = readableOperator(stream, async (value, context) => {
+    // Keep this mapper synchronous until the user callback actually returns a
+    // promise.  An `async` wrapper introduces an extra VM await continuation
+    // for every item; in Quench that continuation can re-enter the callback
+    // with the mapper context as its value (observable as bogus reduce terms).
+    // Promise adoption below retains the same ordering and rejection behavior
+    // without representing the ordinary synchronous case as a state machine.
+    const terminalStep = (value, context) => {
       if (context.signal?.aborted) throw sliceAbortError();
       if (kind === "reduce") {
         if (!started) {
           accumulator = value;
           started = true;
-        } else {
-          accumulator = await callback(accumulator, value, context);
+          return value;
         }
+        const reduced = callback(accumulator, value, context);
+        if (reduced && typeof reduced.then === "function") {
+          return reduced.then((next) => {
+            accumulator = next;
+            return value;
+          });
+        }
+        accumulator = reduced;
         return value;
       }
-      const matched = await callback(value, context);
+      const matched = callback(value, context);
+      if (matched && typeof matched.then === "function") {
+        return matched.then((decision) => {
+          if (!decided && ((kind === "some" && decision) ||
+              (kind === "every" && !decision) || (kind === "find" && decision))) {
+            decided = true;
+            found = kind === "find" ? value : kind === "some";
+            if (typeof stream.destroy === "function") stream.destroy();
+          }
+          return value;
+        });
+      }
       if (!decided && ((kind === "some" && matched) ||
           (kind === "every" && !matched) || (kind === "find" && matched))) {
         decided = true;
@@ -1083,15 +1219,23 @@
         if (typeof stream.destroy === "function") stream.destroy();
       }
       return value;
-    }, false, { concurrency: 1, signal: options?.signal });
+    };
+    const operator = readableOperator(stream, terminalStep, false,
+      { concurrency: 1, signal: options?.signal });
     const completion = operator.toArray();
+    // A short-circuiting signal races the terminal result.  The operator's
+    // own completion promise still rejects when its iterator observes the
+    // abort; retain that rejection edge so it cannot surface as a second
+    // unhandled rejection after the race has already settled.
+    completion.catch(() => {});
     const result = options?.signal
       ? Promise.race([completion, new Promise((resolve, reject) => {
           const abort = () => reject(sliceAbortError());
           options.signal.addEventListener?.("abort", abort, { once: true });
           if (options.signal.aborted) abort();
-        })])
+      })])
       : completion;
+    result.catch(() => {});
     return result.then(() => {
       if (kind === "reduce") {
         if (!started) {
@@ -1102,11 +1246,14 @@
         return accumulator;
       }
       return decided ? found : kind === "some" ? false : kind === "every" ? true : undefined;
-    });
+    }, (error) => { throw error; });
   }
 
   function sliceCount(count) {
     const number = Number(count);
+    // Node's validateInteger treats NaN as the zero-count edge for the
+    // readable slicing operators; only other finite violations reject.
+    if (Number.isNaN(number)) return 0;
     if (!Number.isFinite(number) && number !== Infinity) {
       const error = new RangeError("The count argument must be a finite number");
       error.code = "ERR_OUT_OF_RANGE";
@@ -1146,25 +1293,43 @@
     sliceOptions(options);
     const limit = sliceCount(count);
     const signal = options?.signal;
+    const sourceIterator = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
+    let skipped = 0;
+    let emitted = 0;
+    let iteratorDone = false;
+    const iterator = {
+      next() {
+        if (iteratorDone || emitted >= limit) {
+          iteratorDone = true;
+          return Promise.resolve({ value: undefined, done: true });
+        }
+        if (signal?.aborted) return Promise.reject(sliceAbortError());
+        const pull = () => Promise.resolve(sourceIterator.next()).then((step) => {
+          if (!step || step.done) {
+            iteratorDone = true;
+            return { value: undefined, done: true };
+          }
+          if (skipped < drop) {
+            skipped++;
+            return pull();
+          }
+          emitted++;
+          return { value: step.value, done: false };
+        });
+        return pull();
+      },
+      return() {
+        iteratorDone = true;
+        sourceIterator.return?.();
+        return Promise.resolve({ value: undefined, done: true });
+      },
+      [Symbol.asyncIterator]() { return this; }
+    };
     const slice = {
       readable: true,
       destroyed: false,
-      async *[Symbol.asyncIterator]() {
-        let skipped = 0;
-        let emitted = 0;
-        if (limit === 0) return;
-        if (signal?.aborted) throw sliceAbortError();
-        for await (const value of readableValues(stream)) {
-          if (signal?.aborted) throw sliceAbortError();
-          if (skipped < drop) {
-            skipped++;
-            continue;
-          }
-          if (emitted >= limit) break;
-          emitted++;
-          yield value;
-        }
-      },
+      __quenchIterator: iterator,
+      [Symbol.asyncIterator]() { return iterator; },
       take(nextCount, nextOptions) {
         return sliceReadable(this, nextCount, 0, nextOptions);
       },
@@ -1201,7 +1366,18 @@
             })();
           });
         }
-        return collectValues(this);
+        // Delegate directly to the slice iterator. The VM's async-generator
+        // reducer does not treat `yield*` as an async iterable delegation, so
+        // routing through readableValues would reject with "value is not
+        // iterable" even though the iterator itself is valid.
+        const iterator = this[Symbol.asyncIterator]();
+        const values = [];
+        const collect = () => Promise.resolve(iterator.next()).then((step) => {
+          if (step.done) return values;
+          values.push(step.value);
+          return collect();
+        });
+        return collect();
       },
       destroy(error) {
         this.destroyed = true;
@@ -1265,7 +1441,7 @@
       if (step.done) return values;
       values.push(step.value);
       return collect();
-    });
+    }, (error) => { throw error; });
     return collect();
   };
 
@@ -1391,6 +1567,7 @@
       highWaterMark: defaultHwm(options, "writable"),
       buffered: 0,
       needDrain: false,
+      drainPending: false,
       bufferedRequestCount: 0,
       pending: [],
       writing: false,
@@ -1502,16 +1679,10 @@
         stream.destroy();
       }
     });
-    // A duplex with autoDestroy cannot finish its writable side before its
-    // readable side has emitted end.  In particular, Transform.end() may
-    // queue readable completion and resume() in the same turn.
-    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted &&
-        !stream._finishedWantsWritableOnly && !stream._isTransform) {
-      if (!st.finishScheduled) {
-        st.finishScheduled = true;
-        stream.once("end", emitFinish);
-      }
-    } else emitFinish();
+    // Writable completion is independent of the readable half of a Duplex;
+    // Node emits `finish` even while the readable side remains open. Keep
+    // auto-destroy as a separate, end-aware transition above.
+    emitFinish();
   }
 
   function flushCorked(stream) {
@@ -1682,12 +1853,16 @@
       if (st.corked) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
         updateBufferedRequestCount(st);
-        return st.buffered < st.highWaterMark;
+        const accepted = st.buffered < st.highWaterMark;
+        if (!accepted) st.drainPending = true;
+        return accepted;
       }
       if (st.writing) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
         updateBufferedRequestCount(st);
-        return st.buffered < st.highWaterMark;
+        const accepted = st.buffered < st.highWaterMark;
+        if (!accepted) st.drainPending = true;
+        return accepted;
       }
       st.writing = true;
       let called = false;
@@ -1700,6 +1875,7 @@
           return;
         }
         called = true;
+        const shouldDrain = st.needDrain;
         st.buffered -= chunkLength;
         updateNeedDrain(st);
         st.writing = false;
@@ -1737,7 +1913,11 @@
                     st.errorEmitted = true;
                     this._emitter.emit("error", batchError);
                   }
-                  if (!st.destroyed && st.buffered <= st.highWaterMark) this._emitter.emit("drain");
+                  if (!batchError && (shouldDrain || st.drainPending) && !st.destroyed &&
+                      st.buffered <= st.highWaterMark) {
+                    st.drainPending = false;
+                    nextTick(() => this._emitter.emit("drain"));
+                  }
                   if (!batchError) finishWritable(this);
                 }
               );
@@ -1765,7 +1945,13 @@
           st.ended = wasEnded;
           return;
         }
-        if (!st.destroyed && st.buffered <= st.highWaterMark) this._emitter.emit("drain");
+        if (!st.destroyed && (shouldDrain || st.drainPending) &&
+            st.buffered <= st.highWaterMark) {
+          // Node emits drain as part of the synchronous write completion once
+          // the buffered total returns below the high-water mark.
+          st.drainPending = false;
+          this._emitter.emit("drain");
+        }
         finishWritable(this);
       };
       try {
@@ -1781,7 +1967,16 @@
         }
         done(error);
       }
-      return !failed && st.buffered < st.highWaterMark;
+      // Preserve the write-side backpressure decision made at admission.
+      // A synchronous transform callback must not turn an oversized write
+      // into a falsely accepted write before the pipe observes the return.
+      // Admission is based on the post-write buffered total. A synchronous
+      // callback may consume an oversized chunk before `write()` returns;
+      // Node then reports writable capacity (rather than forcing false from
+      // the chunk's individual size).
+      const accepted = !failed && st.buffered < st.highWaterMark;
+      if (!accepted) st.drainPending = true;
+      return accepted;
     }
 
     end(chunk, encoding, callback) {
@@ -1940,6 +2135,7 @@
     state.finishScheduled = false;
     state.writing = false;
     state.buffered = 0;
+    state.drainPending = false;
     state.pending = [];
     state.endCallbacks = [];
     return this;
@@ -2062,54 +2258,6 @@
   PassThrough.prototype.constructor = PassThrough;
   Object.setPrototypeOf(PassThrough, PassThroughClass);
 
-  function duplexPair(options = {}) {
-    const left = new Duplex(options);
-    const right = new Duplex(options);
-    // Writable byte streams use the internal "buffer" encoding marker after
-    // decoding strings.  It is metadata for _write, not a public readable
-    // encoding; forwarding it to push() would make a valid Buffer pair fail
-    // validation as an unknown encoding.
-    const pairPush = (destination, chunk, encoding) =>
-      encoding === "buffer" ? destination.push(chunk) : destination.push(chunk, encoding);
-    const connect = (source, destination) => {
-      source.__pairPending = [];
-      source._write = (chunk, encoding, callback) => {
-        if (source.writableCorked > 0) {
-          source.__pairPending.push([chunk, encoding, callback]);
-        } else {
-          pairPush(destination, chunk, encoding);
-          callback?.();
-        }
-      };
-      source.uncork = () => {
-        if (source.writableCorked > 0) source._writableState.corked -= 1;
-        if (source.writableCorked !== 0) return;
-        const pending = source.__pairPending.splice(0);
-        for (const [chunk, encoding, callback] of pending) {
-          pairPush(destination, chunk, encoding);
-          callback?.();
-        }
-        return source;
-      };
-      source._final = (callback) => {
-        const flush = () => {
-          const pending = source.__pairPending.splice(0);
-          for (const [chunk, encoding, writeCallback] of pending) {
-            pairPush(destination, chunk, encoding);
-            writeCallback?.();
-          }
-          destination.push(null);
-          callback?.();
-        };
-        source._writableState.corked = 0;
-        queueMicrotask(flush);
-      };
-    };
-    connect(left, right);
-    connect(right, left);
-    return [left, right];
-  }
-
   function finished(stream, options, callback) {
     if (!stream || typeof stream.on !== "function") {
       const error = new TypeError("The \"stream\" argument must be an instance of Stream");
@@ -2214,15 +2362,19 @@
         if (callback) callback(pipelineError);
       }
     };
-    for (let i = 0; i + 1 < streams.length; i += 1) {
-      streams[i].pipe(streams[i + 1]);
-    }
     for (let index = 0; index < streams.length; index += 1) {
       const stream = streams[index];
       cleanups.push(finished(stream, {
         readable: index < streams.length - 1,
         writable: index > 0,
       }, complete));
+    }
+    // Register completion observers before connecting the pipe.  A finite
+    // iterable may emit `end` synchronously during the first read; attaching
+    // `finished` afterwards loses that terminal edge and leaves the callback
+    // pending forever.
+    for (let i = 0; i + 1 < streams.length; i += 1) {
+      streams[i].pipe(streams[i + 1]);
     }
     const last = streams[streams.length - 1];
     return last;
@@ -2677,11 +2829,15 @@
     Duplex: DuplexCompat,
     Transform,
     PassThrough,
-    duplexPair,
     Stream,
     destroy,
     addAbortSignal(signal, stream) {
-      if (!signal || !stream || typeof stream.destroy !== "function") return stream;
+      if (!(signal instanceof AbortSignal)) {
+        throw Object.assign(new TypeError("The \"signal\" argument must be an instance of AbortSignal"), { code: "ERR_INVALID_ARG_TYPE" });
+      }
+      if (!stream || typeof stream.destroy !== "function") {
+        throw Object.assign(new TypeError("The \"stream\" argument must be an instance of Stream"), { code: "ERR_INVALID_ARG_TYPE" });
+      }
       const abort = () => {
         const reason = signal.reason || Object.assign(
           new Error("The operation was aborted"),
