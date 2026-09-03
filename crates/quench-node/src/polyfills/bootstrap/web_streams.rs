@@ -2,6 +2,11 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithWebStreams = globalThis.require;
 const __quenchWebStreamsState = Symbol("kState");
+Object.defineProperty(globalThis, "__quenchWebStreamsState", {
+  configurable: true,
+  enumerable: false,
+  value: __quenchWebStreamsState,
+});
 const __quenchReadableEnqueue = (stream, value) => {
   const waiter = stream._readWaiters.shift();
   if (waiter) return waiter({ value, done: false });
@@ -62,13 +67,17 @@ const __quenchReadableRead = (stream) => {
     return Promise.resolve({ value: item.value, done: false });
   }
   if (stream._closed) return Promise.resolve({ value: undefined, done: true });
+  // Register the read waiter before invoking a synchronous pull algorithm.
+  // Otherwise an enqueue+close performed during pull lands in the queue and
+  // can be observed twice by two reads issued in the same turn.
+  const pending = new Promise((resolve) => stream._readWaiters.push(resolve));
   if (stream._pull && !stream._pulling) {
     stream._pulling = true;
     Promise.resolve(stream._pull(stream._controller)).finally(() => {
       stream._pulling = false;
     });
   }
-  return new Promise((resolve) => stream._readWaiters.push(resolve));
+  return pending;
 };
 const __quenchReadableCancel = async (stream, reason) => {
   stream._closed = true;
@@ -121,11 +130,14 @@ class __quenchReadableStream {
     this.locked = true;
     return __quenchReadableReader(this);
   }
-  cancel() {
+  cancel(reason) {
     if (this.locked) {
-      const error = new TypeError("Invalid state: stream is locked");
-      error.code = "ERR_INVALID_STATE";
-      return Promise.reject(error);
+      // Host abort integration may need to terminate a stream while its
+      // reader is held.  Surface the supplied abort reason through the
+      // reader's `closed` promise instead of producing an unrelated lock
+      // error.
+      this._errorStream?.(reason);
+      return Promise.resolve();
     }
     this._closed = true;
     return Promise.resolve();
@@ -136,14 +148,11 @@ class __quenchReadableStream {
     }
     const writer = transform.writable.getWriter();
     const reader = this.getReader();
-    (async () => {
-      for (;;) {
-        const item = await reader.read();
-        if (item.done) break;
-        await writer.write(item.value);
-      }
-      await writer.close();
-    })();
+    const pump = () => reader.read().then((item) => {
+      if (item.done) return writer.close();
+      return Promise.resolve(writer.write(item.value)).then(pump);
+    });
+    pump();
     return transform.readable;
   }
   pipeTo(destination) {
@@ -154,14 +163,11 @@ class __quenchReadableStream {
     }
     const reader = this.getReader();
     const writer = destination.getWriter();
-    return (async () => {
-      for (;;) {
-        const item = await reader.read();
-        if (item.done) break;
-        await writer.write(item.value);
-      }
-      await writer.close();
-    })();
+    const pump = () => reader.read().then((item) => {
+      if (item.done) return writer.close();
+      return Promise.resolve(writer.write(item.value)).then(pump);
+    });
+    return pump();
   }
   tee() {
     if (this.locked) {
@@ -466,11 +472,22 @@ const __quenchWebStreams = {
   CompressionStream: __quenchCompressionStream,
   DecompressionStream: __quenchDecompressionStream,
   TextEncoderStream: __quenchTextEncoderStream,
-  TextDecoderStream: __quenchTextDecoderStream
+  TextDecoderStream: __quenchTextDecoderStream,
+  ByteLengthQueuingStrategy: __quenchByteLengthQueuingStrategy,
+  CountQueuingStrategy: __quenchCountQueuingStrategy
 };
+// Web-stream constructors are one identity family in Node: the globals and
+// `require('stream/web')` must observe the same constructors.  A Blob
+// compatibility fallback may have populated `ReadableStream` earlier in
+// bootstrap, so make the canonical stream implementation authoritative here.
+globalThis.ReadableStream = __quenchReadableStream;
 Object.defineProperty(globalThis, "__quenchWebStreams", {
   configurable: true,
   value: __quenchWebStreams
+});
+Object.defineProperty(globalThis, "__quenchReadableStream", {
+  configurable: true,
+  value: __quenchReadableStream
 });
 for (const [name, constructor] of Object.entries(__quenchWebStreams)) {
   globalThis[name] ||= constructor;
@@ -478,7 +495,9 @@ for (const [name, constructor] of Object.entries(__quenchWebStreams)) {
 for (const constructor of "ReadableStreamDefaultReader ReadableStreamBYOBReader ReadableStreamBYOBRequest ReadableByteStreamController ReadableStreamDefaultController TransformStreamDefaultController WritableStreamDefaultWriter WritableStreamDefaultController".split(
   " "
 )) {
-  globalThis[constructor] ||= class {};
+  const value = globalThis[constructor] || class {};
+  globalThis[constructor] = value;
+  __quenchWebStreams[constructor] = value;
 }
 globalThis.ByteLengthQueuingStrategy ||= __quenchByteLengthQueuingStrategy;
 globalThis.CountQueuingStrategy ||= __quenchCountQueuingStrategy;
