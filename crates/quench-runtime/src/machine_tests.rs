@@ -134,6 +134,102 @@ fn invocation_count_alone_does_not_promote_a_cold_function() {
 }
 
 #[test]
+fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
+    // Build a tiny compact loop directly so the test observes the exact
+    // branch/back-edge admission used by the interpreter dispatcher.  The
+    // first pass enters the loop with r0=true; the body flips it to false,
+    // then the backward jump reaches the OSR candidate.  Baseline execution
+    // resumes at pc=0 with the same register file and exits through pc=3.
+    let store = std::rc::Rc::new(super::CodeStore {
+        instructions: vec![
+            crate::ir::Instruction::jump_if_false(0, 3),
+            crate::ir::Instruction::load_const(0, 0),
+            crate::ir::Instruction::jump(0),
+            crate::ir::Instruction::ret(0),
+        ]
+        .into(),
+        cold: Vec::<super::Op>::new().into(),
+        ranges: vec![(0, 4)].into(),
+        parameter_ends: vec![None].into(),
+        constants: vec![super::ConstantPool::new(vec![
+            super::Constant::Boolean(false),
+        ])]
+        .into(),
+        metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        quickening_sites: vec![Vec::<
+            std::cell::RefCell<crate::quickening::QuickeningSite<4>>,
+        >::new()
+        .into_boxed_slice()]
+        .into(),
+        operand_windows: vec![Vec::<std::rc::Rc<[u16]>>::new()].into(),
+        catch_ranges: vec![Vec::<super::CatchRange>::new()].into(),
+    });
+    let range = super::CodeRange::new(super::CodeId(0), 0, 4).expect("valid test range");
+    let owner = super::FunctionCode::new(store, range);
+    owner.set_tier_threshold_for_test(1);
+    let code = owner.code().expect("compact test code");
+    assert!(!owner.is_osr_entry(2), "no plan before the back-edge");
+
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(true),
+    ]);
+    let context = crate::vm::current_context_or_default();
+    let (completion, next) = crate::vm::execute_function_code_step_from(
+        code,
+        &owner,
+        0,
+        &mut registers,
+        &context,
+    )
+    .expect("hot loop executes");
+
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Boolean(false)));
+    assert_eq!(next, 4);
+    assert_eq!(owner.tier(), super::ExecutionTier::Baseline);
+    let profile = owner.tier_profile();
+    assert_eq!(profile.osr_entries, 1);
+    assert_eq!(profile.osr_transfers, 1);
+    assert!(owner.is_osr_entry(2));
+
+    // The same canonical compact code must remain correct when admission is
+    // disabled: this is the differential guard that proves OSR is an
+    // execution shortcut, not an alternate semantic path.
+    let cold_owner = super::FunctionCode::new(owner.store().expect("test code store"), range);
+    cold_owner.set_tier_threshold_for_test(100);
+    let mut cold_registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Boolean(true),
+    ]);
+    let (cold_completion, cold_next) = crate::vm::execute_function_code_step_from(
+        cold_owner.code().expect("compact test code"),
+        &cold_owner,
+        0,
+        &mut cold_registers,
+        &context,
+    )
+    .expect("cold loop executes");
+    assert_eq!(cold_completion, completion);
+    assert_eq!(cold_next, next);
+    assert_eq!(cold_owner.tier(), super::ExecutionTier::Interpreter);
+    assert_eq!(cold_owner.tier_profile().osr_transfers, 0);
+}
+
+#[test]
+fn structured_fori_is_not_an_osr_back_edge() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::ForI,
+        flags: 0,
+        a: 0,
+        b: 0,
+        c: 0,
+    };
+    assert!(matches!(
+        instruction.opcode.control_operands(instruction),
+        crate::ir::ControlOperands::Loop { .. }
+    ));
+    assert!(!super::is_osr_candidate(3, instruction));
+}
+
+#[test]
 fn code_arena_lowers_constant_add_as_one_specialized_instruction() {
     let function = super::FunctionCode::from_ops(vec![
         super::Op::Const {
