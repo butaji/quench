@@ -1,9 +1,9 @@
 // VM micro-case 032
-// family=objects; operation=polymorphic-shapes; variant=2; work_units=37; memory=ephemeral
+// family=objects; operation=polymorphic-shapes; variant=2; work_units=740; memory=ephemeral
 "use strict";
 const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
 function microRun() {
-  const objects = Array.from({ length: 37 }, (_, i) => i & 1 ? { a: i, b: i + 1 } : { a: i, c: i + 2 }); let total = 0; for (const object of objects) total += object.a + (object.b ?? object.c); return total;
+  const objects = Array.from({ length: 740 }, (_, i) => i & 1 ? { a: i, b: i + 1 } : { a: i, c: i + 2 }); let total = 0; for (const object of objects) total += object.a + (object.b ?? object.c); return total;
 }
 globalThis.microRun = microRun;
 const result = microRun();
