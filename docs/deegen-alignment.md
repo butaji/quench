@@ -36,23 +36,24 @@ optimizations below — not an optimizing JIT or deopt.
 `machine.rs` has a third promotion tier (`ExecutionTier::Optimizing`,
 `OptimizingPlan`) beyond the paper's two tiers. Its own doc comment: "a
 physical execution view, not a second semantic IR" — re-wraps the same
-baseline entries/stencil plans, with native leaves admitted per target, no real instruction selection,
+baseline entries/stencil plans, x86_64-gated, no real instruction selection,
 register allocation, or speculation (so no deopt needed — it never
 speculates). **Decision: keep it**, verify it's a measured net win (task 030),
 document it as not the paper's (nonexistent) optimizing JIT.
 
-Task 036's paired ARM64 validation used the same optimized artifact and
-three-run neutral-corpus command. Baseline-only (normal threshold, but
-`OPTIMIZATION_WARMUP_MULTIPLIER = u32::MAX`) was 100/100, Score **250.885**,
-wall ratio **0.8197**, RSS ratio **0.3035**, instructions **1.1351**, and cycles
-**0.7821** (`target/micro-pair-disabled.txt`). With the optimized view
-reachable it was 100/100, Score **252.355**, wall ratio **0.7850**, RSS ratio
-**0.3032**, instructions **1.0930**, and cycles **0.7586**
-(`target/micro-pair-enabled.txt`). This is a reproducible **4.24% wall,
-3.71% instruction, and 3.01% cycle improvement**; the composite Score delta
-is +0.59% because both configurations already have the same low RSS. Native
-stencil leaves remain target-admitted and every other operation uses the
-canonical fallback. The temporary multiplier change was reverted to 8.
+Task 036 validation on this ARM64 macOS host used the same optimized
+`target/debug/quench-node` artifact and three-run neutral-corpus command in
+both configurations. With normal promotion reachable, the run was 100/100,
+Score **253.929**, wall ratio **0.7861**, RSS ratio **0.3051**, and instruction
+ratio **1.0860** (`target/micro-neutral-036-enabled.txt`). With
+`OPTIMIZATION_WARMUP_MULTIPLIER = u32::MAX` for the measurement (so promotion
+was unreachable), it was also 100/100, Score **251.828**, wall ratio **0.8104**,
+RSS ratio **0.3056**, and instruction ratio **1.0835**
+(`target/micro-neutral-036-disabled.txt`). The +0.83% score delta is within
+the task's stated 2–3% noise band, and the executable optimizing view is
+x86_64-gated, so this is **not a measured net win on the current ARM64
+machine**. The temporary multiplier change was reverted to 8; no behavior
+change is being claimed.
 
 ## Summary: what's real work vs. what's misnamed vs. what's done
 
