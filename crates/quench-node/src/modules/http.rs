@@ -693,24 +693,30 @@ fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<
             }
             if size == 0 {
                 let trailer_start = line_end + 2;
-                let Some(trailer_end) = conn.buffer[trailer_start..]
-                    .windows(4)
-                    .position(|pair| pair == b"\r\n\r\n")
-                else {
-                    break;
-                };
-                let trailer_end = trailer_start + trailer_end;
-                for line in String::from_utf8_lossy(&conn.buffer[trailer_start..trailer_end])
-                    .split("\r\n")
-                {
-                    if let Some(colon) = line.find(':') {
-                        trailer_values.push((
-                            line[..colon].trim().to_ascii_lowercase(),
-                            line[colon + 1..].trim().to_string(),
-                        ));
+                let trailer_end = if conn.buffer[trailer_start..].starts_with(b"\r\n") {
+                    trailer_start
+                } else {
+                    let Some(offset) = conn.buffer[trailer_start..]
+                        .windows(4)
+                        .position(|pair| pair == b"\r\n\r\n")
+                    else {
+                        break;
+                    };
+                    let trailer_end = trailer_start + offset;
+                    for line in String::from_utf8_lossy(&conn.buffer[trailer_start..trailer_end])
+                        .split("\r\n")
+                    {
+                        if let Some(colon) = line.find(':') {
+                            trailer_values.push((
+                                line[..colon].trim().to_ascii_lowercase(),
+                                line[colon + 1..].trim().to_string(),
+                            ));
+                        }
                     }
-                }
-                conn.buffer.drain(..trailer_end + 4);
+                    trailer_end
+                };
+                let trailer_bytes = if trailer_end == trailer_start { 2 } else { 4 };
+                conn.buffer.drain(..trailer_end + trailer_bytes);
                 done = true;
                 break;
             }
