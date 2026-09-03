@@ -66,6 +66,9 @@ pub struct HostState {
     /// Thrown value stashed by `pump::handle_uncaught`, dispatched by
     /// the `__quench_uncaught__` capability inside an active frame.
     pub pending_uncaught: Option<Value>,
+    /// Paths of internal FileHandles whose finalizer must report an
+    /// `ERR_INVALID_STATE` at the next explicit GC boundary.
+    pub pending_filehandle_gc: Vec<String>,
     /// Shared `URL` class pair (constructor, prototype), built on first use
     /// so `instanceof URL` has one canonical prototype per realm.
     pub url_class: Option<(Value, Value)>,
@@ -75,12 +78,23 @@ pub struct HostState {
     /// `require('stream')` module value, evaluated once from the
     /// embedded JS prelude (`modules/stream_prelude.js`).
     pub stream_module: Option<Value>,
+    /// Original compose evaluator retained behind the Rust static boundary.
+    pub stream_compose_impl: Option<Value>,
+    /// Original web-aware pipeline evaluator retained behind the Rust
+    /// boundary; native stream-only pipelines use the Rust state machine.
+    pub stream_pipeline_impl: Option<Value>,
     /// `require('stream/consumers')` value, evaluated once per realm.
     pub stream_consumers_module: Option<Value>,
     /// Canonical `require("util")` module for this realm.
     pub util_module: Option<Value>,
     /// Canonical `require("console")` module and global console identity.
     pub console_module: Option<Value>,
+    /// Canonical `require("process")` module and global process identity.
+    pub process_module: Option<Value>,
+    /// Canonical `require("module")` namespace for this realm.
+    pub module_api: Option<Value>,
+    /// Canonical `require.extensions` table for this realm.
+    pub module_extensions: Option<Value>,
     pub string_decoder_aliases: std::collections::HashMap<u64, u64>,
     pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
     pub string_decoder_encoding: std::collections::HashMap<u64, String>,
@@ -92,7 +106,10 @@ pub struct HostState {
     /// Canonical `internalBinding("tcp_wrap")` object for this realm.
     pub tcp_binding: Option<Value>,
     /// Composite AbortSignals keyed by each source target identity.
-    pub abort_composites: std::collections::HashMap<u64, Vec<Value>>,
+    pub abort_composites: std::collections::HashMap<u64, Vec<quench_runtime::value::WeakObject>>,
+    /// Weak handles for source signals whose dependent-set metadata is
+    /// updated after host-side GC pruning.
+    pub abort_signal_refs: std::collections::HashMap<u64, quench_runtime::value::WeakObject>,
     /// Strong roots for host-created identity-bearing objects exposed as aliases.
     pub identity_roots: Vec<Value>,
     /// Canonical child-process prototype kept out of the JavaScript global.
@@ -132,13 +149,19 @@ impl NodeHost {
             pending_module: None,
             module_stack: Vec::new(),
             pending_uncaught: None,
+            pending_filehandle_gc: Vec::new(),
             url_class: None,
             blob_urls: std::collections::HashMap::new(),
             next_blob_url: 1,
             stream_module: None,
+            stream_compose_impl: None,
+            stream_pipeline_impl: None,
             stream_consumers_module: None,
             util_module: None,
             console_module: None,
+            process_module: None,
+            module_api: None,
+            module_extensions: None,
             string_decoder_aliases: std::collections::HashMap::new(),
             string_decoder_pending: std::collections::HashMap::new(),
             string_decoder_encoding: std::collections::HashMap::new(),
@@ -147,6 +170,7 @@ impl NodeHost {
             cares_binding: None,
             tcp_binding: None,
             abort_composites: std::collections::HashMap::new(),
+            abort_signal_refs: std::collections::HashMap::new(),
             identity_roots: Vec::new(),
             child_process_prototype: None,
             child_pipes: std::collections::HashMap::new(),
@@ -298,11 +322,27 @@ pub fn install_script_with_args_and_title(
 }
 
 fn host_exec_path() -> String {
-    std::env::current_exe()
+    let executable = std::env::current_exe()
         .ok()
-        .and_then(|path| std::fs::canonicalize(path).ok())
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "quench-node".to_string())
+        .and_then(|path| std::fs::canonicalize(path).ok());
+    let Some(executable) = executable else {
+        return "quench-node".to_string();
+    };
+    // The compatibility binaries are launchers, but Node exposes the engine
+    // identity through `process.execPath`. Keep that fact canonical by using
+    // the sibling engine binary when it is present; real `quench-node`
+    // invocations continue to report their own executable path.
+    let launcher = executable
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| matches!(stem, "run" | "run-compat" | "run-parallel"));
+    if launcher {
+        let engine = executable.with_file_name("quench-node");
+        if engine.is_file() {
+            return engine.to_string_lossy().into_owned();
+        }
+    }
+    executable.to_string_lossy().into_owned()
 }
 
 /// Same as `install`, but provides a host-side output sink that
@@ -331,7 +371,32 @@ pub fn install_with_argv_and_title(
     argv: Vec<String>,
     title: &str,
 ) -> (Rc<NodeHost>, VmContext) {
+    let exec_argv = std::env::var("QUENCH_EXEC_ARGV")
+        .ok()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .unwrap_or_default();
+    install_with_argv_and_title_and_exec_argv(realm, sink, argv, title, &exec_argv)
+}
+
+/// Install a host with explicit Node invocation flags.  `execArgv` is an
+/// input fact distinct from `process.argv`; callers such as the upstream test
+/// runner use this to carry `// Flags:` metadata before bootstrap executes.
+pub fn install_with_argv_and_title_and_exec_argv(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    argv: Vec<String>,
+    title: &str,
+    exec_argv: &[String],
+) -> (Rc<NodeHost>, VmContext) {
     quench_runtime::date::set_local_timezone(None);
+    // Node exposes a default stack-trace limit on the global Error
+    // constructor. Keep this host fact available before any internal error
+    // constructor captures or formats a stack.
+    let error_ctor = quench_runtime::execute::set_property(
+        Value::Builtin(quench_runtime::ops::Builtin::Error),
+        "stackTraceLimit",
+        Value::Number(10.0),
+    );
     // Node schedules every async-function continuation as a microtask,
     // including awaits whose operand is already fulfilled.
     quench_runtime::module_bindings::defer_fulfilled_await(true);
@@ -345,8 +410,14 @@ pub fn install_with_argv_and_title(
         let state = host.state.borrow();
         (state.process.argv.clone(), state.process.exec_path.clone())
     };
-    let bindings = crate::registry::namespace_bindings(&argv, &exec_path, title);
-    let mut context = VmContext::default().with_host(host.clone());
+    let bindings =
+        crate::registry::namespace_bindings_with_exec_argv(&argv, &exec_path, title, exec_argv);
+    if let Some((_, process)) = bindings.iter().find(|(name, _)| name == "process") {
+        host.state.borrow_mut().process_module = Some(process.clone());
+    }
+    let mut context = VmContext::default()
+        .with_host(host.clone())
+        .with_host_value("Error".to_string(), error_ctor);
     // Bootstrap globals derive the public process surface from these
     // canonical argv facts. Keep them identical to the host state so
     // script arguments survive the shared bootstrap path.
@@ -354,6 +425,14 @@ pub fn install_with_argv_and_title(
         .with_host_value(
             "__quench_argv".to_string(),
             host_api::array(argv.iter().cloned().map(Value::String).collect()),
+        )
+        .with_host_value(
+            "__quench_allowed_node_environment_flags".to_string(),
+            crate::modules::process::allowed_node_environment_flags(),
+        )
+        .with_host_value(
+            "__quench_error_stack_trace_limit".to_string(),
+            Value::Number(10.0),
         )
         .with_host_value(
             "__quench_exec_path".to_string(),
@@ -374,12 +453,24 @@ pub fn install_with_argv_and_title(
             crate::modules::require::internal_util_module(),
         )
         .with_host_value(
+            "__quenchHttp2Binding".to_string(),
+            crate::modules::http2_util::binding(),
+        )
+        .with_host_value(
             "__quench_vm_run_in_context".to_string(),
             crate::host::capability(crate::registry::SPEC_VM_RUN_IN_CONTEXT),
         )
         .with_host_value(
             "__quench_vm_run_in_new_context".to_string(),
             crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT),
+        )
+        .with_host_value(
+            "__quench_vm_run_in_this_context".to_string(),
+            crate::host::capability(crate::registry::SPEC_VM_RUN_IN_THIS_CONTEXT),
+        )
+        .with_host_value(
+            "__nodeInternalJsStreamSocket".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
         )
         .with_host_value(
             "__quench_cluster_close_worker".to_string(),
@@ -396,15 +487,41 @@ pub fn install_with_argv_and_title(
     // fixture is bootstrapping. Keep `__nodePath` identical to require('path')
     // and expose mkdir as the one filesystem capability used by tmpdir.
     let path_module = crate::modules::path::build();
+    let fs_module = crate::modules::fs::build();
     host.state()
         .borrow_mut()
         .module_cache
         .insert("path".into(), path_module.clone());
+    host.state()
+        .borrow_mut()
+        .module_cache
+        .insert("fs".into(), fs_module.clone());
     context = context
         .with_host_value("__nodePath", path_module)
+        .with_host_value("__nodeFs", fs_module)
+        .with_host_value(
+            "__quenchVfsState",
+            host_api::object(vec![("handlers".into(), Value::Null)]),
+        )
         .with_host_value(
             "__quench_fs_mkdir",
             crate::host::capability(crate::registry::SPEC_FS_MKDIRSYNC),
+        )
+        .with_host_value(
+            "__quenchInternalTimers",
+            host_api::object(vec![
+                ("TIMEOUT_MAX".into(), Value::Number(2_147_483_647.0)),
+                (
+                    "setUnrefTimeout".into(),
+                    crate::host::capability(
+                        crate::registry::SPEC_INTERNAL_TIMERS_SET_UNREF_TIMEOUT,
+                    ),
+                ),
+                (
+                    "async_context_frame".into(),
+                    Value::String("Symbol(async_context_frame)\0quench".into()),
+                ),
+            ]),
         );
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
@@ -423,6 +540,15 @@ pub fn install_with_argv_and_title(
     let console = crate::modules::console::build_value();
     host.state.borrow_mut().console_module = Some(console.clone());
     context = context.with_host_value("console".to_string(), console);
+    let (crypto, crypto_key) = crate::modules::webcrypto::build();
+    let crypto_key_prototype = quench_runtime::execute::get_property(&crypto_key, "prototype");
+    context = context
+        .with_host_value("crypto".to_string(), crypto)
+        .with_host_value("CryptoKey".to_string(), crypto_key)
+        .with_host_value(
+            "__quench_crypto_key_prototype".to_string(),
+            crypto_key_prototype,
+        );
     (host, context)
 }
 
@@ -479,7 +605,7 @@ pub fn namespace_object_from_pairs(props: Vec<(String, Value)>) -> Value {
 
 /// Build a namespace whose data properties cannot be reassigned or deleted.
 pub fn readonly_namespace_from_pairs(props: Vec<(String, Value)>) -> Value {
-    let mut entries: Vec<(String, Value)> = Vec::with_capacity(props.len() * 2);
+    let mut entries: Vec<(String, Value)> = Vec::with_capacity(props.len() * 2 + 1);
     for (key, value) in props {
         let descriptor = host_api::object(vec![
             ("value".to_string(), value.clone()),
@@ -490,6 +616,7 @@ pub fn readonly_namespace_from_pairs(props: Vec<(String, Value)>) -> Value {
         entries.push((key.clone(), value));
         entries.push((descriptor_key(&key), descriptor));
     }
+    entries.push(("\0readonly_namespace".into(), Value::Boolean(true)));
     host_api::object(entries)
 }
 
