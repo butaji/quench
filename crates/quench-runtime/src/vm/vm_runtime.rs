@@ -192,7 +192,11 @@ fn run_code_completion_step_from(
         context,
         tier_owner: None,
     };
-    dispatch_callee(&mut dispatch, start, 0)
+    // The stable-Rust backend cannot promise a machine tail call. Enter the
+    // stack-safe callee-directed loop directly so ordinary interpreter work
+    // does not accumulate one native frame per bytecode before reaching the
+    // safepoint segment.
+    dispatch_segment(&mut dispatch, start)
 }
 
 /// Execute an interpreter function with its tier owner attached.  The owner
@@ -215,7 +219,7 @@ pub(crate) fn execute_function_code_from(
         context,
         tier_owner: Some(owner),
     };
-    let step = dispatch_callee(&mut dispatch, start, 0)?;
+    let step = dispatch_segment(&mut dispatch, start)?;
     Ok((step.completion, step.next))
 }
 
@@ -236,7 +240,7 @@ pub(crate) fn execute_function_code_step_from(
         context,
         tier_owner: Some(owner),
     };
-    let step = dispatch_callee(&mut dispatch, start, 0)?;
+    let step = dispatch_segment(&mut dispatch, start)?;
     Ok((step.completion, step.next))
 }
 
