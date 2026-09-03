@@ -106,6 +106,18 @@ constant-materialization change was attempted; `TAG_PREFIX`, `TAG_SHIFT`, and
 `TAG_MASK` remain semantically identical immediates. This preserves the
 paper's correctness requirement and avoids an unsound ABI substitute.
 
+Task 032 Gate 0 used a guard-hit-heavy monomorphic shape/property probe in a
+release runtime test: 20 million current side-table probes took 39,162,375 ns,
+while the generic rewritten-opcode prototype took 7,859,500 ns (5.0x less
+probe-path time). Path A was therefore justified. The implementation adds
+three catalog-generated quickened opcode variants and a fixed four-word
+per-instruction rewrite cell. A confirmed shape hit overlays the specialized
+opcode; a shape/key/descriptor mismatch dequickens and re-enters the complete
+generic path. Full runtime/node checks passed, and the optimized neutral corpus
+produced 100/100 exact matches with overall index 248.26 (0.785x wall time,
+0.320x peak RSS, 1.054x instructions, and 0.746x cycles versus Node). Raw
+output is `target/micro-neutral-after-032.json`.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
@@ -190,6 +202,7 @@ shared fact.
 | 029 | `enter_slow_path` transition tests, cold `#[inline(never)]` gateway, and zero-delta architecture-size comparison |
 | 030 | Gate-0 DWARF/sample + ARM64 disassembly before/after counts, full runtime/node gates, and `target/micro-neutral-after-030.json` (100/100) |
 | 031 | Gate-0 dependency audit recorded above; blocked without a physical pinned register, so no implementation was attempted |
+| 032 | Side-table vs rewritten-opcode Gate-0 timing, opcode rewrite/dequicken differential test, full runtime/node gates, and `target/micro-neutral-after-032.json` (100/100) |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.
