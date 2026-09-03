@@ -29,7 +29,7 @@ optimizations below — not an optimizing JIT or deopt.
 | 10 | Polymorphic IC + IC inline slab in JIT (§7.1) | **Absent** | No SMC stub chain and no inline-slab-vs-outlined-stub distinction anywhere in `stencil_arena.rs`/`stencil_patch.rs`. |
 | 11 | Hot-cold code splitting by block-frequency analysis, fallthrough branch elimination (§7.2) | **Absent** | `CodeView::cold`/`cold_at` (`machine.rs:2006-2013`) is an unrelated compact-instruction operand-overflow side table, not frequency-based code splitting. `docs/copy-and-patch-jit.md` explicitly disclaims hotness-triggered mechanisms for the current tier. |
 | 12 | Tier-up via per-function retired-bytecode counting (§3) | **Present, committed and verified** | `TierState{invocations, retired, threshold:32}` (`machine.rs:1940-1961`), `enter_invocation()`/`retire_at()` (`machine.rs:2241-2340`) — counts bytecodes retired within the function, matching the paper's design exactly. Covered by the runtime library gates and the neutral-corpus run recorded for task 027. |
-| 13 | OSR-entry: branch into already-compiled JIT code at a back-edge (§7.1) | **Present; end-to-end audit pending** | `is_osr_candidate`/`is_osr_entry` (`machine.rs`) computes admission and the runtime dispatch path contains `maybe_osr_switch` (`vm_runtime.rs`). Task 028 adds the synthetic firing assertion and confirms the `ForI` exclusion. |
+| 13 | OSR-entry: branch into already-compiled JIT code at a back-edge (§7.1) | **Present and verified** | `is_osr_candidate`/`is_osr_entry` (`machine.rs`) computes admission; `maybe_osr_switch` (`vm_runtime.rs`) now checks the compiled plan entry before transferring the live frame into baseline code. The synthetic compact back-edge test records one transfer and matches the cold interpreter result; `ForI` is explicitly excluded as a structured loop with no bytecode back-edge. |
 
 ## Extra, beyond-paper: `ExecutionTier::Optimizing`
 
@@ -44,7 +44,7 @@ document it as not the paper's (nonexistent) optimizing JIT.
 ## Summary: what's real work vs. what's misnamed vs. what's done
 
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
-  counting (#12).
+  counting (#12), OSR-entry wiring and admission test (#13).
 - **Real gaps, worth closing**: slow-path outlining/EnterSlowPath (#3b), tag
   register optimization (#6), register pinning (#7), true bytecode quickening
   as instruction rewrite (#8), JIT-side SMC IC stub chain + inline slab
