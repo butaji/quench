@@ -186,7 +186,13 @@ fn run_code_completion_step_from(
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
-    dispatch_callee(code, start, registers, context, 0, None)
+    let mut dispatch = DispatchState {
+        code,
+        registers,
+        context,
+        tier_owner: None,
+    };
+    dispatch_callee(&mut dispatch, start, 0)
 }
 
 /// Execute an interpreter function with its tier owner attached.  The owner
@@ -203,7 +209,13 @@ pub(crate) fn execute_function_code_from(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    let step = dispatch_callee(code, start, registers, context, 0, Some(owner))?;
+    let mut dispatch = DispatchState {
+        code,
+        registers,
+        context,
+        tier_owner: Some(owner),
+    };
+    let step = dispatch_callee(&mut dispatch, start, 0)?;
     Ok((step.completion, step.next))
 }
 
@@ -218,7 +230,13 @@ pub(crate) fn execute_function_code_step_from(
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<(crate::completion::Completion, usize), VmError> {
-    let step = dispatch_callee(code, start, registers, context, 0, Some(owner))?;
+    let mut dispatch = DispatchState {
+        code,
+        registers,
+        context,
+        tier_owner: Some(owner),
+    };
+    let step = dispatch_callee(&mut dispatch, start, 0)?;
     Ok((step.completion, step.next))
 }
 
@@ -634,53 +652,70 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
     }
 }
 
+/// State shared by each continuation in the hot dispatch chain.
+///
+/// Passing one stable state pointer keeps the code/frame/context facts in one
+/// ABI argument across recursive continuation calls. This is the safe Rust
+/// approximation of Deegen's fixed-register pinning: ownership and observable
+/// semantics are unchanged, and LLVM remains responsible for allocation.
+struct DispatchState<'code, 'state> {
+    code: crate::machine::CodeView<'code>,
+    registers: &'state mut crate::register_file::RegisterFile,
+    context: &'state VmContext,
+    tier_owner: Option<&'state crate::machine::FunctionCode>,
+}
+
 /// Execute one continuation by calling the target supplied by its predecessor.
 /// The entry/exit shim above owns no mutable program counter and never derives a
 /// successor after a handler returns.  This is the interpreter's CPS-shaped
 /// path; each normal transition immediately invokes the next callee.
 #[inline(always)]
-fn dispatch_callee(
-    code: crate::machine::CodeView<'_>,
+fn dispatch_callee<'code, 'state>(
+    state: &mut DispatchState<'code, 'state>,
     pc: usize,
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
     depth: usize,
-    tier_owner: Option<&crate::machine::FunctionCode>,
 ) -> Result<CompletionStep, VmError> {
     // Rust has no portable guaranteed-tail-call ABI.  Keep the direct callee
     // chain bounded, then enter a safepoint segment that consumes only the
     // already-produced targets.  This prevents an adversarial backward branch
     // from turning continuation depth into unbounded native stack growth.
     if depth == DISPATCH_RECURSION_LIMIT {
-        return dispatch_segment(code, pc, registers, context, tier_owner);
+        return dispatch_segment(state, pc);
     }
-    let Some(instruction) = code.instruction(pc) else {
+    let Some(instruction) = state.code.instruction(pc) else {
         return completion_step_after_transition(
-            registers,
+            state.registers,
             crate::completion::Completion::Normal,
-            code.len(),
+            state.code.len(),
         );
     };
-    if skip_index_coercible(code, pc, instruction, registers) {
-        if let Some(step) = maybe_osr_switch(code, tier_owner, pc, pc + 1, registers, context)? {
+    if skip_index_coercible(state.code, pc, instruction, state.registers) {
+        if let Some(step) = maybe_osr_switch(
+            state.code,
+            state.tier_owner,
+            pc,
+            pc + 1,
+            state.registers,
+            state.context,
+        )? {
             return Ok(step);
         }
-        return dispatch_callee(code, pc + 1, registers, context, depth + 1, tier_owner);
+        return dispatch_callee(state, pc + 1, depth + 1);
     }
     #[cfg(not(feature = "execution-trace"))]
-    let result = match run_instruction_hot(code, pc, instruction, registers) {
+    let result = match run_instruction_hot(state.code, pc, instruction, state.registers) {
         Some(result) => result,
-        None => run_instruction(code, pc, instruction, registers, context),
+        None => run_instruction(state.code, pc, instruction, state.registers, state.context),
     };
     #[cfg(feature = "execution-trace")]
-    let result = run_instruction(code, pc, instruction, registers, context);
+    let result = run_instruction(state.code, pc, instruction, state.registers, state.context);
     let transition = match result {
         Ok(transition) => transition,
         Err(error) => {
-            if let Some(owner) = tier_owner {
+            if let Some(owner) = state.tier_owner {
                 owner.retire(1);
             }
-            return completion_step_after_error(registers, error, pc + 1);
+            return completion_step_after_error(state.registers, error, pc + 1);
         }
     };
     let next = match transition.target {
@@ -690,21 +725,26 @@ fn dispatch_callee(
     // Retire before observing completion so calls, returns, and other exits
     // contribute to the profile. `maybe_osr_switch` can only admit a plan at
     // an actual back-edge, so ordinary exits are merely counted.
-    if let Some(step) = maybe_osr_switch(code, tier_owner, pc, next, registers, context)? {
+    if let Some(step) = maybe_osr_switch(
+        state.code,
+        state.tier_owner,
+        pc,
+        next,
+        state.registers,
+        state.context,
+    )? {
         return Ok(step);
     }
     if let Some(completion) = transition
         .completion
         .filter(|value| !matches!(value, crate::completion::Completion::Normal))
     {
-        return completion_step_after_transition(registers, completion, next);
+        return completion_step_after_transition(state.registers, completion, next);
     }
     match transition.target {
-        DispatchTarget::Callee(_) => {
-            dispatch_callee(code, next, registers, context, depth + 1, tier_owner)
-        }
+        DispatchTarget::Callee(_) => dispatch_callee(state, next, depth + 1),
         DispatchTarget::Exit => completion_step_after_transition(
-            registers,
+            state.registers,
             crate::completion::Completion::Normal,
             next,
         ),
@@ -714,63 +754,74 @@ fn dispatch_callee(
 /// Stack-safe safepoint shim for targets that cannot be represented by a
 /// guaranteed machine-level tail call on stable Rust. It never computes a
 /// successor: every next offset comes from the handler's `DispatchTarget`.
-fn dispatch_segment(
-    code: crate::machine::CodeView<'_>,
+fn dispatch_segment<'code, 'state>(
+    state: &mut DispatchState<'code, 'state>,
     start: usize,
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-    tier_owner: Option<&crate::machine::FunctionCode>,
 ) -> Result<CompletionStep, VmError> {
     let mut pc = start;
     loop {
-        let Some(instruction) = code.instruction(pc) else {
+        let Some(instruction) = state.code.instruction(pc) else {
             return completion_step_after_transition(
-                registers,
+                state.registers,
                 crate::completion::Completion::Normal,
-                code.len(),
+                state.code.len(),
             );
         };
-        if skip_index_coercible(code, pc, instruction, registers) {
-            if let Some(step) = maybe_osr_switch(code, tier_owner, pc, pc + 1, registers, context)? {
+        if skip_index_coercible(state.code, pc, instruction, state.registers) {
+            if let Some(step) = maybe_osr_switch(
+                state.code,
+                state.tier_owner,
+                pc,
+                pc + 1,
+                state.registers,
+                state.context,
+            )? {
                 return Ok(step);
             }
             pc += 1;
             continue;
         }
         #[cfg(not(feature = "execution-trace"))]
-        let result = match run_instruction_hot(code, pc, instruction, registers) {
+        let result = match run_instruction_hot(state.code, pc, instruction, state.registers) {
             Some(result) => result,
-            None => run_instruction(code, pc, instruction, registers, context),
+            None => run_instruction(state.code, pc, instruction, state.registers, state.context),
         };
         #[cfg(feature = "execution-trace")]
-        let result = run_instruction(code, pc, instruction, registers, context);
+        let result = run_instruction(state.code, pc, instruction, state.registers, state.context);
         let transition = match result {
             Ok(transition) => transition,
             Err(error) => {
-                if let Some(owner) = tier_owner {
+                if let Some(owner) = state.tier_owner {
                     owner.retire(1);
                 }
-                return completion_step_after_error(registers, error, pc + 1);
+                return completion_step_after_error(state.registers, error, pc + 1);
             }
         };
         let next = match transition.target {
             DispatchTarget::Callee(next) => next,
             DispatchTarget::Exit => transition.next_pc,
         };
-        if let Some(step) = maybe_osr_switch(code, tier_owner, pc, next, registers, context)? {
+        if let Some(step) = maybe_osr_switch(
+            state.code,
+            state.tier_owner,
+            pc,
+            next,
+            state.registers,
+            state.context,
+        )? {
             return Ok(step);
         }
         if let Some(completion) = transition
             .completion
             .filter(|value| !matches!(value, crate::completion::Completion::Normal))
         {
-            return completion_step_after_transition(registers, completion, next);
+            return completion_step_after_transition(state.registers, completion, next);
         }
         match transition.target {
             DispatchTarget::Callee(_) => pc = next,
             DispatchTarget::Exit => {
                 return completion_step_after_transition(
-                    registers,
+                    state.registers,
                     crate::completion::Completion::Normal,
                     next,
                 )
