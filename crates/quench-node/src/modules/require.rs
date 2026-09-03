@@ -1178,6 +1178,9 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
         append_cached_child(state, &path);
         return Ok(cached.clone());
     }
+    if path.extension().and_then(|extension| extension.to_str()) == Some("node") {
+        return Err(native_addon_error(&path));
+    }
     let source = {
         let global = quench_runtime::vm::current_global_object();
         let fs_module = execute::get_property(&global, "__nodeFs");
@@ -1252,6 +1255,18 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
     state.borrow_mut().module_cache.insert(key, exports.clone());
     cache_module(state, &path, &exports);
     Ok(exports)
+}
+
+fn native_addon_error(path: &std::path::Path) -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(format!("file too short: {}", path.display()))],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_DLOPEN_FAILED".into()),
+    ))
 }
 
 fn package_type_is_module(path: &std::path::Path) -> bool {
