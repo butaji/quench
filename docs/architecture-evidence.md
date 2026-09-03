@@ -51,10 +51,13 @@ node quench-bench/micros/verify.mjs \
   --out target/micro-neutral-evidence-3run.json
 ```
 
-It produced 100/100 exact observable matches. The aggregate engine/oracle
-ratios were 0.964x wall time, 0.428x peak RSS, 1.135x retired instructions,
-and 1.002x cycles (overall index 156.04). This is a reproducibility snapshot,
-not a production dispatch rule or a claim about Bun.
+It produced 100/100 exact observable matches. The refreshed task-027 run
+used the optimized `bench-throughput` artifact copied to that command path
+(the repository's dev profile is intentionally unoptimized), and measured
+0.766x wall time, 0.295x peak RSS, 1.043x retired instructions, and 0.745x
+cycles (overall index 260.04). This is a reproducibility snapshot, not a
+production dispatch rule or a claim about Bun. The earlier 156.04 run remains
+useful as historical evidence but is not a profile-matched comparison.
 
 The same run against the locally installed Bun oracle is retained at
 `target/micro-neutral-bun-evidence.json`: it also produced 100/100 exact
