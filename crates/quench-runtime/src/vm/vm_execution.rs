@@ -403,7 +403,12 @@ fn drive_code_completion_with_optimizing_plan(
                     return Ok(crate::completion::Completion::Throw(value));
                 }
             }
-            crate::completion::Completion::Normal => continue,
+            crate::completion::Completion::Normal => {
+                if pc >= code.len() {
+                    return Ok(crate::completion::Completion::Normal);
+                }
+                continue;
+            }
             completion => return preserve_frame_completion(completion),
         }
     }
