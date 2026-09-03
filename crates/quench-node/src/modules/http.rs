@@ -663,7 +663,7 @@ fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmEr
 }
 
 fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmError> {
-    let (req, chunks, done) = {
+    let (req, chunks, done, trailer_values) = {
         let mut guard = state.borrow_mut();
         let Some(conn) = guard.http.conns.get_mut(&socket_id) else {
             return Ok(());
@@ -673,6 +673,7 @@ fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<
         }
         let mut chunks = Vec::new();
         let mut done = false;
+        let mut trailer_values = Vec::new();
         loop {
             let Some(line_end) = conn.buffer.windows(2).position(|pair| pair == b"\r\n") else {
                 break;
@@ -690,20 +691,59 @@ fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<
             if conn.buffer.len() < frame_end {
                 break;
             }
-            conn.buffer.drain(..line_end + 2);
             if size == 0 {
-                conn.buffer.drain(..2);
+                let trailer_start = line_end + 2;
+                let Some(trailer_end) = conn.buffer[trailer_start..]
+                    .windows(4)
+                    .position(|pair| pair == b"\r\n\r\n")
+                else {
+                    break;
+                };
+                let trailer_end = trailer_start + trailer_end;
+                for line in String::from_utf8_lossy(&conn.buffer[trailer_start..trailer_end])
+                    .split("\r\n")
+                {
+                    if let Some(colon) = line.find(':') {
+                        trailer_values.push((
+                            line[..colon].trim().to_ascii_lowercase(),
+                            line[colon + 1..].trim().to_string(),
+                        ));
+                    }
+                }
+                conn.buffer.drain(..trailer_end + 4);
                 done = true;
                 break;
             }
+            conn.buffer.drain(..line_end + 2);
             chunks.push(conn.buffer[..size].to_vec());
             conn.buffer.drain(..size + 2);
         }
         conn.body_chunked_done |= done;
         conn.body_done = conn.body_chunked_done;
-        (conn.req.clone(), chunks, conn.body_done)
+        (conn.req.clone(), chunks, conn.body_done, trailer_values)
     };
     if let Some(req) = req {
+        if done {
+            let trailers = host_api::object(
+                trailer_values
+                    .iter()
+                    .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+                    .collect(),
+            );
+            execute::set_property_in_place(&req, "trailers", trailers);
+            execute::set_property_in_place(
+                &req,
+                "rawTrailers",
+                host_api::array(
+                    trailer_values
+                        .iter()
+                        .flat_map(|(name, value)| {
+                            [Value::String(name.clone()), Value::String(value.clone())]
+                        })
+                        .collect(),
+                ),
+            );
+        }
         for chunk in chunks {
             if !chunk.is_empty() {
                 let value = match execute::get_property_result(&req, REQ_ENCODING_PROP).ok() {
@@ -1033,6 +1073,11 @@ fn build_req(
                 "headers".to_string(),
                 execute::set_prototype_of(&host_api::object(headers), &Value::Null)?,
             ),
+            (
+                "trailers".to_string(),
+                execute::set_prototype_of(&host_api::object(Vec::new()), &Value::Null)?,
+            ),
+            ("rawTrailers".to_string(), host_api::array(Vec::new())),
             (
                 "pause".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_RESUME),
