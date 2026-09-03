@@ -235,17 +235,20 @@ pub(crate) fn execute_registered(
         consecutive = (first..instruction.a).collect::<Vec<_>>();
         consecutive.as_slice()
     };
-    let arguments: Vec<_> = argument_registers
-        .iter()
-        .map(|register| read_register(registers, *register))
-        .collect::<Result<_, _>>()?;
-    finish_named_call(
+    // Registered calls are the common fixed-arity path for builtins and
+    // methods. Keep their arguments in the bounded inline representation used
+    // by continuations instead of allocating a fresh Vec on every call.
+    let mut arguments = crate::completion::CallArguments::with_capacity(argument_registers.len());
+    for register in argument_registers {
+        arguments.push(read_register(registers, *register)?);
+    }
+    finish_named_call_owned(
         registers,
         instruction.a,
         instruction.b,
         callee,
         receiver,
-        &arguments,
+        arguments,
         argument_registers,
     )
 }
@@ -324,6 +327,48 @@ fn finish_named_call(
         callee,
         &receiver,
         arguments,
+        argument_registers,
+        receiver_register,
+        registers,
+    )?;
+    write_value(registers, destination, value);
+    Ok(None)
+}
+
+fn finish_named_call_owned(
+    registers: &mut crate::register_file::RegisterFile,
+    destination: u16,
+    receiver_register: u16,
+    callee: Value,
+    receiver: Value,
+    arguments: crate::completion::CallArguments,
+    argument_registers: &[u16],
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    if let Value::Function(function) = &callee {
+        if let Some(value) =
+            crate::functions::try_execute_specialized(function, &receiver, &arguments)?
+        {
+            crate::execution_trace::kernel("CallKnown", false);
+            write_value(registers, destination, value);
+            return Ok(None);
+        }
+        if crate::functions::direct_call_eligible(function) {
+            let value = crate::functions::execute_direct(function, &receiver, &arguments)?;
+            write_value(registers, destination, value);
+            return Ok(None);
+        }
+        return Ok(Some(crate::vm::vm_ops::take_call_continuation(
+            registers,
+            destination,
+            callee,
+            receiver,
+            arguments,
+        )));
+    }
+    let value = execute_named_callee(
+        callee,
+        &receiver,
+        &arguments,
         argument_registers,
         receiver_register,
         registers,
