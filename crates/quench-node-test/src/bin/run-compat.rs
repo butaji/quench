@@ -41,6 +41,7 @@ struct Options {
     list: bool,
     quiet: bool,
     filter: Option<String>,
+    argv: Vec<String>,
 }
 
 impl Options {
@@ -50,6 +51,7 @@ impl Options {
             list: false,
             quiet: false,
             filter: None,
+            argv: Vec::new(),
         };
         let mut positional = None;
         let mut args = args;
@@ -62,7 +64,7 @@ impl Options {
                 }
                 value if value.starts_with('-') => return Err(format!("unknown option {value}")),
                 value if positional.is_none() => positional = Some(PathBuf::from(value)),
-                _ => return Err("only one directory may be specified".into()),
+                value => options.argv.push(value.to_string()),
             }
         }
         if let Some(dir) = positional {
@@ -75,6 +77,16 @@ impl Options {
 fn run_with_options(options: Options) -> ExitCode {
     let dir = options.dir;
     if !dir.is_dir() {
+        if dir.is_file() {
+            let mut runner = quench_node_test::NodeTestRunner::new();
+            return match runner.run_file_with_args(&dir, options.argv) {
+                NodeOutcome::Pass | NodeOutcome::Skip { .. } => ExitCode::SUCCESS,
+                NodeOutcome::Fail { reason } => {
+                    eprintln!("{reason}");
+                    ExitCode::from(1)
+                }
+            };
+        }
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
     }
