@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::{execute::VmError, value::Value};
+use crate::{
+    execute::VmError,
+    value::{PropertyEntries, Value},
+};
 
 pub(crate) fn names(target: Option<&Value>) -> Result<Value, VmError> {
     pack_keys(listed(require_object(target)?, false)?, false)
@@ -195,6 +198,19 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
             .iter()
             .map(|(key, _)| key.clone())
             .collect(),
+        Value::Iterator(data) => data
+            .properties
+            .borrow()
+            .iter()
+            .filter(|(key, _)| !key.starts_with('\0'))
+            .filter(|(key, _)| {
+                data.descriptor(key)
+                    .as_ref()
+                    .map_or(true, |descriptor| descriptor_enumerable_value(Some(descriptor)))
+            })
+            .map(|(key, _)| key.clone())
+            .collect(),
+        Value::Promise(data) => enumerable_ordered(&data.properties.borrow()[..]),
         Value::Builtin(builtin) => builtin_enumerable_keys(*builtin),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_indices(value)
@@ -317,7 +333,7 @@ fn array_enumerable_keys(values: &crate::value::ArrayData) -> Vec<String> {
 }
 
 fn dense_enumerable_indices(values: &crate::value::ArrayData) -> Vec<(u32, String)> {
-    (0..values.logical_len().min(values.len()))
+    (0..values.logical_len().min(values.len()).min(1024))
         .filter(|index| values.has_index(*index))
         .map(|index| index as u32)
         .filter(|index| array_key_enumerable(values, &index.to_string()))
@@ -328,7 +344,13 @@ fn dense_enumerable_indices(values: &crate::value::ArrayData) -> Vec<(u32, Strin
 fn array_extra_keys(values: &crate::value::ArrayData) -> Vec<String> {
     let mut extra = values.property_keys();
     extra.extend(values.descriptor_keys());
-    extra.retain(|key| key != "length" && !crate::builtins::is_descriptor_key(key));
+    // Array integrity metadata is host state, never a JavaScript property.
+    // Keep it out of enumeration just like object private slots.
+    extra.retain(|key| {
+        key != "length"
+            && !key.starts_with('\0')
+            && !crate::builtins::is_descriptor_key(key)
+    });
     extra.dedup();
     extra
 }
@@ -403,10 +425,24 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
 ) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.entries().find(|(key, _)| *key == "_value")
     else {
-        let mut keys = ordered(properties, symbols)
+        let mut keys: Vec<String> = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value" && key != "timeValue")
             .collect();
+        // Descriptor metadata is stored in private slots, but the associated
+        // public key remains an own key even when it is non-enumerable.
+        for (name, _) in properties.entries() {
+            if !crate::builtins::is_descriptor_key(name) {
+                continue;
+            }
+            let public = crate::builtins::descriptor_public_key(name);
+            if crate::conversion::is_symbol_string(public) != symbols
+                || keys.iter().any(|key| key == public)
+            {
+                continue;
+            }
+            keys.push(public.to_string());
+        }
         if !symbols
             && properties
                 .entries()
@@ -555,7 +591,20 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             .unwrap_or_default();
     }
     match target {
-        Value::Object(properties) => object_keys(properties.as_ref(), symbols),
+        Value::Object(properties) => {
+            let mut keys = object_keys(properties.as_ref(), symbols);
+            if !symbols {
+                for created in &properties.created {
+                    let key = created.as_str();
+                    if properties.descriptor_metadata_for_key(key).is_some()
+                        && !keys.iter().any(|current| current == key)
+                    {
+                        keys.push(key.to_string());
+                    }
+                }
+            }
+            keys
+        }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
@@ -564,6 +613,14 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
         Value::Function(function) => function_keys(function, symbols),
         Value::BoundFunction(bound) => bound_function_keys(bound, symbols),
         Value::Array(values) => array_keys(values, symbols),
+        Value::Promise(data) if !symbols => ordered(&data.properties.borrow()[..], false),
+        Value::Iterator(data) => data
+            .properties
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.clone())
+            .filter(|key| crate::conversion::is_symbol_string(key) == symbols)
+            .collect(),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_keys(value, symbols)
         }
@@ -677,7 +734,7 @@ fn indexed_array_keys(values: &crate::value::ArrayData, symbols: bool) -> Vec<St
     if symbols {
         return Vec::new();
     }
-    (0..values.logical_len().min(values.len()))
+    (0..values.logical_len().min(values.len()).min(1024))
         .filter(|index| values.has_index(*index))
         .map(|index| index.to_string())
         .collect()
