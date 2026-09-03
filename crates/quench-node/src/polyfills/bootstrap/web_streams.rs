@@ -111,6 +111,11 @@ class __quenchReadableStream {
       this._resolveClosed = resolve;
       this._rejectClosed = reject;
     });
+    // The internal completion promise is also exposed through readers.  Mark
+    // its rejection handled at creation so controller.error does not surface
+    // an unrelated process-level unhandled rejection when no reader.closed
+    // observer was requested.
+    this._closedPromise.catch(() => undefined);
     this._cancel = source.cancel?.bind(source);
     this._pull = source.pull?.bind(source);
     this._pulling = false;
@@ -224,6 +229,7 @@ class __quenchWritableStream {
       this._resolveClosed = resolve;
       this._rejectClosed = reject;
     });
+    this._closedPromise.catch(() => undefined);
   }
   getWriter() {
     if (this.locked) {
