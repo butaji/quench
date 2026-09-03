@@ -1,0 +1,655 @@
+{
+  "schema": 1,
+  "purpose": "Gradual, instrumentation-verified curriculum proving each Deegen (arXiv:2411.11469) mechanism engages, staged from bare interpreter dispatch through full-system closure and adversarial fallback-safety. Separate from quench-bench/micros/ (the neutral perf-regression corpus, which this does not modify or replace).",
+  "source_of_truth": "docs/deegen-micro-curriculum.md",
+  "count": 38,
+  "numbering": "001.js .. 038.js, contiguous, one file per case",
+  "instrumentation_source": "execution_trace.rs snapshot(), emitted to stderr as 'QUENCH_EXEC_TRACE {json}' at process exit when QUENCH_EXEC_TRACE=1 is set. See deegen-verify.mjs.",
+  "instrumentation_gaps": "Stage 5 (tier-up) and stage 6 (OSR-entry) currently have no per-run, CLI-observable counter for *live* tier promotion or OSR firing: machine.rs's TierState/tier_profile() and is_osr_entry are in-process APIs, not surfaced through execution_trace's snapshot() JSON emitted at process exit. These stage cases are correctness-only until that gap is closed (would need a small additive counter in execution_trace.rs, e.g. tier_transitions / osr_fires, feature-gated like everything else in that file). Stage 4's kernel-hit counters (lanes.l1.kernels) are the closest existing proxy for build-time fast-path/counted-loop admission, not a literal RegionKey-level counter \u2014 see docs/deegen-alignment.md.",
+  "stages": [
+    {
+      "id": "1",
+      "name": "interpreter-dispatch",
+      "first": 1,
+      "last": 5,
+      "paper_section": "\u00a72-3",
+      "description": "Baseline interpreter dispatch correctness: arithmetic, branch, loop control, calls, exceptions."
+    },
+    {
+      "id": "2",
+      "name": "call-inline-cache",
+      "first": 6,
+      "last": 10,
+      "paper_section": "\u00a73, \u00a75.2",
+      "description": "Call-site inline caching: monomorphic hit, bounded polymorphic, megamorphic degrade, re-stabilization, recursion."
+    },
+    {
+      "id": "3",
+      "name": "property-generic-ic",
+      "first": 11,
+      "last": 16,
+      "paper_section": "\u00a74, \u00a75.2",
+      "description": "Property-access generic IC (\u03bbi/\u03bbe split): monomorphic, polymorphic, megamorphic, guard invalidation, get/set interleave."
+    },
+    {
+      "id": "4",
+      "name": "fast-path-kernel-admission",
+      "first": 17,
+      "last": 21,
+      "paper_section": "\u00a75.1",
+      "description": "Type-check elimination / fast-path kernel admission and its hostile-input fallback."
+    },
+    {
+      "id": "5",
+      "name": "tier-up-threshold",
+      "first": 22,
+      "last": 24,
+      "paper_section": "\u00a73",
+      "description": "Interpreter-to-baseline-JIT tier-up threshold boundary behavior (correctness-only; see instrumentation_gaps)."
+    },
+    {
+      "id": "6",
+      "name": "osr-entry",
+      "first": 25,
+      "last": 27,
+      "paper_section": "\u00a77.1",
+      "description": "OSR-entry motivating shape: single-invocation hot loops, and structured loops that must not attempt OSR (correctness-only; see instrumentation_gaps)."
+    },
+    {
+      "id": "9",
+      "name": "full-system-closure",
+      "first": 28,
+      "last": 33,
+      "paper_section": "whole-program, project analog to paper \u00a78's 44-benchmark evaluation",
+      "description": "General neutral programs exercising several mechanisms simultaneously at realistic scale."
+    },
+    {
+      "id": "10",
+      "name": "fallback-safety-adversarial",
+      "first": 34,
+      "last": 38,
+      "paper_section": "AGENTS.md rule 12 / Guarded-Unknown correctness discipline",
+      "description": "Inputs designed to defeat every fast path, proving guarded/unknown fallback stays correct."
+    }
+  ],
+  "cases": [
+    {
+      "id": "001",
+      "file": "001.js",
+      "title": "Straight-line arithmetic recurrence",
+      "stage": "interpreter-dispatch",
+      "mechanism": "Plain arithmetic dispatch: every opcode should execute via the fast/compact lane.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l2.vm_share_ppm",
+          "assert": ">=900000"
+        }
+      }
+    },
+    {
+      "id": "002",
+      "file": "002.js",
+      "title": "Branch ladder dispatch",
+      "stage": "interpreter-dispatch",
+      "mechanism": "if/else and switch-style branching: dispatch stays on the fast lane across all branch outcomes.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l2.vm_share_ppm",
+          "assert": ">=850000"
+        }
+      }
+    },
+    {
+      "id": "003",
+      "file": "003.js",
+      "title": "Loop control: break and continue",
+      "stage": "interpreter-dispatch",
+      "mechanism": "Nested loops with break/continue: control-flow opcodes stay on the fast dispatch path.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l2.vm_share_ppm",
+          "assert": ">=850000"
+        }
+      }
+    },
+    {
+      "id": "004",
+      "file": "004.js",
+      "title": "Repeated plain function call",
+      "stage": "interpreter-dispatch",
+      "mechanism": "A hot call site to one stable function: exercises call dispatch and site-level quickening at baseline.",
+      "expect": {
+        "instrumentation": {
+          "kind": "map_sum",
+          "path": "quickening",
+          "field": "hits",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "005",
+      "file": "005.js",
+      "title": "Exception throw/catch/finally",
+      "stage": "interpreter-dispatch",
+      "mechanism": "A hot loop that throws and catches on a subset of iterations: exercises the unwind/exception path deliberately.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l3.handlers",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "006",
+      "file": "006.js",
+      "title": "Monomorphic call site",
+      "stage": "call-inline-cache",
+      "mechanism": "One callee called repeatedly at the same call site: should install and hold a monomorphic call IC.",
+      "expect": {
+        "instrumentation": {
+          "kind": "map_sum",
+          "path": "quickening",
+          "field": "hits",
+          "assert": ">=400"
+        }
+      }
+    },
+    {
+      "id": "007",
+      "file": "007.js",
+      "title": "Bounded polymorphic call site",
+      "stage": "call-inline-cache",
+      "mechanism": "A call site rotating across 3 stable callees: should become bounded polymorphic, not degrade.",
+      "expect": {
+        "instrumentation": {
+          "kind": "all",
+          "clauses": [
+            {
+              "kind": "map_sum",
+              "path": "quickening",
+              "field": "hits",
+              "assert": ">=1"
+            },
+            {
+              "kind": "map_sum",
+              "path": "quickening",
+              "field": "misses",
+              "assert": ">=1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "008",
+      "file": "008.js",
+      "title": "Megamorphic call site (distinct closure per call)",
+      "stage": "call-inline-cache",
+      "mechanism": "Every call sees a freshly-created closure: call IC should degrade past its bound and stay correct.",
+      "expect": {
+        "instrumentation": {
+          "kind": "map_sum",
+          "path": "quickening",
+          "field": "misses",
+          "assert": ">=100"
+        }
+      }
+    },
+    {
+      "id": "009",
+      "file": "009.js",
+      "title": "Stable call site that switches once",
+      "stage": "call-inline-cache",
+      "mechanism": "A call site monomorphic for the first half, then permanently switches callee: expect one re-install, not thrashing.",
+      "expect": {
+        "instrumentation": {
+          "kind": "all",
+          "clauses": [
+            {
+              "kind": "map_sum",
+              "path": "quickening",
+              "field": "hits",
+              "assert": ">=1"
+            },
+            {
+              "kind": "map_sum",
+              "path": "quickening",
+              "field": "misses",
+              "assert": ">=1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "010",
+      "file": "010.js",
+      "title": "Recursive self-call",
+      "stage": "call-inline-cache",
+      "mechanism": "Recursive calls to one function object: the recursive call site should be monomorphic by construction.",
+      "expect": {
+        "instrumentation": {
+          "kind": "map_sum",
+          "path": "quickening",
+          "field": "hits",
+          "assert": ">=100"
+        }
+      }
+    },
+    {
+      "id": "011",
+      "file": "011.js",
+      "title": "Monomorphic property get",
+      "stage": "property-generic-ic",
+      "mechanism": "Repeated get of the same property on objects sharing one stable shape.",
+      "expect": {
+        "instrumentation": {
+          "kind": "all",
+          "clauses": [
+            {
+              "kind": "path",
+              "path": "lanes.l0.property_hit",
+              "assert": ">=400"
+            },
+            {
+              "kind": "path",
+              "path": "lanes.l0.property_miss",
+              "assert": "<=5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "012",
+      "file": "012.js",
+      "title": "Monomorphic property set",
+      "stage": "property-generic-ic",
+      "mechanism": "Repeated set of the same property on objects sharing one stable shape.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l1.shape_hits",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "013",
+      "file": "013.js",
+      "title": "Polymorphic property get (3 shapes)",
+      "stage": "property-generic-ic",
+      "mechanism": "Property reads rotate across 3 distinct, stable shapes: expect bounded polymorphic behavior, not degrade.",
+      "expect": {
+        "instrumentation": {
+          "kind": "all",
+          "clauses": [
+            {
+              "kind": "path",
+              "path": "lanes.l0.property_hit",
+              "assert": ">=1"
+            },
+            {
+              "kind": "path",
+              "path": "lanes.l0.property_miss",
+              "assert": ">=1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "014",
+      "file": "014.js",
+      "title": "Megamorphic property get (many shapes)",
+      "stage": "property-generic-ic",
+      "mechanism": "Each object has a uniquely-shaped property set: property IC should degrade to megamorphic and stay correct.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l0.property_miss",
+          "assert": ">=100"
+        }
+      }
+    },
+    {
+      "id": "015",
+      "file": "015.js",
+      "title": "Guard invalidation mid-loop",
+      "stage": "property-generic-ic",
+      "mechanism": "A stable shape is mutated by adding a new property mid-loop: the IC's guard must re-probe, not trust a stale state.",
+      "expect": {
+        "instrumentation": {
+          "kind": "all",
+          "clauses": [
+            {
+              "kind": "path",
+              "path": "lanes.l0.property_hit",
+              "assert": ">=1"
+            },
+            {
+              "kind": "path",
+              "path": "lanes.l0.property_miss",
+              "assert": ">=1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "016",
+      "file": "016.js",
+      "title": "Interleaved property get and set",
+      "stage": "property-generic-ic",
+      "mechanism": "Get and set on the same stable-shape property in one loop body: proves the idempotent probe is reused correctly for both.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l1.shape_hits",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "017",
+      "file": "017.js",
+      "title": "Numeric add-heavy hot loop",
+      "stage": "fast-path-kernel-admission",
+      "mechanism": "A tight numeric-add loop shaped to admit a fused fast-path kernel over the arithmetic sequence.",
+      "expect": {
+        "instrumentation": {
+          "kind": "array_field_sum",
+          "path": "lanes.l1.kernels",
+          "field": "hits",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "018",
+      "file": "018.js",
+      "title": "Numeric add hostile (mixed types)",
+      "stage": "fast-path-kernel-admission",
+      "mechanism": "Same loop shape as case 17, but operands alternate number/string: must defeat fast-path admission and still compute the correct (string-concatenated) result via the complete fallback.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "019",
+      "file": "019.js",
+      "title": "Mixed arithmetic operators loop",
+      "stage": "fast-path-kernel-admission",
+      "mechanism": "Subtract/multiply/divide in one hot loop: exercises fast-path admission for operators beyond add.",
+      "expect": {
+        "instrumentation": {
+          "kind": "array_field_sum",
+          "path": "lanes.l1.kernels",
+          "field": "hits",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "020",
+      "file": "020.js",
+      "title": "Stable property-chain hot loop",
+      "stage": "fast-path-kernel-admission",
+      "mechanism": "A guarded property-access chain on one stable shape, hot enough to be a fast-path kernel candidate.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l0.property_hit",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "021",
+      "file": "021.js",
+      "title": "Hostile polymorphic property chain",
+      "stage": "fast-path-kernel-admission",
+      "mechanism": "Same access chain as case 20, but shapes rotate every iteration: must defeat guarded-region admission and stay correct via fallback.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l0.property_miss",
+          "assert": ">=1"
+        }
+      }
+    },
+    {
+      "id": "022",
+      "file": "022.js",
+      "title": "Function invoked just under the promotion threshold",
+      "stage": "tier-up-threshold",
+      "mechanism": "Invoke a small function 20 times (below the current 32-retired-bytecode TierState threshold): should stay in the interpreter tier.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "023",
+      "file": "023.js",
+      "title": "Function invoked well over the promotion threshold",
+      "stage": "tier-up-threshold",
+      "mechanism": "Invoke a small function thousands of times: should cross the tier-up threshold and promote to the baseline tier.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "024",
+      "file": "024.js",
+      "title": "Many distinct cold functions, one call each",
+      "stage": "tier-up-threshold",
+      "mechanism": "50 distinct functions each called exactly once: none should individually cross the tier-up threshold.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "025",
+      "file": "025.js",
+      "title": "Single-invocation hot loop (paper's OSR motivating case)",
+      "stage": "osr-entry",
+      "mechanism": "A function called exactly once, containing a very hot loop: tier-up-on-entry can never fire (only one invocation), so only OSR-entry mid-loop could promote this.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "026",
+      "file": "026.js",
+      "title": "Structured for-in loop, single invocation",
+      "stage": "osr-entry",
+      "mechanism": "A structured (for-in-shaped) hot loop called once: per the documented ForI exclusion, this must not attempt OSR-entry and must still be correct via the ordinary loop gateway.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "027",
+      "file": "027.js",
+      "title": "Nested hot loops, single invocation",
+      "stage": "osr-entry",
+      "mechanism": "A function called once with a hot outer loop and a hot inner loop: exercises OSR-entry admission at more than one back-edge in the same invocation.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "028",
+      "file": "028.js",
+      "title": "Linked-list and tree traversal",
+      "stage": "full-system-closure",
+      "mechanism": "Object-oriented traversal over a small tree and a linked list, bounded shape set, hot enough to tier up.",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l2.vm_share_ppm",
+          "assert": ">=600000"
+        }
+      }
+    },
+    {
+      "id": "029",
+      "file": "029.js",
+      "title": "Recursive numeric algorithm mixed with calls",
+      "stage": "full-system-closure",
+      "mechanism": "A recursive Ackermann-lite function mixing arithmetic and call dispatch under load.",
+      "expect": {
+        "instrumentation": {
+          "kind": "map_sum",
+          "path": "quickening",
+          "field": "hits",
+          "assert": ">=100"
+        }
+      }
+    },
+    {
+      "id": "030",
+      "file": "030.js",
+      "title": "Small event-queue state-machine simulation",
+      "stage": "full-system-closure",
+      "mechanism": "A generic task-queue simulation (structurally similar to classic VM benchmarks, but sized and shaped as a neutral general program, not a fixture-detecting kernel).",
+      "expect": {
+        "instrumentation": {
+          "kind": "path",
+          "path": "lanes.l2.vm_share_ppm",
+          "assert": ">=500000"
+        }
+      }
+    },
+    {
+      "id": "031",
+      "file": "031.js",
+      "title": "Mixed array/object/Map workload",
+      "stage": "full-system-closure",
+      "mechanism": "Interplay of arrays, plain objects, and Map: exercises several data-API fast paths in one program.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "032",
+      "file": "032.js",
+      "title": "String-heavy parsing-like loop",
+      "stage": "full-system-closure",
+      "mechanism": "Tokenizing and accumulating over strings: tests string/control interplay together.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "033",
+      "file": "033.js",
+      "title": "Polymorphic dispatch inside a hot loop",
+      "stage": "full-system-closure",
+      "mechanism": "A hot loop dispatching to one of several handler shapes each iteration: combines call-IC polymorphism with a hot loop.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "034",
+      "file": "034.js",
+      "title": "Proxy-wrapped object defeats shape assumptions",
+      "stage": "fallback-safety-adversarial",
+      "mechanism": "A Proxy intercepting property access must defeat any shape-based fast path and still produce correct trapped results.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "035",
+      "file": "035.js",
+      "title": "Getter with an observable side effect",
+      "stage": "fallback-safety-adversarial",
+      "mechanism": "A property getter with a side effect must run exactly once per access, even under repeated access at a hot call site.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "036",
+      "file": "036.js",
+      "title": "Accessor swapped mid-loop via defineProperty",
+      "stage": "fallback-safety-adversarial",
+      "mechanism": "A plain data property is redefined as an accessor mid-loop: subsequent reads must observe the new accessor, not a stale cached slot.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "037",
+      "file": "037.js",
+      "title": "Call target reassigned mid-loop with side-effecting arguments",
+      "stage": "fallback-safety-adversarial",
+      "mechanism": "A previously-monomorphic call site's target is reassigned partway through, with an argument expression that has a side effect: both the dispatch target and the side effect must stay correct after reassignment.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    },
+    {
+      "id": "038",
+      "file": "038.js",
+      "title": "for-in over inherited, own, and deleted properties",
+      "stage": "fallback-safety-adversarial",
+      "mechanism": "Prototype-chain iteration with deletions mid-loop: must enumerate exactly the correct live key set at each step, defeating any static-shape enumeration shortcut.",
+      "expect": {
+        "instrumentation": {
+          "kind": "none",
+          "reason": "correctness-only case"
+        }
+      }
+    }
+  ]
+}
