@@ -281,7 +281,8 @@ const __quenchDgramSend = (socket, message, ...args) => {
     });
     return socket;
   }
-  const sendResult = socket[__quenchDgramStateSymbol].handle.send?.();
+  const send = socket[__quenchDgramStateSymbol].handle.send;
+  const sendResult = typeof send === "function" ? send() : undefined;
   if (sendResult) {
     const error = Object.assign(
       new Error(`send UNKNOWN ${address || "127.0.0.1"}:${destinationPort}`),
