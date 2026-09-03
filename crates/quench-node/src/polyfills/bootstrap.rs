@@ -6,6 +6,8 @@
 
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
+    "fetch" => fetch,
+    "externalizable-strings" => externalizable_strings,
     "report" => report,
     "performance" => performance,
     "support" => support,
@@ -18,4 +20,6 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "async-resource" => async_resource,
     "web-streams" => web_streams,
     "webcrypto-global" => webcrypto_global,
+    "vfs-head" => vfs_head,
+    "vfs" => vfs,
 );
