@@ -1,26 +1,20 @@
 # Architecture and performance evidence
 
 This document records reproducible checks for the fact-generated VM plan,
-which is interpreter-first with one bounded, gated exception — the
-copy-and-patch region-stencil tier described in
+including the copy-and-patch region-stencil tier described in
 [`copy-and-patch-jit.md`](copy-and-patch-jit.md). It is an evidence index, not
 a benchmark score and never selects a production path.
 Run commands from the repository root; write generated reports under
 `target/` so they remain disposable.
 
-## Structural gates
+## Structural checks
 
 ```sh
-node tools/check-vm-architecture.cjs
 node tools/architecture-size-report.cjs target/debug/quench-node \
   > target/architecture-size.json
 cargo fmt --all -- --check
 git diff --check
 ```
-
-The architecture gate checks the single `vm_op!` catalog, contiguous generated
-IDs, handler coverage, task-queue integrity, runtime feature boundaries, and
-the absence of workload identity tokens in `quench-runtime/src`.
 
 The size report is the task-010 complexity ledger: the current optimized
 artifact records 28 generated catalog rows, 466 runtime Rust files, 5.58 MB of
@@ -66,6 +60,11 @@ matches (2.358x wall time, 0.710x peak RSS, 4.466x instructions, and 3.143x
 cycles relative to Bun). Node and Bun are measurement oracles only; neither
 result enables workload-specific runtime behavior.
 
+After the callee-directed continuation rewrite, the same 001–100 corpus still
+produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
+`target/micro-neutral-after-cps.json`; it is evidence only and is not read by
+the runtime.
+
 ## Neutral performance probes
 
 The measurement-only probes exercise reusable operation shapes and validate a
@@ -97,11 +96,11 @@ artifact-level `size -m` report records a 14.09 MB text section. Raw profiler
 output is disposable and should be regenerated with the same artifact before
 making layout or dispatch changes.
 
-The dispatch boundary now returns an explicit `DispatchTransition` carrying
-the next program counter and completion. The driver consumes that transition;
-branch and jump successors are decoded from the catalog's control facts. This
-is the interpreter-only groundwork requested by task 019; it does not add CPS,
-computed-goto, executable memory, or a JIT.
+The dispatch boundary returns an explicit `DispatchTransition` carrying the
+callee-directed continuation target and completion. Normal transitions invoke
+the supplied target directly; the frame driver is only an entry/exit shim.
+This remains interpreter-only control transfer: it adds no computed-goto,
+executable memory, or benchmark-specific path.
 
 ## Representation and lookup evidence
 
@@ -134,14 +133,14 @@ shared fact.
 
 | Tasks | Evidence |
 | --- | --- |
-| 001–005, 007–008 | `ir.rs` catalog tests, compact encoding tests, and the architecture gate |
-| 002, 010, 012 | `tools/check-vm-architecture.cjs` and this document |
+| 001–005, 007–008 | `ir.rs` catalog tests and compact encoding tests |
+| 002, 010, 012 | `tools/architecture-size-report.cjs` and this document |
 | 006, 011 | runtime/node tests plus the 001–100 neutral corpus |
 | 009 | `SharedBinaryFact` adapter test and Wasm numeric lowering tests |
 | 013–015 | quickening unit tests and the execution-trace profile snapshot |
 | 016, 019 | cold-symbol audit, `sample` profile, and `DispatchTransition` tests |
 | 017–018 | tagged-value/shape unit tests and `target/micro-object-evidence.json` |
-| 021–026 | `docs/copy-and-patch-jit.md`, stencil unit/differential tests, and the architecture gate's copy_patch_jit invariant checks |
+| 021–026 | `docs/copy-and-patch-jit.md` and stencil unit/differential tests |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.

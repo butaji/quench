@@ -13,8 +13,7 @@ zero. The runtime contains no workload-specific kernel feature; reusable
 fact-guarded kernels remain valid runtime machinery.
 Measurement failures are fixed in the measurement or general runtime, never
 with workload-shaped behavior. The implementation queue is
-[`tasks/index.json`](../tasks/index.json), and the read-only architecture gate
-is `node tools/check-vm-architecture.cjs`. Reproducible commands and the
+[`tasks/index.json`](../tasks/index.json). Reproducible commands and the
 interpretation rules for their output are indexed in
 [`architecture-evidence.md`](architecture-evidence.md). The VM declaration remains the
 single `vm_op!` macro catalog; generated mechanics may change as facts grow,
