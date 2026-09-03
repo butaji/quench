@@ -5,7 +5,18 @@ use crate::{
     value::{GeneratorData, GeneratorState, Value},
 };
 use std::collections::{HashMap, VecDeque};
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
+thread_local! {
+    static CURRENT_GENERATOR_ID: Cell<usize> = const { Cell::new(0) };
+}
+
+pub(crate) fn current_generator_id() -> usize {
+    CURRENT_GENERATOR_ID.with(Cell::get)
+}
 type InitialGeneratorState = (
     Option<GeneratorState>,
     crate::register_file::RegisterFile,
@@ -32,7 +43,8 @@ pub(crate) fn create(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let (state, mut registers, pc, environment) = initialize_parameters(function, receiver, arguments)?;
+    let (state, mut registers, pc, environment) =
+        initialize_parameters(function, receiver, arguments)?;
     let deferred_arguments = if state.is_none() {
         arguments.to_vec()
     } else {
@@ -292,12 +304,15 @@ pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value,
     }
     *generator.running.borrow_mut() = true;
     let realm = crate::construct::function_realm_id(&generator.function);
+    let previous_generator =
+        CURRENT_GENERATOR_ID.with(|id| id.replace(generator as *const _ as usize));
     let result = if realm != crate::vm::current_context_or_default().realm() {
         crate::vm::with_realm(realm, || resume_inner(generator, resume.clone()))
             .unwrap_or_else(|| resume_inner(generator, resume))
     } else {
         resume_inner(generator, resume)
     };
+    CURRENT_GENERATOR_ID.with(|id| id.set(previous_generator));
     *generator.running.borrow_mut() = false;
     result
 }
@@ -550,6 +565,9 @@ fn resume_suspended_contexts(
     let mut completion = completion.clone();
     if state.async_for_of.is_some() {
         let spec = state.async_for_of.take().ok_or(VmError::MissingReturn)?;
+        if matches!(completion, crate::completion::Completion::Throw(_)) {
+            return resume_machine_frame(generator, state, completion).map(Some);
+        }
         let _private = crate::private_environment::Guard::install_environment(
             generator.function.private_environment.clone(),
         );
@@ -576,6 +594,24 @@ fn resume_suspended_contexts(
             return resume_machine_frame(generator, state, completion).map(Some);
         }
         return resume_machine_frame(generator, state, completion).map(Some);
+    }
+    // An await nested in a loop leaves an Await marker above the loop frame.
+    // Consume that marker before handing the fulfilled value to the loop
+    // continuation; otherwise resumption skips the loop body entirely.
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Await { .. })
+    ) && generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .iter()
+        .rev()
+        .nth(1)
+        .is_some_and(|frame| matches!(frame, crate::machine::Frame::Loop { .. }))
+    {
+        generator.machine.borrow_mut().pop_await_frame();
     }
     if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
