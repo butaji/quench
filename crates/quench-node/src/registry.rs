@@ -2381,8 +2381,11 @@ pub fn namespace_bindings_with_exec_argv(
         "structuredClone".to_string(),
         crate::host::capability(crate::registry::SPEC_STRUCTURED_CLONE),
     ));
+    // HTTP fetch is installed by the bootstrap surface. Keep the native
+    // capability private so the JS bridge can delegate blob URLs without
+    // allowing the virtual binding to shadow the replaceable global.
     out.push((
-        "fetch".to_string(),
+        "__quenchHostFetch".to_string(),
         crate::host::capability(crate::registry::SPEC_FETCH),
     ));
     let abort_controller = crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER);
