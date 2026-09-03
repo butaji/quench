@@ -9,6 +9,7 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "report" => report,
     "performance" => performance,
     "support" => support,
+    "punycode" => punycode,
     "dns" => dns,
     "dgram-head" => dgram_head,
     "dgram" => dgram,
