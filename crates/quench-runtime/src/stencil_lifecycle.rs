@@ -3,6 +3,10 @@
 use crate::stencil_fact::{PatchValues, RegionKey};
 
 const MAX_MISSES: u8 = crate::quickening::MAX_MISSES;
+/// Maximum number of physical IC stubs retained at one rendered site.  The
+/// chain is disposable metadata; exhaustion always returns to the complete
+/// interpreter gateway rather than allocating a side table.
+pub const MAX_IC_STUBS: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StencilState {
@@ -43,6 +47,108 @@ pub trait EffectfulApply {
 pub enum LifecycleError {
     Retired,
     InvalidTransition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IcStubPlacement {
+    Inline,
+    Outlined,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IcStub {
+    pub key: u64,
+    pub address: usize,
+    pub size: usize,
+    pub placement: IcStubPlacement,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IcStubInstall {
+    Installed(IcStub),
+    Existing(IcStub),
+    Fallback,
+}
+
+/// Fixed-capacity polymorphic IC chain for a rendered region.  Inline stubs
+/// consume a reserved slab first; larger stubs are placed in the outlined
+/// tail.  The chain never grows beyond `N`, and a miss after exhaustion is
+/// represented explicitly so callers can invoke the ordinary interpreter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IcStubChain<const N: usize = MAX_IC_STUBS> {
+    entries: [Option<IcStub>; N],
+    len: usize,
+    inline_start: usize,
+    inline_used: usize,
+    inline_capacity: usize,
+    outlined_next: usize,
+}
+
+impl<const N: usize> IcStubChain<N> {
+    pub const fn new(inline_start: usize, inline_capacity: usize, outlined_start: usize) -> Self {
+        Self {
+            entries: [None; N],
+            len: 0,
+            inline_start,
+            inline_used: 0,
+            inline_capacity,
+            outlined_next: outlined_start,
+        }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub const fn capacity(&self) -> usize {
+        N
+    }
+
+    pub const fn inline_used(&self) -> usize {
+        self.inline_used
+    }
+
+    pub fn lookup(&self, key: u64) -> Option<IcStub> {
+        self.entries[..self.len]
+            .iter()
+            .flatten()
+            .find(|stub| stub.key == key)
+            .copied()
+    }
+
+    pub fn install(&mut self, key: u64, size: usize) -> IcStubInstall {
+        if let Some(stub) = self.lookup(key) {
+            return IcStubInstall::Existing(stub);
+        }
+        if self.len == N {
+            return IcStubInstall::Fallback;
+        }
+        let (address, placement) = if size <= self.inline_capacity.saturating_sub(self.inline_used)
+        {
+            let address = self.inline_start.saturating_add(self.inline_used);
+            self.inline_used = self.inline_used.saturating_add(size);
+            (address, IcStubPlacement::Inline)
+        } else {
+            let address = self.outlined_next;
+            self.outlined_next = self.outlined_next.saturating_add(size);
+            (address, IcStubPlacement::Outlined)
+        };
+        let stub = IcStub {
+            key,
+            address,
+            size,
+            placement,
+        };
+        self.entries[self.len] = Some(stub);
+        self.len += 1;
+        IcStubInstall::Installed(stub)
+    }
+
+    /// Walk the bounded chain in insertion order. `None` is the complete
+    /// ordinary fallback path for a miss or an exhausted chain.
+    pub fn dispatch(&self, key: u64) -> Option<IcStub> {
+        self.lookup(key)
+    }
 }
 
 /// Pure transition function used by both tests and the runtime state holder.
@@ -217,6 +323,63 @@ impl EffectfulApply for StencilLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ic_stub_chain_walks_and_falls_back_at_bounded_ceiling() {
+        let mut chain = IcStubChain::<3>::new(100, 24, 1000);
+        for key in 1..=3 {
+            assert!(matches!(
+                chain.install(key, 8),
+                IcStubInstall::Installed(IcStub {
+                    placement: IcStubPlacement::Inline,
+                    ..
+                })
+            ));
+        }
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain.dispatch(1).map(|stub| stub.address), Some(100));
+        assert_eq!(chain.dispatch(2).map(|stub| stub.address), Some(108));
+        assert_eq!(chain.dispatch(3).map(|stub| stub.address), Some(116));
+        assert_eq!(chain.dispatch(99), None);
+        assert_eq!(chain.install(4, 8), IcStubInstall::Fallback);
+        assert_eq!(chain.len(), chain.capacity());
+    }
+
+    #[test]
+    fn ic_stub_chain_selects_inline_slab_or_outlined_stub() {
+        let mut chain = IcStubChain::<4>::new(4_000, 16, 8_000);
+        let inline = chain.install(1, 12);
+        assert!(matches!(
+            inline,
+            IcStubInstall::Installed(IcStub {
+                address: 4_000,
+                placement: IcStubPlacement::Inline,
+                ..
+            })
+        ));
+        let outlined = chain.install(2, 12);
+        assert!(matches!(
+            outlined,
+            IcStubInstall::Installed(IcStub {
+                address: 8_000,
+                placement: IcStubPlacement::Outlined,
+                ..
+            })
+        ));
+        assert_eq!(chain.inline_used(), 12);
+    }
+
+    #[test]
+    fn ic_stub_chain_peak_state_is_bounded_under_repeated_keys() {
+        let mut chain = IcStubChain::<MAX_IC_STUBS>::new(0, 32, 32);
+        for round in 0..100 {
+            for key in 0..(MAX_IC_STUBS as u64 + 1) {
+                let _ = chain.install(round * 10 + key, 8);
+            }
+            assert_eq!(chain.len(), MAX_IC_STUBS);
+        }
+        assert!(chain.inline_used() <= 32);
+    }
 
     #[test]
     fn lifecycle_prefers_data_repatch_before_render() {
