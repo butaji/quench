@@ -607,6 +607,21 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
             execute::get_property(&guard.js, "allowHalfOpen"),
             Value::Boolean(true)
         );
+        // An HTTP/1.1 peer may half-close after pipelined requests. Once the
+        // parser has no active request left, finish the server write side so
+        // the peer observes its expected final `end` event even when
+        // `httpAllowHalfOpen` is enabled.
+        let close_http = sock.borrow().server_id.is_some()
+            && matches!(
+                execute::get_property(&js, crate::modules::http::HTTP_SERVER_SOCKET_PROP),
+                Value::Boolean(true)
+            )
+            && state.borrow().http.conns.get(&sock.borrow().id).is_some_and(|conn| {
+                conn.req.is_none() && !conn.head_parsed && conn.buffer.is_empty()
+            });
+        if close_http {
+            super::socket_end(state, Some(&js), &[])?;
+        }
         if guard.read_eof && pending_write_len(&guard) > 0 && !allow_half_open {
             guard.write_buf.clear();
             guard.write_offset = 0;
