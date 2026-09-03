@@ -117,6 +117,7 @@ impl NodeRunner {
         self.host = host;
         let mut context = context
             .with_source_text(fixture_source.clone())
+            .with_source_name(script.clone())
             .with_host_value(
                 "__quench_script_source".to_string(),
                 Value::String(fixture_source.clone()),
@@ -173,18 +174,17 @@ impl NodeRunner {
             .is_some_and(|extension| extension == "mjs");
         // CJS fixtures receive Node's wrapper; ESM fixtures retain module
         // syntax so the runtime's module reducer owns import facts.
-        let source = if is_module {
+        let fixture_program = if is_module {
             quench_node::esm_imports::transform_esm_imports(&fixture_source)
-                .replace("await import(", "require(")
         } else {
             quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture_source)
         };
-        let source = if fixture.source.contains("--experimental-eventsource") {
-            format!("globalThis.EventSource = globalThis.__quench_event_source;\n{source}")
+        let fixture_program = if fixture.source.contains("--experimental-eventsource") {
+            format!("globalThis.EventSource = globalThis.__quench_event_source;\n{fixture_program}")
         } else {
-            source
+            fixture_program
         };
-        let dgram_surface = if is_module && fixture_source.contains("dgram") {
+        let dgram_surface = if fixture_source.contains("dgram") {
             ["dgram-head", "dgram", "dgram-tail", "membership"]
                 .into_iter()
                 .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
@@ -205,14 +205,32 @@ impl NodeRunner {
         // resolve to one constructor identity.
         let globals_surface =
             quench_node::polyfills::bootstrap::lookup("globals-extra").unwrap_or("");
-        let report_surface =
-            quench_node::polyfills::bootstrap::lookup("report").unwrap_or("");
+        // The externalizable-string helpers are test-only host hooks. Install
+        // them only for fixtures that name the hooks; keeping them out of the
+        // baseline global shape preserves Node's global-leak observations.
+        let externalizable_surface = fixture_source
+            .contains("Externalizable")
+            .then(|| {
+                quench_node::polyfills::bootstrap::lookup("externalizable-strings").unwrap_or("")
+            })
+            .unwrap_or("");
+        let report_surface = quench_node::polyfills::bootstrap::lookup("report").unwrap_or("");
         let punycode_surface = quench_node::polyfills::bootstrap::lookup("punycode").unwrap_or("");
         let support_surface = quench_node::polyfills::bootstrap::lookup("support").unwrap_or("");
         let async_resource_surface =
             quench_node::polyfills::bootstrap::lookup("async-resource").unwrap_or("");
         let webcrypto_surface =
             quench_node::polyfills::bootstrap::lookup("webcrypto-global").unwrap_or("");
+        let vfs_enabled = fixture_source.contains("--experimental-vfs");
+        let vfs_head_surface = vfs_enabled
+            .then(|| quench_node::polyfills::bootstrap::lookup("vfs-head").unwrap_or(""))
+            .unwrap_or("");
+        let vfs_surface = vfs_enabled
+            .then(|| quench_node::polyfills::bootstrap::lookup("vfs").unwrap_or(""))
+            .unwrap_or("");
+        let vfs_stream_setup = vfs_enabled
+            .then_some("Object.defineProperty(globalThis, '__nodeStream', { configurable: true, writable: true, value: require('stream') });")
+            .unwrap_or("");
         let web_streams_surface = ["web-streams"]
             .into_iter()
             .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
@@ -227,16 +245,42 @@ impl NodeRunner {
         };
         let url_pattern_surface =
             quench_node::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
-        let source = format!(
-            "globalThis.__nodePath = __nodePath; globalThis.__quench_fs_mkdir = __quench_fs_mkdir; globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{support_surface}\n{async_resource_surface}\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
+        let mut bootstrap = format!(
+            "globalThis.__nodePath = __nodePath; globalThis.__quench_fs_mkdir = __quench_fs_mkdir; Object.defineProperty(globalThis, '__filename', {{ value: __quench_script_filename, configurable: true }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{support_surface}\n{async_resource_surface}\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process && !(globalThis.__quench_allowed_node_environment_flags instanceof Set)) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\nif (globalThis.process && globalThis.__quench_allowed_node_environment_flags instanceof Set) process.allowedNodeEnvironmentFlags = globalThis.__quench_allowed_node_environment_flags;"
         );
-        let source = format!("globalThis.process.execArgv = __quench_exec_argv;\n{source}");
+        let source = bootstrap.clone();
+        bootstrap = format!(
+            "if (globalThis.process && globalThis.__quench_allowed_node_environment_flags instanceof Set) {{ const flags = globalThis.__quench_allowed_node_environment_flags; const has = flags.has.bind(flags); flags.has = (flag) => flag === '--perf_basic_prof' || flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === '--perf_basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === '-r' || flag === 'r' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has(flag); Object.freeze(flags); process.allowedNodeEnvironmentFlags = flags; }}\n{source}"
+        );
+        bootstrap = format!(
+            "if (typeof Error === 'function' && Error.stackTraceLimit === undefined) Error.stackTraceLimit = __quench_error_stack_trace_limit;\n{bootstrap}"
+        );
+        bootstrap = format!("globalThis.process.execArgv = __quench_exec_argv;\n{bootstrap}");
         // Node's two global spellings are one identity. Declare the alias in
         // the runner realm so fixtures using `global.gc`, `global.process`,
         // and identity checks observe the same host surface as `globalThis`.
-        let source =
-            format!("var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
-        let source = format!("{punycode_surface}\n{source}");
+        let bootstrap_tail = format!(
+            "var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{externalizable_surface}\n{report_surface}\n{punycode_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}"
+        );
+        // ESM imports create lexical bindings. Run the host bootstrap through
+        // a separately constructed function so its global lookups cannot
+        // resolve to an imported binding still in its temporal dead zone.
+        let bootstrap = format!("{bootstrap_tail}\n{bootstrap}");
+        let bootstrap_literal = format!(
+            "\"{}\"",
+            bootstrap
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\u{2028}', "\\u2028")
+                .replace('\u{2029}', "\\u2029")
+        );
+        let source = if is_module {
+            format!("Function({bootstrap_literal})();\n{fixture_program}")
+        } else {
+            format!("{bootstrap}\n{fixture_program}")
+        };
         self.host
             .state()
             .borrow_mut()
@@ -261,11 +305,53 @@ impl NodeRunner {
                 };
             }
         };
-        let result = normalize_script_completion(quench_runtime::vm::execute_code_with_context(
-            program.code(),
-            &self.context,
-        ))
-        .and_then(|_| self.drive("__quench_run_loop__();"));
+        let result = {
+            let state = self.host.state();
+            let dynamic_namespace_cache =
+                std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::<
+                    String,
+                    Value,
+                >::new()));
+            let _dynamic_import = quench_runtime::module_bindings::install_dynamic_import({
+                let dynamic_namespace_cache = std::rc::Rc::clone(&dynamic_namespace_cache);
+                std::rc::Rc::new(move |specifier, _deferred| {
+                    let mocked = quench_node::modules::test::module_is_mocked(specifier);
+                    let cacheable =
+                        !mocked || quench_node::modules::test::mock_module_cache(specifier);
+                    let cache_key = format!(
+                        "{}:{}",
+                        quench_node::modules::test::canonical_mock_specifier(specifier),
+                        if mocked { "mock" } else { "real" }
+                    );
+                    if cacheable {
+                        if let Some(cached) = dynamic_namespace_cache.borrow().get(&cache_key) {
+                            return Some(cached.clone());
+                        }
+                    }
+                    match quench_node::modules::require::require_dynamic(
+                        &state,
+                        &[Value::String(specifier.to_owned())],
+                    ) {
+                        Ok(value) => {
+                            let namespace = quench_node::modules::require::dynamic_namespace(value);
+                            if cacheable {
+                                dynamic_namespace_cache
+                                    .borrow_mut()
+                                    .insert(cache_key, namespace.clone());
+                            }
+                            Some(namespace)
+                        }
+                        Err(quench_runtime::vm::VmError::Thrown(reason)) => Some(
+                            quench_node::modules::require::dynamic_import_rejection(reason),
+                        ),
+                        Err(_) => None,
+                    }
+                })
+            });
+            let executed =
+                quench_runtime::vm::execute_code_with_context(program.code(), &self.context);
+            normalize_script_completion(executed).and_then(|_| self.drive("__quench_run_loop__();"))
+        };
         // Promise jobs may surface an uncaught rejection while the loop is
         // draining. Route that lifecycle event before checking harness call
         // counts; otherwise the verifier observes its own pending handler as
@@ -294,7 +380,13 @@ impl NodeRunner {
                 let _ = self.drive("__quench_run_exit__();");
                 Err(error)
             }
-            ok => ok.map(|_| ()),
+            ok => {
+                let normalized = ok.map(|_| ());
+                if self.host.exit_code().is_some_and(|code| code != 0) {
+                    let _ = self.drive("__quench_run_exit__();");
+                }
+                normalized
+            }
         };
         Self::classify(result, self.host.exit_code())
     }
@@ -330,7 +422,7 @@ impl NodeRunner {
             },
             (Err(_), Some(0)) => NodeOutcome::Pass,
             (Err(error), Some(code)) => NodeOutcome::Fail {
-                reason: format!("exit code {code}: {}", error.render()),
+                reason: format!("exit code {code}: {}", render_uncaught(&error)),
             },
             (Err(error), None) => NodeOutcome::Fail {
                 reason: format!("runtime: {}", render_uncaught(&error)),
@@ -360,6 +452,9 @@ impl NodeRunner {
 
 fn render_uncaught(error: &quench_runtime::vm::VmError) -> String {
     if let quench_runtime::vm::VmError::Thrown(value) = error {
+        if let Value::String(stack) = quench_runtime::execute::get_property(value, "stack") {
+            return stack;
+        }
         if matches!(value, Value::Null | Value::Undefined)
             || matches!(value, Value::String(text) if text.starts_with("Symbol.") && text.contains('\0'))
         {
