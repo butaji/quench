@@ -128,6 +128,14 @@ the fixed peak state; existing call/property differential tests cover the
 semantic gateways. The mechanism is disposable metadata and does not alter
 the W^X publication boundary.
 
+Task 034 Gate 0 used a DWARF-enabled five-second macOS `sample` of a long
+neutral arithmetic loop and searched for rendered-region symbols
+(`StencilArena`, `render_selected`, `execute_f64`). It found zero such samples;
+the executable stencil path is x86_64-gated and inactive on this ARM64 host.
+Therefore icache/branch cost for rendered regions was not a measured cost, and
+the task's required outcome is **not a measured cost, no implementation
+attempted**. No layout or branch-target bytes changed.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
@@ -214,6 +222,7 @@ shared fact.
 | 031 | Gate-0 dependency audit recorded above; blocked without a physical pinned register, so no implementation was attempted |
 | 032 | Side-table vs rewritten-opcode Gate-0 timing, opcode rewrite/dequicken differential test, full runtime/node gates, and `target/micro-neutral-after-032.json` (100/100) |
 | 033 | `IcStubChain` chain/placement/bounded-state unit tests plus call/property differential gateways |
+| 034 | Gate-0 DWARF/sample rendered-region symbol audit: zero samples on ARM64, so no implementation attempted |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.
