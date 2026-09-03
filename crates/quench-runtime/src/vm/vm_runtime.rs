@@ -1795,8 +1795,7 @@ pub(crate) fn run_instruction_fallback(
 ) -> Result<DispatchTransition, VmError> {
     use crate::ir::Opcode;
     match instruction.opcode {
-        Opcode::Slow => run_slow_fallback(code, instruction, registers, context)
-            .map(|completion| handler_transition(_pc, completion)),
+        Opcode::Slow => enter_slow_path(code, _pc, instruction, registers, context),
         // ForI is a reserved residual-loop encoding.  Lowering currently
         // keeps counted loops as structured `Op::Loop`; if a serialized
         // residual carries that operation in cold metadata, execute the same
@@ -1820,18 +1819,28 @@ pub(crate) fn run_instruction_fallback(
     }
 }
 
+/// Enter the canonical slow-path body as a one-way VM transition.
+///
+/// Deegen's `EnterSlowPath` is CPS-shaped: the fast component does not call
+/// into a value-returning helper and then decide what to do with its result.
+/// Rust cannot promise a machine-level tail-call ABI, so the equivalent here
+/// is an explicit `DispatchTransition` whose callee target is consumed by the
+/// outer dispatch shim.  The body is `#[cold]`/`#[inline(never)]`, shared by
+/// every stencil and never copied into rendered bytes; all misses therefore
+/// retain the complete ordinary semantics at one out-of-line entry point.
 #[cold]
 #[inline(never)]
-fn run_slow_fallback(
+fn enter_slow_path(
     code: crate::machine::CodeView<'_>,
+    pc: usize,
     instruction: crate::ir::Instruction,
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
-) -> Result<Option<crate::completion::Completion>, VmError> {
+) -> Result<DispatchTransition, VmError> {
     let operation = code
         .cold(instruction)
         .ok_or_else(|| VmError::EvalError("missing cold instruction".into()))?;
-    run_op(registers, operation, context)
+    run_op(registers, operation, context).map(|completion| handler_transition(pc, completion))
 }
 
 fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {
@@ -2132,6 +2141,61 @@ mod compact_handler_tests {
         assert_eq!(transition.target, super::DispatchTarget::Callee(1));
         assert!(transition.completion.is_none());
         assert_eq!(registers.read(0), Some(Value::Number(3.0)));
+    }
+
+    #[test]
+    fn slow_path_enters_one_way_transition_for_control_completions() {
+        // Throw, break, and continue are all canonical cold operations.  They
+        // lower to Opcode::Slow and must cross the same named, out-of-line
+        // gateway rather than returning a value to a second dispatch policy.
+        let cases = [
+            (
+                Op::Throw { src: 0 },
+                crate::completion::Completion::Throw(Value::Number(7.0)),
+            ),
+            (
+                Op::Break {
+                    label: Some("outer".into()),
+                    value: Some(0),
+                },
+                crate::completion::Completion::Break {
+                    label: Some("outer".into()),
+                    value: Some(Value::Number(7.0)),
+                },
+            ),
+            (
+                Op::Continue {
+                    label: None,
+                    value: Some(0),
+                },
+                crate::completion::Completion::Continue {
+                    label: None,
+                    value: Some(Value::Number(7.0)),
+                },
+            ),
+        ];
+
+        for (op, expected) in cases {
+            let executable = crate::machine::ExecutableCode::from_ops(vec![op]);
+            let code = executable.code();
+            let instruction = code.instruction(0).expect("cold instruction");
+            assert_eq!(instruction.opcode, crate::ir::Opcode::Slow);
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                Value::Number(7.0),
+            ]);
+            let context = crate::vm::current_context_or_default();
+            let transition = super::enter_slow_path(
+                code,
+                0,
+                instruction,
+                &mut registers,
+                &context,
+            )
+            .expect("slow-path transition");
+            assert_eq!(transition.next_pc, 1);
+            assert_eq!(transition.target, super::DispatchTarget::Exit);
+            assert_eq!(transition.completion, Some(expected));
+        }
     }
 
     #[test]
