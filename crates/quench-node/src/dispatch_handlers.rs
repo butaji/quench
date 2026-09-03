@@ -10952,10 +10952,43 @@ pub fn cp_exec_file(
         });
         let stdout = execute::to_js_string(&stdout).unwrap_or_default();
         let stderr = execute::to_js_string(&stderr).unwrap_or_default();
+        let mut completion_error = error;
+        let options = args
+            .iter()
+            .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+        let max_buffer = match options {
+            Some(value) => match execute::get_property(value, "maxBuffer") {
+                Value::Number(limit) if limit.is_finite() && limit >= 0.0 => Some(limit as usize),
+                Value::Undefined => Some(1024 * 1024),
+                _ => None,
+            },
+            None => Some(1024 * 1024),
+        };
+        if completion_error.is_none() {
+            let stream = if max_buffer.is_some_and(|limit| stdout.len() > limit) {
+                Some("stdout")
+            } else if max_buffer.is_some_and(|limit| stderr.len() > limit) {
+                Some("stderr")
+            } else {
+                None
+            };
+            if let Some(stream) = stream {
+                let mut overflow = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    &[Value::String(format!("{stream} maxBuffer length exceeded"))],
+                );
+                execute::set_property_in_place(
+                    &mut overflow,
+                    "code",
+                    Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
+                );
+                completion_error = Some(overflow);
+            }
+        }
         state.borrow_mut().event_loop.queue_microtask(
             callback,
             vec![
-                error.unwrap_or(Value::Null),
+                completion_error.unwrap_or(Value::Null),
                 Value::String(stdout),
                 Value::String(stderr),
             ],
