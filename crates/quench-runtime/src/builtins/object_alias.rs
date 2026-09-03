@@ -1,8 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::value::{
-    ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, PropertyEntries, Value, WeakObject,
-};
+use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject};
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
     let self_reference = value_targets(&value, &properties);
@@ -78,18 +76,17 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
 /// been resolved by the property setter.  Special objects and metadata remain
 /// on the replacement path, which preserves prototype/accessor and alias
 /// behavior without making the common object-literal write quadratic.
-fn plain_named_write(properties: &Rc<ObjectData>, key: &str) -> bool {
+pub(crate) fn plain_named_write(properties: &Rc<ObjectData>, key: &str) -> bool {
     !key.starts_with('\0')
         && crate::arrays::array_index(key).is_none()
-        && properties.original_prototype().is_none()
-        && properties
-            .value_for_key("\0prototype")
-            .is_none_or(|prototype| {
-                matches!(
-                    prototype,
-                    Value::Builtin(crate::ops::Builtin::ObjectPrototype)
-                )
-            })
+        && properties.original_prototype().is_none_or(|prototype| {
+            matches!(
+                prototype,
+                Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+            )
+        })
+        && properties.has_default_internal_prototype()
+        && properties.is_fast_extensible()
         && !properties.has_replacement()
         && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
 }
@@ -102,15 +99,8 @@ pub(crate) fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool 
                 Value::Builtin(crate::ops::Builtin::ObjectPrototype)
             )
         })
-        && properties
-            .as_ref()
-            .value_for_key("\0prototype")
-            .is_none_or(|prototype| {
-                matches!(
-                    prototype,
-                    Value::Builtin(crate::ops::Builtin::ObjectPrototype)
-                )
-            })
+        && properties.has_default_internal_prototype()
+        && properties.is_fast_extensible()
         && !properties.has_replacement()
         && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
 }

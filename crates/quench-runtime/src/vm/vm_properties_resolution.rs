@@ -706,6 +706,31 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     if crate::vm::is_global_object(value) {
         return None;
     }
+
+    // Once the object layout has been interned, its canonical name->physical
+    // slot map is the same proof used by the named IC path.  Dynamic property
+    // reads (including `obj[key]` in a for-in loop) arrive here without a
+    // call-site cache, so retaining the old reverse scan made every read
+    // proportional to the object's total property count.  Probe the derived
+    // slot first and keep the scan below as the complete fallback for
+    // duplicate/deletion/metadata states that cannot be proven.
+    if let Some(slot) = proven_own_slot(properties, key) {
+        let own = properties.hot_properties().slot_value(slot)?;
+        if matches!(
+            own,
+            Value::Builtin(
+                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
+            )
+        ) && key == "format"
+        {
+            return None;
+        }
+        if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
+            return None;
+        }
+        return Some(property_value(&own));
+    }
+
     let mut own = None;
     let mut metadata = None;
     for (slot, name) in properties.names().enumerate().rev() {

@@ -977,7 +977,12 @@ impl ArrayData {
         let stored = self.is_packed_data()
             && self.has_default_array_prototype()
             && index < self.logical_len()
-            && self.values.set_existing_number(index, number);
+            // PackedValue arrays are still ordinary dense data when every
+            // slot currently contains a number.  Keep this value-only write
+            // in the shared dense store as well; falling back merely because
+            // the array was materialized from a mixed/value representation
+            // would clone the whole ArrayData on every indexed assignment.
+            && self.values.set_existing_numeric_value(index, number);
         if stored {
             self.kind
                 .set(monotonic_kind(self.kind.get(), number_kind(number)));
@@ -1682,6 +1687,23 @@ mod array_data_tests {
         assert!(data.set_existing_number(0, &Value::Number(9.5)));
         assert_eq!(alias.dense_number_at(0), Some(9.5));
         assert_eq!(alias.storage_capacity(), data.storage_capacity());
+    }
+
+    #[test]
+    fn packed_value_numeric_write_stays_in_shared_storage() {
+        // A value-backed dense array can arise after one non-numeric value was
+        // materialized and later normalized by the VM.  Once the target slot
+        // is numeric, indexed numeric assignment must not clone the complete
+        // ArrayData/replacement chain on every write.
+        let data = std::rc::Rc::new(ArrayData::new(vec![
+            Value::Number(1.0),
+            Value::String("materialized".into()),
+        ]));
+        let alias = std::rc::Rc::clone(&data);
+        assert!(!data.set_existing_f64(1, 9.5));
+        assert!(data.set_existing_f64(0, 9.5));
+        assert_eq!(alias.dense_number_at(0), Some(9.5));
+        assert_eq!(alias.get_index(1), Some(Value::String("materialized".into())));
     }
 
     #[test]
