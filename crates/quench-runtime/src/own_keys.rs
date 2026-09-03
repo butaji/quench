@@ -432,7 +432,7 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
         // Descriptor metadata is stored in private slots, but the associated
         // public key remains an own key even when it is non-enumerable.
         for (name, _) in properties.entries() {
-            if !crate::builtins::is_descriptor_key(name) {
+            if name.starts_with('\0') || !crate::builtins::is_descriptor_key(name) {
                 continue;
             }
             let public = crate::builtins::descriptor_public_key(name);
@@ -596,6 +596,9 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             if !symbols {
                 for created in &properties.created {
                     let key = created.as_str();
+                    if key.starts_with('\0') {
+                        continue;
+                    }
                     if properties.descriptor_metadata_for_key(key).is_some()
                         && !keys.iter().any(|current| current == key)
                     {
