@@ -111,11 +111,75 @@ pub fn https_agent_construct(
 /// Transport dispatch is owned by ClientRequest itself; an uninitialized
 /// manually-seeded free socket must not be invoked by the host.
 pub fn agent_add_request(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(args.first().cloned().unwrap_or(Value::Undefined))
+    let Some(agent) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let request = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Some(id) = client_id(Some(&request)) {
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            req.agent = Some(agent.clone());
+        }
+        set_request_property(Some(&request), "agent", agent.clone());
+        let name = execute::call(
+            &execute::get_property(&agent, "getName"),
+            &agent,
+            std::slice::from_ref(&request),
+        )
+        .ok()
+        .and_then(|value| execute::to_js_string(&value).ok());
+        if let Some(name) = name {
+            let free = execute::get_property(&execute::get_property(&agent, "freeSockets"), &name);
+            let has_free = matches!(
+                execute::get_property(&free, "length"),
+                Value::Number(value) if value.is_finite() && value > 0.0
+            );
+            if has_free {
+                set_request_property(Some(&request), "reusedSocket", Value::Boolean(true));
+            }
+        }
+    }
+    let (host, port, local) = match args.get(1) {
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => (
+            execute::to_js_string(&execute::get_property(args.get(1).unwrap(), "host"))
+                .unwrap_or_else(|_| "localhost".into()),
+            execute::to_js_string(&execute::get_property(args.get(1).unwrap(), "port"))
+                .unwrap_or_default(),
+            execute::to_js_string(&execute::get_property(args.get(1).unwrap(), "localAddress"))
+                .unwrap_or_default(),
+        ),
+        Some(host) => (
+            execute::to_js_string(host).unwrap_or_else(|_| "localhost".into()),
+            args.get(2)
+                .map(execute::to_js_string)
+                .transpose()?
+                .unwrap_or_default(),
+            args.get(3)
+                .map(execute::to_js_string)
+                .transpose()?
+                .unwrap_or_default(),
+        ),
+        None => ("localhost".into(), String::new(), String::new()),
+    };
+    let key = format!("{host}:{port}:{local}");
+    let requests = execute::get_property(agent, "requests");
+    let current = execute::get_property(&requests, &key);
+    let updated = if matches!(current, Value::Array(_)) {
+        let length = execute::get_property(&current, "length");
+        let index = match length {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        };
+        let _ = execute::set_property_in_place(&current, &index.to_string(), request);
+        current
+    } else {
+        host_api::array(vec![request])
+    };
+    execute::set_property_in_place(&requests, &key, updated);
+    Ok(Value::Undefined)
 }
 
 /// `agent.keepSocketAlive(socket)` applies the default idle-socket policy.
@@ -667,18 +731,24 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         quench_runtime::is_callable(&lookup).then_some(lookup)
     });
     let omit_host = option_source.is_some_and(|options| {
-        matches!(
-            execute::get_property(options, "headers"),
-            Value::Array(_)
-        )
+        matches!(execute::get_property(options, "headers"), Value::Array(_))
     });
-    let expect_continue = opts
-        .headers
-        .iter()
-        .any(|(name, value)| name.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue"));
+    let expect_continue = opts.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue")
+    });
     let (req, id) = build_req_object(state)?;
     req_path_set(state, Some(&req), &[Value::String(opts.path.clone())])?;
     set_request_property(Some(&req), "method", Value::String(opts.method.clone()));
+    set_request_property(
+        Some(&req),
+        "host",
+        Value::String(target_host(&opts.target)),
+    );
+    set_request_property(
+        Some(&req),
+        "port",
+        Value::Number(target_port(&opts.target) as f64),
+    );
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
         id,
@@ -1717,8 +1787,14 @@ pub fn req_end(
         // listeners so an idle expiry cannot destroy an active request.
         net::socket_set_timeout(state, Some(socket), &[Value::Number(0.0)])?;
     }
-    let reused = pooled.is_some();
-    let socket = match (existing.or(pooled), custom.or(custom_socket.clone())) {
+    let reused = pooled.is_some()
+        || matches!(
+            receiver.map(|request| execute::get_property(request, "reusedSocket")),
+            Some(Value::Boolean(true))
+        );
+    set_request_property(receiver, "reusedSocket", Value::Boolean(reused));
+    let pooled_transport = pooled.filter(|socket| net::net_id(socket).is_some());
+    let socket = match (existing.or(pooled_transport), custom.or(custom_socket.clone())) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
             net::socket_write(state, Some(&socket), &[host_api::bytes(head.as_bytes())])?;
