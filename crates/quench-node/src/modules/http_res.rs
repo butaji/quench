@@ -114,6 +114,38 @@ pub fn res_set_headers(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+/// `res.addTrailers(headers)` — append trailers for a chunked response.
+pub fn res_add_trailers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let Some(source) = args.first() else {
+        return Err(invalid_headers_argument());
+    };
+    let entries = execute::own_enumerable_keys(source)
+        .into_iter()
+        .map(|name| (name.clone(), execute::get_property(source, &name)))
+        .map(|(name, value)| execute::to_js_string(&value).map(|value| (name, value)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut guard = state.borrow_mut();
+    if let Some(res) = guard.http.res.get_mut(&id) {
+        res.trailers.extend(entries);
+        if !res
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("transfer-encoding"))
+        {
+            res.headers.push(("Transfer-Encoding".into(), "chunked".into()));
+            res.chunked = true;
+        }
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 fn invalid_headers_argument() -> VmError {
     crate::modules::buffer_enc::invalid_arg_type(
         "The \"headers\" argument must be an instance of Headers or Map".into(),
@@ -530,6 +562,7 @@ pub fn res_write(
             &text,
             &headers,
             &bytes,
+            &[],
             response_keep_alive(&headers, keep_alive),
             http10,
             send_date,
@@ -688,7 +721,19 @@ pub fn res_end(
             }
         }
     }
-    let (status, text, headers, body, socket, keep_alive, http10, send_date, headers_sent, chunked) = {
+    let (
+        status,
+        text,
+        headers,
+        body,
+        trailers,
+        socket,
+        keep_alive,
+        http10,
+        send_date,
+        headers_sent,
+        chunked,
+    ) = {
         let guard = state.borrow();
         let Some(res) = guard.http.res.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -698,6 +743,7 @@ pub fn res_end(
             res.text.clone(),
             res.headers.clone(),
             res.body.clone(),
+            res.trailers.clone(),
             res.socket.clone(),
             res.keep_alive,
             res.http10,
@@ -757,12 +803,16 @@ pub fn res_end(
         })
         .unwrap_or(text);
     if !headers_sent {
-        let payload = host_api::bytes(&compose(
-            status, &wire_text, &headers, &body, keep_alive, http10, send_date,
-        ));
+        let mut wire = compose(
+            status, &wire_text, &headers, &body, &trailers, keep_alive, http10, send_date,
+        );
+        if chunked {
+            wire.extend_from_slice(&chunk_terminator(&trailers));
+        }
+        let payload = host_api::bytes(&wire);
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     } else if chunked {
-        let terminator = host_api::bytes(b"0\r\n\r\n");
+        let terminator = host_api::bytes(&chunk_terminator(&trailers));
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&terminator))?;
     }
     if let Some(socket_id) = net::net_id(&socket) {
@@ -888,6 +938,7 @@ pub fn res_flush_headers(
         &text,
         &headers,
         &[],
+        &[],
         keep_alive,
         http10,
         !matches!(
@@ -916,6 +967,7 @@ fn compose(
     text: &str,
     headers: &[(String, String)],
     body: &[u8],
+    trailers: &[(String, String)],
     keep_alive: bool,
     http10: bool,
     send_date: bool,
@@ -984,6 +1036,15 @@ fn chunk_frame(body: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(body);
     frame.extend_from_slice(b"\r\n");
     frame
+}
+
+fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {
+    let mut out = b"0\r\n".to_vec();
+    for (name, value) in trailers {
+        out.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+    }
+    out.extend_from_slice(b"\r\n");
+    out
 }
 
 fn valid_status(value: &Value) -> Option<u16> {
