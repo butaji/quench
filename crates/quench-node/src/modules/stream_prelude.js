@@ -2320,6 +2320,12 @@
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
     const streams = args.map((stage, index) => {
+      if (typeof stage === "function" &&
+          stage.constructor?.name === "GeneratorFunction") {
+        const error = new TypeError("The pipeline function must return an AsyncIterable");
+        error.code = "ERR_INVALID_RETURN_VALUE";
+        throw error;
+      }
       if (index === 0 && stage && typeof stage.pipe !== "function" &&
           (typeof stage[Symbol.iterator] === "function" ||
            typeof stage[Symbol.asyncIterator] === "function")) {
@@ -2383,7 +2389,7 @@
 
   const composeWritable = (stage) => stage && typeof stage === "object"
     ? composeWeb(stage) || stage.writable !== false && typeof stage.write === "function"
-    : typeof stage === "function" && stage.length > 0;
+    : typeof stage === "function";
   const composeReadable = (stage) => stage && typeof stage.pipe === "function"
     ? stage.readable !== false
     : composeWeb(stage) || (typeof stage === "function"
@@ -2392,6 +2398,9 @@
   const composeWeb = (stage) => Boolean(
     stage?.readable?.getReader && stage?.writable?.getWriter
   );
+  const composeAsyncInput = (values) => ({
+    [Symbol.iterator]() { return values[Symbol.iterator](); },
+  });
   const composeValues = async (stages, initial) => {
     let values = initial;
     for (const stage of stages) {
@@ -2410,7 +2419,10 @@
         continue;
       }
       if (typeof stage === "function") {
-        const output = stage(values);
+        const input = stage.constructor?.name === "AsyncGeneratorFunction"
+          ? composeAsyncInput(values)
+          : values;
+        const output = stage(input);
         const next = [];
         if (output && typeof output.next === "function") {
           for await (const value of output) next.push(value);
@@ -2425,11 +2437,12 @@
         values = next;
         continue;
       }
-      const output = [];
-      const onData = (value) => output.push(value);
+      const inputValues = values;
+      values = [];
+      const onData = (value) => values.push(value);
       stage.on?.("data", onData);
       try {
-        for (const value of values) {
+        for (const value of inputValues) {
           await new Promise((resolve, reject) => {
             try {
               stage.write(value, (error) => error ? reject(error) : resolve());
@@ -2448,7 +2461,6 @@
       } finally {
         stage.removeListener?.("data", onData);
       }
-      values = output;
     }
     return values;
   };
