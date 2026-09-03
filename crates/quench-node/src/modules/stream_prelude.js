@@ -2737,7 +2737,11 @@
           });
         },
         write(chunk, encoding, callback) {
-          if (writable) writable.write(chunk, encoding, callback);
+          if (writable) {
+            const objectMode = writable._writableState?.objectMode;
+            if (objectMode) writable.write(chunk, callback);
+            else writable.write(chunk, encoding, callback);
+          }
           else if (webWritable) {
             const writer = webWritable.getWriter();
             writer.write(chunk).then(() => {
@@ -2769,6 +2773,7 @@
         readable.on("data", (chunk) => result.push(chunk));
         readable.once("end", () => result.push(null));
         readable.once("error", (error) => result.destroy(error));
+        readable.resume?.();
       }
       return result;
     }
