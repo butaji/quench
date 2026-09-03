@@ -30,12 +30,31 @@ fn run_generator_code_steps(
     {
         return Ok(GeneratorStep { completion: resume, pc, suspension: None });
     }
-    for next in pc..code.len() {
+    let mut next = pc;
+    while next < code.len() {
         let instruction = code.instruction(next).ok_or(VmError::MissingReturn)?;
+        match instruction.opcode {
+            crate::ir::Opcode::Jump => {
+                next = usize::from(instruction.a);
+                continue;
+            }
+            crate::ir::Opcode::JumpIfFalse => {
+                let truthy = registers
+                    .word_truthiness(usize::from(instruction.a))
+                    .map_or_else(
+                        || run_read_truthiness(registers, instruction.a),
+                        Ok,
+                    )?;
+                next = if truthy { next.saturating_add(1) } else { usize::from(instruction.b) };
+                continue;
+            }
+            _ => {}
+        }
         if let Some(op @ Op::YieldStar { .. }) = code.cold(instruction) {
             if let Some(step) = run_yield_star_step(registers, op, &resume, next)? {
                 return Ok(step);
             }
+            next += 1;
             continue;
         }
         let result = match run_instruction(code, next, instruction, registers, context) {
@@ -48,19 +67,28 @@ fn run_generator_code_steps(
         if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
             if let crate::completion::Completion::Call(continuation) = completion {
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+                next = next.saturating_add(1);
                 continue;
             }
             crate::vm::flush_global_declaration_batch(registers);
             let suspension = code.cold(instruction).and_then(|op| {
-                matches!(completion, crate::completion::Completion::Yield(_))
+                completion.is_suspension()
                     .then(|| direct_suspension(op, next))
                     .flatten()
             });
             return Ok(GeneratorStep { completion, pc: next + 1, suspension });
         }
+        next += 1;
     }
     crate::vm::flush_global_declaration_batch(registers);
     Ok(GeneratorStep { completion: crate::completion::Completion::Normal, pc: code.len(), suspension: None })
+}
+
+fn run_read_truthiness(
+    registers: &crate::register_file::RegisterFile,
+    register: u16,
+) -> Result<bool, VmError> {
+    crate::execute::read_register(registers, register).map(|value| crate::execute::is_truthy(&value))
 }
 
 fn run_yield_star_step(
@@ -111,10 +139,12 @@ fn direct_suspension(op: &Op, pc: usize) -> Option<crate::continuation::Suspensi
             ..
         } => {
             let body_code = body.code()?;
-            let (index, Op::Yield { src }) =
-                body_code.find_cold(|candidate| matches!(candidate, Op::Yield { .. }))?
-            else {
-                return None;
+            let (index, candidate) = body_code.find_cold(|candidate| {
+                matches!(candidate, Op::Yield { .. } | Op::Await { .. })
+            })?;
+            let src = match candidate {
+                Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+                _ => return None,
             };
             Some(crate::continuation::SuspensionPoint::Loop {
                 pc,
@@ -128,7 +158,7 @@ fn direct_suspension(op: &Op, pc: usize) -> Option<crate::continuation::Suspensi
                     end: body.range.end,
                 },
                 dst: *dst,
-                yield_dst: *src,
+                yield_dst: src,
                 post_test: *post_test,
             })
         }

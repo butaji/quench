@@ -167,11 +167,21 @@ fn process_promise_in_context(promise: &Rc<PromiseData>) {
                     | PromiseContinuation::AsyncGeneratorYield { .. }
             );
             if async_continuation {
-                promise_phase(promise, "before");
-            }
-            process_continuation(continuation, &state);
-            if async_continuation {
-                promise_phase(promise, "after");
+                // Await resumes in its own Promise reaction resource. Using
+                // the awaited promise here leaks enterWith() mutations from
+                // the producer into the consumer's async context.
+                let reaction = match &continuation {
+                    PromiseContinuation::AsyncGenerator { reaction, .. }
+                    | PromiseContinuation::AsyncGeneratorYield { reaction, .. } => {
+                        Rc::clone(reaction)
+                    }
+                    _ => unreachable!(),
+                };
+                promise_phase(&reaction, "before");
+                process_continuation(continuation, &state);
+                promise_phase(&reaction, "after");
+            } else {
+                process_continuation(continuation, &state);
             }
         }
     }
@@ -271,8 +281,9 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
             generator,
             result,
             async_function,
+            ..
         } => process_async_continuation(generator, result, false, async_function, state),
-        PromiseContinuation::AsyncGeneratorYield { generator, result } => {
+        PromiseContinuation::AsyncGeneratorYield { generator, result, .. } => {
             process_async_continuation(generator, result, true, false, state)
         }
         PromiseContinuation::ArrayFromAsync {
@@ -306,6 +317,13 @@ fn process_async_continuation(
     };
     if yielding {
         *generator.pending_yield.borrow_mut() = false;
+        if is_yield_star_suspension(&generator) && delegated_result_done(&value) {
+            continue_after_delegation(
+                &generator,
+                &result,
+            );
+            return;
+        }
         finish_async_yield(&generator, &result, state, value);
         return;
     }
@@ -325,6 +343,26 @@ fn process_async_continuation(
         }
         Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
         Err(_) => reject_promise(&result, Value::Undefined),
+    }
+}
+
+fn delegated_result_done(value: &Value) -> bool {
+    crate::execute::get_property_result(value, "done")
+        .map(|done| crate::execute::is_truthy(&done))
+        .unwrap_or(false)
+}
+
+fn continue_after_delegation(
+    generator: &Rc<crate::value::GeneratorData>,
+    result: &Rc<PromiseData>,
+) {
+    match crate::generator::resume_async_after_await(generator, false, Value::Undefined) {
+        Ok(value) => settle_async_result(result, value, false),
+        Err(VmError::Suspended(awaited)) => {
+            register_async_generator(&awaited, Rc::clone(generator), Rc::clone(result), false)
+        }
+        Err(VmError::Thrown(reason)) => reject_promise(result, reason),
+        Err(_) => reject_promise(result, Value::Undefined),
     }
 }
 
@@ -349,8 +387,20 @@ fn finish_async_yield(
         *generator.done.borrow_mut() = true;
         reject_promise(result, value);
     } else {
+        let value = if is_yield_star_suspension(generator) {
+            crate::execute::get_property_result(&value, "value").unwrap_or(Value::Undefined)
+        } else {
+            value
+        };
         resolve_promise(result, crate::generator::iterator_result(value, false));
     }
+}
+
+fn is_yield_star_suspension(generator: &crate::value::GeneratorData) -> bool {
+    matches!(
+        generator.state.borrow().as_ref().and_then(|state| state.suspension.as_ref()),
+        Some(crate::continuation::SuspensionPoint::YieldStar { .. })
+    )
 }
 
 fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
@@ -450,25 +500,21 @@ pub(crate) fn register_async_generator(
     result: Rc<PromiseData>,
     async_function: bool,
 ) {
-    awaited
-        .continuations
-        .borrow_mut()
-        .push(if *generator.pending_yield.borrow() {
-            PromiseContinuation::AsyncGeneratorYield { generator, result }
-        } else {
-            // An await installs a reaction promise before the async function
-            // returns its result. Keep that lifecycle edge visible to hosts;
-            // it is the resource that links the awaited promise to the
-            // continuation (and therefore preserves Node's trigger chain).
-            let _reaction = with_promise_trigger(awaited, || {
-                PromiseData::allocate(PromiseState::Pending)
-            });
-            PromiseContinuation::AsyncGenerator {
-                generator,
-                result,
-                async_function,
-            }
-        });
+    // Every suspension has a distinct reaction resource. It inherits the
+    // producer's context at allocation, while the continuation itself runs
+    // under this resource when the awaited promise settles.
+    let reaction =
+        with_promise_trigger(awaited, || PromiseData::allocate(PromiseState::Pending));
+    awaited.continuations.borrow_mut().push(if *generator.pending_yield.borrow() {
+        PromiseContinuation::AsyncGeneratorYield { generator, result, reaction }
+    } else {
+        PromiseContinuation::AsyncGenerator {
+            generator,
+            result,
+            async_function,
+            reaction,
+        }
+    });
     if !matches!(*awaited.state.borrow(), PromiseState::Pending) {
         queue_promise(awaited);
     }
@@ -725,6 +771,9 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 let target = PromiseData::allocate(PromiseState::Pending);
                 let resolve = bound_settler(Builtin::PromiseAdoptResolve, &target, 1.0);
                 let reject = bound_settler(Builtin::PromiseAdoptReject, &target, 1.0);
+                // Promise.resolve assimilates this source immediately; the
+                // paired rejection adopter is already an observable handler.
+                promise.rejection_handled.set(true);
                 promise
                     .then_actions
                     .borrow_mut()
@@ -835,12 +884,11 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         .then_actions
         .borrow_mut()
         .push((maybe_handler(arguments, 0), maybe_handler(arguments, 1)));
-    if arguments
-        .get(1)
-        .is_some_and(|handler| !matches!(handler, Value::Undefined))
-    {
-        promise.rejection_handled.set(true);
-    }
+    // A rejection reaction transfers failures to the promise returned by
+    // `then`, even when the caller omits its explicit reject callback.  The
+    // descendant is then responsible for unhandled-rejection reporting; the
+    // source promise itself has a reaction and is considered handled.
+    promise.rejection_handled.set(true);
     let promise_key = Rc::as_ptr(promise) as usize;
     THEN_RESULTS.with(|results| {
         results
