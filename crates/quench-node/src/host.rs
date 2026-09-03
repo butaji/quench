@@ -345,6 +345,27 @@ fn host_exec_path() -> String {
     executable.to_string_lossy().into_owned()
 }
 
+/// Whether a shell command names this host or its canonical engine sibling.
+/// The compatibility launchers expose the sibling path through
+/// `process.execPath`, while the actual child process may still be launched
+/// through the current runner executable.
+pub(crate) fn command_uses_host_exec(command: &str) -> bool {
+    let Some(executable) = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+    else {
+        return false;
+    };
+    if command.contains(executable.to_string_lossy().as_ref()) {
+        return true;
+    }
+    executable
+        .parent()
+        .map(|parent| parent.join("quench-node"))
+        .filter(|engine| engine.is_file())
+        .is_some_and(|engine| command.contains(engine.to_string_lossy().as_ref()))
+}
+
 /// Same as `install`, but provides a host-side output sink that
 /// receives `console.log/info/...` lines.
 pub fn install_with_sink(

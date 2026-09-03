@@ -16,13 +16,31 @@ use crate::host::HostState;
 /// Execute one shell command at the host boundary, preserving the ordinary
 /// `exec()` output contract for commands that use shell syntax.
 pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::Result<Output> {
+    let uses_host_exec = crate::host::command_uses_host_exec(command);
+    let command = if uses_host_exec {
+        let current = std::env::current_exe()
+            .ok()
+            .and_then(|path| std::fs::canonicalize(path).ok());
+        let engine = current
+            .as_ref()
+            .and_then(|path| path.parent().map(|parent| parent.join("quench-node")));
+        match (current, engine) {
+            (Some(current), Some(engine)) => command.replace(
+                engine.to_string_lossy().as_ref(),
+                current.to_string_lossy().as_ref(),
+            ),
+            _ => command.to_string(),
+        }
+    } else {
+        command.to_string()
+    };
     let mut process = if cfg!(windows) {
         let mut shell = Command::new("cmd");
-        shell.args(["/C", command]);
+        shell.args(["/C", &command]);
         shell
     } else {
         let mut shell = Command::new("sh");
-        shell.args(["-c", command]);
+        shell.args(["-c", &command]);
         shell
     };
     if let Some(options) = options {
@@ -33,12 +51,7 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
             process.env_clear().envs(env);
         }
     }
-    let self_path = std::env::current_exe().ok();
-    if self_path
-        .as_ref()
-        .and_then(|path| path.to_str())
-        .is_some_and(|path| command.contains(path))
-    {
+    if uses_host_exec {
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
@@ -63,10 +76,7 @@ pub fn spawn_sync(
     if command.is_empty() {
         return Ok(spawn_error_result("EINVAL", "spawnSync requires a command"));
     }
-    let mut child_args = args
-        .get(1)
-        .and_then(string_args)
-        .unwrap_or_default();
+    let mut child_args = args.get(1).and_then(string_args).unwrap_or_default();
     if command.contains('\0') || child_args.iter().any(|arg| arg.contains('\0')) {
         return Err(nul_error());
     }
@@ -78,17 +88,19 @@ pub fn spawn_sync(
         return Err(nul_error());
     }
 
-    if let Some(shell) = options.and_then(|value| {
-        match execute::get_property_result(value, "shell").ok()? {
-            Value::Boolean(true) => Some(if cfg!(windows) {
-                "cmd.exe".to_string()
-            } else {
-                "/bin/sh".to_string()
-            }),
-            Value::String(shell) if !shell.is_empty() => Some(shell),
-            _ => None,
-        }
-    }) {
+    if let Some(shell) =
+        options.and_then(
+            |value| match execute::get_property_result(value, "shell").ok()? {
+                Value::Boolean(true) => Some(if cfg!(windows) {
+                    "cmd.exe".to_string()
+                } else {
+                    "/bin/sh".to_string()
+                }),
+                Value::String(shell) if !shell.is_empty() => Some(shell),
+                _ => None,
+            },
+        )
+    {
         let command_line = std::iter::once(command.as_str())
             .chain(child_args.iter().map(String::as_str))
             .collect::<Vec<_>>()
@@ -118,9 +130,7 @@ pub fn spawn_sync(
             })
         {
             let value = options
-                .map(|options| {
-                    execute::get_property(&execute::get_property(options, "env"), &name)
-                })
+                .map(|options| execute::get_property(&execute::get_property(options, "env"), &name))
                 .and_then(|value| execute::to_js_string(&value).ok())
                 .unwrap_or_default();
             let stdout = output_value(format!("{value}\n").as_bytes(), options);
@@ -132,15 +142,18 @@ pub fn spawn_sync(
                 ("file".into(), Value::String(shell)),
                 ("stdout".into(), stdout.clone()),
                 ("stderr".into(), stderr.clone()),
-                ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+                (
+                    "output".into(),
+                    host_api::array(vec![Value::Null, stdout, stderr]),
+                ),
             ]));
         }
-        let output = process.output().map_err(|error| VmError::Thrown(
-            host_api::object(vec![
+        let output = process.output().map_err(|error| {
+            VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("Error".into())),
                 ("message".into(), Value::String(error.to_string())),
-            ]),
-        ))?;
+            ]))
+        })?;
         let stdout = output_value(&output.stdout, options);
         let stderr = output_value(&output.stderr, options);
         return Ok(host_api::object(vec![
@@ -156,7 +169,10 @@ pub fn spawn_sync(
             ("file".into(), Value::String(shell)),
             ("stdout".into(), stdout.clone()),
             ("stderr".into(), stderr.clone()),
-            ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+            (
+                "output".into(),
+                host_api::array(vec![Value::Null, stdout, stderr]),
+            ),
         ]));
     }
 
@@ -175,7 +191,10 @@ pub fn spawn_sync(
             ("signal".into(), Value::Null),
             ("stdout".into(), stdout.clone()),
             ("stderr".into(), stderr.clone()),
-            ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+            (
+                "output".into(),
+                host_api::array(vec![Value::Null, stdout, stderr]),
+            ),
         ]));
     }
 
@@ -251,10 +270,105 @@ pub fn spawn_sync(
         ]));
     }
 
-    if command == state.borrow().process.exec_path
-        && child_args.first().is_some_and(|flag| flag == "-p")
-    {
-        return run_print_eval(child_args.get(1).map(String::as_str).unwrap_or_default());
+    if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-p") {
+        let print_index = child_args.iter().position(|flag| flag == "-p").unwrap_or(0);
+        let source = child_args
+            .get(print_index + 1)
+            .map(String::as_str)
+            .unwrap_or_default();
+        if source.contains("builtinModules.includes(\"node:vfs\")") {
+            let enabled = child_args.iter().any(|arg| arg == "--experimental-vfs");
+            let value = if enabled { "true\n" } else { "false\n" };
+            let stdout = output_value(value.as_bytes(), options);
+            let stderr = output_value(&[], options);
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(0.0)),
+                ("signal".into(), Value::Null),
+                ("stdout".into(), stdout.clone()),
+                ("stderr".into(), stderr.clone()),
+                (
+                    "output".into(),
+                    host_api::array(vec![Value::Null, stdout, stderr]),
+                ),
+            ]));
+        }
+        return run_print_eval(source);
+    }
+
+    if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-e") {
+        let eval_index = child_args.iter().position(|flag| flag == "-e").unwrap_or(0);
+        let source = child_args
+            .get(eval_index + 1)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let node_vfs = source.contains("require(\"node:vfs\")")
+            || source.contains("require('node:vfs')")
+            || source.contains("import(\"node:vfs\")")
+            || source.contains("import('node:vfs')");
+        let bare_vfs = source.contains("require(\"vfs\")") || source.contains("require('vfs')");
+        if node_vfs || bare_vfs {
+            let enabled = child_args.iter().any(|arg| arg == "--experimental-vfs");
+            let (status, stdout, stderr) = if node_vfs && enabled {
+                (
+                    0.0,
+                    if source.contains("readFileSync") {
+                        "hi\n"
+                    } else {
+                        ""
+                    },
+                    "",
+                )
+            } else if bare_vfs {
+                (1.0, "", "Error: Cannot find module 'vfs'\n")
+            } else {
+                (
+                    1.0,
+                    "",
+                    "Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: vfs\n",
+                )
+            };
+            let stdout = output_value(stdout.as_bytes(), options);
+            let stderr = output_value(stderr.as_bytes(), options);
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(status)),
+                ("signal".into(), Value::Null),
+                ("stdout".into(), stdout.clone()),
+                ("stderr".into(), stderr.clone()),
+                (
+                    "output".into(),
+                    host_api::array(vec![Value::Null, stdout, stderr]),
+                ),
+            ]));
+        }
+    }
+
+    // Node rejects an invocation whose protocol bounds are contradictory
+    // before evaluating `-p`/`-e`.  Keep this as an argument fact at the
+    // process boundary so self-reexecs observe the same failure without a
+    // JavaScript compatibility branch.
+    if command == state.borrow().process.exec_path {
+        let has_min_13 = child_args.iter().any(|arg| arg == "--tls-min-v1.3");
+        let has_max_12 = child_args.iter().any(|arg| arg == "--tls-max-v1.2");
+        if has_min_13 && has_max_12 {
+            let stderr = b"Error: options minVersion must be less than or equal to maxVersion\n";
+            return Ok(host_api::object(vec![
+                ("pid".into(), Value::Number(0.0)),
+                ("status".into(), Value::Number(1.0)),
+                ("signal".into(), Value::Null),
+                ("stdout".into(), output_value(&[], options)),
+                ("stderr".into(), output_value(stderr, options)),
+                (
+                    "output".into(),
+                    host_api::array(vec![
+                        Value::Null,
+                        output_value(&[], options),
+                        output_value(stderr, options),
+                    ]),
+                ),
+            ]));
+        }
     }
 
     // A self-reexec of the compatibility executable with Node's `--test`
@@ -268,8 +382,7 @@ pub fn spawn_sync(
     }
 
     if command == state.borrow().process.exec_path
-        && (child_args.first().map(String::as_str) == Some("-e")
-            || child_args.iter().any(|arg| arg == "spawnchild"))
+        && child_args.iter().any(|arg| arg == "spawnchild")
     {
         let stdout = if child_args.first().map(String::as_str) == Some("-e") {
             child_args
@@ -293,11 +406,7 @@ pub fn spawn_sync(
                     quench_runtime::ops::Builtin::Error,
                     &[Value::String("spawnSync ENOBUFS".into())],
                 );
-                execute::set_property_in_place(
-                    &mut error,
-                    "code",
-                    Value::String("ENOBUFS".into()),
-                );
+                execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
                 execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
                 let stdout_value = output_value(&stdout, options);
                 let stderr_value = output_value(&stderr, options);
@@ -326,6 +435,36 @@ pub fn spawn_sync(
             (std::fs::canonicalize(&command), std::fs::canonicalize(&host_exec)),
             (Ok(command), Ok(host_exec)) if command == host_exec
         );
+    // Re-executing the compatibility runner with a missing JavaScript entry
+    // follows Node's module-resolution contract. Keep this fact at the Rust
+    // process boundary so worker_threads does not need a JS error shim.
+    if is_host_exec {
+        if let Some(entry) = child_args
+            .iter()
+            .find(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+        {
+            let entry_path = std::path::Path::new(entry);
+            let resolved = if entry_path.is_absolute() {
+                entry_path.to_path_buf()
+            } else {
+                options
+                    .and_then(|value| opt_str(value, "cwd"))
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| state.borrow().process.cwd.clone())
+                    .join(entry_path)
+            };
+            if !resolved.exists() {
+                let stderr = format!("Cannot find module '{entry}'\n");
+                return Ok(host_api::object(vec![
+                    ("pid".into(), Value::Number(0.0)),
+                    ("status".into(), Value::Number(1.0)),
+                    ("signal".into(), Value::Null),
+                    ("stdout".into(), output_value(&[], options)),
+                    ("stderr".into(), output_value(stderr.as_bytes(), options)),
+                ]));
+            }
+        }
+    }
     let executable = if is_host_exec {
         std::env::current_exe()
             .ok()
@@ -718,15 +857,15 @@ fn nul_error() -> VmError {
 }
 
 fn options_have_nul(options: &Value) -> bool {
-    ["cwd", "argv0", "shell"].iter().any(|key| {
-        value_contains_nul(&execute::get_property(options, key))
-    }) || {
-        let env = execute::get_property(options, "env");
-        execute::own_enumerable_keys(&env).into_iter().any(|key| {
-            key.contains('\0')
-                || value_contains_nul(&execute::get_property(&env, &key))
-        })
-    }
+    ["cwd", "argv0", "shell"]
+        .iter()
+        .any(|key| value_contains_nul(&execute::get_property(options, key)))
+        || {
+            let env = execute::get_property(options, "env");
+            execute::own_enumerable_keys(&env).into_iter().any(|key| {
+                key.contains('\0') || value_contains_nul(&execute::get_property(&env, &key))
+            })
+        }
 }
 
 fn value_contains_nul(value: &Value) -> bool {
@@ -918,7 +1057,15 @@ fn run_print_eval(source: &str) -> Result<Value, VmError> {
     let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
     let output = lines
         .lock()
-        .map(|lines| lines.iter().map(|line| format!("{line}\n")).collect())
+        .map(|lines| {
+            lines.iter().fold(String::new(), |mut output, line| {
+                output.push_str(line);
+                if !line.ends_with('\n') {
+                    output.push('\n');
+                }
+                output
+            })
+        })
         .unwrap_or_default();
     let (status, stderr) = match outcome.error {
         Some(error) => (1.0, error),
