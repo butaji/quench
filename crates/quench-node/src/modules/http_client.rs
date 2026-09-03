@@ -930,11 +930,11 @@ fn start_request_socket(state: &Rc<RefCell<HostState>>, request: &Value) -> Resu
     let pooled = agent
         .as_ref()
         .and_then(|agent| take_agent_socket(agent, &agent_name(&target, agent)));
-    if pooled.is_none()
+    let blocked = pooled.is_none()
         && agent
             .as_ref()
-            .is_some_and(|agent| !agent_socket_capacity_available(agent, &target))
-    {
+            .is_some_and(|agent| !agent_socket_capacity_available(agent, &target));
+    if blocked {
         return Ok(());
     }
     let socket = if let Some(socket) = pooled {
@@ -1969,6 +1969,60 @@ pub fn req_end(
         }
     };
     if queued {
+        if let Some(request) = receiver {
+            set_request_property(Some(request), "finished", Value::Boolean(true));
+        }
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    // `request()` may reserve a socket before `get()` performs its implicit
+    // `end()`. Re-check the physical Agent pool here as well: this boundary
+    // closes the race where another request filled `maxTotalSockets` between
+    // those two calls, and keeps the queue fact aligned with `sockets`.
+    let capacity_blocked = {
+        let (agent, target, has_socket) = {
+            let guard = state.borrow();
+            guard
+                .http
+                .clientreqs
+                .get(&id)
+                .map(|request| {
+                    (
+                        request.agent.clone(),
+                        Some(request.target.clone()),
+                        request.socket.is_some(),
+                    )
+                })
+                .unwrap_or((None, None, true))
+        };
+        agent
+            .zip(target)
+            .filter(|(_, _)| !has_socket)
+            .is_some_and(|(agent, target)| !agent_socket_capacity_available(&agent, &target))
+    };
+    if capacity_blocked {
+        let (agent, target, request) = {
+            let guard = state.borrow();
+            guard
+                .http
+                .clientreqs
+                .get(&id)
+                .map(|current| {
+                    (
+                        current.agent.clone(),
+                        current.target.clone(),
+                        current.req.clone(),
+                    )
+                })
+                .unwrap_or((None, RequestTarget::Tcp { host: String::new(), port: 0 }, Value::Undefined))
+        };
+        if let Some(agent) = agent {
+            let name = agent_name(&target, &agent);
+            let mut guard = state.borrow_mut();
+            if !guard.http.agent_pending.contains(&id) {
+                guard.http.agent_pending.push(id);
+                add_agent_request(&agent, &name, &request);
+            }
+        }
         if let Some(request) = receiver {
             set_request_property(Some(request), "finished", Value::Boolean(true));
         }
@@ -3096,6 +3150,18 @@ fn add_agent_socket(agent: &Value, name: &str, socket: &Value) {
         .into_iter()
         .map(|key| execute::get_property(&list, &key))
         .any(|value| same_socket(&value, socket))
+    {
+        return;
+    }
+    let total = execute::own_enumerable_keys(&pools)
+        .into_iter()
+        .map(|key| execute::get_property(&pools, &key))
+        .map(|entry| match execute::get_property(&entry, "length") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+            _ => 0,
+        })
+        .sum::<usize>();
+    if matches!(execute::get_property(agent, "maxTotalSockets"), Value::Number(limit) if limit.is_finite() && limit > 0.0 && total >= limit as usize)
     {
         return;
     }
