@@ -659,6 +659,12 @@ pub fn res_end(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver.is_some_and(|response| {
+        matches!(execute::get_property(response, "closed"), Value::Boolean(true))
+            || matches!(execute::get_property(response, "destroyed"), Value::Boolean(true))
+    }) {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
     let Some(id) = res_state(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
@@ -772,6 +778,7 @@ pub fn res_end(
         execute::set_property_in_place(response, "finished", Value::Boolean(true));
         execute::set_property_in_place(response, "writableEnded", Value::Boolean(true));
         execute::set_property_in_place(response, "destroyed", Value::Boolean(true));
+        execute::set_property_in_place(response, "closed", Value::Boolean(true));
         state
             .borrow_mut()
             .net
