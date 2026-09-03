@@ -1,10 +1,9 @@
 # Copy-and-patch region-stencil tier
 
-This document is the canonical description of `copy_patch_jit`, the one
-bounded, explicitly gated exception to this project's otherwise
-interpreter-only scope. It exists because `tools/check-vm-architecture.cjs`
-requires this file (or an equivalent) to exist and be referenced from
-`tasks/index.json` before the `copy_patch_jit` theme is permitted.
+This document describes `copy_patch_jit`, a copy-and-patch region-stencil
+tier layered on top of the fact-generated interpreter. It is not a mechanically
+enforced exception; the project targets the best available VM design rather
+than gating design space by policy.
 
 ## Relationship to the Deegen paper
 
@@ -71,19 +70,36 @@ runtime code generator.
   combination, never hotness-triggered — the paper's profiling/tier-up
   machinery (§3) is explicitly out of scope and would need its own task.
 
-## Bounded-exception invariants (mechanically enforced)
+## Design invariants (not mechanically enforced)
 
-`tools/check-vm-architecture.cjs` enforces, whenever the `copy_patch_jit`
-theme exists in `tasks/index.json`:
+These remain load-bearing for correctness even without a gate script:
 
-1. This document (or an equivalent bounded-exception writeup) exists and is
-   referenced by `tasks/index.json`.
-2. Every `copy_patch_jit` task depends on one of the correctness/dispatch
-   gates (011, 016, 019, 026) or another `copy_patch_jit` task, so the
-   exception cannot begin before its prerequisites land.
-3. Every `copy_patch_jit` path keeps the complete ordinary interpreter as its
+1. Every `copy_patch_jit` task depends on one of the correctness/dispatch
+   work (011, 016, 019, 026) or another `copy_patch_jit` task, so the tier
+   is not built ahead of its prerequisites.
+2. Every `copy_patch_jit` path keeps the complete ordinary interpreter as its
    fallback on any Unknown fact, hole-table miss, or patch failure — the same
    rule that governs every other guarded fast path in this project
    (see `docs/benchmark-integrity.md`).
 
 See `tasks/021.md`-`tasks/026.md` for the implementation breakdown.
+
+## Current implementation evidence
+
+The build script emits a fused Number Add+Return x86-64 fragment and a property
+region with a typed `Ptr64` hole. Each generated key is derived from that
+region's generated opcode slice, so the eligibility facts have one source.
+Runtime selection is a single `RegionKey` lookup; rendering uses the bounded RW
+arena, copies and patches before the one-way RX transition, and invokes the
+installed Add fragment through the arena-owned ABI entry. Invalid keys, stale
+cache addresses, protection failures, and execution errors all return to the
+ordinary interpreter callback. The executable differential test is covered by:
+
+```text
+RUSTFLAGS='-Awarnings' cargo test -p quench-runtime --lib stencil_ --quiet
+```
+
+The interpreter continuation path now invokes the handler-supplied callee
+target directly; the ordinary driver remains only the frame entry/exit shim.
+This evidence still does not claim a complete baseline-JIT or platform-specific
+assembly tail-call backend.
