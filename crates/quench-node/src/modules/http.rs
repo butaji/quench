@@ -1348,6 +1348,8 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         ("finished".to_string(), Value::Boolean(false)),
         ("writable".to_string(), Value::Boolean(true)),
         ("writableEnded".to_string(), Value::Boolean(false)),
+        ("closed".to_string(), Value::Boolean(false)),
+        ("errored".to_string(), Value::Undefined),
         ("destroyed".to_string(), Value::Boolean(false)),
         ("statusCode".to_string(), Value::Number(200.0)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
@@ -1406,6 +1408,7 @@ pub fn incoming_destroy(
     }
     let error = args.first().cloned();
     execute::set_property_in_place(receiver, "destroyed", Value::Boolean(true));
+    execute::set_property_in_place(receiver, "closed", Value::Boolean(true));
     execute::set_property_in_place(receiver, "errored", error.clone().unwrap_or(Value::Null));
     let signal = execute::get_property(receiver, "signal");
     if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -1650,20 +1653,19 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined);
-    let outgoing_prototype = host_api::object(vec![
-        (
-            "write".into(),
-            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING_WRITE),
-        ),
-        (
-            "end".into(),
-            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING_END),
-        ),
-        (
-            "destroy".into(),
-            crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING_DESTROY),
-        ),
-    ]);
+    let mut outgoing_prototype = crate::modules::events::emitter_prototype()
+        .unwrap_or_else(|_| host_api::object(Vec::new()));
+    for (name, spec) in [
+        ("write", crate::registry::SPEC_HTTP_OUTGOING_WRITE),
+        ("end", crate::registry::SPEC_HTTP_OUTGOING_END),
+        ("destroy", crate::registry::SPEC_HTTP_OUTGOING_DESTROY),
+    ] {
+        outgoing_prototype = execute::set_property(
+            outgoing_prototype,
+            name,
+            crate::host::capability(spec),
+        );
+    }
     state.borrow_mut().http.outgoing_prototype = Some(outgoing_prototype.clone());
     let outgoing = quench_runtime::execute::set_property(
         crate::host::capability(crate::registry::SPEC_HTTP_OUTGOING),

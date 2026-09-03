@@ -1,4 +1,7 @@
-fn require_stream_http_modules(name: &str) -> Option<Value> {
+fn require_stream_http_modules(
+    state: &std::rc::Rc<std::cell::RefCell<crate::host::HostState>>,
+    name: &str,
+) -> Option<Value> {
         if name == "node:test" {
             let test = capability_function(HostCapabilityKind::Custom(CapabilityName::NodeTest));
             let skip = test.clone();
@@ -47,9 +50,6 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ),
             ]));
         }
-        if name == "stream/promises" || name == "node:stream/promises" {
-            return Some(stream_promises_module());
-        }
         if name == "stream/consumers" || name == "node:stream/consumers" {
             return Some(quench_runtime::host_api::object(vec![
                 (
@@ -78,7 +78,7 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ),
             ]));
         }
-        if name == "node:stream" || name == "stream" {
+        /*if name == "node:stream" || name == "stream" {
             let stream = capability_function(HostCapabilityKind::Custom(CapabilityName::Stream));
             let stream = quench_runtime::execute::set_property(
                 stream,
@@ -143,6 +143,7 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ),
             ]));
         }
+        */
         if name == "node:http" || name == "http" {
             let incoming = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::HttpServer)),
