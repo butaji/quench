@@ -224,6 +224,7 @@ shared fact.
 | 033 | `IcStubChain` chain/placement/bounded-state unit tests plus call/property differential gateways |
 | 034 | Gate-0 DWARF/sample rendered-region symbol audit: zero samples on ARM64, so no implementation attempted |
 | 035 | `docs/deegen-stencil-coverage.md` inventories all 31 catalog opcodes. The generated `DISPATCH` region covers 31/31 (100%) before and after the source-declaration reconciliation; specialized leaves cover 8/31 (25.8%). `dispatch_row_covers_every_compact_opcode` plus `quickened_catalog_entries_use_the_same_cfg_checked_dispatch_region` prove exhaustive admission and CFG-safe fallback. |
+| 036 | Normal vs. unreachable `Optimizing` promotion was measured on ARM64 with three-run neutral sweeps: 100/100, Score 253.929 vs 251.828 (+0.83%), within the documented 2–3% noise band. The task's required positive net-win gate is therefore **not met**; the temporary disable multiplier was reverted and no optimizing-JIT claim is made. |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.

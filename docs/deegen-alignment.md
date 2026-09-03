@@ -41,6 +41,20 @@ register allocation, or speculation (so no deopt needed — it never
 speculates). **Decision: keep it**, verify it's a measured net win (task 030),
 document it as not the paper's (nonexistent) optimizing JIT.
 
+Task 036 validation on this ARM64 macOS host used the same optimized
+`target/debug/quench-node` artifact and three-run neutral-corpus command in
+both configurations. With normal promotion reachable, the run was 100/100,
+Score **253.929**, wall ratio **0.7861**, RSS ratio **0.3051**, and instruction
+ratio **1.0860** (`target/micro-neutral-036-enabled.txt`). With
+`OPTIMIZATION_WARMUP_MULTIPLIER = u32::MAX` for the measurement (so promotion
+was unreachable), it was also 100/100, Score **251.828**, wall ratio **0.8104**,
+RSS ratio **0.3056**, and instruction ratio **1.0835**
+(`target/micro-neutral-036-disabled.txt`). The +0.83% score delta is within
+the task's stated 2–3% noise band, and the executable optimizing view is
+x86_64-gated, so this is **not a measured net win on the current ARM64
+machine**. The temporary multiplier change was reverted to 8; no behavior
+change is being claimed.
+
 ## Summary: what's real work vs. what's misnamed vs. what's done
 
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
