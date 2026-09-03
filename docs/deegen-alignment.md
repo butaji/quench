@@ -19,7 +19,7 @@ optimizations below — not an optimizing JIT or deopt.
 | 1 | Single-source DSL generating interpreter+JIT+IC bodies (§2-3) | **Partial** | `vm_op!` (`ir.rs:48-262`) generates the opcode catalog, dispatch metadata, and stencil/IC *eligibility facts* — it does not generate handler bodies, stencil machine code, or IC logic; those are hand-written Rust. One fact source, not one source emitting all three artifacts' bodies (the paper's stronger claim). |
 | 2 | Call inline caching, dual monomorphic/polymorphic (§3) | **Present** | `quickening.rs` `GuardedCallHit`/`InstallCallGuard`, bounded-polymorphic call sites (`quickening.rs:400-404`) |
 | 3 | Generic IC λi/λe split (§4, §5.2) | **Partial** | `GenericIcDecision<S>`/`GenericInlineCache` implement the idempotent-probe half (`quickening.rs:32-62`). |
-| 3b | Slow-path outlining, `EnterSlowPath`-style CPS transfer, AOT-compiled non-inlined slow path (§4) | **Absent** | `Opcode::Slow` / `run_instruction_fallback` are ordinary fallback handlers, not a CPS "enter and never return" construct. |
+| 3b | Slow-path outlining, `EnterSlowPath`-style CPS transfer, AOT-compiled non-inlined slow path (§4) | **Present** | `enter_slow_path` (`vm_runtime.rs`) is the named one-way gateway: it resolves the cold operation, executes complete fallback semantics, and returns an explicit `DispatchTransition` targeting `Exit`. It is `#[cold]`/`#[inline(never)]`, shared by all stencil misses, and the three-way throw/break/continue transition test proves the CPS boundary. |
 | 4 | Type-check elimination algorithm 𝒜 (§5.1) | **Present** | `stencil_fact.rs` `BoxingFact`/`RegionKey::from_facts` over `Certainty::Proven/Guarded` vectors; `docs/copy-and-patch-jit.md` names this explicitly as mirroring 𝒜. |
 | 5 | JIT-side λi/λe as self-modifying-code (SMC) IC stub chain (§7.1) | **Absent** | Repatch is hole-patching of pre-rendered bytes in a bounded arena (`stencil_patch.rs`), not an SMC stub chain that grows/branches at runtime. |
 | 6 | Tag register optimization (§5.3) | **Absent** | No pinned register holding a large boxing constant for small-offset field access; `tagged_value.rs` embeds NaN-tagging constants as immediates. No `tag_register`/`TAG_REG` anywhere in the crate. |
@@ -44,7 +44,8 @@ document it as not the paper's (nonexistent) optimizing JIT.
 ## Summary: what's real work vs. what's misnamed vs. what's done
 
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
-  counting (#12), OSR-entry wiring and admission test (#13).
+  counting (#12), OSR-entry wiring and admission test (#13), and the shared
+  slow-path CPS gateway (#3b).
 - **Real gaps, worth closing**: slow-path outlining/EnterSlowPath (#3b), tag
   register optimization (#6), register pinning (#7), true bytecode quickening
   as instruction rewrite (#8), JIT-side SMC IC stub chain + inline slab

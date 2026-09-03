@@ -73,6 +73,18 @@ interpreter-to-baseline transfer and compares it with a threshold-disabled
 cold run; `structured_fori_is_not_an_osr_back_edge` records the intentional
 structured-loop exclusion.
 
+Task 029's `enter_slow_path` gateway was validated with the full compact
+handler suite (576 passed without execution tracing; 586 passed with it), the
+Node host check, and three direct cold-operation transition cases (throw,
+labeled break, and continue). An apples-to-apples optimized artifact size
+comparison against the pre-task commit recorded 7,237,724 bytes of `__text`
+before and after (delta 0), 28 generated catalog rows, and no generated-code
+growth. The exact three-run neutral corpus remained 100/100; its fresh overall
+index was 248.23 with 0.768x wall-time and 0.321x peak-RSS ratios versus Node
+(the prior 262.71 index had a 0.759x wall-time ratio, within run-to-run host
+noise). Raw output is `target/micro-neutral-after-029.json`; the before/after
+size reports are disposable files under `target/`.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
@@ -154,6 +166,7 @@ shared fact.
 | 016, 019 | cold-symbol audit, `sample` profile, and `DispatchTransition` tests |
 | 017–018 | tagged-value/shape unit tests and `target/micro-object-evidence.json` |
 | 021–026 | `docs/copy-and-patch-jit.md` and stencil unit/differential tests |
+| 029 | `enter_slow_path` transition tests, cold `#[inline(never)]` gateway, and zero-delta architecture-size comparison |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.
