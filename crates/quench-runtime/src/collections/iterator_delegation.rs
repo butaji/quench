@@ -168,6 +168,19 @@ fn delegation_result(
     data: &IteratorData,
     result: Value,
 ) -> Result<DelegationResult, crate::execute::VmError> {
+    if let Value::Promise(promise) = &result {
+        let state = promise.state.borrow().clone();
+        return match state {
+            crate::value::PromiseState::Fulfilled(value) => delegation_result(data, value),
+            crate::value::PromiseState::Rejected(reason) => {
+                Err(crate::execute::VmError::Thrown(reason))
+            }
+            crate::value::PromiseState::Pending => Ok(DelegationResult::Ongoing {
+                value: result,
+                passthrough: true,
+            }),
+        };
+    }
     if !crate::value::is_object(&result) {
         return Err(not_iterable());
     }

@@ -13,6 +13,9 @@ fn yielded_result(
         let value = match op {
             Some(Op::YieldStar { dst, .. }) => {
                 let result = crate::execute::read_register(&registers(generator), *dst)?;
+                if let Value::Promise(_) = result {
+                    return async_yield_star_result(generator, result);
+                }
                 crate::execute::get_property_result(&result, "value")?
             }
             _ => value,
@@ -23,6 +26,27 @@ fn yielded_result(
         return Ok(iterator_result(value, false));
     };
     crate::execute::read_register(&registers(generator), *dst)
+}
+
+fn async_yield_star_result(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
+    let Value::Promise(promise) = value else {
+        return Ok(iterator_result(value, false));
+    };
+    let state = promise.state.borrow().clone();
+    match state {
+        crate::value::PromiseState::Fulfilled(result) => {
+            let value = crate::execute::get_property_result(&result, "value")?;
+            Ok(iterator_result(value, false))
+        }
+        crate::value::PromiseState::Rejected(reason) => {
+            *generator.done.borrow_mut() = true;
+            Err(VmError::Thrown(reason))
+        }
+        crate::value::PromiseState::Pending => {
+            *generator.pending_yield.borrow_mut() = true;
+            Err(VmError::Suspended(promise))
+        }
+    }
 }
 
 fn async_yield_result(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {

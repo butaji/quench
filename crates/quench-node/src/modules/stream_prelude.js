@@ -2410,9 +2410,7 @@
         continue;
       }
       if (typeof stage === "function") {
-        const output = stage((async function* () {
-          for (const value of values) yield value;
-        })());
+        const output = stage(values);
         const next = [];
         if (output && typeof output.next === "function") {
           for await (const value of output) next.push(value);
@@ -2509,7 +2507,9 @@
     const result = new Transform({
       objectMode: inputMode,
       transform(chunk, encoding, callback) {
-        composeValues(stages, [chunk]).then((values) => {
+        const value = typeof first === "function" && chunk &&
+          typeof chunk.byteLength === "number" ? chunk.toString() : chunk;
+        composeValues(stages, [value]).then((values) => {
           if (values) for (const value of values) this.push(value);
           callback();
         }, callback);
