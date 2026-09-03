@@ -21,7 +21,12 @@ fn write_chunk_type_error(value: &Value) -> VmError {
         Value::Boolean(value) => format!(" Received type boolean ({value})"),
         Value::Number(value) => {
             let rendered = if value.is_infinite() {
-                if value.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_string()
+                if value.is_sign_negative() {
+                    "-Infinity"
+                } else {
+                    "Infinity"
+                }
+                .to_string()
             } else {
                 value.to_string()
             };
@@ -97,7 +102,10 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     let connection_listener = args
         .first()
         .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| args.get(1).filter(|value| quench_runtime::is_callable(value)));
+        .or_else(|| {
+            args.get(1)
+                .filter(|value| quench_runtime::is_callable(value))
+        });
     add_listener_cb(state, &object, connection_listener, "connection", false)?;
     Ok(object)
 }
@@ -105,10 +113,7 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 /// `new internalBinding('pipe_wrap').Pipe(type)` is a server-owned bound
 /// handle. Its fd is stable identity; binding and closing reuse the ordinary
 /// net server path and lifecycle.
-pub fn pipe_construct(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn pipe_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let object = create_server(state, &[])?;
     let fd = {
         let mut net = state.borrow_mut();
@@ -142,10 +147,7 @@ pub fn pipe_bind(
 /// Construct an internal TCP listener handle consumed by `server.listen`.
 /// Binding port zero eagerly yields a stable descriptor and listener while
 /// preserving the ordinary bound-socket adoption path.
-pub fn tcp_construct(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn tcp_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let options = host_api::object(vec![
         ("host".into(), Value::String("0.0.0.0".into())),
         ("port".into(), Value::Number(0.0)),
@@ -182,14 +184,22 @@ pub fn bound_socket_construct(
     let options = match args.first() {
         None | Some(Value::Undefined) => host_api::object(Vec::new()),
         Some(Value::Object(_) | Value::ObjectAlias(_)) => args[0].clone(),
-        _ => return Err(bound_arg_error("options must be an object", "ERR_INVALID_ARG_TYPE")),
+        _ => {
+            return Err(bound_arg_error(
+                "options must be an object",
+                "ERR_INVALID_ARG_TYPE",
+            ))
+        }
     };
     let path = execute::get_property(&options, "path");
     if !matches!(path, Value::Undefined) {
         let path = if matches!(path, Value::String(_) | Value::StringUnits(_)) {
             execute::to_js_string(&path)?
         } else {
-            return Err(bound_arg_error("path must be a string", "ERR_INVALID_ARG_TYPE"));
+            return Err(bound_arg_error(
+                "path must be a string",
+                "ERR_INVALID_ARG_TYPE",
+            ));
         };
         for key in ["host", "port", "ipv6Only", "reusePort"] {
             if !matches!(execute::get_property(&options, key), Value::Undefined) {
@@ -215,13 +225,17 @@ pub fn bound_socket_construct(
             return Err(bound_bind_error("EACCES"));
         }
         if state.borrow().net.paths.contains_key(&path)
-            || state.borrow().net.bound_sockets.values().any(|bound| {
-                bound.borrow().path.as_deref() == Some(path.as_str())
-            })
+            || state
+                .borrow()
+                .net
+                .bound_sockets
+                .values()
+                .any(|bound| bound.borrow().path.as_deref() == Some(path.as_str()))
         {
             return Err(bound_bind_error("EADDRINUSE"));
         }
-        let listener = bind_listener(0, None).map_err(|error| bound_bind_error(bind_code(&error)))?;
+        let listener =
+            bind_listener(0, None).map_err(|error| bound_bind_error(bind_code(&error)))?;
         if !path.starts_with('\0') {
             create_pipe_placeholder(&path, Some(&options))
                 .map_err(|error| bound_bind_error(bind_code(&error)))?;
@@ -243,17 +257,28 @@ pub fn bound_socket_construct(
     }
     let host = match execute::get_property(&options, "host") {
         Value::Undefined => {
-            if matches!(execute::get_property(&options, "ipv6Only"), Value::Boolean(true)) {
+            if matches!(
+                execute::get_property(&options, "ipv6Only"),
+                Value::Boolean(true)
+            ) {
                 "::".to_string()
             } else {
                 "0.0.0.0".to_string()
             }
         }
         Value::String(host) => host,
-        _ => return Err(bound_arg_error("host must be a string", "ERR_INVALID_ARG_TYPE")),
+        _ => {
+            return Err(bound_arg_error(
+                "host must be a string",
+                "ERR_INVALID_ARG_TYPE",
+            ))
+        }
     };
     if host.parse::<std::net::IpAddr>().is_err() {
-        return Err(bound_arg_error("host must be an IP address", "ERR_INVALID_ARG_VALUE"));
+        return Err(bound_arg_error(
+            "host must be an IP address",
+            "ERR_INVALID_ARG_VALUE",
+        ));
     }
     let port_value = execute::get_property(&options, "port");
     let port = if matches!(port_value, Value::Undefined) {
@@ -261,14 +286,17 @@ pub fn bound_socket_construct(
     } else {
         parse_port(&port_value)?
     };
-    if matches!(execute::get_property(&options, "reusePort"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(&options, "reusePort"),
+        Value::Boolean(true)
+    ) {
         return Err(bound_bind_error("EADDRINUSE"));
     }
     if !cfg!(windows) && (1..1024).contains(&port) {
         return Err(bound_bind_error("EACCES"));
     }
-    let listener = bind_listener(port, Some(&host))
-        .map_err(|error| bound_bind_error(bind_code(&error)))?;
+    let listener =
+        bind_listener(port, Some(&host)).map_err(|error| bound_bind_error(bind_code(&error)))?;
     let address = listener.local_addr().ok();
     let fd = address.map(|addr| i64::from(addr.port())).unwrap_or(0);
     let id = allocate_id(state);
@@ -296,9 +324,18 @@ fn bound_object(
     let object = host_api::object(vec![
         (BOUND_ID_PROP.into(), Value::Number(id as f64)),
         ("isPipe".into(), Value::Boolean(path.is_some())),
-        ("address".into(), crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_ADDRESS)),
-        ("fd".into(), crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_FD)),
-        ("close".into(), crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_CLOSE)),
+        (
+            "address".into(),
+            crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_ADDRESS),
+        ),
+        (
+            "fd".into(),
+            crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_FD),
+        ),
+        (
+            "close".into(),
+            crate::host::capability(crate::registry::SPEC_NET_BOUND_SOCKET_CLOSE),
+        ),
     ]);
     if let Some(path) = path {
         execute::set_property_in_place(&object, "_path", Value::String(path));
@@ -345,7 +382,9 @@ fn bound_state(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
 ) -> Result<Rc<RefCell<NetBoundSocket>>, VmError> {
-    let id = receiver.and_then(bound_id).ok_or_else(|| execute::type_error("BoundSocket"))?;
+    let id = receiver
+        .and_then(bound_id)
+        .ok_or_else(|| execute::type_error("BoundSocket"))?;
     state
         .borrow()
         .net
@@ -363,10 +402,16 @@ pub fn bound_socket_address(
     let bound = bound_state(state, receiver)?;
     let bound = bound.borrow();
     if bound.adopted {
-        return Err(bound_arg_error("BoundSocket handle was adopted", "ERR_SOCKET_HANDLE_ADOPTED"));
+        return Err(bound_arg_error(
+            "BoundSocket handle was adopted",
+            "ERR_SOCKET_HANDLE_ADOPTED",
+        ));
     }
     if bound.listener.is_none() {
-        return Err(bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"));
+        return Err(bound_arg_error(
+            "BoundSocket is closed",
+            "ERR_SOCKET_CLOSED",
+        ));
     }
     Ok(bound
         .path
@@ -384,10 +429,16 @@ pub fn bound_socket_fd(
     let bound = bound_state(state, receiver)?;
     let bound = bound.borrow();
     if bound.adopted {
-        return Err(bound_arg_error("BoundSocket handle was adopted", "ERR_SOCKET_HANDLE_ADOPTED"));
+        return Err(bound_arg_error(
+            "BoundSocket handle was adopted",
+            "ERR_SOCKET_HANDLE_ADOPTED",
+        ));
     }
     if bound.listener.is_none() {
-        return Err(bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"));
+        return Err(bound_arg_error(
+            "BoundSocket is closed",
+            "ERR_SOCKET_CLOSED",
+        ));
     }
     Ok(Value::Number(bound.fd as f64))
 }
@@ -408,10 +459,16 @@ pub fn bound_socket_close(
         .ok_or_else(|| execute::type_error("BoundSocket"))?;
     let mut bound = bound.borrow_mut();
     if bound.adopted {
-        return Err(bound_arg_error("BoundSocket handle was adopted", "ERR_SOCKET_HANDLE_ADOPTED"));
+        return Err(bound_arg_error(
+            "BoundSocket handle was adopted",
+            "ERR_SOCKET_HANDLE_ADOPTED",
+        ));
     }
     if bound.listener.take().is_none() {
-        return Err(bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"));
+        return Err(bound_arg_error(
+            "BoundSocket is closed",
+            "ERR_SOCKET_CLOSED",
+        ));
     }
     if let Some(path) = bound.path.take() {
         state.borrow_mut().net.paths.remove(&path);
@@ -458,8 +515,17 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             Value::Number(fd) => Some(fd as i64),
             _ => None,
         })
-        .and_then(|fd| state.borrow_mut().net.fd_streams.get_mut(&fd).and_then(Vec::pop));
-    let fd_local = fd_stream.as_ref().and_then(|stream| stream.local_addr().ok());
+        .and_then(|fd| {
+            state
+                .borrow_mut()
+                .net
+                .fd_streams
+                .get_mut(&fd)
+                .and_then(Vec::pop)
+        });
+    let fd_local = fd_stream
+        .as_ref()
+        .and_then(|stream| stream.local_addr().ok());
     let (object, _id) = new_net_object(state, socket_props())?;
     let global = quench_runtime::vm::current_global_object();
     let prototype = state
@@ -589,10 +655,10 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             write_shutdown_pending: false,
             finish_emitted: false,
             connect_announced: fd_local.is_some(),
-        peer: None,
-        local: fd_local,
-        encoding: None,
-        decode_buf: Vec::new(),
+            peer: None,
+            local: fd_local,
+            encoding: None,
+            decode_buf: Vec::new(),
         })),
     );
     if fd_local.is_some() {
@@ -612,7 +678,10 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
     {
         let signal = execute::get_property(options, "signal");
         if matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
-            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+            if matches!(
+                execute::get_property(&signal, "aborted"),
+                Value::Boolean(true)
+            ) {
                 state.borrow_mut().net.pending_events.push((
                     object.clone(),
                     "error".into(),
@@ -624,7 +693,8 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
                     crate::host::capability_ref(crate::registry::SPEC_NET_SOCKET_ABORT),
                     vec![object.clone()],
                 );
-                let listener_options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
+                let listener_options =
+                    host_api::object(vec![("once".into(), Value::Boolean(true))]);
                 crate::modules::event_target::add_event_listener(
                     state,
                     Some(&signal),
@@ -640,22 +710,26 @@ fn validate_connect_options(options: &Value) -> Result<(), VmError> {
     let local_address = execute::get_property(options, "localAddress");
     if !matches!(local_address, Value::Undefined | Value::Null) {
         let valid = match &local_address {
-            Value::String(_) | Value::StringUnits(_) => {
-                execute::to_js_string(&local_address)
-                    .ok()
-                    .is_some_and(|value| value.parse::<std::net::IpAddr>().is_ok())
-            }
+            Value::String(_) | Value::StringUnits(_) => execute::to_js_string(&local_address)
+                .ok()
+                .is_some_and(|value| value.parse::<std::net::IpAddr>().is_ok()),
             _ => false,
         };
         if !valid {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
-                ("code".into(), Value::String("ERR_INVALID_IP_ADDRESS".into())),
+                (
+                    "code".into(),
+                    Value::String("ERR_INVALID_IP_ADDRESS".into()),
+                ),
             ])));
         }
     }
     let local_port = execute::get_property(options, "localPort");
-    if !matches!(local_port, Value::Undefined | Value::Null | Value::Number(_)) {
+    if !matches!(
+        local_port,
+        Value::Undefined | Value::Null | Value::Number(_)
+    ) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
@@ -735,7 +809,11 @@ pub fn connect_path(state: &Rc<RefCell<HostState>>, path: &str) -> Result<Value,
         }
         None => {
             let code = path_connect_error_code(path).unwrap_or_else(|| {
-                if Path::new(path).exists() { "ENOTSOCK" } else { "ENOENT" }
+                if Path::new(path).exists() {
+                    "ENOTSOCK"
+                } else {
+                    "ENOENT"
+                }
             });
             path_connect_error(state, path, code)
         }
@@ -766,11 +844,18 @@ fn path_connect_error(
     let (object, _) = new_net_object(state, socket_props())?;
     let error = host_api::object(vec![
         ("name".into(), Value::String("Error".into())),
-        ("message".into(), Value::String(format!("connect {code} {path}"))),
+        (
+            "message".into(),
+            Value::String(format!("connect {code} {path}")),
+        ),
         ("code".into(), Value::String(code.into())),
         ("syscall".into(), Value::String("connect".into())),
     ]);
-    state.borrow_mut().net.pending_errors.push((object.clone(), error));
+    state
+        .borrow_mut()
+        .net
+        .pending_errors
+        .push((object.clone(), error));
     Ok(object)
 }
 
@@ -782,7 +867,10 @@ fn path_connect_error_for_receiver(
 ) -> Result<Value, VmError> {
     let error = host_api::object(vec![
         ("name".into(), Value::String("Error".into())),
-        ("message".into(), Value::String(format!("connect {code} {path}"))),
+        (
+            "message".into(),
+            Value::String(format!("connect {code} {path}")),
+        ),
         ("code".into(), Value::String(code.into())),
         ("syscall".into(), Value::String("connect".into())),
     ]);
@@ -807,7 +895,11 @@ fn connect_path_for_receiver(
         return path_connect_error(state, path, code);
     }
     let Some(port) = state.borrow().net.paths.get(path).copied() else {
-        let code = if Path::new(path).exists() { "ENOTSOCK" } else { "ENOENT" };
+        let code = if Path::new(path).exists() {
+            "ENOTSOCK"
+        } else {
+            "ENOENT"
+        };
         if let Some(receiver) = receiver {
             return path_connect_error_for_receiver(state, receiver, path, code);
         }
@@ -827,10 +919,14 @@ fn connect_path_for_receiver(
     if args.last().is_some_and(quench_runtime::is_callable) {
         connect_args.push(args.last().cloned().unwrap_or(Value::Undefined));
     }
-    match receiver {
+    let result = match receiver {
         Some(receiver) => connect_with_receiver(state, Some(receiver), &connect_args),
         None => connect(state, &connect_args),
-    }
+    }?;
+    // Pipe transports use the same bounded TCP emulation internally, but do
+    // not produce `net` TCP performance entries.
+    execute::set_property_in_place(&result, PIPE_MARKER_PROP, Value::Boolean(true));
+    Ok(result)
 }
 
 pub fn connect_existing(
@@ -878,8 +974,10 @@ pub fn complete_lookup(state: &Rc<RefCell<HostState>>, result: Value) -> Result<
         return Ok(pending.socket);
     };
     let addresses = lookup_addresses_for(&result);
-    if matches!(execute::get_property(&pending.options, "all"), Value::Boolean(true))
-        && !addresses.is_empty()
+    if matches!(
+        execute::get_property(&pending.options, "all"),
+        Value::Boolean(true)
+    ) && !addresses.is_empty()
     {
         let attempted = host_api::array(
             addresses
@@ -933,6 +1031,18 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // Capture the bridge while the initiating VM frame is active.  Later
+    // delivery runs from the host pump, where `current_global_object()` is
+    // intentionally unavailable.
+    if state.borrow().net.performance_record.is_none() {
+        let record = execute::get_property(
+            &quench_runtime::vm::current_global_object(),
+            "__nodePerformanceRecord",
+        );
+        if quench_runtime::is_callable(&record) {
+            state.borrow_mut().net.performance_record = Some(record);
+        }
+    }
     let mut lookup_socket_for_result: Option<Value> = None;
     let mut lookup_addresses: Option<Vec<String>> = None;
     if let Some(receiver) = receiver {
@@ -966,9 +1076,11 @@ fn connect_with_receiver(
                 _ => 0,
             };
             let addresses = (0..length)
-                .filter_map(|index| match execute::get_property(&saved_addresses, &index.to_string()) {
-                    Value::String(address) => Some(address),
-                    _ => None,
+                .filter_map(|index| {
+                    match execute::get_property(&saved_addresses, &index.to_string()) {
+                        Value::String(address) => Some(address),
+                        _ => None,
+                    }
                 })
                 .collect::<Vec<_>>();
             if !addresses.is_empty() {
@@ -977,9 +1089,17 @@ fn connect_with_receiver(
         }
         validate_connect_options(options)?;
         if receiver.is_some()
-            && matches!(execute::get_property(receiver.unwrap(), BOUND_HANDLE_PROP), Value::Boolean(true))
-            && (!matches!(execute::get_property(options, "localPort"), Value::Undefined)
-                || !matches!(execute::get_property(options, "localAddress"), Value::Undefined))
+            && matches!(
+                execute::get_property(receiver.unwrap(), BOUND_HANDLE_PROP),
+                Value::Boolean(true)
+            )
+            && (!matches!(
+                execute::get_property(options, "localPort"),
+                Value::Undefined
+            ) || !matches!(
+                execute::get_property(options, "localAddress"),
+                Value::Undefined
+            ))
         {
             return Err(bound_arg_error(
                 "localAddress/localPort cannot be used with an adopted handle",
@@ -1008,7 +1128,9 @@ fn connect_with_receiver(
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
         }
-        if let Value::Number(value) = execute::get_property(options, "autoSelectFamilyAttemptTimeout") {
+        if let Value::Number(value) =
+            execute::get_property(options, "autoSelectFamilyAttemptTimeout")
+        {
             if !value.is_finite() || value.fract() != 0.0 || value <= 0.0 {
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("name".into(), Value::String("RangeError".into())),
@@ -1119,7 +1241,10 @@ fn connect_with_receiver(
                 return Ok(object);
             }
             let addresses = lookup_addresses_for(&result);
-            if matches!(execute::get_property(&lookup_options, "all"), Value::Boolean(true)) {
+            if matches!(
+                execute::get_property(&lookup_options, "all"),
+                Value::Boolean(true)
+            ) {
                 if !addresses.is_empty() {
                     let attempted = host_api::array(
                         addresses
@@ -1251,12 +1376,12 @@ fn connect_with_receiver(
             let local_address = string_property(options, "localAddress");
             let conflict = state.borrow().net.servers.values().any(|server| {
                 let server = server.borrow();
-                server
-                    .bind_addr
-                    .is_some_and(|address| address.port() == local_port
+                server.bind_addr.is_some_and(|address| {
+                    address.port() == local_port
                         && local_address
                             .as_deref()
-                            .is_none_or(|host| host == address.ip().to_string()))
+                            .is_none_or(|host| host == address.ip().to_string())
+                })
             });
             if conflict {
                 let object = match receiver.or(lookup_socket_for_result.as_ref()) {
@@ -1272,14 +1397,22 @@ fn connect_with_receiver(
                     ("code".into(), Value::String("EADDRINUSE".into())),
                     ("syscall".into(), Value::String("bind".into())),
                 ]);
-                state.borrow_mut().net.pending_errors.push((object.clone(), error));
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((object.clone(), error));
                 return Ok(object);
             }
         }
     }
     if port == 0 {
         let loopback = SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), 0);
-        return connect_refused(state, receiver.or(lookup_socket_for_result.as_ref()), &loopback);
+        return connect_refused(
+            state,
+            receiver.or(lookup_socket_for_result.as_ref()),
+            &loopback,
+        );
     }
     let candidate_addrs = lookup_addresses
         .unwrap_or_else(|| vec![target_host.to_string()])
@@ -1313,7 +1446,10 @@ fn connect_with_receiver(
             server.bind_addr.is_some_and(|address| {
                 address.port() == port
                     && address.is_ipv6()
-                    && matches!(execute::get_property(&server.js, "ipv6Only"), Value::Boolean(true))
+                    && matches!(
+                        execute::get_property(&server.js, "ipv6Only"),
+                        Value::Boolean(true)
+                    )
             })
         });
     if ipv6_only_reject {
@@ -1325,7 +1461,9 @@ fn connect_with_receiver(
     }
     let mut selected = None;
     for addr in candidate_addrs {
-        if let Ok(stream) = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
+        if let Ok(stream) =
+            TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000))
+        {
             selected = Some((stream, addr));
             break;
         }
@@ -1434,6 +1572,18 @@ fn connect_with_receiver(
         encoding: existing_encoding,
         decode_buf: Vec::new(),
     }));
+    // Preserve transport negotiation facts before registering callbacks: the
+    // first EventEmitter mutation may publish a copy-on-write representative,
+    // so connection metadata must already be present on the source object.
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let alpn = execute::get_property(options, "ALPNProtocols");
+        if !matches!(alpn, Value::Undefined) {
+            execute::set_property_in_place(&object, crate::modules::tls::TLS_ALPN_PROP, alpn);
+        }
+    }
     let queued_write = state
         .borrow_mut()
         .net
@@ -1539,16 +1689,12 @@ pub fn socket_reset_and_destroy(
             quench_runtime::ops::Builtin::Error,
             &[Value::String("Socket is closed".into())],
         );
-        let error = execute::set_property(
-            error,
-            "code",
-            Value::String("ERR_SOCKET_CLOSED".into()),
-        );
-        state.borrow_mut().net.pending_events.push((
-            receiver.clone(),
-            "error".into(),
-            vec![error],
-        ));
+        let error = execute::set_property(error, "code", Value::String("ERR_SOCKET_CLOSED".into()));
+        state
+            .borrow_mut()
+            .net
+            .pending_events
+            .push((receiver.clone(), "error".into(), vec![error]));
     }
     Ok(receiver.clone())
 }
@@ -1642,10 +1788,12 @@ fn connect_refused(
         };
         (length > 1).then(|| {
             (0..length)
-                .filter_map(|index| match execute::get_property(&value, &index.to_string()) {
-                    Value::String(address) => Some(address),
-                    _ => None,
-                })
+                .filter_map(
+                    |index| match execute::get_property(&value, &index.to_string()) {
+                        Value::String(address) => Some(address),
+                        _ => None,
+                    },
+                )
                 .collect::<Vec<_>>()
         })
     });
@@ -1658,11 +1806,8 @@ fn connect_refused(
                         quench_runtime::ops::Builtin::Error,
                         &[Value::String(format!("connect ECONNREFUSED {address}"))],
                     );
-                    let error = execute::set_property(
-                        error,
-                        "code",
-                        Value::String("ECONNREFUSED".into()),
-                    );
+                    let error =
+                        execute::set_property(error, "code", Value::String("ECONNREFUSED".into()));
                     execute::set_property(error, "syscall", Value::String("connect".into()))
                 })
                 .collect(),
@@ -1671,12 +1816,19 @@ fn connect_refused(
         let constructor = execute::get_property(&global, "AggregateError");
         execute::construct_value(
             &constructor,
-            &[errors, Value::String("All connection attempts failed".into())],
+            &[
+                errors,
+                Value::String("All connection attempts failed".into()),
+            ],
         )
         .unwrap_or_else(|_| {
             quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!("connect ECONNREFUSED {}:{}", addr.ip(), addr.port()))],
+                &[Value::String(format!(
+                    "connect ECONNREFUSED {}:{}",
+                    addr.ip(),
+                    addr.port()
+                ))],
             )
         })
     } else {
@@ -1805,9 +1957,14 @@ fn lookup_addresses_for(result: &Value) -> Vec<String> {
         _ => 0,
     };
     (0..length)
-        .filter_map(|index| match execute::get_property(&execute::get_property(&direct, &index.to_string()), "address") {
-            Value::String(address) => Some(address),
-            _ => None,
+        .filter_map(|index| {
+            match execute::get_property(
+                &execute::get_property(&direct, &index.to_string()),
+                "address",
+            ) {
+                Value::String(address) => Some(address),
+                _ => None,
+            }
         })
         .collect()
 }
@@ -1894,7 +2051,10 @@ pub fn server_listen(
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .map(|options| execute::get_property(options, "signal"));
     if let Some(signal) = signal.as_ref() {
-        if !matches!(signal, Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)) {
+        if !matches!(
+            signal,
+            Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)
+        ) {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
@@ -1961,7 +2121,11 @@ pub fn server_listen(
                         super::set_server_connection_key(&receiver, port, None)?;
                     }
                     add_listener_cb(state, &receiver, args.get(1), "listening", true)?;
-                    configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
+                    configure_server_signal(
+                        state,
+                        &receiver,
+                        signal.as_ref().unwrap_or(&Value::Undefined),
+                    )?;
                     return Ok(receiver);
                 }
             }
@@ -1994,26 +2158,24 @@ pub fn server_listen(
             );
             let error = execute::set_property(error, "code", Value::String("EINVAL".into()));
             let error = execute::set_property(error, "syscall", Value::String("listen".into()));
-            state.borrow_mut().net.pending_errors.push((receiver.clone(), error));
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((receiver.clone(), error));
             return Ok(receiver);
         }
     }
     if let Some(id) = super::net_id(&receiver) {
-        let already_listening = state
-            .borrow()
-            .net
-            .servers
-            .get(&id)
-            .is_some_and(|server| {
-                let server = server.borrow();
-                server.listening && !server.closed
+        let already_listening = state.borrow().net.servers.get(&id).is_some_and(|server| {
+            let server = server.borrow();
+            server.listening && !server.closed
         });
         if already_listening {
             if state.borrow().cluster.worker_context.is_some() {
                 let process_emit = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
-                let message = host_api::object(vec![
-                    ("cmd".into(), Value::String("NODE_CLUSTER".into())),
-                ]);
+                let message =
+                    host_api::object(vec![("cmd".into(), Value::String("NODE_CLUSTER".into()))]);
                 let mut host = state.borrow_mut();
                 for _ in 0..2 {
                     host.event_loop.queue_microtask(
@@ -2032,15 +2194,18 @@ pub fn server_listen(
             ])));
         }
     }
-    let supplied_bound = args.first().and_then(|value| {
-        bound_id(value).or_else(|| {
-            let handle = execute::get_property(value, "handle");
-            bound_id(&handle).or_else(|| {
-                let handle = execute::get_property(value, "_handle");
-                bound_id(&handle)
+    let supplied_bound = args
+        .first()
+        .and_then(|value| {
+            bound_id(value).or_else(|| {
+                let handle = execute::get_property(value, "handle");
+                bound_id(&handle).or_else(|| {
+                    let handle = execute::get_property(value, "_handle");
+                    bound_id(&handle)
+                })
             })
         })
-    }).or(fd_bound);
+        .or(fd_bound);
     if let Some(bound_id) = supplied_bound {
         let bound = state
             .borrow()
@@ -2062,7 +2227,11 @@ pub fn server_listen(
                 .take()
                 .ok_or_else(|| bound_arg_error("BoundSocket is closed", "ERR_SOCKET_CLOSED"))?;
             let path = bound.path.clone();
-            let port = bound.address.or_else(|| listener.local_addr().ok()).map(|a| a.port()).unwrap_or(0);
+            let port = bound
+                .address
+                .or_else(|| listener.local_addr().ok())
+                .map(|a| a.port())
+                .unwrap_or(0);
             bound.adopted = true;
             (listener, path, port)
         };
@@ -2074,7 +2243,11 @@ pub fn server_listen(
             super::set_server_connection_key(&receiver, port, None)?;
         }
         add_listener_cb(state, &receiver, args.get(1), "listening", true)?;
-        configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
+        configure_server_signal(
+            state,
+            &receiver,
+            signal.as_ref().unwrap_or(&Value::Undefined),
+        )?;
         return Ok(receiver);
     }
     if args.len() == 1 && args.first().is_some_and(quench_runtime::is_callable) {
@@ -2152,10 +2325,11 @@ pub fn server_listen(
                 }
             };
             if let Err(error) = create_pipe_placeholder(&path, args.first()) {
-                state.borrow_mut().net.pending_errors.push((
-                    receiver.clone(),
-                    server_bind_error(&error, None, 0),
-                ));
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((receiver.clone(), server_bind_error(&error, None, 0)));
                 return Ok(receiver);
             }
             let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
@@ -2174,7 +2348,11 @@ pub fn server_listen(
             }
             register_server_path(state, &receiver, Some(listener), Some(path.clone()))?;
             add_listener_cb(state, &receiver, args.last(), "listening", true)?;
-            configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
+            configure_server_signal(
+                state,
+                &receiver,
+                signal.as_ref().unwrap_or(&Value::Undefined),
+            )?;
             return Ok(receiver);
         }
     }
@@ -2190,61 +2368,71 @@ pub fn server_listen(
     // separate server constructions remain distinct across workers.
     let cluster_listener = (state.borrow().cluster.worker_context.is_some()
         && (port != 0 || cluster_ephemeral_slot.is_some()))
-        .then(|| {
-            let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
-            let (process_scope, worker_scopes) = {
-                let host = state.borrow();
-                (host.cluster.process_scope(), host.cluster.worker_scopes())
-            };
-            let found = state.borrow().net.servers.values().find_map(|server| {
-                let server = server.borrow();
-                if server.owner_worker.is_none()
-                    || !server.listening
-                    || server.closed
-                    || server.owner_worker
-                        .and_then(|worker| worker_scopes.get(&worker).copied())
-                        != Some(process_scope)
-                    || server
+    .then(|| {
+        let requested_ipv6 = resolve(host.as_deref().unwrap_or("0.0.0.0"), port).is_ipv6();
+        let (process_scope, worker_scopes) = {
+            let host = state.borrow();
+            (host.cluster.process_scope(), host.cluster.worker_scopes())
+        };
+        let found = state.borrow().net.servers.values().find_map(|server| {
+            let server = server.borrow();
+            if server.owner_worker.is_none()
+                || !server.listening
+                || server.closed
+                || server
+                    .owner_worker
+                    .and_then(|worker| worker_scopes.get(&worker).copied())
+                    != Some(process_scope)
+                || server
+                    .bind_addr
+                    .is_none_or(|address| address.is_ipv6() != requested_ipv6)
+                || if port != 0 {
+                    server
                         .bind_addr
-                        .is_none_or(|address| address.is_ipv6() != requested_ipv6)
-                    || if port != 0 {
-                        server
-                            .bind_addr
-                            .is_none_or(|address| address.port() != port)
-                    } else {
-                        !cluster_ephemeral_slot
-                            .is_some_and(|slot| server.ephemeral_slot == Some(slot))
-                    }
-                {
-                    return None;
+                        .is_none_or(|address| address.port() != port)
+                } else {
+                    !cluster_ephemeral_slot.is_some_and(|slot| server.ephemeral_slot == Some(slot))
                 }
-                server
-                    .listener
-                    .as_ref()
-                    .and_then(|listener| listener.try_clone().ok())
-            });
-            found
-        })
-        .flatten();
+            {
+                return None;
+            }
+            server
+                .listener
+                .as_ref()
+                .and_then(|listener| listener.try_clone().ok())
+        });
+        found
+    })
+    .flatten();
     let reuse_port = args.first().is_some_and(|options| {
         matches!(options, Value::Object(_) | Value::ObjectAlias(_))
-            && matches!(execute::get_property(options, "reusePort"), Value::Boolean(true))
+            && matches!(
+                execute::get_property(options, "reusePort"),
+                Value::Boolean(true)
+            )
     });
     // A reuse-port bind shares the existing listener identity when the host
     // cannot request SO_REUSEPORT directly. Both logical servers still enter
     // the normal net registry and lifecycle; only the kernel descriptor is
     // cloned, which is sufficient for accept/close semantics.
-    let shared_listener = reuse_port.then(|| {
-        state.borrow().net.servers.values().find_map(|server| {
-            let server = server.borrow();
-            let matches_port = server
-                .bind_addr
-                .is_some_and(|address| address.port() == port);
-            matches_port
-                .then(|| server.listener.as_ref().and_then(|listener| listener.try_clone().ok()))
-                .flatten()
+    let shared_listener = reuse_port
+        .then(|| {
+            state.borrow().net.servers.values().find_map(|server| {
+                let server = server.borrow();
+                let matches_port = server
+                    .bind_addr
+                    .is_some_and(|address| address.port() == port);
+                matches_port
+                    .then(|| {
+                        server
+                            .listener
+                            .as_ref()
+                            .and_then(|listener| listener.try_clone().ok())
+                    })
+                    .flatten()
+            })
         })
-    }).flatten();
+        .flatten();
     let listener = if let Some(listener) = cluster_listener.or(shared_listener) {
         listener
     } else {
@@ -2252,10 +2440,10 @@ pub fn server_listen(
             Ok(listener) => listener,
             Err(error) => {
                 state.borrow_mut().net.pending_errors.push((
-                receiver.clone(),
-                server_bind_error(&error, host.as_deref(), port),
-            ));
-            return Ok(receiver);
+                    receiver.clone(),
+                    server_bind_error(&error, host.as_deref(), port),
+                ));
+                return Ok(receiver);
             }
         }
     };
@@ -2269,7 +2457,11 @@ pub fn server_listen(
     }
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening", true)?;
-    configure_server_signal(state, &receiver, signal.as_ref().unwrap_or(&Value::Undefined))?;
+    configure_server_signal(
+        state,
+        &receiver,
+        signal.as_ref().unwrap_or(&Value::Undefined),
+    )?;
     Ok(receiver.clone())
 }
 
@@ -2299,7 +2491,10 @@ fn configure_server_signal(
     if !matches!(signal, Value::Object(_) | Value::ObjectAlias(_)) {
         return Ok(());
     }
-    if matches!(execute::get_property(signal, "aborted"), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(signal, "aborted"),
+        Value::Boolean(true)
+    ) {
         server_close(state, Some(server), &[])?;
         return Ok(());
     }
@@ -2341,15 +2536,33 @@ fn bind_listener(port: u16, host: Option<&str>) -> std::io::Result<TcpListener> 
 }
 
 fn create_pipe_placeholder(path: &str, options: Option<&Value>) -> std::io::Result<()> {
-    use std::fs::OpenOptions;
-    let _file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
+    #[cfg(unix)]
+    {
+        // Keep a real filesystem socket at the public path.  The host uses a
+        // logical TCP listener for its event-loop transport, but Node's fs
+        // surface must still observe the path as a socket (not a regular
+        // placeholder file).
+        // Unix-domain socket paths have a platform limit; report the same
+        // EINVAL that libuv exposes for an overlong pipe name.
+        if path.len() > 100 {
+            return Err(std::io::Error::from_raw_os_error(22));
+        }
+        std::os::unix::net::UnixListener::bind(path)?;
+    }
+    #[cfg(not(unix))]
+    {
+        use std::fs::OpenOptions;
+        let _file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    }
     #[cfg(unix)]
     if options.is_some_and(|value| {
-        matches!(execute::get_property(value, "readableAll"), Value::Boolean(true))
-            || matches!(execute::get_property(value, "writableAll"), Value::Boolean(true))
+        matches!(
+            execute::get_property(value, "readableAll"),
+            Value::Boolean(true)
+        ) || matches!(
+            execute::get_property(value, "writableAll"),
+            Value::Boolean(true)
+        )
     }) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777))?;
@@ -2418,7 +2631,11 @@ pub fn server_close(
     let receiver = receiver
         .filter(|value| net_id(value).is_some())
         .cloned()
-        .or_else(|| args.first().filter(|value| net_id(value).is_some()).cloned())
+        .or_else(|| {
+            args.first()
+                .filter(|value| net_id(value).is_some())
+                .cloned()
+        })
         .unwrap_or(Value::Undefined);
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
@@ -2589,7 +2806,19 @@ pub fn socket_write(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver.is_some_and(|socket| {
+        matches!(
+            execute::get_property(socket, crate::modules::tls::TLS_REJECTED_PROP),
+            Value::Boolean(true)
+        )
+    }) {
+        return Ok(Value::Boolean(false));
+    }
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let tls_socket = matches!(
+        execute::get_property(&receiver, crate::modules::tls::TLS_SOCKET_PROP),
+        Value::Boolean(true)
+    );
     let Some(id) = net_id(&receiver) else {
         return Ok(Value::Boolean(false));
     };
@@ -2640,7 +2869,7 @@ pub fn socket_write(
                 .extend_from_slice(&bytes);
             return Ok(Value::Boolean(true));
         }
-        if let Some(callback) = callback {
+        if let Some(callback) = callback.filter(|_| !tls_socket) {
             state.borrow_mut().event_loop.queue_microtask(
                 callback,
                 vec![super::handle_write_error(
@@ -2679,17 +2908,17 @@ pub fn socket_write(
         } else {
             super::handle_write_error("EBADF", "write EBADF")
         };
-        if let Some(callback) = callback {
+        if let Some(callback) = callback.filter(|_| !tls_socket) {
             state
                 .borrow_mut()
                 .event_loop
                 .queue_microtask(callback, vec![error]);
-        } else if !http_owned {
-            state
-                .borrow_mut()
-                .net
-                .pending_events
-                .push((receiver.clone(), "error".into(), vec![error]));
+        } else if !http_owned && !tls_socket {
+            state.borrow_mut().net.pending_events.push((
+                receiver.clone(),
+                "error".into(),
+                vec![error],
+            ));
         }
         socket_destroy(state, Some(&receiver), &[])?;
         return Ok(Value::Boolean(false));
@@ -2705,28 +2934,26 @@ pub fn socket_write(
     );
     if guard.read_eof && readable_ended && guard.finish_emitted && !allow_half_open {
         drop(guard);
-        let error = super::handle_write_error(
-            "EPIPE",
-            "This socket has been ended by the other party",
-        );
-        if !http_owned {
+        let error =
+            super::handle_write_error("EPIPE", "This socket has been ended by the other party");
+        if !http_owned && !tls_socket {
+            state.borrow_mut().net.pending_events.push((
+                receiver.clone(),
+                "error".into(),
+                vec![error.clone()],
+            ));
+        }
+        if let Some(callback) = callback.filter(|_| !tls_socket) {
             state
                 .borrow_mut()
-                .net
-                .pending_events
-                .push((receiver.clone(), "error".into(), vec![error.clone()]));
-        }
-        if let Some(callback) = callback {
-            state.borrow_mut().event_loop.queue_microtask(
-                callback,
-                vec![error],
-            );
+                .event_loop
+                .queue_microtask(callback, vec![error]);
         }
         socket_destroy(state, Some(&receiver), &[])?;
         return Ok(Value::Boolean(false));
     }
     if guard.state == SocketState::Closed {
-        if let Some(callback) = callback {
+        if let Some(callback) = callback.filter(|_| !tls_socket) {
             state.borrow_mut().event_loop.queue_microtask(
                 callback,
                 vec![super::handle_write_error(
@@ -2749,7 +2976,7 @@ pub fn socket_write(
     // Before the first connect turn, libuv reports the write as queued even
     // when the OS could accept it synchronously. Keep bufferSize observable
     // until the pump's connect transition flushes the queue.
-    let _flushed = !connecting && try_flush(&mut guard);
+    let _flushed = !connecting && !tls_socket && try_flush(&mut guard);
     let pending = super::pending_write_len(&guard);
     super::set_socket_property(&receiver, "bufferSize", Value::Number(pending as f64));
     super::set_socket_property(&receiver, "writableLength", Value::Number(pending as f64));
@@ -2780,9 +3007,10 @@ pub fn socket_end(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(data) = args.first().filter(|data| {
-        !matches!(data, Value::Undefined) && !quench_runtime::is_callable(data)
-    }) {
+    if let Some(data) = args
+        .first()
+        .filter(|data| !matches!(data, Value::Undefined) && !quench_runtime::is_callable(data))
+    {
         socket_write(state, receiver, std::slice::from_ref(data))?;
     }
     let Some(receiver) = receiver else {
@@ -2791,15 +3019,10 @@ pub fn socket_end(
     let Some(id) = net_id(receiver) else {
         return Ok(receiver.clone());
     };
-    let connecting = state
-        .borrow()
-        .net
-        .sockets
-        .get(&id)
-        .is_some_and(|socket| {
-            let socket = socket.borrow();
-            socket.stream.is_some() && !socket.connect_announced
-        });
+    let connecting = state.borrow().net.sockets.get(&id).is_some_and(|socket| {
+        let socket = socket.borrow();
+        socket.stream.is_some() && !socket.connect_announced
+    });
     let pending = state
         .borrow()
         .net
@@ -2814,11 +3037,7 @@ pub fn socket_end(
     // whose host entry is being retired observe the same transition.
     if !connecting {
         super::set_socket_property(receiver, "writable", Value::Boolean(false));
-        super::set_socket_property(
-            receiver,
-            "readyState",
-            Value::String("readOnly".into()),
-        );
+        super::set_socket_property(receiver, "readyState", Value::String("readOnly".into()));
     }
     let mut queue_finish = false;
     let Some(sock) = state.borrow().net.sockets.get(&id).cloned() else {
@@ -2922,15 +3141,11 @@ pub fn socket_destroy(
         crate::modules::http_client::mark_socket_destroyed_in_agents(state, &receiver);
         // Node delivers socket close on the next loop turn, allowing a
         // listener attached immediately after `destroy()` to observe it.
-        state
-            .borrow_mut()
-            .net
-            .pending_events
-            .push((
-                receiver.clone(),
-                "close".into(),
-                vec![Value::Boolean(args.first().is_some())],
-            ));
+        state.borrow_mut().net.pending_events.push((
+            receiver.clone(),
+            "close".into(),
+            vec![Value::Boolean(args.first().is_some())],
+        ));
     }
     Ok(receiver)
 }
@@ -2995,7 +3210,10 @@ pub fn socket_set_no_delay(
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
         let enabled = args.first().map(execute::is_truthy).unwrap_or(true);
-        let previous = matches!(execute::get_property(receiver, super::NO_DELAY_PROP), Value::Boolean(true));
+        let previous = matches!(
+            execute::get_property(receiver, super::NO_DELAY_PROP),
+            Value::Boolean(true)
+        );
         let handle = execute::get_property(receiver, "_handle");
         let handle_is_object = matches!(handle, Value::Object(_) | Value::ObjectAlias(_));
         let applied = matches!(
@@ -3003,15 +3221,12 @@ pub fn socket_set_no_delay(
             Value::Boolean(true)
         );
         if enabled != previous || (handle_is_object && !applied) {
-            let binding = state
-                .borrow()
-                .tcp_binding
-                .clone()
-                .unwrap_or_else(|| {
-                    let global = quench_runtime::vm::current_global_object();
-                    execute::get_property(&global, TCP_WRAP_BINDING_PROP)
-                });
-            let prototype = execute::get_property(&execute::get_property(&binding, "TCPWrap"), "prototype");
+            let binding = state.borrow().tcp_binding.clone().unwrap_or_else(|| {
+                let global = quench_runtime::vm::current_global_object();
+                execute::get_property(&global, TCP_WRAP_BINDING_PROP)
+            });
+            let prototype =
+                execute::get_property(&execute::get_property(&binding, "TCPWrap"), "prototype");
             let set_no_delay = execute::get_property(&prototype, "setNoDelay");
             let set_no_delay = if handle_is_object && quench_runtime::is_callable(&set_no_delay) {
                 set_no_delay
@@ -3023,7 +3238,11 @@ pub fn socket_set_no_delay(
             if quench_runtime::is_callable(&set_no_delay) {
                 execute::call(&set_no_delay, &handle, &[Value::Boolean(enabled)])?;
                 if handle_is_object {
-                    execute::set_property_in_place(&handle, HANDLE_NO_DELAY_PROP, Value::Boolean(true));
+                    execute::set_property_in_place(
+                        &handle,
+                        HANDLE_NO_DELAY_PROP,
+                        Value::Boolean(true),
+                    );
                 }
             }
         } else {
@@ -3055,11 +3274,7 @@ pub fn socket_set_type_of_service(
         ));
     }
     if let Some(receiver) = receiver {
-        execute::set_property_in_place(
-            receiver,
-            super::TOS_PROP,
-            Value::Number(value),
-        );
+        execute::set_property_in_place(receiver, super::TOS_PROP, Value::Number(value));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -3149,18 +3364,10 @@ pub fn socket_set_timeout(
         }
         execute::set_property_in_place(&target, SOCKET_TIMEOUT_PROP, Value::Undefined);
         execute::set_property_in_place(&target, "timeout", Value::Number(timeout));
-        if matches!(execute::get_property(&target, "destroyed"), Value::Boolean(true)) {
-            return Ok(receiver);
-        }
-        let has_transport = socket_id.is_some_and(|id| {
-            state
-                .borrow()
-                .net
-                .sockets
-                .get(&id)
-                .is_some_and(|socket| socket.borrow().stream.is_some())
-        });
-        if timeout > 0.0 && !has_transport {
+        if matches!(
+            execute::get_property(&target, "destroyed"),
+            Value::Boolean(true)
+        ) {
             return Ok(receiver);
         }
         if timeout > 0.0 {
