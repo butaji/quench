@@ -36,7 +36,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let mode_index = args
         .iter()
         .position(|arg| {
-                !arg.starts_with("--experimental-")
+            !arg.starts_with("--experimental-")
                 && !arg.starts_with("--network-family-autoselection")
                 && !arg.starts_with("--title=")
         })
@@ -48,7 +48,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("-e") | Some("--eval") => {
             let source = args.get(mode_index + 1).map_or("", String::as_str);
-            let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
+            let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
             match eval_script(source, sink).error {
                 Some(error) => Err(error.into()),
                 None => Ok(()),
@@ -65,7 +65,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         )),
         Some(path) => run_file(Path::new(path), &args[mode_index + 1..]),
         None => {
-            let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
+            let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
             match eval_script("", sink).error {
                 Some(error) => Err(error.into()),
                 None => Ok(()),
@@ -76,7 +76,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_file(path: &Path, _script_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)?;
-    let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
+    let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
     // Script files run as global programs, matching the CLI's ordinary file semantics.
     let outcome = eval_script(&source, sink);
     match outcome.error {

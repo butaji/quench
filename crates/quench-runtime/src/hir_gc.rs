@@ -9,7 +9,9 @@ pub enum GcStorage {
     I16,
     Val(crate::hir::Kind),
     /// Packed as a typed ref so rec-group identity is data.
-    Ref { type_idx: Option<u32> },
+    Ref {
+        type_idx: Option<u32>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,28 +40,58 @@ pub enum GcType {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GcOp {
-    StructNewDefault { type_idx: u32 },
-    StructNew { type_idx: u32 },
-    StructNewDesc { type_idx: u32 },
-    StructNewDefaultDesc { type_idx: u32 },
+    StructNewDefault {
+        type_idx: u32,
+    },
+    StructNew {
+        type_idx: u32,
+    },
+    StructNewDesc {
+        type_idx: u32,
+    },
+    StructNewDefaultDesc {
+        type_idx: u32,
+    },
     StructGet {
         field: u32,
         signed: Option<bool>,
         pack: u8,
     },
-    StructSet { field: u32 },
-    ArrayNew { type_idx: u32 },
-    ArrayNewDefault { type_idx: u32 },
-    ArrayNewFixed { type_idx: u32, n: u32 },
-    ArrayGet { signed: Option<bool>, pack: u8 },
+    StructSet {
+        field: u32,
+    },
+    ArrayNew {
+        type_idx: u32,
+    },
+    ArrayNewDefault {
+        type_idx: u32,
+    },
+    ArrayNewFixed {
+        type_idx: u32,
+        n: u32,
+    },
+    ArrayGet {
+        signed: Option<bool>,
+        pack: u8,
+    },
     ArraySet,
     ArrayLen,
     ArrayFill,
     ArrayCopy,
-    ArrayNewData { type_idx: u32, data: u32 },
-    ArrayNewElem { type_idx: u32, elem: u32 },
-    ArrayInitData { data: u32 },
-    ArrayInitElem { elem: u32 },
+    ArrayNewData {
+        type_idx: u32,
+        data: u32,
+    },
+    ArrayNewElem {
+        type_idx: u32,
+        elem: u32,
+    },
+    ArrayInitData {
+        data: u32,
+    },
+    ArrayInitElem {
+        elem: u32,
+    },
     RefCast {
         nullable: bool,
         exact: bool,

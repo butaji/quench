@@ -219,7 +219,10 @@ fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
         ("Any", _)
             | ("Other", None)
             | ("C", None)
-            | ("General_Category" | "gc", Some("Other" | "C" | "Surrogate" | "Cs"))
+            | (
+                "General_Category" | "gc",
+                Some("Other" | "C" | "Surrogate" | "Cs")
+            )
             | (
                 "Script" | "sc" | "Script_Extensions" | "scx",
                 Some("Unknown" | "Zzzz")

@@ -68,6 +68,207 @@ fn machine_resolves_frame_ranges_from_its_function_store() {
         Some(0)
     );
 }
+
+#[test]
+fn hot_function_builds_one_reusable_baseline_plan() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::Move { dst: 0, src: 0 }]);
+    function.set_tier_threshold_for_test(2);
+    assert_eq!(function.tier(), super::ExecutionTier::Interpreter);
+    assert_eq!(function.enter_invocation(), super::TierTransition::Cold);
+    function.retire(2);
+    assert_eq!(
+        function.enter_invocation(),
+        super::TierTransition::CompileBaseline
+    );
+    let first = function.baseline_plan().expect("baseline plan");
+    assert_eq!(first.len(), 1);
+    assert_eq!(function.enter_invocation(), super::TierTransition::Baseline);
+    let second = function.baseline_plan().expect("baseline plan remains");
+    assert!(std::rc::Rc::ptr_eq(&first, &second));
+    assert_eq!(function.tier_counts(), (3, 2));
+    let profile = function.tier_profile();
+    assert_eq!(profile.tier, super::ExecutionTier::Baseline);
+    assert_eq!(profile.invocations, 3);
+    assert_eq!(profile.baseline_instructions, 1);
+    assert_eq!(profile.osr_entries, 0);
+}
+
+#[test]
+fn warm_baseline_function_admits_optimizing_plan() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    function.set_tier_threshold_for_test(1);
+    function.retire(1);
+    assert_eq!(
+        function.enter_invocation(),
+        super::TierTransition::CompileBaseline
+    );
+    for _ in 0..6 {
+        assert_eq!(function.enter_invocation(), super::TierTransition::Baseline);
+    }
+    assert_eq!(
+        function.enter_invocation(),
+        super::TierTransition::CompileOptimizing
+    );
+    let profile = function.tier_profile();
+    assert_eq!(profile.tier, super::ExecutionTier::Optimizing);
+    assert_eq!(profile.optimizing_instructions, 2);
+    assert!(function.optimizing_plan().is_some());
+}
+
+#[test]
+fn invocation_count_alone_does_not_promote_a_cold_function() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::Move { dst: 0, src: 0 }]);
+    function.set_tier_threshold_for_test(2);
+    assert_eq!(function.enter_invocation(), super::TierTransition::Cold);
+    assert_eq!(function.enter_invocation(), super::TierTransition::Cold);
+    assert_eq!(function.tier(), super::ExecutionTier::Interpreter);
+    assert_eq!(function.tier_counts(), (2, 0));
+}
+
+#[test]
+fn code_arena_lowers_constant_add_as_one_specialized_instruction() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Const {
+            dst: 1,
+            value: crate::ops::Constant::Number(2.5),
+        },
+        super::Op::Binary {
+            dst: 2,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 0,
+        },
+        super::Op::Return { src: 2 },
+    ]);
+    let code = function.code().expect("materialized code");
+    assert_eq!(code.len(), 2);
+    let add = code.instruction(0).expect("specialized add");
+    assert_eq!(add.opcode, crate::ir::Opcode::AddConst);
+    assert_eq!(add.a, 2);
+    assert_eq!(add.b, 0);
+    assert!(add.add_const_is_left());
+    assert_eq!(
+        code.constant(add.c),
+        Some(&crate::ops::Constant::Number(2.5))
+    );
+    assert_eq!(
+        code.instruction(1).map(|instruction| instruction.opcode),
+        Some(crate::ir::Opcode::Return)
+    );
+}
+
+#[test]
+fn code_arena_lowers_constant_add_in_either_operand_position() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Const {
+            dst: 1,
+            value: crate::ops::Constant::Number(2.5),
+        },
+        super::Op::Binary {
+            dst: 2,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 0,
+            rhs: 1,
+        },
+        super::Op::Return { src: 2 },
+    ]);
+    let code = function.code().expect("materialized code");
+    let add = code.instruction(0).expect("specialized add");
+    assert_eq!(add.opcode, crate::ir::Opcode::AddConst);
+    assert_eq!((add.a, add.b), (2, 0));
+    assert!(!add.add_const_is_left());
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[test]
+fn non_x86_baseline_does_not_admit_native_numeric_plan() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 2,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 0,
+            rhs: 1,
+        },
+        super::Op::Return { src: 2 },
+    ]);
+    function.set_tier_threshold_for_test(1);
+    function.retire(1);
+    assert_eq!(
+        function.enter_invocation(),
+        super::TierTransition::CompileBaseline
+    );
+    let plan = function.baseline_plan().expect("baseline plan");
+    assert!(plan.native_binary_at(0).is_none());
+}
+
+#[test]
+fn native_add_const_rejects_constant_left_for_signed_zero_order() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Const {
+            dst: 1,
+            value: crate::ops::Constant::Number(-0.0),
+        },
+        super::Op::Binary {
+            dst: 2,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 0,
+        },
+        super::Op::Return { src: 2 },
+    ]);
+    function.set_tier_threshold_for_test(1);
+    function.retire(1);
+    assert_eq!(
+        function.enter_invocation(),
+        super::TierTransition::CompileBaseline
+    );
+    let plan = function.baseline_plan().expect("baseline plan");
+    assert!(plan.native_binary_at(0).is_none());
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[test]
+fn non_x86_native_execution_rejects_before_mapping() {
+    let mut plan = super::NativeBinaryPlan {
+        arena: None,
+        cache: crate::stencil_select::RenderedRegionCache::new(),
+        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
+        opcode: crate::ir::Opcode::Add,
+    };
+    assert!(plan.execute(1.0, 2.0).is_err());
+    assert!(plan.arena.is_none());
+}
+
+#[test]
+fn osr_admission_only_accepts_back_edges() {
+    assert!(!super::is_osr_candidate(3, crate::ir::Instruction::ret(0)));
+    assert!(super::is_osr_candidate(3, crate::ir::Instruction::jump(2)));
+    assert!(!super::is_osr_candidate(3, crate::ir::Instruction::jump(4)));
+    assert!(super::is_osr_candidate(
+        3,
+        crate::ir::Instruction::jump_if_false(1, 2)
+    ));
+    assert!(!super::is_osr_candidate(
+        3,
+        crate::ir::Instruction {
+            opcode: crate::ir::Opcode::ForI,
+            flags: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+        }
+    ));
+}
+
 #[test]
 fn machine_rejects_frame_ranges_not_owned_by_its_code_store() {
     let function = super::FunctionCode::pending(vec![super::Op::ParameterEnd]);

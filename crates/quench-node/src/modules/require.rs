@@ -601,9 +601,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     quench_runtime::host_api::object(vec![
                         (
                             "enable".to_string(),
-                            crate::host::capability(
-                                crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE,
-                            ),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE),
                         ),
                         (
                             "tick".to_string(),
@@ -611,9 +609,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                         ),
                         (
                             "setTime".to_string(),
-                            crate::host::capability(
-                                crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME,
-                            ),
+                            crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME),
                         ),
                         (
                             "reset".to_string(),

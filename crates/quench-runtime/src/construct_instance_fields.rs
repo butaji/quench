@@ -178,7 +178,8 @@ fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
         prototype.clone(),
     )]));
     object.capture_original_prototype(prototype);
-    crate::value::Value::Object(object)
+    let value = crate::value::Value::Object(object);
+    value
 }
 
 fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::value::Value> {

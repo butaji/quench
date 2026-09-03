@@ -14,7 +14,9 @@ pub use atom::{Atom, AtomTable};
 pub use jsvalue::{JsValue, Tag};
 pub use opcode::{Bytecode, Op, StackUse};
 pub use rt::{Context, GcHeader, JsString, Object, Runtime};
-pub use shape::{Shape, ShapeId, ShapeTable, PROP_CONFIGURABLE, PROP_CWE, PROP_ENUMERABLE, PROP_WRITABLE};
+pub use shape::{
+    Shape, ShapeId, ShapeTable, PROP_CONFIGURABLE, PROP_CWE, PROP_ENUMERABLE, PROP_WRITABLE,
+};
 
 /// Dynamic payload. One representation: a QuickJS JSValue. Not `value::Value`.
 #[derive(Clone, Debug, PartialEq)]

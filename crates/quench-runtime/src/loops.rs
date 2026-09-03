@@ -481,7 +481,7 @@ fn iterate_loop_keys(
     data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, per_iteration, iteration_slots, keys, dst, object) = data;
-    let Some(body) = body.code() else {
+    let Some(body_code) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     for key in keys {
@@ -491,7 +491,8 @@ fn iterate_loop_keys(
         }
         let value = crate::value::Value::String(key);
         let _binding = bind_iteration(registers, slot, value, per_iteration, iteration_slots);
-        match execute_loop_body(registers, label, body)? {
+        let _ = body.enter_invocation();
+        match execute_loop_body_with_owner(registers, label, body_code, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(value) => {
                 // Per spec §13.7.5.13, a `break` produces a normal
@@ -567,14 +568,14 @@ fn iterate_loop_values(
                 .saturating_add(1),
         ),
     );
-    let body_code = body.clone();
-    let Some(body) = body.code() else {
+    let body_owner = body.clone();
+    let Some(body_code) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let pending = crate::value::AsyncForOfState {
         label: label.clone(),
         slot,
-        body: body_code,
+        body: body_owner,
         per_iteration,
         iteration_slots: iteration_slots.to_vec(),
         iterator: iterator.clone(),
@@ -601,7 +602,8 @@ fn iterate_loop_values(
             return Ok(crate::completion::Completion::Normal);
         };
         let _binding = bind_iteration(registers, slot, value, per_iteration, iteration_slots);
-        match execute_loop_body(registers, label, body)? {
+        let _ = body.enter_invocation();
+        match execute_loop_body_with_owner(registers, label, body_code, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
                 return crate::collections::iterator::close(
@@ -632,7 +634,7 @@ pub(crate) fn resume_async_for_of(
     ),
     crate::execute::VmError,
 > {
-    let Some(body) = spec.body.code() else {
+    let Some(body_code) = spec.body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let mut next_value = crate::collections::iterator::resume_async_result(&spec.iterator, input)?;
@@ -647,7 +649,8 @@ pub(crate) fn resume_async_for_of(
             spec.per_iteration,
             &spec.iteration_slots,
         );
-        match execute_loop_body(registers, &spec.label, body)? {
+        let _ = spec.body.enter_invocation();
+        match execute_loop_body_with_owner(registers, &spec.label, body_code, &spec.body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
                 return crate::collections::iterator::close(
@@ -709,32 +712,19 @@ fn bind_iteration(
     }
 }
 
-fn execute_loop_body(
+fn execute_loop_body_with_owner(
     registers: &mut crate::register_file::RegisterFile,
     label: &Option<String>,
     body: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
 ) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
     Ok(crate::completion::Completion::into_loop_transition(
-        crate::vm::execute_code_completion_in_current_frame(body, registers)?,
-        label,
-    ))
-}
-
-fn execute_loop_body_with_context(
-    registers: &mut crate::register_file::RegisterFile,
-    label: &Option<String>,
-    body: crate::machine::CodeView<'_>,
-    context: &crate::vm::VmContext,
-) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
-    Ok(crate::completion::Completion::into_loop_transition(
-        crate::vm::execute_code_completion_with_context(body, registers, context)?,
+        crate::vm::execute_code_completion_with_owner(body, owner, registers)?,
         label,
     ))
 }
 
 include!("loops_run.rs");
-include!("loops_pair_walk.rs");
-include!("loops_regexp_exec.rs");
 include!("loops_body.rs");
 include!("loops_while.rs");
 
@@ -753,5 +743,66 @@ mod tests {
         assert_eq!(take_live_for_of(), Some(Value::Number(2.0)));
         assert_eq!(take_live_for_of(), Some(Value::Number(1.0)));
         assert_eq!(take_live_for_of(), None);
+    }
+
+    #[test]
+    fn counted_loop_body_uses_its_owner_for_tier_admission() {
+        let init = crate::machine::FunctionCode::from_ops(vec![
+            crate::ops::Op::Const {
+                dst: 0,
+                value: crate::ops::Constant::Number(0.0),
+            },
+            crate::ops::Op::Const {
+                dst: 1,
+                value: crate::ops::Constant::Number(3.0),
+            },
+            crate::ops::Op::Const {
+                dst: 2,
+                value: crate::ops::Constant::Number(1.0),
+            },
+        ]);
+        let test = crate::machine::FunctionCode::from_ops(vec![
+            crate::ops::Op::Binary {
+                dst: 3,
+                operator: crate::ops::BinaryOp::LessThan,
+                lhs: 0,
+                rhs: 1,
+            },
+            crate::ops::Op::Return { src: 3 },
+        ]);
+        let body = crate::machine::FunctionCode::from_ops(vec![crate::ops::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::NumericAdd,
+            lhs: 0,
+            rhs: 2,
+        }]);
+        body.set_tier_threshold_for_test(1);
+        let update = crate::machine::FunctionCode::from_ops(Vec::new());
+        let loop_op = crate::ops::Op::Loop {
+            label: None,
+            init,
+            test,
+            body: body.clone(),
+            update,
+            post_test: false,
+            dst: 4,
+            per_iteration: Vec::new(),
+        };
+        let mut registers = crate::register_file::RegisterFile::new();
+        assert_eq!(
+            super::execute(&mut registers, &loop_op),
+            Ok(crate::completion::Completion::Normal)
+        );
+        assert_eq!(registers.read_number(0), Some(3.0));
+        assert!(matches!(
+            body.tier(),
+            crate::machine::ExecutionTier::Baseline | crate::machine::ExecutionTier::Optimizing
+        ));
+        assert_eq!(body.tier_profile().baseline_instructions, 1);
+        if body.tier() == crate::machine::ExecutionTier::Optimizing {
+            assert_eq!(body.tier_profile().optimizing_instructions, 1);
+        }
+        assert!(body.tier_profile().invocations >= 2);
+        assert!(body.tier_profile().retired >= 1);
     }
 }

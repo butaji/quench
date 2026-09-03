@@ -12,6 +12,7 @@ const separator = process.argv.indexOf("--");
 const requested = process.argv.slice(2, separator < 0 ? undefined : separator);
 const forwarded = separator < 0 ? [] : process.argv.slice(separator + 1);
 const benchmarks = requested.length ? requested : Object.keys(contracts.benchmarks);
+const DEFAULT_TIMEOUT_MS = 120_000;
 let failed = false;
 
 for (const benchmark of benchmarks) {
@@ -23,7 +24,12 @@ for (const benchmark of benchmarks) {
   const result = cp.spawnSync(process.execPath, [
     path.join(root, "tools/analyze-quench-bench.cjs"), benchmark,
     "--assert-profile", contractsPath, ...forwarded,
-  ], { cwd: root, stdio: "inherit" });
+  ], {
+    cwd: root,
+    stdio: "inherit",
+    timeout: DEFAULT_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
   failed ||= result.status !== 0;
 }
 

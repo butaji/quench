@@ -344,21 +344,19 @@ impl DateTimeOptions {
         if has_core_component {
             if defaults.is_some_and(|keys| {
                 keys.len() == 3 && keys.contains(&"year") && !keys.contains(&"hour")
-            })
-                && !self
-                    .components
-                    .iter()
-                    .any(|(key, _)| matches!(key.as_str(), "year" | "month" | "day" | "weekday"))
+            }) && !self
+                .components
+                .iter()
+                .any(|(key, _)| matches!(key.as_str(), "year" | "month" | "day" | "weekday"))
             {
                 for key in ["year", "month", "day"] {
                     self.set_component(key, "numeric".to_string());
                 }
             }
             if defaults.is_some_and(|keys| keys.len() == 3 && keys.contains(&"hour"))
-                && !self
-                    .components
-                    .iter()
-                    .any(|(key, _)| matches!(key.as_str(), "hour" | "minute" | "second" | "dayPeriod"))
+                && !self.components.iter().any(|(key, _)| {
+                    matches!(key.as_str(), "hour" | "minute" | "second" | "dayPeriod")
+                })
             {
                 for key in ["hour", "minute", "second"] {
                     self.set_component(key, "numeric".to_string());

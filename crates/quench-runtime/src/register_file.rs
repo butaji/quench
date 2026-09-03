@@ -12,7 +12,6 @@ fn encode(value: Value) -> TaggedValue {
     match value {
         Value::Object(value) => TaggedValue::object_ptr(Rc::into_raw(value) as usize),
         Value::Array(value) => TaggedValue::array_ptr(Rc::into_raw(value) as usize),
-        Value::Function(value) => TaggedValue::function_ptr(Rc::into_raw(value) as usize),
         value => value.to_tagged().or_else(|| {
             let pointer = Rc::into_raw(Rc::new(AlignedValue(value))) as usize;
             TaggedValue::heap_ptr(pointer)
@@ -72,6 +71,7 @@ fn release(word: TaggedValue) {
 }
 
 /// One owning execute word shared by registers, slots, and mutable cells.
+#[repr(transparent)]
 pub(crate) struct OwnedWord(TaggedValue);
 
 const _: () = assert!(std::mem::size_of::<OwnedWord>() == 8);
@@ -82,126 +82,6 @@ const _: () = assert!(std::mem::size_of::<OwnedWord>() == 8);
 pub(crate) struct ImmediateCopyPlan {
     source: *const TaggedValue,
     target: *mut TaggedValue,
-}
-
-/// Pre-resolved physical operands for one proven numeric call site.
-///
-/// Admission owns the semantic guard: the callee has already been recognized
-/// as `x + constant`, and the argument, lexical target, and completion result
-/// are immediate words whose backing stores cannot move while the admitted
-/// counted body executes.
-pub(crate) struct ImmediateNumberCallPlan {
-    argument: *const TaggedValue,
-    target: *mut TaggedValue,
-    result: *mut TaggedValue,
-    constant: f64,
-}
-
-impl ImmediateNumberCallPlan {
-    pub(crate) fn new(
-        argument: *const TaggedValue,
-        target: *mut TaggedValue,
-        result: *mut TaggedValue,
-        constant: f64,
-    ) -> Self {
-        Self {
-            argument,
-            target,
-            result,
-            constant,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn execute(&self) {
-        // SAFETY: construction resolves all pointers from fully-sized word
-        // stores. The admitted body contains only these plans, so neither the
-        // lexical store nor the register file can resize before completion.
-        // Admission canonicalizes the first argument as an IEEE number and
-        // every result written below retains that representation.
-        let number = f64::from_bits(unsafe { *self.argument }.bits());
-        let result = TaggedValue::number(number + self.constant);
-        unsafe {
-            *self.target = result;
-            *self.result = result;
-        }
-    }
-
-    /// Execute a chain of pure calls that repeatedly assigns the same local.
-    /// Intermediate assignment values cannot escape: admission requires every
-    /// callee to be the capture-independent numeric fact and the compact body
-    /// contains no operation between these call sites.
-    #[inline(always)]
-    pub(crate) fn is_chain(plans: &[Self]) -> bool {
-        let Some(first) = plans.first() else {
-            return false;
-        };
-        plans.iter().all(|plan| {
-            plan.argument == first.argument
-                && plan.target == first.target
-                && plan.result == first.result
-        })
-    }
-
-    /// Execute a chain whose pointer relation was admitted before entering the
-    /// counted loop. Keeping the guard outside is the difference between a
-    /// runtime fact and repeating the proof as work.
-    #[inline(always)]
-    pub(crate) fn execute_admitted_chain(plans: &[Self]) {
-        debug_assert!(Self::is_chain(plans));
-        let first = &plans[0];
-        let mut number = f64::from_bits(unsafe { *first.argument }.bits());
-        match plans {
-            [first, second] => {
-                number += first.constant;
-                number += second.constant;
-            }
-            [first, second, third] => {
-                number += first.constant;
-                number += second.constant;
-                number += third.constant;
-            }
-            _ => {
-                for plan in plans {
-                    number += plan.constant;
-                }
-            }
-        }
-        let result = TaggedValue::number(number);
-        unsafe {
-            *first.target = result;
-            *first.result = result;
-        }
-    }
-
-    /// Run an admitted call chain for a known counted range. The slice shape
-    /// is selected once so rustc/LLVM sees the inner body as direct scalar
-    /// loads and arithmetic rather than an interpreter over call plans.
-    pub(crate) fn execute_chain_iterations(plans: &[Self], iterations: usize) -> bool {
-        if !Self::is_chain(plans) {
-            return false;
-        }
-        match plans {
-            [first, second] => {
-                for _ in 0..iterations {
-                    let mut number = f64::from_bits(unsafe { *first.argument }.bits());
-                    number += first.constant;
-                    number += second.constant;
-                    let result = TaggedValue::number(number);
-                    unsafe {
-                        *first.target = result;
-                        *first.result = result;
-                    }
-                }
-            }
-            _ => {
-                for _ in 0..iterations {
-                    Self::execute_admitted_chain(plans);
-                }
-            }
-        }
-        true
-    }
 }
 
 impl ImmediateCopyPlan {
@@ -343,6 +223,7 @@ impl Drop for OwnedWord {
 /// second `Value` representation. The cell remains exactly one execute word;
 /// accessors/arguments mappings stay in the spec layer.
 #[doc(hidden)]
+#[repr(transparent)]
 pub struct SlotWord(std::cell::UnsafeCell<OwnedWord>);
 
 const _: () = assert!(std::mem::size_of::<SlotWord>() == 8);
@@ -371,6 +252,37 @@ impl SlotWord {
         // SAFETY: property mutation is serialized by the VM's single-threaded
         // execution model. No reference to the contained value is exposed.
         unsafe { (&mut *self.0.get()).store(value) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn store_object_or_null(
+        &self,
+        value: Option<&std::rc::Rc<crate::value::ObjectData>>,
+    ) {
+        let tagged = value.map_or_else(TaggedValue::null, |value| {
+            let pointer = std::rc::Rc::as_ptr(value);
+            unsafe { std::rc::Rc::increment_strong_count(pointer) };
+            TaggedValue::object_ptr(pointer as usize)
+                .expect("aligned object pointer exceeds tag layout")
+        });
+        let previous = unsafe { std::mem::replace(&mut (*self.0.get()).0, tagged) };
+        release(previous);
+    }
+
+    /// Rewrite one edge inside a proven closed object-graph batch. The caller
+    /// balances ownership once per object entering or leaving the graph; nodes
+    /// retained by the graph keep the same single incoming graph edge even
+    /// when its physical owner slot changes.
+    #[inline(always)]
+    pub(crate) unsafe fn store_graph_object_or_null_balanced(
+        &self,
+        value: Option<&std::rc::Rc<crate::value::ObjectData>>,
+    ) {
+        let tagged = value.map_or_else(TaggedValue::null, |value| {
+            TaggedValue::object_ptr(std::rc::Rc::as_ptr(value) as usize)
+                .expect("aligned object pointer exceeds tag layout")
+        });
+        unsafe { (*self.0.get()).0 = tagged };
     }
 
     /// Store a proven IEEE-754 payload without constructing the semantic
@@ -425,6 +337,19 @@ impl SlotWord {
     #[inline(always)]
     pub(crate) fn object_or_null_ptr(&self) -> Option<Option<*const crate::value::ObjectData>> {
         self.with_word(OwnedWord::object_or_null_ptr)
+    }
+
+    #[inline(always)]
+    pub(crate) fn object_or_null(&self) -> Option<Option<std::rc::Rc<crate::value::ObjectData>>> {
+        self.object_or_null_ptr().map(|pointer| {
+            pointer.map(|pointer| unsafe {
+                // The slot owns one strong reference for the duration of this
+                // single-threaded read. Retain before constructing the owned
+                // handle returned to the quickened kernel.
+                std::rc::Rc::increment_strong_count(pointer);
+                std::rc::Rc::from_raw(pointer)
+            })
+        })
     }
 
     #[inline(always)]
@@ -589,6 +514,20 @@ impl<const N: usize> FixedWordFile<N> {
     pub(crate) fn write_number(&mut self, index: usize, value: f64) -> Option<()> {
         let destination = self.words.get_mut(index)?;
         let previous = std::mem::replace(destination, TaggedValue::number(value));
+        release(previous);
+        Some(())
+    }
+
+    /// Install a raw execute word returned by a proven native leaf.  Retain
+    /// before replacing so pointer-backed values preserve the same ownership
+    /// contract as every ordinary register write; malformed/unsupported words
+    /// remain visible to the normal decoder rather than gaining new semantics.
+    #[inline(always)]
+    pub(crate) fn write_tagged_bits(&mut self, index: usize, bits: u64) -> Option<()> {
+        let destination = self.words.get_mut(index)?;
+        let word = TaggedValue::from_bits(bits);
+        retain(word);
+        let previous = std::mem::replace(destination, word);
         release(previous);
         Some(())
     }
@@ -890,14 +829,19 @@ impl RegisterFile {
     /// operation beside `read_number` makes the Dynamic→Fast fact canonical
     /// while avoiding two separate `Option::zip` chains in binary ops.
     #[inline(always)]
-    pub(crate) fn read_number_pair(
-        &self,
-        left: usize,
-        right: usize,
-    ) -> Option<(f64, f64)> {
+    pub(crate) fn read_number_pair(&self, left: usize, right: usize) -> Option<(f64, f64)> {
         let left = decoded_number(self.words.get(left)?.decode())?;
         let right = decoded_number(self.words.get(right)?.decode())?;
         Some((left, right))
+    }
+
+    /// Borrow the address of one canonical execute word for a read-only native
+    /// leaf. The pointer is consumed before any register mutation or resize;
+    /// the owning `RegisterFile` keeps the word storage and referenced
+    /// allocation alive for the duration of that call.
+    #[inline(always)]
+    pub(crate) fn word_ptr(&self, index: usize) -> Option<*const TaggedValue> {
+        self.words.get(index).map(|word| word as *const TaggedValue)
     }
 
     /// Decide ToBoolean directly when the execute word contains the complete
@@ -975,6 +919,18 @@ impl RegisterFile {
             &mut self.words[index],
             TaggedValue::number(value),
         ));
+    }
+
+    /// Install a raw execute word returned by a proven native leaf. Retain
+    /// before replacing so pointer-backed values preserve the same ownership
+    /// contract as every ordinary register write.
+    #[inline(always)]
+    pub(crate) fn write_tagged_bits(&mut self, index: usize, bits: u64) -> Option<()> {
+        self.resize_undefined(index + 1);
+        let word = TaggedValue::from_bits(bits);
+        retain(word);
+        release(std::mem::replace(&mut self.words[index], word));
+        Some(())
     }
 
     #[inline(always)]
@@ -1157,12 +1113,26 @@ impl PartialEq<Vec<Value>> for RegisterFile {
 
 #[cfg(test)]
 mod tests {
-    use super::{RegisterFile, SlotWord};
+    use super::{RegisterFile, SlotWord, TaggedValue};
     use crate::{
         tagged_value::DecodedValue,
         value::{ObjectData, Value},
     };
     use std::rc::Rc;
+
+    #[test]
+    fn register_file_uses_one_word_tagged_storage_for_every_slot() {
+        assert_eq!(std::mem::size_of::<TaggedValue>(), 8);
+        let registers = RegisterFile::from_values(vec![Value::Number(1.0), Value::Null]);
+        assert_eq!(
+            registers.capacity() * std::mem::size_of::<TaggedValue>(),
+            registers.capacity() * 8
+        );
+        assert_eq!(
+            registers.word(0).expect("number word").bits(),
+            1.0f64.to_bits()
+        );
+    }
 
     #[test]
     fn numeric_slot_store_replaces_an_owned_word_without_value_encoding() {

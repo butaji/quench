@@ -1,4 +1,9 @@
-use std::{env, fs, path::PathBuf, process::Command, time::Instant};
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::Command,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 const RUNNER: &str = r#"
 let __quenchBenchSucceeded = true;
@@ -16,6 +21,7 @@ BenchmarkSuite.RunSuites({
   },
 });
 "#;
+const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Debug)]
 struct Sample {
@@ -42,7 +48,10 @@ fn main() {
     let mut bun = "bun".into();
     let mut quench = "target/bench-throughput/quench-node".into();
     let mut runs = 1usize;
-    let mut timeout_ms = 120_000u64;
+    // Every engine invocation is bounded unless the caller explicitly opts
+    // into a different positive duration.  The suite still records all
+    // fixtures after a timeout so one stale workload cannot hide the rest.
+    let mut timeout_ms = DEFAULT_TIMEOUT_MS;
     while let Some(x) = a.next() {
         match x.as_str() {
             "--node" => node = a.next().unwrap_or_else(|| usage("missing --node path")),
@@ -81,6 +90,7 @@ fn main() {
     } else {
         vec![PathBuf::from(first)]
     };
+    let mut all_valid = true;
     for f in fsx {
         let x = materialize(&f);
         let n = (0..runs)
@@ -98,6 +108,8 @@ fn main() {
                 && n.stdout == b.stdout
                 && b.stdout == q.stdout
         });
+        // Scores are intentionally engine-dependent; output_equal is retained
+        // as evidence, while validity is based on successful, scored runs.
         let valid = n.iter().chain(&b).chain(&q).all(Sample::valid);
         let (nw, nr) = summary(&n);
         let (bw, br) = summary(&b);
@@ -109,9 +121,16 @@ fn main() {
             option_u128(bw), option_u64(br), samples(&b),
             option_u128(qw), option_u64(qr), samples(&q)
         );
+        // The materialized source is runner scratch, never benchmark state.
+        // Remove it after all three bounded processes have reaped so a later
+        // invocation cannot accidentally consume stale fixture contents.
+        let _ = fs::remove_file(&x);
         if !valid {
-            std::process::exit(1);
+            all_valid = false;
         }
+    }
+    if !all_valid {
+        std::process::exit(1);
     }
 }
 
@@ -131,8 +150,13 @@ fn summary(samples: &[Sample]) -> (Option<u128>, Option<u64>) {
     )
 }
 fn materialize(f: &PathBuf) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
     let p = PathBuf::from("/tmp").join(format!(
-        "quench-bench-{}",
+        "quench-bench-{}-{}-{}",
+        std::process::id(),
+        nonce,
         f.file_name().unwrap().to_string_lossy()
     ));
     let base = fs::read("quench-bench/js-engine-benchmark/v8-v7/base.js").unwrap();

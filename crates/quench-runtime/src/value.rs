@@ -680,10 +680,34 @@ impl PartialEq<String> for &PropertyName {
 
 /// Canonical ordinary-property table. Callers use this boundary instead of
 /// depending on the eventual physical slot layout.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ObjectProperties {
     names: Vec<PropertyName>,
     values: Vec<crate::register_file::SlotWord>,
+    layout_hash: std::cell::Cell<u64>,
+}
+
+const OBJECT_LAYOUT_HASH_SEED: u64 = 0xcbf2_9ce4_8422_2325;
+
+impl Default for ObjectProperties {
+    fn default() -> Self {
+        Self {
+            names: Vec::new(),
+            values: Vec::new(),
+            layout_hash: std::cell::Cell::new(OBJECT_LAYOUT_HASH_SEED),
+        }
+    }
+}
+
+impl Clone for ObjectProperties {
+    fn clone(&self) -> Self {
+        crate::execution_trace::allocation("object_properties_clone");
+        Self {
+            names: self.names.clone(),
+            values: self.values.clone(),
+            layout_hash: std::cell::Cell::new(self.layout_hash.get()),
+        }
+    }
 }
 
 pub struct PropertyValueMut<'a> {
@@ -723,10 +747,10 @@ impl ObjectProperties {
         Self::default()
     }
     pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            names: Vec::with_capacity(capacity),
-            values: Vec::with_capacity(capacity),
-        }
+        let mut properties = Self::default();
+        properties.names.reserve(capacity);
+        properties.values.reserve(capacity);
+        properties
     }
 
     #[cold]
@@ -816,7 +840,14 @@ impl ObjectProperties {
         self.names.capacity().min(self.values.capacity())
     }
 
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.names.shrink_to_fit();
+        self.values.shrink_to_fit();
+    }
+
     pub fn push(&mut self, (name, value): (PropertyName, Value)) {
+        self.layout_hash
+            .set(mix_object_layout_hash(self.layout_hash.get(), &name));
         self.names.push(name);
         self.values.push(crate::register_file::SlotWord::new(value));
     }
@@ -861,7 +892,31 @@ impl ObjectProperties {
         }
         self.names = names;
         self.values = values;
+        self.layout_hash
+            .set(compute_object_layout_hash(&self.names));
     }
+
+    /// Hash of the canonical property-name sequence, maintained at mutation
+    /// boundaries so layout interning never re-hashes names on a lookup.
+    #[inline]
+    pub(crate) fn layout_hash(&self) -> u64 {
+        self.layout_hash.get()
+    }
+}
+
+#[inline]
+fn mix_object_layout_hash(previous: u64, name: &PropertyName) -> u64 {
+    let mut hash = previous ^ (name.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for byte in name.as_bytes() {
+        hash = hash.rotate_left(5) ^ u64::from(*byte);
+    }
+    hash
+}
+
+fn compute_object_layout_hash(names: &[PropertyName]) -> u64 {
+    names
+        .iter()
+        .fold(OBJECT_LAYOUT_HASH_SEED, mix_object_layout_hash)
 }
 
 #[inline]
@@ -1021,6 +1076,7 @@ pub struct ObjectData {
     identity: u64,
     layout_id: std::cell::Cell<u32>,
     replacement: RefCell<Option<Rc<ObjectData>>>,
+    replacement_state: std::cell::Cell<bool>,
     // Hot semantic storage. Keep the vector as the sole property storage.
     // An inline first-slot representation would not remove the per-object
     // `PrivateSlots` Rc (the ownership/lifecycle anchor), and would duplicate
@@ -1032,12 +1088,25 @@ pub struct ObjectData {
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
     pub(crate) created: Vec<PropertyName>,
+    // Most objects preserve insertion order in the canonical property vector;
+    // avoid allocating a second Vec until a mutation makes a separate order
+    // necessary (for example delete/re-add or an internal descriptor entry).
+    pub(crate) created_derived: bool,
     // Derived tri-state cache for descriptor metadata. Mutation resets it;
     // the property vector remains the sole semantic source of truth.
     descriptor_metadata_state: std::cell::Cell<u8>,
     // Derived tri-state cache for deletion tombstones. The canonical property
     // vector remains authoritative; this only avoids repeated absence scans.
     deleted_marker_state: std::cell::Cell<u8>,
+    // Derived identity fact for the internal script-global view marker. The
+    // marker is installed at construction and is never guest-visible.
+    script_global_view: std::cell::Cell<bool>,
+    // Derived registration fact. Realm/global registration is the event;
+    // property reads consume this bit instead of consulting realm tables.
+    realm_global: std::cell::Cell<bool>,
+    // Derived RegExp internal-slot fact. The canonical marker property remains
+    // authoritative; named writes consume this bit instead of scanning it.
+    regexp_internal_slot: std::cell::Cell<bool>,
 }
 
 impl Drop for ObjectData {
@@ -1061,12 +1130,17 @@ impl Clone for ObjectData {
             identity: self.identity,
             layout_id: std::cell::Cell::new(self.layout_id.get()),
             replacement: RefCell::new(None),
+            replacement_state: std::cell::Cell::new(false),
             properties: self.properties.clone(),
             private_slots: Rc::clone(&self.private_slots),
             original_prototype: RefCell::new(self.original_prototype()),
             created: self.created.clone(),
+            created_derived: self.created_derived,
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
+            script_global_view: std::cell::Cell::new(self.script_global_view.get()),
+            realm_global: std::cell::Cell::new(self.realm_global.get()),
+            regexp_internal_slot: std::cell::Cell::new(self.regexp_internal_slot.get()),
         }
     }
 }
@@ -1076,6 +1150,10 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        if key == "\0regexp" {
+            self.regexp_internal_slot
+                .set(matches!(&value, Value::Boolean(true)));
+        }
         let deleted = crate::builtins::deleted_key(key);
         let cell = self
             .properties
@@ -1098,6 +1176,7 @@ impl ObjectData {
                 crate::arrays::array_index(name.as_str()).is_some_and(|last| last < index)
             });
             if append {
+                self.ensure_creation_order();
                 self.properties.push((key.into(), value));
                 self.created.push(key.into());
                 self.layout_id.set(0);
@@ -1111,6 +1190,7 @@ impl ObjectData {
                 *current = value;
             }
         } else {
+            self.ensure_creation_order();
             self.properties.push((key.into(), value));
             self.created.push(key.into());
         }
@@ -1126,6 +1206,10 @@ impl ObjectData {
     #[inline]
     pub(crate) fn hot_properties(&self) -> &ObjectProperties {
         &self.properties
+    }
+
+    pub(crate) fn hot_properties_mut_for_transaction(&mut self) -> &mut ObjectProperties {
+        &mut self.properties
     }
     /// Return the address of the canonical property vector.
     ///
@@ -1177,23 +1261,19 @@ impl ObjectData {
         properties: Vec<(String, Value)>,
         private_slots: PrivateSlots,
     ) -> Self {
-        let properties: ObjectProperties = properties
+        let mut properties: ObjectProperties = properties
             .into_iter()
             .map(|(name, value)| (name.into(), value))
             .collect();
-        Self::with_creation_order(
-            properties.clone(),
-            private_slots,
-            creation_order(&properties),
-        )
+        properties.shrink_to_fit();
+        Self::with_canonical_creation_order(properties, private_slots)
     }
 
     pub(crate) fn with_shared_properties(
         properties: ObjectProperties,
         private_slots: PrivateSlots,
     ) -> Self {
-        let created = creation_order(&properties);
-        Self::with_creation_order(properties, private_slots, created)
+        Self::with_canonical_creation_order(properties, private_slots)
     }
 
     pub(crate) fn with_shared_properties_for_owner(
@@ -1201,13 +1281,15 @@ impl ObjectData {
         properties: ObjectProperties,
         private_slots: PrivateSlots,
     ) -> Self {
-        let mut next = Self::with_shared_properties(properties, private_slots);
+        let mut next =
+            Self::with_creation_order(properties, private_slots, owner.creation_order_values());
         next.identity = owner.identity;
+        next.realm_global.set(owner.realm_global.get());
         next
     }
 
     pub(crate) fn from_shared_properties(properties: ObjectProperties) -> Self {
-        Self::with_shared_properties(properties, Rc::new(RefCell::new(Vec::new())))
+        Self::with_canonical_creation_order(properties, Rc::new(RefCell::new(Vec::new())))
     }
 
     pub(crate) fn original_prototype(&self) -> Option<Value> {
@@ -1228,22 +1310,80 @@ impl ObjectData {
     ) -> Self {
         crate::execution_trace::object_lifecycle(true);
         crate::execution_trace::object_shape(&properties);
+        let script_global_view = properties
+            .names()
+            .any(|name| name == crate::vm::SCRIPT_GLOBAL_VIEW);
+        let regexp_internal_slot = properties
+            .iter()
+            .any(|(name, value)| name == "\0regexp" && matches!(value, Value::Boolean(true)));
+        let created_derived = creation_order_matches(&properties, &created);
+        let created = if created_derived { Vec::new() } else { created };
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
             replacement: RefCell::new(None),
+            replacement_state: std::cell::Cell::new(false),
             properties,
             private_slots,
             original_prototype: RefCell::new(None),
             created,
+            created_derived,
             descriptor_metadata_state: std::cell::Cell::new(0),
             deleted_marker_state: std::cell::Cell::new(0),
+            script_global_view: std::cell::Cell::new(script_global_view),
+            realm_global: std::cell::Cell::new(false),
+            regexp_internal_slot: std::cell::Cell::new(regexp_internal_slot),
+        }
+    }
+
+    fn with_canonical_creation_order(
+        properties: ObjectProperties,
+        private_slots: PrivateSlots,
+    ) -> Self {
+        crate::execution_trace::object_lifecycle(true);
+        crate::execution_trace::object_shape(&properties);
+        let script_global_view = properties
+            .names()
+            .any(|name| name == crate::vm::SCRIPT_GLOBAL_VIEW);
+        let regexp_internal_slot = properties
+            .iter()
+            .any(|(name, value)| name == "\0regexp" && matches!(value, Value::Boolean(true)));
+        Self {
+            identity: next_object_identity(),
+            layout_id: std::cell::Cell::new(0),
+            replacement: RefCell::new(None),
+            replacement_state: std::cell::Cell::new(false),
+            properties,
+            private_slots,
+            original_prototype: RefCell::new(None),
+            created: Vec::new(),
+            created_derived: true,
+            descriptor_metadata_state: std::cell::Cell::new(0),
+            deleted_marker_state: std::cell::Cell::new(0),
+            script_global_view: std::cell::Cell::new(script_global_view),
+            realm_global: std::cell::Cell::new(false),
+            regexp_internal_slot: std::cell::Cell::new(regexp_internal_slot),
         }
     }
 
     #[inline]
     pub(crate) fn identity(&self) -> u64 {
         self.identity
+    }
+
+    pub(crate) fn ensure_creation_order(&mut self) {
+        if self.created_derived {
+            self.created = creation_order(&self.properties);
+            self.created_derived = false;
+        }
+    }
+
+    pub(crate) fn creation_order_values(&self) -> Vec<PropertyName> {
+        if self.created_derived {
+            creation_order(&self.properties)
+        } else {
+            self.created.clone()
+        }
     }
 
     #[inline]
@@ -1253,7 +1393,27 @@ impl ObjectData {
 
     #[inline]
     pub(crate) fn has_replacement(&self) -> bool {
-        self.replacement.borrow().is_some()
+        self.replacement_state.get()
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_script_global_view(&self) -> bool {
+        self.script_global_view.get()
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_realm_global(&self) -> bool {
+        self.realm_global.get()
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_regexp_internal_slot(&self) -> bool {
+        self.regexp_internal_slot.get()
+    }
+
+    #[inline]
+    pub(crate) fn mark_realm_global(&self) {
+        self.realm_global.set(true);
     }
 
     #[inline]
@@ -1283,6 +1443,7 @@ impl ObjectData {
     #[inline]
     pub(crate) fn replace_with(&self, replacement: Rc<ObjectData>) {
         *self.replacement.borrow_mut() = Some(replacement);
+        self.replacement_state.set(true);
     }
 }
 
@@ -1352,22 +1513,66 @@ struct InternedObjectLayout {
 }
 
 thread_local! {
-    static OBJECT_LAYOUTS: RefCell<Vec<InternedObjectLayout>> = const { RefCell::new(Vec::new()) };
+    static OBJECT_LAYOUTS: RefCell<ObjectLayoutInterner> = RefCell::new(ObjectLayoutInterner::new());
+}
+
+struct ObjectLayoutInterner {
+    layouts: Vec<InternedObjectLayout>,
+    buckets: std::collections::HashMap<u64, Vec<u32>>,
+}
+
+// Hash buckets pay for themselves only once an execution has accumulated a
+// meaningful layout vocabulary. Small programs stay on the cheaper linear
+// path, while object-heavy programs get QuickJS-style hashed lookup.
+const OBJECT_LAYOUT_BUCKET_THRESHOLD: usize = 64;
+
+impl ObjectLayoutInterner {
+    fn new() -> Self {
+        Self {
+            layouts: Vec::new(),
+            buckets: std::collections::HashMap::new(),
+        }
+    }
 }
 
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
     OBJECT_LAYOUTS.with(|layouts| {
         let mut layouts = layouts.borrow_mut();
-        if let Some(index) = layouts.iter().position(|layout| {
-            layout.names.len() == properties.len()
-                && layout
-                    .names
-                    .iter()
-                    .zip(properties.names())
-                    .all(|(left, right)| left == right)
-        }) {
+        let hash = properties.layout_hash();
+        let index = if layouts.layouts.len() < OBJECT_LAYOUT_BUCKET_THRESHOLD {
+            layouts.layouts.iter().position(|layout| {
+                layout.names.len() == properties.len()
+                    && layout
+                        .names
+                        .iter()
+                        .zip(properties.names())
+                        .all(|(left, right)| left == right)
+            })
+        } else {
+            layouts
+                .buckets
+                .get(&hash)
+                .into_iter()
+                .flatten()
+                .copied()
+                .find(|index| {
+                    layouts.layouts.get(*index as usize).is_some_and(|layout| {
+                        layout.names.len() == properties.len()
+                            && layout
+                                .names
+                                .iter()
+                                .zip(properties.names())
+                                .all(|(left, right)| left == right)
+                    })
+                })
+                .map(|index| index as usize)
+        };
+        if let Some(index) = index {
+            crate::execution_trace::kernel("object_layout_intern", false);
             return u32::try_from(index + 1).unwrap_or(u32::MAX);
         }
+        crate::execution_trace::kernel("object_layout_intern", true);
+        crate::execution_trace::allocation("object_layout");
         let names = properties.names().cloned().collect::<Vec<_>>();
         let slots = names
             .iter()
@@ -1375,17 +1580,20 @@ fn intern_object_layout(properties: &ObjectProperties) -> u32 {
             .enumerate()
             .map(|(slot, name)| (name, slot))
             .collect();
-        layouts.push(InternedObjectLayout { names, slots });
-        u32::try_from(layouts.len()).unwrap_or(u32::MAX)
+        layouts.layouts.push(InternedObjectLayout { names, slots });
+        let index = u32::try_from(layouts.layouts.len() - 1).unwrap_or(u32::MAX);
+        layouts.buckets.entry(hash).or_default().push(index);
+        index.saturating_add(1)
     })
 }
 
 fn object_layout_slot(layout: u32, key: &str) -> Option<usize> {
     let index = usize::try_from(layout).ok()?.checked_sub(1)?;
-    OBJECT_LAYOUTS.with(|layouts| layouts.borrow().get(index)?.slots.get(key).copied())
+    OBJECT_LAYOUTS.with(|layouts| layouts.borrow().layouts.get(index)?.slots.get(key).copied())
 }
 
 fn creation_order(properties: &ObjectProperties) -> Vec<PropertyName> {
+    crate::execution_trace::allocation("object_creation_order");
     // Bootstrap objects commonly arrive with all properties at once. Reserve
     // the final key count so creation-order storage does not repeatedly grow
     // and retain transient allocator pages during bootstrap.
@@ -1397,6 +1605,20 @@ fn creation_order(properties: &ObjectProperties) -> Vec<PropertyName> {
         created.push(key.clone());
     }
     created
+}
+
+fn creation_order_matches(properties: &ObjectProperties, created: &[PropertyName]) -> bool {
+    let mut index = 0;
+    for key in properties.names() {
+        if key.starts_with('\0') {
+            continue;
+        }
+        if created.get(index) != Some(key) {
+            return false;
+        }
+        index += 1;
+    }
+    index == created.len()
 }
 
 impl PartialEq for ObjectData {
@@ -1452,9 +1674,10 @@ mod object_identity_tests {
     #[test]
     fn creation_order_shares_the_canonical_property_name() {
         let object = ObjectData::new(vec![("currentTask".into(), super::Value::Undefined)]);
+        let created = object.creation_order_values();
         assert!(Rc::ptr_eq(
             &object.properties.name_at(0).unwrap().0,
-            &object.created[0].0
+            &created[0].0
         ));
     }
 }

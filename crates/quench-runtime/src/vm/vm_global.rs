@@ -17,13 +17,6 @@ pub fn current_global_object() -> Value {
         .unwrap_or_else(|| crate::locals::current().get(0))
 }
 
-#[inline(always)]
-pub(crate) fn current_global_identity() -> Option<u64> {
-    realm::global_identity(current_realm()).or_else(|| {
-        GLOBAL_OBJECT.with(|global| global.borrow().as_ref().map(|object| object.identity()))
-    })
-}
-
 pub(crate) const SCRIPT_GLOBAL_VIEW: &str = "\0quench:script-global-view";
 
 thread_local! {
@@ -34,6 +27,7 @@ pub(crate) fn initialize_global_object(value: &Value) {
     let Value::Object(object) = value else {
         return;
     };
+    object.mark_realm_global();
     GLOBAL_OBJECT.with(|global| {
         if global.borrow().is_none() {
             global.replace(Some(object.clone()));
@@ -214,6 +208,7 @@ pub(crate) fn define_global_declaration_property(
                 }
             }
         }
+        staged.ensure_creation_order();
         staged.properties.retain(|(key, _)| {
             key != name && key != &descriptor_key && key != &deleted_key
         });
@@ -437,7 +432,7 @@ pub struct SharedGlobal {
 
 /// Drop the thread-local root global between independent top-level programs.
 /// Nested executions retain the caller's object through `SharedGlobal`; only a
-/// top-level runner may clear this slot to give each conformance test a fresh
+/// top-level runner may clear this slot to give each independent program a fresh
 /// global environment.
 pub fn reset_global_object() {
     if SHARED_GLOBAL.with(|count| count.get() != 0) {

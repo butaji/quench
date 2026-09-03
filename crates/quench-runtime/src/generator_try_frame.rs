@@ -1,5 +1,6 @@
 struct TryFrameResume {
     phase: crate::machine::TryPhase,
+    body: crate::machine::CodeRange,
     body_resume: crate::machine::CodeRange,
     handler: Option<crate::machine::CodeRange>,
     finalizer: Option<crate::machine::CodeRange>,
@@ -12,6 +13,7 @@ fn try_frame_resume(generator: &GeneratorData) -> Option<TryFrameResume> {
     let frame = generator.machine.borrow().frames.frames.last()?.clone();
     let crate::machine::Frame::Try {
         phase,
+        body,
         body_resume,
         handler,
         finalizer,
@@ -25,6 +27,7 @@ fn try_frame_resume(generator: &GeneratorData) -> Option<TryFrameResume> {
     };
     Some(TryFrameResume {
         phase,
+        body,
         body_resume,
         handler,
         finalizer,
@@ -72,7 +75,57 @@ fn resume_try_frame(
         return Ok(Some(completion));
     }
     generator.machine.borrow_mut().pop_frame();
+    if matches!(completion, crate::completion::Completion::Normal) {
+        // When this try is nested in a loop body, the loop—not the outer
+        // generator range—is the continuation owner.  Advance the loop body
+        // past the Try operation before handing control back to its frame.
+        advance_parent_loop_after_try(generator, frame.body)?;
+    }
     resume_after_try(generator, state, frame.resume, completion).map(Some)
+}
+
+fn advance_parent_loop_after_try(
+    generator: &GeneratorData,
+    inner_body: crate::machine::CodeRange,
+) -> Result<bool, VmError> {
+    let Some(crate::machine::Frame::Loop { body, .. }) = generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .last()
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
+    let code = store.code(body).ok_or(VmError::MissingReturn)?;
+    let Some(index) = code.cold_ops().find_map(|(index, op)| match op {
+        crate::ops::Op::Try { body, .. } if body.range == inner_body => Some(index),
+        _ => None,
+    }) else {
+        return Ok(false);
+    };
+    let resume = crate::machine::CodeRange {
+        code: body.code,
+        start: body.start.saturating_add(index as u32 + 1),
+        end: body.end,
+    };
+    let mut machine = generator.machine.borrow_mut();
+    let Some(crate::machine::Frame::Loop {
+        body_resume: current,
+        ..
+    }) = machine.frames.frames.last_mut()
+    else {
+        return Ok(false);
+    };
+    *current = resume;
+    Ok(true)
 }
 
 fn push_nested_try_after_yield(
@@ -310,6 +363,15 @@ fn resume_after_try(
     range: crate::machine::CodeRange,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Loop { .. })
+    ) && matches!(completion, crate::completion::Completion::Normal)
+    {
+        if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
+            return Ok(completion);
+        }
+    }
     if matches!(
         generator.machine.borrow().frames.frames.last(),
         Some(crate::machine::Frame::Try { .. })

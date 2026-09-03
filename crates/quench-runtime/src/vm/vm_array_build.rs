@@ -20,7 +20,7 @@ fn execute_array_plan(
     for index in holes {
         array.delete_property(&index.to_string());
     }
-    write_value(registers, dst, Value::Array(Rc::new(array)));
+    write_allocated_value(registers, dst, Value::Array(Rc::new(array)));
     Ok(())
 }
 

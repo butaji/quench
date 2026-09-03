@@ -33,10 +33,7 @@ fn function_declaration_op(
         dst,
         body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
             direct_constructor: metadata.direct_constructor.clone(),
-            forward_construct_call: metadata.forward_construct_call.clone(),
-            forward_then_call: metadata.forward_then_call.clone(),
-            counted_method_loop: metadata.counted_method_loop.clone(),
-            direct_method: metadata.direct_method.clone(),
+            composed_constructor: metadata.composed_constructor.clone(),
         }),
         params,
         captures,

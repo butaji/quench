@@ -87,22 +87,22 @@ fn stats_unix(meta: &std::fs::Metadata) -> Value {
         ("size".to_string(), Value::Number(meta.size() as f64)),
         ("blksize".to_string(), Value::Number(meta.blksize() as f64)),
         ("blocks".to_string(), Value::Number(meta.blocks() as f64)),
-        (
-            "atimeMs".to_string(),
-            Value::Number(atime_ms),
-        ),
-        (
-            "mtimeMs".to_string(),
-            Value::Number(mtime_ms),
-        ),
-        (
-            "ctimeMs".to_string(),
-            Value::Number(ctime_ms),
-        ),
+        ("atimeMs".to_string(), Value::Number(atime_ms)),
+        ("mtimeMs".to_string(), Value::Number(mtime_ms)),
+        ("ctimeMs".to_string(), Value::Number(ctime_ms)),
         ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
-        ("atime".to_string(), quench_runtime::date::instance(atime_ms)),
-        ("mtime".to_string(), quench_runtime::date::instance(mtime_ms)),
-        ("ctime".to_string(), quench_runtime::date::instance(ctime_ms)),
+        (
+            "atime".to_string(),
+            quench_runtime::date::instance(atime_ms),
+        ),
+        (
+            "mtime".to_string(),
+            quench_runtime::date::instance(mtime_ms),
+        ),
+        (
+            "ctime".to_string(),
+            quench_runtime::date::instance(ctime_ms),
+        ),
         (
             "birthtime".to_string(),
             quench_runtime::date::instance(birthtime_ms),
