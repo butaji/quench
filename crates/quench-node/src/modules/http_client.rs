@@ -4676,6 +4676,16 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                     &parser_option,
                 ));
             }
+            for key in ["host", "hostname"] {
+                if own_option(&options, key) {
+                    let value = execute::get_property(&options, key);
+                    if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
+                        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                            "The options.{key} property must be of type string"
+                        )));
+                    }
+                }
+            }
             // Legacy url.parse() exposes `host`/`path`, while WHATWG URL
             // exposes `hostname`/`pathname`/`search`; both are request facts.
             let raw_host = opt_first(&options, &["host", "hostname"])?
