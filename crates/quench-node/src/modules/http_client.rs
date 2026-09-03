@@ -47,7 +47,13 @@ pub struct ClientReq {
     pub method: String,
     pub path: String,
     pub headers: Vec<(String, String)>,
+    pub secure: bool,
+    pub tls_options: Option<Value>,
+    pub tls_rejected: bool,
     pub body: Vec<u8>,
+    /// Preserve individual `write()` boundaries for server-side data events.
+    pub body_chunks: Vec<Vec<u8>>,
+    pub body_started: bool,
     pub req: Value,
     pub agent: Option<Value>,
     pub lookup: Option<Value>,
@@ -681,7 +687,12 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             method: opts.method,
             path: opts.path,
             headers: opts.headers,
+            secure,
+            tls_options,
+            tls_rejected,
             body: Vec::new(),
+            body_chunks: Vec::new(),
+            body_started: false,
             req: req.clone(),
             agent,
             lookup,
@@ -1146,6 +1157,8 @@ pub fn req_write(
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
         req.body.extend_from_slice(&bytes);
+        req.body_chunks.push(bytes.clone());
+        req.body_started = true;
         (req.socket.is_none(), req.agent.clone(), req.dispatched)
     };
     let custom = agent
@@ -1487,29 +1500,46 @@ pub fn req_end(
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
     if expect_started {
-        if args.first().is_some_and(|data| !matches!(data, Value::Undefined)) {
+        if args
+            .first()
+            .is_some_and(|data| !matches!(data, Value::Undefined))
+        {
             req_write(state, receiver, end_chunk_args(args))?;
         }
-        let (socket, body) = {
+        let (socket, body_chunks, body) = {
             let mut guard = state.borrow_mut();
             let Some(req) = guard.http.clientreqs.get_mut(&id) else {
                 return Ok(receiver.cloned().unwrap_or(Value::Undefined));
             };
-            (req.socket.clone(), std::mem::take(&mut req.body))
+            (
+                req.socket.clone(),
+                std::mem::take(&mut req.body_chunks),
+                std::mem::take(&mut req.body),
+            )
         };
         if let Some(socket) = socket {
             let mut payload = Vec::new();
-            if !body.is_empty() {
-                payload.extend_from_slice(format!("{:x}\r\n", body.len()).as_bytes());
-                payload.extend_from_slice(&body);
+            for chunk in body_chunks {
+                payload.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
+                payload.extend_from_slice(&chunk);
                 payload.extend_from_slice(b"\r\n");
+                net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
+                payload.clear();
             }
-            payload.extend_from_slice(b"0\r\n\r\n");
-            net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
+            if payload.is_empty() && body.is_empty() {
+                payload.extend_from_slice(b"0\r\n\r\n");
+                net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
+            } else {
+                net::socket_write(state, Some(&socket), &[host_api::bytes(b"0\r\n\r\n")])?;
+            }
         }
         if let Some(request) = receiver {
             set_request_property(Some(request), "finished", Value::Boolean(true));
-            set_request_property(Some(request), CLIENT_EXPECT_CONTINUE_PROP, Value::Boolean(false));
+            set_request_property(
+                Some(request),
+                CLIENT_EXPECT_CONTINUE_PROP,
+                Value::Boolean(false),
+            );
         }
         invoke_end_callback(receiver, args)?;
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -1593,10 +1623,25 @@ pub fn req_end(
         if !bytes.is_empty() {
             if let Some(request) = state.borrow_mut().http.clientreqs.get_mut(&id) {
                 request.body.extend_from_slice(&bytes);
+                request.body_chunks.push(bytes);
             }
         }
     }
-    let (target, method, path, headers, body, agent, lookup, omit_host) = {
+    let (
+        target,
+        method,
+        path,
+        headers,
+        body,
+        body_chunks,
+        body_started,
+        agent,
+        lookup,
+        omit_host,
+        secure,
+        tls_options,
+        tls_rejected,
+    ) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -1613,20 +1658,36 @@ pub fn req_end(
             req.path.clone(),
             req.headers.clone(),
             req.body.clone(),
+            req.body_chunks.clone(),
+            req.body_started,
             req.agent.clone(),
             req.lookup.clone(),
             req.omit_host,
+            req.secure,
+            req.tls_options.clone(),
+            req.tls_rejected,
         )
     };
     let expect_header_start = receiver.is_some_and(|request| {
-        matches!(execute::get_property(request, CLIENT_EXPECT_CONTINUE_PROP), Value::Boolean(true))
+        matches!(
+            execute::get_property(request, CLIENT_EXPECT_CONTINUE_PROP),
+            Value::Boolean(true)
+        )
     });
     if let Some(req_value) = receiver.filter(|_| !expect_header_start) {
         set_request_property(Some(req_value), "finished", Value::Boolean(true));
     }
     let host = target_host(&target);
     let head_host = request_host(&target);
-    let head = request_head(&head_host, &method, &path, &headers, body.len(), omit_host);
+    let head = request_head_with_chunking(
+        &head_host,
+        &method,
+        &path,
+        &headers,
+        body.len(),
+        omit_host,
+        body_started,
+    );
     if let Some(req) = state.borrow().http.clientreqs.get(&id) {
         set_request_property(Some(&req.req), "_header", Value::String(head.clone()));
     }
@@ -1660,9 +1721,22 @@ pub fn req_end(
     let socket = match (existing.or(pooled), custom.or(custom_socket.clone())) {
         (Some(socket), _) => {
             net::socket_ref(state, Some(&socket), &[])?;
-            let mut bytes = head.into_bytes();
-            bytes.extend_from_slice(&body);
-            net::socket_write(state, Some(&socket), &[host_api::bytes(&bytes)])?;
+            net::socket_write(state, Some(&socket), &[host_api::bytes(head.as_bytes())])?;
+            if body_started {
+                for chunk in &body_chunks {
+                    let mut frame = format!("{:x}\r\n", chunk.len()).into_bytes();
+                    frame.extend_from_slice(chunk);
+                    frame.extend_from_slice(b"\r\n");
+                    net::socket_write(state, Some(&socket), &[host_api::bytes(&frame)])?;
+                }
+                net::socket_write(state, Some(&socket), &[host_api::bytes(b"0\r\n\r\n")])?;
+            } else if body_chunks.is_empty() && !body.is_empty() {
+                net::socket_write(state, Some(&socket), &[host_api::bytes(&body)])?;
+            } else {
+                for chunk in &body_chunks {
+                    net::socket_write(state, Some(&socket), &[host_api::bytes(chunk)])?;
+                }
+            }
             socket
         }
         (None, Some(connection)) => {
@@ -1692,16 +1766,50 @@ pub fn req_end(
             if matches!(socket, Value::Undefined | Value::Null) {
                 return Ok(receiver.cloned().unwrap_or(Value::Undefined));
             }
-            let mut bytes = request_head(&request_host(&target), &method, &path, &headers, body.len(), omit_host).into_bytes();
-            bytes.extend_from_slice(&body);
+            let mut bytes = request_head_with_chunking(
+                &request_host(&target),
+                &method,
+                &path,
+                &headers,
+                body.len(),
+                omit_host,
+                body_started,
+            )
+            .into_bytes();
             state.borrow_mut().net.pending_request_writes.push((
                 socket.clone(),
                 bytes,
                 receiver.cloned().unwrap_or(Value::Undefined),
             ));
+            if body_started {
+                for chunk in &body_chunks {
+                    let mut frame = format!("{:x}\r\n", chunk.len()).into_bytes();
+                    frame.extend_from_slice(chunk);
+                    frame.extend_from_slice(b"\r\n");
+                    state.borrow_mut().net.pending_request_writes.push((
+                        socket.clone(),
+                        frame,
+                        receiver.cloned().unwrap_or(Value::Undefined),
+                    ));
+                }
+                state.borrow_mut().net.pending_request_writes.push((
+                    socket.clone(),
+                    b"0\r\n\r\n".to_vec(),
+                    receiver.cloned().unwrap_or(Value::Undefined),
+                ));
+            } else if !body.is_empty() {
+                state.borrow_mut().net.pending_request_writes.push((
+                    socket.clone(),
+                    body.clone(),
+                    receiver.cloned().unwrap_or(Value::Undefined),
+                ));
+            }
             let resume = execute::get_property(&socket, "resume");
             if quench_runtime::is_callable(&resume) {
                 execute::call(&resume, &socket, &[])?;
+            }
+            if secure {
+                crate::modules::tls::decorate_socket(&socket, tls_options.as_ref());
             }
             socket
         }
@@ -1979,6 +2087,18 @@ fn request_head(
     body_len: usize,
     omit_host: bool,
 ) -> String {
+    request_head_with_chunking(host, method, path, headers, body_len, omit_host, false)
+}
+
+fn request_head_with_chunking(
+    host: &str,
+    method: &str,
+    path: &str,
+    headers: &[(String, String)],
+    body_len: usize,
+    omit_host: bool,
+    force_chunked: bool,
+) -> String {
     let mut head = format!("{method} {path} HTTP/1.1\r\n");
     if !omit_host {
         head.push_str(&format!("Host: {host}\r\n"));
@@ -2002,6 +2122,8 @@ fn request_head(
         {
             head.push_str("Transfer-Encoding: chunked\r\n");
         }
+    } else if force_chunked && !has_content_length {
+        head.push_str("Transfer-Encoding: chunked\r\n");
     } else if !has_content_length && (body_len > 0 || default_empty_body(method)) {
         head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }

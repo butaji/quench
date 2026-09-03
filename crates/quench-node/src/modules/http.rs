@@ -586,7 +586,7 @@ fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmEr
 }
 
 fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmError> {
-    let (req, data, done) = {
+    let (req, chunks, done) = {
         let mut guard = state.borrow_mut();
         let Some(conn) = guard.http.conns.get_mut(&socket_id) else {
             return Ok(());
@@ -620,16 +620,27 @@ fn drain_chunked_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<
                 done = true;
                 break;
             }
-            data.extend_from_slice(&conn.buffer[..size]);
+            chunks.push(conn.buffer[..size].to_vec());
             conn.buffer.drain(..size + 2);
         }
         conn.body_chunked_done |= done;
         conn.body_done = conn.body_chunked_done;
-        (conn.req.clone(), data, conn.body_done)
+        (conn.req.clone(), chunks, conn.body_done)
     };
     if let Some(req) = req {
-        if !data.is_empty() {
-            net::emit(state, &req, "data", vec![make_buffer(&data)])?;
+        for chunk in chunks {
+            if !chunk.is_empty() {
+                let value = match execute::get_property_result(&req, REQ_ENCODING_PROP).ok() {
+                    Some(Value::String(encoding))
+                        if encoding.eq_ignore_ascii_case("utf8")
+                            || encoding.eq_ignore_ascii_case("utf-8") =>
+                    {
+                        Value::String(String::from_utf8_lossy(&chunk).into_owned())
+                    }
+                    _ => make_buffer(&chunk),
+                };
+                net::emit(state, &req, "data", vec![value])?;
+            }
         }
         if done {
             execute::set_property_in_place(&req, "complete", Value::Boolean(true));
