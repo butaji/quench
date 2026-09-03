@@ -26,6 +26,17 @@ fn collect_loop_body_frames(
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
     for (index, op) in ops.cold_ops() {
+        if matches!(op, Op::Await { .. }) {
+            frames.push(for_of_repeat_frame(
+                loop_iterator.clone(),
+                body,
+                range_after_iterator_op(body, index),
+                resume,
+                0,
+                slot,
+            ));
+            return Ok(true);
+        }
         if let Op::Yield { src } = op {
             frames.push(for_of_repeat_frame(
                 loop_iterator.clone(),
@@ -185,7 +196,7 @@ fn collect_try_frames(
             return Err(VmError::MissingReturn);
         };
         for (index, nested) in code.cold_ops() {
-            if let Op::Yield { src } = nested {
+            if let Op::Yield { src } | Op::Await { dst: src, .. } = nested {
                 frames.push(crate::machine::Frame::Try {
                     phase,
                     body: body.range,
@@ -262,6 +273,18 @@ fn collect_iterator_frames(
         return Err(VmError::MissingReturn);
     };
     for (index, op) in ops.cold_ops() {
+        if matches!(op, Op::Await { .. }) {
+            frames.push(iterator_frame(
+                *iterator,
+                body.range,
+                resume,
+                index,
+                0,
+                *close_normal,
+                registers,
+            )?);
+            return Ok(true);
+        }
         if let Op::Yield { src } = op {
             frames.push(iterator_frame(
                 *iterator,
@@ -332,9 +355,13 @@ fn collect_nested_yield_frame(
     let Some(ops) = code.code() else {
         return Ok(false);
     };
-    let Some((index, Op::Yield { src })) = ops.find_cold(|op| matches!(op, Op::Yield { .. }))
+    let Some((index, op)) = ops.find_cold(|op| matches!(op, Op::Yield { .. } | Op::Await { .. }))
     else {
         return Ok(false);
+    };
+    let src = match op {
+        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+        _ => return Ok(false),
     };
     let iterator = crate::execute::read_register(registers, binding)?;
     frames.push(iterator_binding_frame(
@@ -343,7 +370,7 @@ fn collect_nested_yield_frame(
         body,
         range_after_iterator_op(code.range, index),
         resume,
-        (*src, close_normal, false, 0),
+        (src, close_normal, false, 0),
     ));
     Ok(true)
 }

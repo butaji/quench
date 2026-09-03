@@ -111,9 +111,11 @@ fn update_await_frame(
     if !matches!(completion, crate::completion::Completion::Suspend(_)) {
         return Ok(());
     }
-    if let Some(iterator) = crate::loops::take_pending_async_for_of() {
+    if let Some(iterator) = crate::loops::take_pending_async_for_of(generator as *const _ as usize) {
         let mut iterator = iterator;
-        iterator.await_dst = await_destination(generator);
+        if iterator.body_pc == 0 {
+            iterator.await_dst = await_destination(generator);
+        }
         state.async_for_of = Some(iterator);
     }
     try_push_frame(
@@ -129,6 +131,21 @@ fn update_await_frame(
 }
 
 fn await_destination(generator: &GeneratorData) -> u16 {
+    if let Some(crate::machine::Frame::Iterator { body, body_resume, .. }) =
+        generator.machine.borrow().frames.frames.last()
+    {
+        if let Some(store) = generator.machine.borrow().store.clone() {
+            if let Some(code) = store.code(*body) {
+                let index = body_resume
+                    .start
+                    .saturating_sub(body.start)
+                    .saturating_sub(1) as usize;
+                if let Some(crate::ops::Op::Await { dst, .. }) = code.cold_at(index) {
+                    return *dst;
+                }
+            }
+        }
+    }
     match generator
         .function
         .code
