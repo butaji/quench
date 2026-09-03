@@ -258,8 +258,19 @@ pub fn agent_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result
         object,
         "scheduling",
         match option("scheduling") {
-            Value::String(value) => Value::String(value),
-            _ => Value::String("lifo".into()),
+            Value::String(value) if value == "fifo" || value == "lifo" => Value::String(value),
+            Value::String(value) => {
+                return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                    "The argument 'scheduling' must be one of: 'fifo', 'lifo'. Received '{value}'"
+                )));
+            }
+            Value::Null | Value::Undefined => Value::String("lifo".into()),
+            value => {
+                return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                    "The argument 'scheduling' must be one of: 'fifo', 'lifo'. Received {}",
+                    execute::to_js_string(&value).unwrap_or_else(|_| "undefined".into())
+                )));
+            }
         },
     );
     object = execute::set_property(object, "defaultPort", Value::Number(80.0));
