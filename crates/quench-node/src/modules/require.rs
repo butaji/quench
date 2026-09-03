@@ -882,8 +882,10 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     // `./tmpdir` points at the checkout's `.tmp.0` directory.
     if spec == "../common"
         || spec == "../common/index"
-        || spec.contains("node/test/common")
-        || spec.contains("node/common")
+        || ((spec.contains("node/test/common")
+            || spec.contains("tests/node/common")
+            || spec.contains("node/common"))
+            && (spec.ends_with("/common") || spec.ends_with("/common/index")))
     {
         let common = quench_runtime::execute::get_property(
             &quench_runtime::vm::current_global_object(),
@@ -895,8 +897,10 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     }
     if spec == "../common/tmpdir"
         || spec == "../common/tmpdir.js"
-        || spec.contains("node/test/common/tmpdir")
-        || spec.contains("node/common/tmpdir")
+        || spec.ends_with("node/test/common/tmpdir")
+        || spec.ends_with("node/test/common/tmpdir.js")
+        || spec.ends_with("tests/node/common/tmpdir")
+        || spec.ends_with("tests/node/common/tmpdir.js")
         || (matches!(spec.as_str(), "./tmpdir" | "./tmpdir.js")
             && state.borrow().dir_stack.last().is_some_and(|dir| {
                 std::path::Path::new(dir)
