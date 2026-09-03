@@ -220,4 +220,87 @@ if (typeof globalThis.Headers !== "function") {
   });
 }
 const Headers = globalThis.Headers;
+if (typeof globalThis.Request !== "function") {
+  class Request {
+    constructor(input, init = {}) {
+      const source = input instanceof Request ? input : null;
+      this.url = String(source?.url || input || "");
+      this.method = String(init.method ?? source?.method ?? "GET").toUpperCase();
+      this.headers = new Headers(init.headers ?? source?.headers);
+      this._body = init.body ?? source?._body ?? null;
+      this.bodyUsed = false;
+      this.signal = init.signal ?? source?.signal ?? new AbortController().signal;
+    }
+    async text() {
+      this.bodyUsed = true;
+      return this._body == null ? "" : String(this._body);
+    }
+    async json() { return JSON.parse(await this.text()); }
+    clone() {
+      if (this.bodyUsed) throw new TypeError("Body has already been consumed.");
+      return new Request(this);
+    }
+  }
+  Object.defineProperty(globalThis, "Request", {
+    configurable: true, enumerable: false, writable: true, value: Request,
+  });
+}
+if (typeof globalThis.Response !== "function") {
+  class Response {
+    constructor(body = null, init = {}) {
+      this.status = Number(init.status ?? 200);
+      this.statusText = String(init.statusText ?? "");
+      this.headers = new Headers(init.headers);
+      this._body = body instanceof globalThis.Blob ? body : body == null ? "" : String(body);
+      this.bodyUsed = false;
+      this.ok = this.status >= 200 && this.status < 300;
+    }
+    async text() {
+      this.bodyUsed = true;
+      return this._body instanceof globalThis.Blob ? this._body.text() : this._body;
+    }
+    async bytes() {
+      this.bodyUsed = true;
+      return this._body instanceof globalThis.Blob
+        ? this._body.bytes()
+        : new TextEncoder().encode(this._body);
+    }
+    async arrayBuffer() { return (await this.bytes()).buffer; }
+    async json() { return JSON.parse(await this.text()); }
+    async blob() {
+      if (this._body instanceof globalThis.Blob) return this._body;
+      return new globalThis.Blob([await this.bytes()], {
+        type: this.headers.get("content-type") || "",
+      });
+    }
+    clone() {
+      return new Response(this._body, {
+        status: this.status,
+        statusText: this.statusText,
+        headers: this.headers,
+      });
+    }
+  }
+  Object.defineProperty(globalThis, "Response", {
+    configurable: true, enumerable: false, writable: true, value: Response,
+  });
+}
+if (typeof globalThis.fetch === "function" && !globalThis.fetch.__quenchBlobFetch) {
+  const __quenchHostFetch = globalThis.fetch;
+  const __quenchBlobFetch = function (input, init = {}) {
+    const url = String(input && typeof input === "object" && "url" in input ? input.url : input);
+    if (!url.startsWith("blob:")) return __quenchHostFetch(input, init);
+    const buffer = globalThis.require?.("buffer");
+    const blob = buffer?.resolveObjectURL?.(url);
+    if (blob === undefined) return Promise.reject(new TypeError("Invalid blob URL"));
+    return Promise.resolve(new globalThis.Response(blob, {
+      status: 200,
+      headers: blob.type ? { "content-type": blob.type } : {},
+    }));
+  };
+  Object.defineProperty(__quenchBlobFetch, "__quenchBlobFetch", { value: true });
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true, enumerable: false, writable: true, value: __quenchBlobFetch,
+  });
+}
 "#);
