@@ -19,6 +19,13 @@ use std::{cell::RefCell, rc::Rc, sync::OnceLock};
 
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 
+/// ARM executable stencils are opt-in until their call overhead is proven a
+/// net win on the host corpus. Setting this development switch exercises the
+/// real AArch64 bytes; the default keeps the bounded ordinary baseline path.
+fn aarch64_stencils_enabled() -> bool {
+    !cfg!(target_arch = "aarch64") || std::env::var_os("QUENCH_ENABLE_AARCH64_STENCILS").is_some()
+}
+
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
 // values must point at their eventual immutable store before that store exists.
@@ -1355,6 +1362,9 @@ pub(crate) struct NativeBinaryPlan {
 
 impl NativeBinaryPlan {
     fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        if !aarch64_stencils_enabled() {
+            return None;
+        }
         let opcode = instruction.opcode;
         opcode.numeric_operator()?;
         // The AddConst stencil has a fixed machine operand order (source in
@@ -1366,9 +1376,9 @@ impl NativeBinaryPlan {
             return None;
         }
         let key = crate::stencil_select::numeric_region_key(opcode)?;
-        // Build-generated rows are the sole executable admission fact.  On
-        // non-x86 targets the catalog intentionally marks numeric bytes as
-        // data-only, so do not even allocate a native plan there.
+        // Build-generated rows are the sole executable admission fact.  ARM64
+        // rows are real but opt-in until their measured call overhead is
+        // recovered; the ordinary baseline remains the default fallback.
         crate::stencil_select::select_region(key).filter(|record| record.executable)?;
         Some(Self {
             arena: None,
@@ -1463,6 +1473,9 @@ pub(crate) struct NativeMovePlan {
 
 impl NativeMovePlan {
     fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        if !aarch64_stencils_enabled() {
+            return None;
+        }
         if instruction.opcode != crate::ir::Opcode::Move || instruction.flags != 0 {
             return None;
         }
@@ -1546,6 +1559,9 @@ pub(crate) struct NativePropertyPlan {
 
 impl NativePropertyPlan {
     fn new(instruction: crate::ir::Instruction) -> Option<Self> {
+        if !aarch64_stencils_enabled() {
+            return None;
+        }
         let opcode = instruction.opcode;
         (opcode == crate::ir::Opcode::GetN).then_some(())?;
         let key = crate::stencil_select::property_region_key();
@@ -1691,7 +1707,7 @@ impl NativeDispatchPlan {
             let record = crate::stencil_select::select_region(key).ok_or_else(|| {
                 NativeDispatchError::Physical("native baseline stencil missing".into())
             })?;
-            let offset = arena
+            let address = arena
                 .render_or_get(&mut self.cache, key, &record.stencil, &values)
                 .map_err(|error| {
                     NativeDispatchError::Physical(format!(
@@ -1702,9 +1718,6 @@ impl NativeDispatchPlan {
                 NativeDispatchError::Physical(format!(
                     "native baseline protection failed: {error:?}"
                 ))
-            })?;
-            let address = arena.address(offset).ok_or_else(|| {
-                NativeDispatchError::Physical("native baseline entry address unavailable".into())
             })?;
             let mut dispatch =
                 crate::vm::NativeDispatchContext::new(code, pc, entry, registers, context);
@@ -2358,10 +2371,8 @@ impl FunctionCode {
         self.tier.borrow().optimizing.clone()
     }
 
-    /// The optimizing view is currently validated only for the x86-64
-    /// stencil ABI. Keep the plan available for inspection/tests on every
-    /// host, but admit it to execution only where its physical assumptions
-    /// are true; other targets retain complete baseline semantics.
+    /// The optimizing view is executable only on hosts with a tested stencil
+    /// ABI; other targets retain complete baseline semantics.
     pub(crate) fn executable_optimizing_plan(&self) -> Option<Rc<OptimizingPlan>> {
         cfg!(target_arch = "x86_64")
             .then(|| self.optimizing_plan())

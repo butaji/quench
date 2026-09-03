@@ -1,23 +1,196 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, process::Command};
 
 #[derive(Clone, Copy)]
 struct RegionDeclaration {
     name: &'static str,
     operations: &'static [&'static str],
     x86_bytes: &'static [u8],
+    aarch64_bytes: &'static [u8],
     portable_bytes: &'static [u8],
     holes: &'static [(u16, usize, &'static str)],
+    aarch64_holes: &'static [(u16, usize, &'static str)],
     entry: u32,
     external_entries: &'static [u32],
 }
+
+const fn le32(word: u32) -> [u8; 4] {
+    word.to_le_bytes()
+}
+
+const fn put32<const N: usize>(out: &mut [u8; N], offset: usize, word: u32) {
+    let bytes = le32(word);
+    out[offset] = bytes[0];
+    out[offset + 1] = bytes[1];
+    out[offset + 2] = bytes[2];
+    out[offset + 3] = bytes[3];
+}
+
+/// AArch64 scalar double FADD, ARM ARM C7.2.44:
+/// `0001 1110 011 Rm 0010 10 Rn Rd`.
+const fn aarch64_fadd_d(rd: u8, rn: u8, rm: u8) -> u32 {
+    0x1E60_2800 | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
+}
+
+/// AArch64 scalar double FSUB, ARM ARM C7.2.245.
+const fn aarch64_fsub_d(rd: u8, rn: u8, rm: u8) -> u32 {
+    0x1E60_3800 | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
+}
+
+/// AArch64 scalar double FMUL, ARM ARM C7.2.197.
+const fn aarch64_fmul_d(rd: u8, rn: u8, rm: u8) -> u32 {
+    0x1E60_0800 | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
+}
+
+/// AArch64 scalar double FDIV, ARM ARM C7.2.89.
+const fn aarch64_fdiv_d(rd: u8, rn: u8, rm: u8) -> u32 {
+    0x1E60_1800 | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
+}
+
+/// AArch64 RET, ARM ARM C6.2.172.
+const fn aarch64_ret() -> u32 {
+    0xD65F_03C0
+}
+
+/// AArch64 scalar double literal load, ARM ARM C6.2.167. The immediate is
+/// measured in bytes from the instruction's PC and must be 4-byte aligned.
+const fn aarch64_ldr_d_literal(rt: u8, byte_offset: i32) -> u32 {
+    0x5C00_0000 | ((((byte_offset >> 2) as u32) & 0x7_FFFF) << 5) | rt as u32
+}
+
+/// AArch64 LDR (unsigned immediate), ARM ARM C6.2.162.
+const fn aarch64_ldr_x0_x0() -> u32 {
+    0xF940_0000
+}
+
+/// AArch64 BR X16, ARM ARM C6.2.34.
+const fn aarch64_br_x16() -> u32 {
+    0xD61F_0200
+}
+
+/// AArch64 LDR X16, literal, ARM ARM C6.2.162. The signed immediate is in
+/// instruction words and occupies bits 23:5; this form loads the bridge
+/// pointer used by the optional dispatch fragment.
+const fn aarch64_ldr_x16_literal(byte_offset: i32) -> u32 {
+    0x5800_0000 | ((((byte_offset >> 2) as u32) & 0x7_FFFF) << 5) | 16
+}
+
+const fn aarch64_pair(first: u32, second: u32) -> [u8; 8] {
+    let mut out = [0; 8];
+    put32(&mut out, 0, first);
+    put32(&mut out, 4, second);
+    out
+}
+
+const fn aarch64_add_const_bytes() -> [u8; 20] {
+    let mut out = [0; 20];
+    put32(&mut out, 0, aarch64_ldr_d_literal(1, 12));
+    put32(&mut out, 4, aarch64_fadd_d(0, 0, 1));
+    put32(&mut out, 8, aarch64_ret());
+    out
+}
+
+const fn aarch64_dispatch_bytes() -> [u8; 16] {
+    let mut out = [0; 16];
+    // LDR X16, #8; BR X16; followed by the patchable bridge pointer.
+    put32(&mut out, 0, aarch64_ldr_x16_literal(8));
+    put32(&mut out, 4, aarch64_br_x16());
+    out
+}
+
+/// Intel SDM Vol. 2, MOVSD/ADDSD/SUBSD/MULSD/DIVSD legacy SSE2 encodings.
+const fn x86_sse2_binary(opcode: u8, rd: u8, rm: u8) -> [u8; 4] {
+    [0xF2, 0x0F, opcode, 0xC0 | ((rd & 7) << 3) | (rm & 7)]
+}
+
+/// Intel SDM Vol. 2, ModRM register-direct byte (`mod=00`, no displacement).
+const fn x86_modrm_reg_mem(reg: u8, rm: u8) -> u8 {
+    ((reg & 7) << 3) | (rm & 7)
+}
+
+/// Intel SDM Vol. 2, RET near encoding.
+const fn x86_ret() -> u8 {
+    0xC3
+}
+
+const fn x86_binary_ret(opcode: u8) -> [u8; 5] {
+    let binary = x86_sse2_binary(opcode, 0, 1);
+    [binary[0], binary[1], binary[2], binary[3], x86_ret()]
+}
+
+const fn x86_word_load_ret() -> [u8; 4] {
+    // Intel SDM Vol. 2, MOV r64,r/m64 with ModRM [rdi], followed by RET.
+    [0x48, 0x8B, x86_modrm_reg_mem(0, 7), x86_ret()]
+}
+
+/// Intel SDM Vol. 2, near JMP r/m64 through RAX after MOV RAX,imm64.
+const fn x86_dispatch_bytes() -> [u8; 12] {
+    [
+        0x48,
+        0xB8,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0xFF,
+        x86_modrm_reg_mem(4, 0),
+    ]
+}
+
+const fn x86_add_const_bytes() -> [u8; 21] {
+    let mut out = [0; 21];
+    // MOVSD XMM1,[RIP+5], ADDSD XMM0,XMM1, RET, then an eight-byte literal.
+    out[0] = 0xF2;
+    out[1] = 0x0F;
+    out[2] = 0x10;
+    out[3] = 0x0D;
+    out[4] = 5;
+    let add = x86_sse2_binary(0x58, 0, 1);
+    out[8] = add[0];
+    out[9] = add[1];
+    out[10] = add[2];
+    out[11] = add[3];
+    out[12] = x86_ret();
+    out
+}
+
+const X86_LOOP_BYTES: [u8; 5] = x86_binary_ret(0x58);
+const X86_PROPERTY_BYTES: [u8; 4] = x86_word_load_ret();
+const X86_MOVE_BYTES: [u8; 4] = x86_word_load_ret();
+const fn x86_fallthrough_bytes() -> [u8; 9] {
+    let add = x86_sse2_binary(0x58, 0, 1);
+    [add[0], add[1], add[2], add[3], 0xE9, 0, 0, 0, 0]
+}
+
+const X86_FALLTHROUGH_BYTES: [u8; 9] = x86_fallthrough_bytes();
+const X86_SUBTRACT_BYTES: [u8; 5] = x86_binary_ret(0x5C);
+const X86_MULTIPLY_BYTES: [u8; 5] = x86_binary_ret(0x59);
+const X86_DIVIDE_BYTES: [u8; 5] = x86_binary_ret(0x5E);
+const X86_ADD_CONST_BYTES: [u8; 21] = x86_add_const_bytes();
+const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
+
+const AARCH64_LOOP_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_ret());
+const AARCH64_PROPERTY_BYTES: [u8; 8] = aarch64_pair(aarch64_ldr_x0_x0(), aarch64_ret());
+const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
+const AARCH64_FALLTHROUGH_BYTES: [u8; 8] = AARCH64_LOOP_BYTES;
+const AARCH64_SUBTRACT_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_ret());
+const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_ret());
+const AARCH64_DIVIDE_BYTES: [u8; 8] = aarch64_pair(aarch64_fdiv_d(0, 0, 1), aarch64_ret());
+const AARCH64_ADD_CONST_BYTES: [u8; 20] = aarch64_add_const_bytes();
+const AARCH64_DISPATCH_BYTES: [u8; 16] = aarch64_dispatch_bytes();
 
 const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "loop",
         operations: &["Add", "Return"],
-        x86_bytes: &[0xF2, 0x0F, 0x58, 0xC1, 0xC3],
+        x86_bytes: &X86_LOOP_BYTES,
+        aarch64_bytes: &AARCH64_LOOP_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
@@ -27,9 +200,11 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // The property leaf only loads a word from a slot that the complete
         // shape/accessor validator has already proven.  Ownership is retained
         // by the Rust register writer after the leaf returns the raw word.
-        x86_bytes: &[0x48, 0x8B, 0x07, 0xC3],
+        x86_bytes: &X86_PROPERTY_BYTES,
+        aarch64_bytes: &AARCH64_PROPERTY_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
@@ -38,57 +213,70 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         operations: &["Move"],
         // A pure Move leaf copies one canonical tagged word.  RegisterFile
         // performs the retain/release edge after this raw load returns.
-        x86_bytes: &[0x48, 0x8B, 0x07, 0xC3],
+        x86_bytes: &X86_MOVE_BYTES,
+        aarch64_bytes: &AARCH64_MOVE_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
     RegionDeclaration {
         name: "fallthrough",
         operations: &["Add", "Return"],
-        x86_bytes: &[0xF2, 0x0F, 0x58, 0xC1, 0xE9, 0, 0, 0, 0],
+        x86_bytes: &X86_FALLTHROUGH_BYTES,
+        // AArch64 uses a direct branch only within the rendered region.  The
+        // ARM renderer falls back to the equivalent single-region return
+        // sequence when this x86 rel32 chaining shape is selected.
+        aarch64_bytes: &AARCH64_FALLTHROUGH_BYTES,
         portable_bytes: &[0xC3],
         holes: &[(5, 4, "Rel32")],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
     RegionDeclaration {
         name: "subtract",
         operations: &["Sub", "Return"],
-        x86_bytes: &[0xF2, 0x0F, 0x5C, 0xC1, 0xC3],
+        x86_bytes: &X86_SUBTRACT_BYTES,
+        aarch64_bytes: &AARCH64_SUBTRACT_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
     RegionDeclaration {
         name: "multiply",
         operations: &["Mul", "Return"],
-        x86_bytes: &[0xF2, 0x0F, 0x59, 0xC1, 0xC3],
+        x86_bytes: &X86_MULTIPLY_BYTES,
+        aarch64_bytes: &AARCH64_MULTIPLY_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
     RegionDeclaration {
         name: "divide",
         operations: &["Div", "Return"],
-        x86_bytes: &[0xF2, 0x0F, 0x5E, 0xC1, 0xC3],
+        x86_bytes: &X86_DIVIDE_BYTES,
+        aarch64_bytes: &AARCH64_DIVIDE_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
     RegionDeclaration {
         name: "add_const",
         operations: &["AddConst", "Return"],
-        x86_bytes: &[
-            0xF2, 0x0F, 0x10, 0x0D, 0x05, 0x00, 0x00, 0x00, 0xF2, 0x0F, 0x58, 0xC1, 0xC3, 0, 0, 0,
-            0, 0, 0, 0, 0,
-        ],
+        x86_bytes: &X86_ADD_CONST_BYTES,
+        // ldr d1, #12; fadd d0, d0, d1; ret; <literal f64>
+        aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
         portable_bytes: &[0xC3],
         holes: &[(13, 8, "Ptr64")],
+        aarch64_holes: &[(12, 8, "Ptr64")],
         entry: 0,
         external_entries: &[0],
     },
@@ -133,9 +321,13 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         ],
         // movabs rax, <bridge>; jmp rax. The context pointer remains the
         // platform ABI's first argument and is supplied for every invocation.
-        x86_bytes: &[0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xE0],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        // ldr x16, #8; br x16; <bridge pointer>.  x0, the first ABI
+        // argument, is left untouched for the canonical Rust bridge.
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
         holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
         entry: 0,
         external_entries: &[0],
     },
@@ -145,6 +337,9 @@ fn main() {
     generate_op_names();
     generate_stencil_catalog();
     validate_stencil_declarations();
+    if env::var_os("QUENCH_VERIFY_STENCIL_ENCODINGS").is_some() {
+        verify_stencil_encodings();
+    }
     println!("cargo:rustc-check-cfg=cfg(quench_production)");
     println!("cargo:rerun-if-env-changed=PROFILE");
     let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
@@ -164,6 +359,75 @@ fn main() {
     println!("cargo:rustc-env=QUENCH_BUILD_LTO={lto}");
 }
 
+/// One-time developer check for the const encoders. This is intentionally
+/// opt-in: ordinary builds remain pure Rust and do not require clang/as or
+/// objdump. Set `QUENCH_VERIFY_STENCIL_ENCODINGS=1` on a machine with the
+/// system tools to compare the generated words with real assembler output.
+fn verify_stencil_encodings() {
+    let root = env::temp_dir().join(format!("quench-stencil-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create stencil verification directory");
+    let arm_source = root.join("arm.s");
+    let arm_object = root.join("arm.o");
+    fs::write(
+        &arm_source,
+        ".text\n.globl _verify\n_verify:\n  fadd d0, d0, d1\n  fsub d0, d0, d1\n  fmul d0, d0, d1\n  fdiv d0, d0, d1\n  ldr d1, 12f\n  ldr x0, [x0]\n  br x16\n  ret\n12:\n  .quad 0\n",
+    )
+    .expect("write ARM stencil verification source");
+    run_tool(
+        Command::new("clang").args([
+            "--target=aarch64-apple-darwin",
+            "-c",
+            "-x",
+            "assembler",
+            arm_source.to_str().expect("ARM source path"),
+            "-o",
+            arm_object.to_str().expect("ARM object path"),
+        ]),
+        "assemble AArch64 stencil verification source",
+    );
+    let arm_dump = run_tool_output(
+        Command::new("objdump").args(["-d", arm_object.to_str().expect("ARM object path")]),
+        "disassemble AArch64 stencil verification object",
+    );
+    for word in [
+        aarch64_fadd_d(0, 0, 1),
+        aarch64_fsub_d(0, 0, 1),
+        aarch64_fmul_d(0, 0, 1),
+        aarch64_fdiv_d(0, 0, 1),
+        aarch64_ldr_d_literal(1, 12),
+        aarch64_ldr_x0_x0(),
+        aarch64_br_x16(),
+        aarch64_ret(),
+    ] {
+        assert!(
+            arm_dump.contains(&format!("{word:08x}")),
+            "AArch64 encoder word {word:08x} missing from objdump output:\n{arm_dump}"
+        );
+    }
+    fs::remove_file(&arm_source).ok();
+    fs::remove_file(&arm_object).ok();
+    fs::remove_dir(&root).ok();
+}
+
+fn run_tool(command: &mut Command, description: &str) {
+    let status = command
+        .status()
+        .unwrap_or_else(|error| panic!("{description} failed to start: {error}"));
+    assert!(status.success(), "{description} exited with {status}");
+}
+
+fn run_tool_output(command: &mut Command, description: &str) -> String {
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("{description} failed to start: {error}"));
+    assert!(
+        output.status.success(),
+        "{description} exited with {}",
+        output.status
+    );
+    String::from_utf8(output.stdout).expect("objdump output is UTF-8")
+}
+
 fn generate_stencil_catalog() {
     // The catalog is intentionally small and declarative here; these checks
     // make an invalid closed-hole relocation fail the build, rather than
@@ -174,11 +438,19 @@ fn generate_stencil_catalog() {
         let byte_len = declaration
             .x86_bytes
             .len()
+            .max(declaration.aarch64_bytes.len())
             .max(declaration.portable_bytes.len());
         for (offset, width, _) in declaration.holes {
             assert!(
                 usize::from(*offset) + *width <= byte_len,
                 "stencil {} has an out-of-range hole",
+                declaration.name
+            );
+        }
+        for (offset, width, _) in declaration.aarch64_holes {
+            assert!(
+                usize::from(*offset) + *width <= declaration.aarch64_bytes.len(),
+                "stencil {} has an out-of-range AArch64 hole",
                 declaration.name
             );
         }
@@ -190,9 +462,8 @@ fn generate_stencil_catalog() {
     }
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let generated = r#"
-// x86-64 SysV: `addsd xmm0,xmm1; ret`.  This is the build-time stencil for the
-// proven-number Add+Return region.  Non-x86 targets receive a return-only
-// fragment and must use the ordinary fallback entry.
+// The generated rows carry real x86-64 and AArch64 encodings. Unsupported
+// targets receive a return-only fragment and must use the ordinary fallback.
 __LOOP_BYTES__
 // Property access is admitted only after the Rust shape/accessor validator;
 // the leaf loads a tagged slot word and returns ownership to the Rust writer.
@@ -210,7 +481,11 @@ const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
 // The catalog remains present on every target for deterministic admission,
 // but only the ISA whose bytes are actually defined may cross the executable
 // boundary. Unsupported targets must take the complete Rust fallback.
-const X86_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
+const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
+// The generic all-opcode bridge is not one of the eight specialized leaves in
+// this task. Keep its x86 implementation available, but leave ARM on the
+// direct Rust baseline path until a separately audited ARM bridge exists.
+const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
 __LOOP_HOLES__
 __PROPERTY_HOLES__
 __MOVE_HOLES__
@@ -275,7 +550,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: LOOP_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: MOVE_KEY,
@@ -283,7 +558,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: MOVE_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: PROPERTY_KEY,
@@ -291,7 +566,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: PROPERTY_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: FALLTHROUGH_KEY,
@@ -299,7 +574,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: FALLTHROUGH_OPS,
         entry: 0,
         fallthrough: Some((&FALLTHROUGH_TAIL, 5)),
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: SUBTRACT_KEY,
@@ -307,7 +582,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: SUBTRACT_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: MULTIPLY_KEY,
@@ -315,7 +590,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: MULTIPLY_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: DIVIDE_KEY,
@@ -323,7 +598,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: DIVIDE_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: ADD_CONST_KEY,
@@ -331,7 +606,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: ADD_CONST_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
         key: DISPATCH_KEY,
@@ -339,7 +614,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         operations: DISPATCH_OPS,
         entry: 0,
         fallthrough: None,
-        executable: X86_EXECUTABLE,
+        executable: DISPATCH_EXECUTABLE,
     }),
 ];
 "#
@@ -409,8 +684,18 @@ fn hole_decl(name: &str, declaration: &RegionDeclaration) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let arm_holes = declaration
+        .aarch64_holes
+        .iter()
+        .map(|(offset, _, kind)| {
+            format!(
+                "crate::stencil_fact::Hole {{ offset: {offset}, kind: crate::stencil_fact::HoleKind::{kind} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "#[cfg(target_arch = \"x86_64\")]\nconst {name}_HOLES: &[crate::stencil_fact::Hole] = &[{holes}];\n#[cfg(not(target_arch = \"x86_64\"))]\nconst {name}_HOLES: &[crate::stencil_fact::Hole] = &[];"
+        "#[cfg(target_arch = \"x86_64\")]\nconst {name}_HOLES: &[crate::stencil_fact::Hole] = &[{holes}];\n#[cfg(target_arch = \"aarch64\")]\nconst {name}_HOLES: &[crate::stencil_fact::Hole] = &[{arm_holes}];\n#[cfg(not(any(target_arch = \"x86_64\", target_arch = \"aarch64\")))]\nconst {name}_HOLES: &[crate::stencil_fact::Hole] = &[];"
     )
 }
 
@@ -423,8 +708,9 @@ fn byte_decl(name: &str, declaration: &RegionDeclaration) -> String {
             .join(", ")
     }
     format!(
-        "#[cfg(target_arch = \"x86_64\")]\nconst {name}_BYTES: &[u8] = &[{}];\n#[cfg(not(target_arch = \"x86_64\"))]\nconst {name}_BYTES: &[u8] = &[{}];",
+        "#[cfg(target_arch = \"x86_64\")]\nconst {name}_BYTES: &[u8] = &[{}];\n#[cfg(target_arch = \"aarch64\")]\nconst {name}_BYTES: &[u8] = &[{}];\n#[cfg(not(any(target_arch = \"x86_64\", target_arch = \"aarch64\")))]\nconst {name}_BYTES: &[u8] = &[{}];",
         bytes_expr(declaration.x86_bytes),
+        bytes_expr(declaration.aarch64_bytes),
         bytes_expr(declaration.portable_bytes),
     )
 }

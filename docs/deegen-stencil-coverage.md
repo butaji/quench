@@ -57,3 +57,8 @@ coverage, while calls and writes remain on the complete fallback.  No new
 specialized leaf was added without a corresponding semantic proof and a
 profile signal; the quickened variants are covered mechanically by the same
 dispatch row.
+
+On ARM64, task 039 now executes the same eight specialized leaves through
+const-fn-generated AArch64 bytes. The generic all-opcode `DISPATCH` row remains
+data-only on ARM until it receives its own ABI audit; every other catalog entry
+retains the ordinary interpreter/baseline fallback.

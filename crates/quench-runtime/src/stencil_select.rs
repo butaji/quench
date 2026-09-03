@@ -337,7 +337,7 @@ mod tests {
         assert_eq!(numeric_region_key(crate::ir::Opcode::GetProperty), None);
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn numeric_rows_never_admit_x86_bytes_on_other_isas() {
         for opcode in [
@@ -356,10 +356,19 @@ mod tests {
     fn property_row_is_catalog_admitted() {
         let key = RegionKey::from_opcodes(RegionId(2), &[crate::ir::Opcode::GetN]);
         let record = select_region(key).expect("property admission row");
-        assert_eq!(record.executable, cfg!(target_arch = "x86_64"));
+        assert_eq!(
+            record.executable,
+            cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
+        );
         assert_eq!(
             record.stencil.bytes.len(),
-            if cfg!(target_arch = "x86_64") { 4 } else { 1 }
+            if cfg!(target_arch = "x86_64") {
+                4
+            } else if cfg!(target_arch = "aarch64") {
+                8
+            } else {
+                1
+            }
         );
         assert!(record.stencil.holes.is_empty());
     }
@@ -368,10 +377,19 @@ mod tests {
     fn move_row_is_catalog_admitted() {
         let key = RegionKey::from_opcodes(RegionId(8), &[crate::ir::Opcode::Move]);
         let record = select_region(key).expect("move admission row");
-        assert_eq!(record.executable, cfg!(target_arch = "x86_64"));
+        assert_eq!(
+            record.executable,
+            cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
+        );
         assert_eq!(
             record.stencil.bytes.len(),
-            if cfg!(target_arch = "x86_64") { 4 } else { 1 }
+            if cfg!(target_arch = "x86_64") {
+                4
+            } else if cfg!(target_arch = "aarch64") {
+                8
+            } else {
+                1
+            }
         );
         assert!(record.stencil.holes.is_empty());
     }
@@ -390,7 +408,11 @@ mod tests {
         assert_eq!(record.executable, cfg!(target_arch = "x86_64"));
         assert_eq!(
             record.stencil.holes.len(),
-            if cfg!(target_arch = "x86_64") { 1 } else { 0 }
+            if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
+                1
+            } else {
+                0
+            }
         );
     }
 
