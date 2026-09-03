@@ -859,9 +859,12 @@ fn maybe_osr_switch(
     let Some(owner) = tier_owner else {
         return Ok(None);
     };
-    if owner.retire_at(pc) != crate::machine::TierTransition::CompileBaseline {
+    if owner.retire_at(pc) != crate::machine::TierTransition::CompileBaseline
+        || !owner.is_osr_entry(pc)
+    {
         return Ok(None);
     }
+    owner.record_osr_transfer();
     let plan = owner
         .baseline_plan()
         .ok_or_else(|| VmError::EvalError("baseline tier compiled without a plan".into()))?;

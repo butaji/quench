@@ -1309,6 +1309,11 @@ pub struct TierProfile {
     pub baseline_instructions: usize,
     pub optimizing_instructions: usize,
     pub osr_entries: usize,
+    /// Number of interpreter back-edges that transferred the live frame into
+    /// an already compiled baseline plan.  This is bounded per function and
+    /// makes OSR admission observable in profiling/tests without adding a
+    /// second execution representation.
+    pub osr_transfers: u64,
 }
 
 /// Optional machine-code leaf for generated Number binary-operation stencils.
@@ -1941,6 +1946,7 @@ fn is_osr_candidate(pc: usize, instruction: crate::ir::Instruction) -> bool {
 struct TierState {
     invocations: u32,
     retired: u64,
+    osr_transfers: u64,
     threshold: u32,
     tier: ExecutionTier,
     plan: Option<Rc<BaselinePlan>>,
@@ -1952,6 +1958,7 @@ impl TierState {
         Self {
             invocations: 0,
             retired: 0,
+            osr_transfers: 0,
             threshold: 32,
             tier: ExecutionTier::Interpreter,
             plan: None,
@@ -2304,6 +2311,7 @@ impl FunctionCode {
             baseline_instructions: state.plan.as_ref().map_or(0, |plan| plan.len()),
             optimizing_instructions: state.optimizing.as_ref().map_or(0, |plan| plan.len()),
             osr_entries: state.plan.as_ref().map_or(0, |plan| plan.osr_entries.len()),
+            osr_transfers: state.osr_transfers,
         }
     }
 
@@ -2366,6 +2374,11 @@ impl FunctionCode {
     pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
         self.baseline_plan()
             .is_some_and(|plan| plan.is_osr_entry(pc))
+    }
+
+    pub(crate) fn record_osr_transfer(&self) {
+        let mut state = self.tier.borrow_mut();
+        state.osr_transfers = state.osr_transfers.saturating_add(1);
     }
 
     #[cfg(test)]
