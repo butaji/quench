@@ -40,6 +40,11 @@ pub fn build() -> Vec<(String, Value)> {
 
 pub fn build_value() -> Value {
     let mut module = quench_runtime::host_api::object(build());
+    if let Ok(create_task) = eval_function(
+        r#"(name) => ({ name: String(name || ""), run: (callback, ...args) => callback(...args) })"#,
+    ) {
+        module = quench_runtime::execute::set_property(module, "createTask", create_task);
+    }
     if let Ok(console) = eval_function(CONSOLE_CLASS) {
         if let Ok(prototype) = quench_runtime::execute::get_property_result(&console, "prototype") {
             let _ = quench_runtime::execute::set_prototype_of(&module, &prototype);
@@ -67,6 +72,19 @@ pub fn build_value() -> Value {
                 if let Ok(method) = quench_runtime::execute::get_property_result(&prototype, name) {
                     module = quench_runtime::execute::set_property(module, name, method);
                 }
+            }
+            for (name, spec) in [
+                ("log", crate::registry::SPEC_CONSOLE_LOG),
+                ("info", crate::registry::SPEC_CONSOLE_INFO),
+                ("debug", crate::registry::SPEC_CONSOLE_DEBUG),
+                ("warn", crate::registry::SPEC_CONSOLE_WARN),
+                ("error", crate::registry::SPEC_CONSOLE_ERROR),
+            ] {
+                module = quench_runtime::execute::set_property(
+                    module,
+                    name,
+                    crate::host::capability(spec),
+                );
             }
         }
         module = quench_runtime::execute::set_property(module, "Console", console);
@@ -136,11 +154,46 @@ pub fn log(
     args: &[Value],
     is_error: bool,
 ) -> Result<Value, quench_runtime::execute::VmError> {
+    log_named(
+        state,
+        args,
+        is_error,
+        if is_error {
+            "console.error"
+        } else {
+            "console.log"
+        },
+    )
+}
+
+pub fn log_named(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+    is_error: bool,
+    channel_name: &str,
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let channel = crate::modules::diagnostics_channel::channel(
+        state,
+        None,
+        &[Value::String(channel_name.into())],
+    )?;
+    let message = quench_runtime::host_api::array(args.to_vec());
+    crate::modules::diagnostics_channel::publish(state, Some(&channel), &[message])?;
     let line = format_args(args);
-    let state = state.borrow();
-    if is_error {
+    let process = state
+        .borrow()
+        .process_module
+        .clone()
+        .unwrap_or_else(|| quench_runtime::vm::current_global_object());
+    let stream_name = if is_error { "stderr" } else { "stdout" };
+    let stream = quench_runtime::execute::get_property(&process, stream_name);
+    let write = quench_runtime::execute::get_property(&stream, "write");
+    if quench_runtime::is_callable(&write) {
+        let _ =
+            quench_runtime::execute::call(&write, &stream, &[Value::String(format!("{line}\n"))]);
+    } else if is_error {
         eprintln!("{line}");
-    } else if let Some(sink) = &state.output {
+    } else if let Some(sink) = &state.borrow().output {
         sink(&line);
     }
     Ok(Value::Undefined)
