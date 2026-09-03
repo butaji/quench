@@ -46,6 +46,96 @@ impl NodeSpec {
 
 /// All Node host capabilities. Stable ids; do not reorder.
 node_api! {
+    (SPEC_NPM_AJV_CONSTRUCTOR, CAP_NPM_AJV_CONSTRUCTOR, "npm:ajv", 0x2A00),
+    (SPEC_NPM_AJV_COMPILE, CAP_NPM_AJV_COMPILE, "npm:ajv:compile", 0x2A01),
+    (SPEC_NPM_AJV_VALIDATE, CAP_NPM_AJV_VALIDATE, "npm:ajv:validate", 0x2A02),
+    (SPEC_NPM_CHALK_STYLE, CAP_NPM_CHALK_STYLE, "npm:chalk:style", 0x2A03),
+    (SPEC_NPM_PRETTIER_FORMAT, CAP_NPM_PRETTIER_FORMAT, "npm:prettier:format", 0x2A04),
+}
+node_api! {
+    (SPEC_V8_SERIALIZER, "v8:Serializer", 2420),
+    (SPEC_V8_DESERIALIZER, "v8:Deserializer", 2421),
+    (SPEC_V8_SERIALIZER_WRITE, "v8:Serializer.writeValue", 2422),
+    (SPEC_V8_SERIALIZER_RELEASE, "v8:Serializer.releaseBuffer", 2423),
+    (SPEC_V8_DESERIALIZER_READ, "v8:Deserializer.readValue", 2424),
+    (SPEC_V8_SERIALIZE, "v8:serialize", 2425),
+    (SPEC_V8_DESERIALIZE, "v8:deserialize", 2426),
+    (SPEC_V8_CACHED_TAG, "v8:cachedDataVersionTag", 2427),
+    (SPEC_V8_SET_FLAGS, "v8:setFlagsFromString", 2428),
+    (SPEC_V8_HEAP_STATS, "v8:getHeapStatistics", 2429),
+    (SPEC_V8_HEAP_SPACES, "v8:getHeapSpaceStatistics", 2430),
+    (SPEC_V8_HEAP_CODE, "v8:getHeapCodeStatistics", 2431),
+    (SPEC_V8_HEAP_SNAPSHOT, "v8:getHeapSnapshot", 2432),
+    (SPEC_V8_SNAPSHOT_ON, "v8:HeapSnapshot.on", 2433),
+    (SPEC_V8_SNAPSHOT_READ, "v8:HeapSnapshot.read", 2434),
+    (SPEC_V8_VERSION, "v8:getVersion", 2435),
+    (SPEC_V8_PROMISE_HOOK, "v8:promiseHooks.createHook", 2436),
+    (SPEC_V8_HOOK_ENABLE, "v8:promiseHook.enable", 2437),
+    (SPEC_V8_HOOK_DISABLE, "v8:promiseHook.disable", 2438),
+    (SPEC_V8_SERIALIZER_HEADER, "v8:Serializer.writeHeader", 2440),
+    (SPEC_V8_DESERIALIZER_HEADER, "v8:Deserializer.readHeader", 2441),
+    (SPEC_V8_SERIALIZER_UINT32, "v8:Serializer.writeUint32", 2442),
+    (SPEC_V8_SERIALIZER_RAW, "v8:Serializer.writeRawBytes", 2443),
+    (SPEC_V8_SERIALIZER_UINT64, "v8:Serializer.writeUint64", 2444),
+    (SPEC_V8_SERIALIZER_DOUBLE, "v8:Serializer.writeDouble", 2445),
+    (SPEC_V8_DESERIALIZER_UINT32, "v8:Deserializer.readUint32", 2446),
+    (SPEC_V8_DESERIALIZER_RAW, "v8:Deserializer.readRawBytes", 2447),
+    (SPEC_V8_DESERIALIZER_UINT64, "v8:Deserializer.readUint64", 2448),
+    (SPEC_V8_DESERIALIZER_DOUBLE, "v8:Deserializer.readDouble", 2449),
+    (SPEC_STREAM_CONSUMER_BUFFER, "stream/consumers.buffer", 2450),
+    (SPEC_STREAM_CONSUMER_ARRAY_BUFFER, "stream/consumers.arrayBuffer", 2451),
+    (SPEC_STREAM_CONSUMER_TEXT, "stream/consumers.text", 2452),
+    (SPEC_STREAM_CONSUMER_JSON, "stream/consumers.json", 2453),
+    (SPEC_STREAM_CONSUMER_BYTES, "stream/consumers.bytes", 2454),
+    (SPEC_STREAM_CONSUMER_BLOB, "stream/consumers.blob", 2455),
+    (SPEC_STREAM_CONSUMER_READER_STEP, "stream/consumers.readerStep", 2456),
+    (SPEC_STREAM_CONSUMER_READER_REJECT, "stream/consumers.readerReject", 2457),
+    (SPEC_STREAM_CONSUMER_EVENT_DATA, "stream/consumers.eventData", 2458),
+    (SPEC_STREAM_CONSUMER_EVENT_END, "stream/consumers.eventEnd", 2459),
+    (SPEC_STREAM_CONSUMER_EVENT_ERROR, "stream/consumers.eventError", 2460),
+    (SPEC_STREAM_CONSUMER_BLOB_ARRAY_BUFFER, "stream/consumers.Blob.arrayBuffer", 2461),
+    (SPEC_TIMERS_PROMISE_TIMEOUT, "timers/promises.setTimeout", 2462),
+    (SPEC_TIMERS_PROMISE_IMMEDIATE, "timers/promises.setImmediate", 2463),
+    (SPEC_TIMERS_PROMISE_INTERVAL, "timers/promises.setInterval", 2464),
+    (SPEC_TIMERS_PROMISE_FINISH, "timers/promises.finish", 2465),
+    (SPEC_TIMERS_PROMISE_ABORT, "timers/promises.abort", 2466),
+    (SPEC_TIMERS_PROMISE_INTERVAL_TICK, "timers/promises.intervalTick", 2467),
+    (SPEC_TIMERS_PROMISE_INTERVAL_NEXT, "timers/promises.intervalNext", 2468),
+    (SPEC_TIMERS_PROMISE_INTERVAL_RETURN, "timers/promises.intervalReturn", 2469),
+    (SPEC_TIMERS_PROMISE_INTERVAL_ASYNC_ITERATOR, "timers/promises.intervalAsyncIterator", 2470),
+    (SPEC_TIMERS_PROMISE_SCHEDULER_WAIT, "timers/promises.scheduler.wait", 2471),
+    (SPEC_TIMERS_PROMISE_SCHEDULER_YIELD, "timers/promises.scheduler.yield", 2472),
+    (SPEC_TIMERS_PROMISE_SCHEDULER_CONSTRUCTOR, "timers/promises.Scheduler", 2473),
+    (SPEC_TIMERS_PROMISE_INTERVAL_ABORT, "timers/promises.intervalAbort", 2474),
+    (SPEC_WORKER_START, "worker_threads:Worker.start", 2475),
+    (SPEC_WORKER_MESSAGE, "worker_threads:parentPort.postMessage", 2476),
+    (SPEC_WORKER_CLOSE, "worker_threads:Worker.close", 2477),
+    (SPEC_WORKER_CONSTRUCT, "worker_threads:Worker", 2478),
+    (SPEC_MESSAGE_PORT_CONSTRUCT, "worker_threads:MessagePort", 2479),
+    (SPEC_MESSAGE_PORT_CALL, "worker_threads:MessagePort.call", 2480),
+    (SPEC_WORKER_RECEIVE_MESSAGE, "worker_threads:receiveMessageOnPort", 2481),
+    (SPEC_WORKER_SET_ENVIRONMENT, "worker_threads:setEnvironmentData", 2482),
+    (SPEC_WORKER_GET_ENVIRONMENT, "worker_threads:getEnvironmentData", 2483),
+    (SPEC_WORKER_NOOP, "worker_threads:noop", 2484),
+    (SPEC_WORKER_REF, "worker_threads:Worker.ref", 2485),
+    (SPEC_WORKER_UNREF, "worker_threads:Worker.unref", 2486),
+    (SPEC_WORKER_HAS_REF, "worker_threads:Worker.hasRef", 2487),
+    (SPEC_WORKER_TERMINATE, "worker_threads:Worker.terminate", 2488),
+    (SPEC_WORKER_COMPLETE, "worker_threads:Worker.complete", 2489),
+    (SPEC_WORKER_BOOT_MESSAGE, "worker_threads:bootMessage", 2490),
+    (SPEC_STREAM_IS_READABLE, "stream:isReadable", 2491),
+    (SPEC_STREAM_IS_WRITABLE, "stream:isWritable", 2492),
+    (SPEC_STREAM_IS_ERRORED, "stream:isErrored", 2493),
+    (SPEC_STREAM_IS_DISTURBED, "stream:isDisturbed", 2494),
+    (SPEC_STREAM_DESTROY, "stream:destroy", 2495),
+    (SPEC_STREAM_ADD_ABORT_SIGNAL, "stream:addAbortSignal", 2496),
+    (SPEC_STREAM_COMPOSE, "stream:compose", 2497),
+    (SPEC_STREAM_DUPLEX_PAIR_WRITE, "stream:duplexPair:write", 2498),
+    (SPEC_STREAM_DUPLEX_PAIR_UNCORK, "stream:duplexPair:uncork", 2499),
+    (SPEC_STREAM_DUPLEX_PAIR_FINAL, "stream:duplexPair:final", 2500),
+    (SPEC_STREAM_DUPLEX_PAIR, "stream:duplexPair", 2501),
+    (SPEC_STREAM_WEB_PIPELINE_COMPLETE, "stream:webPipeline:complete", 2502),
+    (SPEC_STREAM_WEB_PIPELINE_ERROR, "stream:webPipeline:error", 2503),
     (SPEC_TEST, "test:test", 0x1b00),
     (SPEC_TEST_SKIP, "test:skip", 0x1b01),
     (SPEC_TEST_MOCK_FN, "test:mock:fn", 0x1b02),
@@ -80,6 +170,19 @@ node_api! {
     (SPEC_TEST_CONTEXT_TODO, "test:context:todo", 0x1b1F),
     (SPEC_TEST_RUN_EMIT, "test:run:emit", 0x1b20),
     (SPEC_TEST_GET_CONTEXT, "test:getTestContext", 0x1b21),
+    (SPEC_TEST_ASSERT_CALL, "test:assert:call", 0x1b23),
+    (SPEC_TEST_ASSERT_REGISTER, "test:assert:register", 0x1b24),
+    (SPEC_TEST_CONTEXT_PLAN, "test:context:plan", 0x1b25),
+    (SPEC_TEST_SHORTHAND, "test:shorthand", 0x1b26),
+    (SPEC_TEST_CONTEXT_WAIT_FOR, "test:context:waitFor", 0x1b27),
+    (SPEC_TEST_CONTEXT_DIAGNOSTIC, "test:context:diagnostic", 0x1b28),
+    (SPEC_TEST_BEFORE, "test:before", 0x1b29),
+    (SPEC_TEST_AFTER, "test:after", 0x1b2A),
+    (SPEC_TEST_CONVERT_STRING_TO_REGEXP, "test:convertStringToRegExp", 0x1b2B),
+    (SPEC_TEST_CREATE_SEEDED_GENERATOR, "test:createSeededGenerator", 0x1b2C),
+    (SPEC_TEST_SEEDED_GENERATOR_NEXT, "test:seededGeneratorNext", 0x1b2D),
+    (SPEC_TEST_MOCK_MODULE_RESTORE, "test:mock:module:restore", 0x1b2E),
+    (SPEC_TEST_MOCK_TIMERS_RUN_ALL, "test:mock:timers:runAll", 0x1b2F),
 }
 
 node_api! {
@@ -91,6 +194,19 @@ node_api! {
     (SPEC_VM_SOURCE_TEXT_MODULE, "vm:SourceTextModule", 0x0F11),
     (SPEC_VM_MODULE_LINK, "vm:SourceTextModule:link", 0x0F13),
     (SPEC_VM_MODULE_EVALUATE, "vm:SourceTextModule:evaluate", 0x0F14),
+    (SPEC_VM_MODULE_INSPECT, "vm:SourceTextModule:inspect", 0x7FF0),
+    (SPEC_VM_SYNTHETIC_MODULE, "vm:SyntheticModule", 0x7FF1),
+    (SPEC_VM_SYNTHETIC_SET_EXPORT, "vm:SyntheticModule:setExport", 0x7FF2),
+    (SPEC_VM_SYNTHETIC_EVALUATE, "vm:SyntheticModule:evaluate", 0x7FF3),
+    (SPEC_VM_SYNTHETIC_LINK, "vm:SyntheticModule:link", 0x7FF4),
+    (SPEC_VM_MODULE, "vm:Module", 0x7FF5),
+    (SPEC_VM_COMPILE_FUNCTION, "vm:compileFunction", 0x7FF6),
+    (SPEC_VM_COMPILED_FUNCTION, "vm:compiledFunction", 0x7FF7),
+    (SPEC_VM_MODULE_LINK_REQUESTS, "vm:SourceTextModule:linkRequests", 0x7FF8),
+    (SPEC_VM_MODULE_INSTANTIATE, "vm:SourceTextModule:instantiate", 0x7FF9),
+    (SPEC_VM_MODULE_CACHED_DATA, "vm:SourceTextModule:createCachedData", 0x7FFA),
+    (SPEC_VM_MODULE_HAS_ASYNC_GRAPH, "vm:SourceTextModule:hasAsyncGraph", 0x7FFB),
+    (SPEC_VM_MODULE_HAS_TOP_LEVEL_AWAIT, "vm:SourceTextModule:hasTopLevelAwait", 0x7FFC),
     (SPEC_TEXT_DECODER_NEW, "TextDecoder:new", 0x0809),
     (SPEC_TEXT_DECODER_DECODE, "TextDecoder:decode", 0x080A),
     (SPEC_TEXT_ENCODER_NEW, "TextEncoder:new", 0x084C),
@@ -278,6 +394,7 @@ node_api! {
 }
 
 node_api! {
+    (SPEC_INTERNAL_URL_IS_URL, CAP_INTERNAL_URL_IS_URL, "internal:url:isURL", 2280),
     (SPEC_URL_PARSE, CAP_URL_PARSE, "url:parse", 0x0500),
     (SPEC_URL_FORMAT, CAP_URL_FORMAT, "url:format", 0x0501),
     (SPEC_URL_RESOLVE, CAP_URL_RESOLVE, "url:resolve", 0x0502),
@@ -298,6 +415,7 @@ node_api! {
 
 node_api! {
     (SPEC_TIMERS_SETTIMEOUT, CAP_TIMERS_SETTIMEOUT, "timers:setTimeout", 0x0700),
+    (SPEC_INTERNAL_TIMERS_SET_UNREF_TIMEOUT, CAP_INTERNAL_TIMERS_SET_UNREF_TIMEOUT, "internal/timers:setUnrefTimeout", 0x0722),
     (SPEC_TIMERS_CLEARTIMEOUT, CAP_TIMERS_CLEARTIMEOUT, "timers:clearTimeout", 0x0701),
     (SPEC_TIMERS_SETINTERVAL, CAP_TIMERS_SETINTERVAL, "timers:setInterval", 0x0702),
     (SPEC_TIMERS_CLEARINTERVAL, CAP_TIMERS_CLEARINTERVAL, "timers:clearInterval", 0x0703),
@@ -310,6 +428,39 @@ node_api! {
     (SPEC_TIMERS_REFRESH, CAP_TIMERS_REFRESH, "timers:refresh", 0x070B),
 }
 node_api! {
+    (SPEC_INTERNAL_FS_VALIDATE_OFFSET_LENGTH_READ, CAP_INTERNAL_FS_VALIDATE_OFFSET_LENGTH_READ, "internal/fs/utils:validateOffsetLengthRead", 0x1180),
+    (SPEC_INTERNAL_FS_VALIDATE_OFFSET_LENGTH_WRITE, CAP_INTERNAL_FS_VALIDATE_OFFSET_LENGTH_WRITE, "internal/fs/utils:validateOffsetLengthWrite", 0x1181),
+    (SPEC_INTERNAL_BINDING_UTIL_IS_INSIDE_NODE_MODULES, CAP_INTERNAL_BINDING_UTIL_IS_INSIDE_NODE_MODULES, "internalBinding(util):isInsideNodeModules", 0x1182),
+    (SPEC_INTERNAL_FS_GET_DIRENTS, CAP_INTERNAL_FS_GET_DIRENTS, "internal/fs/utils:getDirents", 0x1183),
+    (SPEC_INTERNAL_FS_GET_DIRENT, CAP_INTERNAL_FS_GET_DIRENT, "internal/fs/utils:getDirent", 0x1184),
+    (SPEC_INTERNAL_ENCODING_GET_LABEL, CAP_INTERNAL_ENCODING_GET_LABEL, "internal/encoding:getEncodingFromLabel", 0x119A),
+    (SPEC_INTERNAL_ASYNC_CONTEXT_FRAME_CURRENT, CAP_INTERNAL_ASYNC_CONTEXT_FRAME_CURRENT, "internal/async_context_frame:current", 0x119E),
+    (SPEC_INTERNAL_ASYNC_HOOKS_ENABLED_HOOKS_EXIST, CAP_INTERNAL_ASYNC_HOOKS_ENABLED_HOOKS_EXIST, "internal/async_hooks:enabledHooksExist", 0x119F),
+    (SPEC_STREAM_ITER_TEXT, CAP_STREAM_ITER_TEXT, "stream/iter:text", 0x1185),
+    (SPEC_STREAM_ITER_BYTES, CAP_STREAM_ITER_BYTES, "stream/iter:bytes", 0x1186),
+    (SPEC_ZLIB_ITER_COMPRESS, CAP_ZLIB_ITER_COMPRESS, "zlib/iter:compressGzipSync", 0x1187),
+    (SPEC_ZLIB_ITER_DECOMPRESS, CAP_ZLIB_ITER_DECOMPRESS, "zlib/iter:decompressGzipSync", 0x1188),
+    (SPEC_INTERNAL_VALIDATORS_VALIDATE_INTEGER, CAP_INTERNAL_VALIDATORS_VALIDATE_INTEGER, "internal/validators:validateInteger", 0x1189),
+    (SPEC_INTERNAL_ERRORS_E, CAP_INTERNAL_ERRORS_E, "internal/errors:E", 0x118A),
+    (SPEC_INTERNAL_ERRORS_HIDE_STACK_FRAMES, CAP_INTERNAL_ERRORS_HIDE_STACK_FRAMES, "internal/errors:hideStackFrames", 0x118B),
+    (SPEC_INTERNAL_ERRORS_CONSTRUCTOR, CAP_INTERNAL_ERRORS_CONSTRUCTOR, "internal/errors:constructor", 0x118C),
+    (SPEC_INTERNAL_ERRORS_INFO_GET, CAP_INTERNAL_ERRORS_INFO_GET, "internal/errors:info:get", 0x118D),
+    (SPEC_INTERNAL_ERRORS_INFO_SET, CAP_INTERNAL_ERRORS_INFO_SET, "internal/errors:info:set", 0x118E),
+    (SPEC_INTERNAL_ERRORS_NODE_FLAG_GET, CAP_INTERNAL_ERRORS_NODE_FLAG_GET, "internal/errors:kIsNodeError:get", 0x118F),
+    (SPEC_INTERNAL_ERRORS_NODE_FLAG_SET, CAP_INTERNAL_ERRORS_NODE_FLAG_SET, "internal/errors:kIsNodeError:set", 0x1190),
+    (SPEC_INTERNAL_ERRORS_INFO_GET_VALUE, CAP_INTERNAL_ERRORS_INFO_GET_VALUE, "internal/errors:info:get-value", 0x1191),
+    (SPEC_INTERNAL_ERRORS_INFO_SET_VALUE, CAP_INTERNAL_ERRORS_INFO_SET_VALUE, "internal/errors:info:set-value", 0x1192),
+    (SPEC_FS_CP, CAP_FS_CP, "fs:cp", 0x1193),
+    (SPEC_FS_CP_SYNC, CAP_FS_CP_SYNC, "fs:cpSync", 0x1194),
+    (SPEC_FSP_CP, CAP_FSP_CP, "fs:promises:cp", 0x1195),
+    (SPEC_PROCESS_PERMISSION_HAS, CAP_PROCESS_PERMISSION_HAS, "process:permission:has", 0x1196),
+    (SPEC_PROCESS_PERMISSION_DROP, CAP_PROCESS_PERMISSION_DROP, "process:permission:drop", 0x1197),
+    (SPEC_FS_CP_FILTER_FULFILLED, CAP_FS_CP_FILTER_FULFILLED, "fs:cp:filterFulfilled", 0x1198),
+    (SPEC_FS_CP_FILTER_REJECTED, CAP_FS_CP_FILTER_REJECTED, "fs:cp:filterRejected", 0x1199),
+    (SPEC_FS_GLOB, CAP_FS_GLOB, "fs:glob", 0x119C),
+    (SPEC_FS_GLOB_SYNC, CAP_FS_GLOB_SYNC, "fs:globSync", 0x119D),
+}
+node_api! {
     (SPEC_RUN_LOOP, CAP_RUN_LOOP, "__quench_run_loop__", 0x070C),
     (SPEC_RUN_EXIT, CAP_RUN_EXIT, "__quench_run_exit__", 0x070D),
     (SPEC_INTERNAL_UTIL_SLEEP, CAP_INTERNAL_UTIL_SLEEP, "internal/util:sleep", 0x070E),
@@ -317,9 +468,16 @@ node_api! {
     (SPEC_TIMERS_CLOSE, CAP_TIMERS_CLOSE, "timers:close", 0x070F),
     (SPEC_TIMERS_TO_PRIMITIVE, CAP_TIMERS_TO_PRIMITIVE, "timers:toPrimitive", 0x071D),
     (SPEC_TIMERS_GET_LIBUV_NOW, CAP_TIMERS_GET_LIBUV_NOW, "timers:getLibuvNow", 0x0714),
-    (SPEC_UTIL_PROMISIFY, CAP_UTIL_PROMISIFY, "util:promisify", 0x071E),
+    // Keep promisify outside the legacy timer range.  The old range contains
+    // a private compatibility capability with the same numeric key, which
+    // would route calls to the wrong handler in the unified dispatch table.
+    (SPEC_UTIL_PROMISIFY, CAP_UTIL_PROMISIFY, "util:promisify", 0x7FDC),
     (SPEC_UTIL_PROMISIFIED_CALL, CAP_UTIL_PROMISIFIED_CALL, "util:promisifiedCall", 0x071F),
     (SPEC_UTIL_PROMISIFIED_CALLBACK, CAP_UTIL_PROMISIFIED_CALLBACK, "util:promisifiedCallback", 0x0720),
+    (SPEC_UTIL_CALLBACKIFY, CAP_UTIL_CALLBACKIFY, "util:callbackify", 0x7FD0),
+    (SPEC_UTIL_CALLBACKIFIED_CALL, CAP_UTIL_CALLBACKIFIED_CALL, "util:callbackifiedCall", 0x7FCD),
+    (SPEC_UTIL_CALLBACKIFIED_FULFILLED, CAP_UTIL_CALLBACKIFIED_FULFILLED, "util:callbackifiedFulfilled", 0x7FCE),
+    (SPEC_UTIL_CALLBACKIFIED_REJECTED, CAP_UTIL_CALLBACKIFIED_REJECTED, "util:callbackifiedRejected", 0x7FCF),
     (SPEC_LINKED_LIST_INIT, CAP_LINKED_LIST_INIT, "internal/linkedlist:init", 0x0718),
     (SPEC_LINKED_LIST_REMOVE, CAP_LINKED_LIST_REMOVE, "internal/linkedlist:remove", 0x0719),
     (SPEC_LINKED_LIST_APPEND, CAP_LINKED_LIST_APPEND, "internal/linkedlist:append", 0x071A),
@@ -337,15 +495,23 @@ pub const SPEC_UTIL_DEBUGLOG: NodeSpec = NodeSpec::new("util:debuglog", 0x0735);
 pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec =
     NodeSpec::new("util:exceptionWithHostPort", 0x0734);
 pub const SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: NodeSpec =
-    NodeSpec::new("util:convertProcessSignalToExitCode", 0x2203);
-pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kill", 0x2204);
+    NodeSpec::new("util:convertProcessSignalToExitCode", 0x2209);
+// Keep this capability distinct from the internal crypto operation that
+// historically occupied 0x220A.  Capability ids are dispatch keys; sharing
+// one silently routes ChildProcess#kill to the crypto handler.
+pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kill", 0x7FFF);
+pub const SPEC_UTIL_TRANSFERABLE_ABORT_SIGNAL: NodeSpec =
+    NodeSpec::new("util:transferableAbortSignal", 0x7FEE);
+pub const SPEC_UTIL_TRANSFERABLE_ABORT_CONTROLLER: NodeSpec =
+    NodeSpec::new("util:transferableAbortController", 0x7FEF);
+pub const SPEC_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE: NodeSpec =
+    NodeSpec::new("internal/streams:addAbortSignalNoValidate", 0x7FED);
 pub const SPEC_CP_STDIN_WRITE: NodeSpec = NodeSpec::new("child_process:stdin:write", 0x1E09);
 pub const SPEC_CP_STDIN_END: NodeSpec = NodeSpec::new("child_process:stdin:end", 0x1E0A);
 pub const SPEC_CP_STDOUT_READ: NodeSpec = NodeSpec::new("child_process:stdout:read", 0x1E12);
 pub const SPEC_CP_STREAM_SET_ENCODING: NodeSpec =
     NodeSpec::new("child_process:stream:setEncoding", 0x1E13);
-pub const SPEC_CP_EXEC_COMPLETE: NodeSpec =
-    NodeSpec::new("child_process:exec:complete", 0x1E14);
+pub const SPEC_CP_EXEC_COMPLETE: NodeSpec = NodeSpec::new("child_process:exec:complete", 0x1E14);
 pub const SPEC_CP_ABORT: NodeSpec = NodeSpec::new("child_process:abort", 0x1E0B);
 pub const SPEC_CP_ABORT_EMIT: NodeSpec = NodeSpec::new("child_process:abortEmit", 0x1E0C);
 pub const SPEC_CP_FORK: NodeSpec = NodeSpec::new("child_process:fork", 0x1E0D);
@@ -357,14 +523,12 @@ pub const SPEC_CP_SEND_ACK: NodeSpec = NodeSpec::new("child_process:sendAck", 0x
 pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
 pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
     NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
-pub const SPEC_CP_EXEC_ERROR: NodeSpec =
-    NodeSpec::new("child_process:exec:error", 0x1E17);
+pub const SPEC_CP_EXEC_ERROR: NodeSpec = NodeSpec::new("child_process:exec:error", 0x1E17);
 pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec =
     NodeSpec::new("internal/util:emitExperimentalWarning", 0x2201);
 pub const SPEC_INTERNAL_UTIL_NORMALIZE_ENCODING: NodeSpec =
     NodeSpec::new("internal/util:normalizeEncoding", 0x0739);
-pub const SPEC_INTERNAL_UTIL_GET_CIDR: NodeSpec =
-    NodeSpec::new("internal/util:getCIDR", 0x073A);
+pub const SPEC_INTERNAL_UTIL_GET_CIDR: NodeSpec = NodeSpec::new("internal/util:getCIDR", 0x073A);
 pub const SPEC_INTERNAL_UTIL_CONSTRUCT_SHARED_ARRAY_BUFFER: NodeSpec =
     NodeSpec::new("internal/util:constructSharedArrayBuffer", 0x073B);
 node_api! {
@@ -373,6 +537,47 @@ node_api! {
     (SPEC_INTERNAL_UTIL_IS_ERROR, CAP_INTERNAL_UTIL_IS_ERROR, "internal/util:isError", 0x2204),
     (SPEC_INTERNAL_UTIL_WEAK_REFERENCE_CONSTRUCT, CAP_INTERNAL_UTIL_WEAK_REFERENCE_CONSTRUCT, "internal/util:WeakReference", 0x2207),
     (SPEC_INTERNAL_UTIL_WEAK_REFERENCE_GET, CAP_INTERNAL_UTIL_WEAK_REFERENCE_GET, "internal/util:WeakReference:get", 0x2208),
+    (SPEC_INTERNAL_CRYPTO_GET_OPENSSL_SEC_LEVEL, CAP_INTERNAL_CRYPTO_GET_OPENSSL_SEC_LEVEL, "internal/crypto/util:getOpenSSLSecLevel", 0x220A),
+    (SPEC_INTERNAL_CRYPTO_IS_X509_CERTIFICATE, CAP_INTERNAL_CRYPTO_IS_X509_CERTIFICATE, "internal/crypto/x509:isX509Certificate", 0x220B),
+    (SPEC_INTERNAL_CRYPTO_BIGINT_ARRAY_TO_UNSIGNED_INT, CAP_INTERNAL_CRYPTO_BIGINT_ARRAY_TO_UNSIGNED_INT, "internal/crypto/util:bigIntArrayToUnsignedInt", 0x220C),
+    (SPEC_INTERNAL_CRYPTO_NORMALIZE_ALGORITHM, CAP_INTERNAL_CRYPTO_NORMALIZE_ALGORITHM, "internal/crypto/util:normalizeAlgorithm", 0x220D),
+    (SPEC_INTERNAL_CRYPTO_VALIDATE_KEY_OPS, CAP_INTERNAL_CRYPTO_VALIDATE_KEY_OPS, "internal/crypto/util:validateKeyOps", 0x220E),
+    (SPEC_INTERNAL_CRYPTO_BIGINT_ARRAY_TO_UNSIGNED_BIGINT, CAP_INTERNAL_CRYPTO_BIGINT_ARRAY_TO_UNSIGNED_BIGINT, "internal/crypto/util:bigIntArrayToUnsignedBigInt", 0x220F),
+    (SPEC_INTERNAL_CRYPTO_KEY_HANDLE, CAP_INTERNAL_CRYPTO_KEY_HANDLE, "internal/crypto/keys:getCryptoKeyHandle", 0x2210),
+    (SPEC_INTERNAL_CRYPTO_GET_USAGES_MASK, CAP_INTERNAL_CRYPTO_GET_USAGES_MASK, "internal/crypto/util:getUsagesMask", 0x2211),
+    (SPEC_INTERNAL_CRYPTO_AES_CIPHER, CAP_INTERNAL_CRYPTO_AES_CIPHER, "internal/crypto/aes:aesCipher", 0x2212),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_REQUIRED_ARGUMENTS, CAP_INTERNAL_CRYPTO_WEBIDL_REQUIRED_ARGUMENTS, "internal/crypto/webidl:requiredArguments", 0x2213),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_BOOLEAN, CAP_INTERNAL_CRYPTO_WEBIDL_BOOLEAN, "internal/crypto/webidl:boolean", 0x2214),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_OCTET, CAP_INTERNAL_CRYPTO_WEBIDL_OCTET, "internal/crypto/webidl:octet", 0x2215),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_UNSIGNED_SHORT, CAP_INTERNAL_CRYPTO_WEBIDL_UNSIGNED_SHORT, "internal/crypto/webidl:unsigned short", 0x2216),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_UNSIGNED_LONG, CAP_INTERNAL_CRYPTO_WEBIDL_UNSIGNED_LONG, "internal/crypto/webidl:unsigned long", 0x2217),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_DOM_STRING, CAP_INTERNAL_CRYPTO_WEBIDL_DOM_STRING, "internal/crypto/webidl:DOMString", 0x2218),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_OBJECT, CAP_INTERNAL_CRYPTO_WEBIDL_OBJECT, "internal/crypto/webidl:object", 0x2219),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_UINT8_ARRAY, CAP_INTERNAL_CRYPTO_WEBIDL_UINT8_ARRAY, "internal/crypto/webidl:Uint8Array", 0x221A),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_DICTIONARY, CAP_INTERNAL_CRYPTO_WEBIDL_DICTIONARY, "internal/crypto/webidl:dictionary", 0x221B),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_BIG_INTEGER, CAP_INTERNAL_CRYPTO_WEBIDL_BIG_INTEGER, "internal/crypto/webidl:BigInteger", 0x221C),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_BUFFER_SOURCE, CAP_INTERNAL_CRYPTO_WEBIDL_BUFFER_SOURCE, "internal/crypto/webidl:BufferSource", 0x221D),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_CRYPTO_KEY, CAP_INTERNAL_CRYPTO_WEBIDL_CRYPTO_KEY, "internal/crypto/webidl:CryptoKey", 0x221E),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_ALGORITHM_IDENTIFIER, CAP_INTERNAL_CRYPTO_WEBIDL_ALGORITHM_IDENTIFIER, "internal/crypto/webidl:AlgorithmIdentifier", 0x221F),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_KEY_FORMAT, CAP_INTERNAL_CRYPTO_WEBIDL_KEY_FORMAT, "internal/crypto/webidl:KeyFormat", 0x2220),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_KEY_USAGE, CAP_INTERNAL_CRYPTO_WEBIDL_KEY_USAGE, "internal/crypto/webidl:KeyUsage", 0x2221),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_JSON_WEB_KEY, CAP_INTERNAL_CRYPTO_WEBIDL_JSON_WEB_KEY, "internal/crypto/webidl:JsonWebKey", 0x2222),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_ALGORITHM, CAP_INTERNAL_CRYPTO_WEBIDL_ALGORITHM, "internal/crypto/webidl:Algorithm", 0x2223),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_RSA_OAEP, CAP_INTERNAL_CRYPTO_WEBIDL_RSA_OAEP, "internal/crypto/webidl:RsaOaepParams", 0x2224),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_EC_IMPORT, CAP_INTERNAL_CRYPTO_WEBIDL_EC_IMPORT, "internal/crypto/webidl:EcKeyImportParams", 0x2225),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_EC_GEN, CAP_INTERNAL_CRYPTO_WEBIDL_EC_GEN, "internal/crypto/webidl:EcKeyGenParams", 0x2226),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_ECDSA, CAP_INTERNAL_CRYPTO_WEBIDL_ECDSA, "internal/crypto/webidl:EcdsaParams", 0x2227),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_HMAC_KEYGEN, CAP_INTERNAL_CRYPTO_WEBIDL_HMAC_KEYGEN, "internal/crypto/webidl:HmacKeyGenParams", 0x2228),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_HMAC_IMPORT, CAP_INTERNAL_CRYPTO_WEBIDL_HMAC_IMPORT, "internal/crypto/webidl:HmacImportParams", 0x2229),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_AES_KEYGEN, CAP_INTERNAL_CRYPTO_WEBIDL_AES_KEYGEN, "internal/crypto/webidl:AesKeyGenParams", 0x222A),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_AES_DERIVED, CAP_INTERNAL_CRYPTO_WEBIDL_AES_DERIVED, "internal/crypto/webidl:AesDerivedKeyParams", 0x222B),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_HKDF, CAP_INTERNAL_CRYPTO_WEBIDL_HKDF, "internal/crypto/webidl:HkdfParams", 0x222C),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_PBKDF2, CAP_INTERNAL_CRYPTO_WEBIDL_PBKDF2, "internal/crypto/webidl:Pbkdf2Params", 0x222D),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_ARGON2, CAP_INTERNAL_CRYPTO_WEBIDL_ARGON2, "internal/crypto/webidl:Argon2Params", 0x222E),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_AES_CBC, CAP_INTERNAL_CRYPTO_WEBIDL_AES_CBC, "internal/crypto/webidl:AesCbcParams", 0x222F),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_AEAD, CAP_INTERNAL_CRYPTO_WEBIDL_AEAD, "internal/crypto/webidl:AeadParams", 0x2230),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_AES_CTR, CAP_INTERNAL_CRYPTO_WEBIDL_AES_CTR, "internal/crypto/webidl:AesCtrParams", 0x2231),
+    (SPEC_INTERNAL_CRYPTO_WEBIDL_ECDH, CAP_INTERNAL_CRYPTO_WEBIDL_ECDH, "internal/crypto/webidl:EcdhKeyDeriveParams", 0x2232),
 }
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
@@ -384,6 +589,9 @@ pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
     NodeSpec::new("internal:view-has-buffer", 0x0712);
 pub const SPEC_INTERNAL_GET_PROXY_DETAILS: NodeSpec =
     NodeSpec::new("internal:get-proxy-details", 0x2200);
+pub const SPEC_INTERNAL_PREVIEW_ENTRIES: NodeSpec =
+    NodeSpec::new("internal:preview-entries", 0x7FFD);
+pub const SPEC_INTERNAL_THROW_ACCESSOR: NodeSpec = NodeSpec::new("internal:throw-accessor", 0x7FFE);
 pub const SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET: NodeSpec =
     NodeSpec::new("internal:buffer-array-buffer-aligned-offset", 0x0713);
 
@@ -425,7 +633,10 @@ pub const SPEC_BUFFER_INCLUDES: NodeSpec = NodeSpec::new("buffer.prototype:inclu
 pub const SPEC_BUFFER_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:write", 0x081D);
 pub const SPEC_BUFFER_INSPECT: NodeSpec = NodeSpec::new("buffer.prototype:inspect", 0x081E);
 pub const SPEC_BUFFER_COPY_BYTES_FROM: NodeSpec = NodeSpec::new("buffer:copyBytesFrom", 0x081F);
-pub const SPEC_BUFFER_RESOLVE_OBJECT_URL: NodeSpec = NodeSpec::new("buffer:resolveObjectURL", 0x082D);
+// Keep this host capability disjoint from the generated numeric Buffer table
+// and the internal UTF-8 writer capability.
+pub const SPEC_BUFFER_RESOLVE_OBJECT_URL: NodeSpec =
+    NodeSpec::new("buffer:resolveObjectURL", 0x0857);
 pub const SPEC_BUFFER_INSPECT_MAX_BYTES_GET: NodeSpec =
     NodeSpec::new("buffer:inspectMaxBytesGet", 0x0854);
 pub const SPEC_BUFFER_INSPECT_MAX_BYTES_SET: NodeSpec =
@@ -466,6 +677,7 @@ pub const SPEC_TTY_ISATTY: NodeSpec = NodeSpec::new("tty:isatty", 0x0900);
 
 pub const SPEC_PROCESS_GET: NodeSpec = NodeSpec::new("process:get", 0x0A00);
 pub const SPEC_PROCESS_EXIT: NodeSpec = NodeSpec::new("process:exit", 0x0A01);
+pub const SPEC_PROCESS_RAW_DEBUG: NodeSpec = NodeSpec::new("process:_rawDebug", 0x0A30);
 pub const SPEC_PROCESS_KILL: NodeSpec = NodeSpec::new("process:kill", 0x0A20);
 pub const SPEC_PROCESS_CWD: NodeSpec = NodeSpec::new("process:cwd", 0x0A02);
 pub const SPEC_PROCESS_CHDIR: NodeSpec = NodeSpec::new("process:chdir", 0x0A03);
@@ -512,6 +724,8 @@ pub const SPEC_PROCESS_SET_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: NodeSpec =
 pub const SPEC_PROCESS_HAS_UNCAUGHT_EXCEPTION_CAPTURE_CALLBACK: NodeSpec =
     NodeSpec::new("process:hasUncaughtExceptionCaptureCallback", 0x0A2B);
 pub const SPEC_PROCESS_MEMORY_USAGE: NodeSpec = NodeSpec::new("process:memoryUsage", 0x0A2C);
+pub const SPEC_PROCESS_MEMORY_USAGE_RSS: NodeSpec =
+    NodeSpec::new("process:memoryUsage:rss", 0x0A2D);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -540,6 +754,11 @@ pub const SPEC_STREAM_DUPLEX: NodeSpec = NodeSpec::new("stream:Duplex", 0x0C02);
 pub const SPEC_STREAM_TRANSFORM: NodeSpec = NodeSpec::new("stream:Transform", 0x0C03);
 pub const SPEC_STREAM_PIPELINE: NodeSpec = NodeSpec::new("stream:pipeline", 0x0C04);
 pub const SPEC_STREAM_FINISHED: NodeSpec = NodeSpec::new("stream:finished", 0x0C05);
+node_api! {
+    (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
+    (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
+    (SPEC_STREAM_FINISHED_CLEANUP, "stream:finished:cleanup", 0x0C08),
+}
 
 pub const SPEC_STRING_DECODER: NodeSpec = NodeSpec::new("string_decoder:StringDecoder", 0x0D00);
 
@@ -560,8 +779,9 @@ pub const SPEC_HTTP_RES_SET_HEADERS: NodeSpec = NodeSpec::new("http:res:setHeade
 pub const SPEC_HTTP_RES_WRITE_HEAD: NodeSpec = NodeSpec::new("http:res:writeHead", 0x0F04);
 pub const SPEC_HTTP_RES_WRITE: NodeSpec = NodeSpec::new("http:res:write", 0x0F05);
 pub const SPEC_HTTP_RES_END: NodeSpec = NodeSpec::new("http:res:end", 0x0F06);
-pub const SPEC_HTTP_RES_WRITE_CONTINUE: NodeSpec =
-    NodeSpec::new("http:res:writeContinue", 0x0F25);
+pub const SPEC_HTTP_RES_WRITE_CONTINUE: NodeSpec = NodeSpec::new("http:res:writeContinue", 0x0F25);
+pub const SPEC_HTTP_RES_WRITE_INFORMATION: NodeSpec = NodeSpec::new("http:res:writeInformation", 0x0F60);
+pub const SPEC_HTTP_RES_WRITE_PROCESSING: NodeSpec = NodeSpec::new("http:res:writeProcessing", 0x0F61);
 // http ClientRequest methods (dispatched with the req receiver).
 pub const SPEC_HTTP_REQ_WRITE: NodeSpec = NodeSpec::new("http:req:write", 0x0F09);
 pub const SPEC_HTTP_REQ_END: NodeSpec = NodeSpec::new("http:req:end", 0x0F0A);
@@ -589,7 +809,8 @@ pub const SPEC_HTTP_AGENT_CONNECT: NodeSpec = NodeSpec::new("http:agent:connect"
 pub const SPEC_HTTP_OUTGOING: NodeSpec = NodeSpec::new("http:OutgoingMessage", 0x0F26);
 pub const SPEC_HTTP_OUTGOING_WRITE: NodeSpec = NodeSpec::new("http:OutgoingMessage:write", 0x0F27);
 pub const SPEC_HTTP_OUTGOING_END: NodeSpec = NodeSpec::new("http:OutgoingMessage:end", 0x0F28);
-pub const SPEC_HTTP_OUTGOING_DESTROY: NodeSpec = NodeSpec::new("http:OutgoingMessage:destroy", 0x0F29);
+pub const SPEC_HTTP_OUTGOING_DESTROY: NodeSpec =
+    NodeSpec::new("http:OutgoingMessage:destroy", 0x0F29);
 pub const SPEC_HTTP_AGENT_ADD_REQUEST: NodeSpec = NodeSpec::new("http:Agent:addRequest", 0x0F2A);
 pub const SPEC_HTTP_AGENT_KEEP_SOCKET_ALIVE: NodeSpec =
     NodeSpec::new("http:Agent:keepSocketAlive", 0x0F2B);
@@ -600,6 +821,16 @@ node_api! {
     (SPEC_HTTP_RES_PIPE, CAP_HTTP_RES_PIPE, "http:res:pipe", 0x0F30),
     (SPEC_HTTP_RES_PIPE_DATA, CAP_HTTP_RES_PIPE_DATA, "http:res:pipe:data", 0x0F31),
     (SPEC_HTTP_RES_PIPE_END, CAP_HTTP_RES_PIPE_END, "http:res:pipe:end", 0x0F32),
+    (SPEC_HTTP_REQ_GET_HEADER, CAP_HTTP_REQ_GET_HEADER, "http:req:getHeader", 0x0F50),
+    (SPEC_HTTP_REQ_GET_HEADERS, CAP_HTTP_REQ_GET_HEADERS, "http:req:getHeaders", 0x0F51),
+    (SPEC_HTTP_REQ_GET_HEADER_NAMES, CAP_HTTP_REQ_GET_HEADER_NAMES, "http:req:getHeaderNames", 0x0F52),
+    (SPEC_HTTP_REQ_HAS_HEADER, CAP_HTTP_REQ_HAS_HEADER, "http:req:hasHeader", 0x0F53),
+    (SPEC_HTTP_REQ_REMOVE_HEADER, CAP_HTTP_REQ_REMOVE_HEADER, "http:req:removeHeader", 0x0F54),
+    (SPEC_HTTP_REQ_SET_NO_DELAY, CAP_HTTP_REQ_SET_NO_DELAY, "http:req:setNoDelay", 0x0F55),
+    (SPEC_HTTP_REQ_SET_KEEP_ALIVE, CAP_HTTP_REQ_SET_KEEP_ALIVE, "http:req:setSocketKeepAlive", 0x0F56),
+    (SPEC_HTTP_REQ_SET_TIMEOUT_SOCKET, CAP_HTTP_REQ_SET_TIMEOUT_SOCKET, "http:req:setSocketTimeout", 0x0F57),
+    (SPEC_HTTP_REQ_CORK, CAP_HTTP_REQ_CORK, "http:req:cork", 0x0F58),
+    (SPEC_HTTP_REQ_UNCORK, CAP_HTTP_REQ_UNCORK, "http:req:uncork", 0x0F59),
 }
 
 pub const SPEC_NET_CONNECT: NodeSpec = NodeSpec::new("net:connect", 0x1000);
@@ -608,22 +839,22 @@ pub const SPEC_NET_SERVER: NodeSpec = NodeSpec::new("net:createServer", 0x1001);
 pub const SPEC_NET_ISIP: NodeSpec = NodeSpec::new("net:isIP", 0x1002);
 pub const SPEC_NET_ISIPV4: NodeSpec = NodeSpec::new("net:isIPv4", 0x1003);
 pub const SPEC_NET_ISIPV6: NodeSpec = NodeSpec::new("net:isIPv6", 0x1004);
+node_api! {
+    (SPEC_INTERNAL_NET_IS_LOOPBACK, CAP_INTERNAL_NET_IS_LOOPBACK, "internal/net:isLoopback", 0x1034),
+}
 pub const SPEC_NET_GET_ASF_TIMEOUT: NodeSpec =
     NodeSpec::new("net:getDefaultAutoSelectFamilyAttemptTimeout", 0x1005);
 pub const SPEC_NET_SET_ASF_TIMEOUT: NodeSpec =
     NodeSpec::new("net:setDefaultAutoSelectFamilyAttemptTimeout", 0x1006);
-pub const SPEC_NET_GET_ASF: NodeSpec =
-    NodeSpec::new("net:getDefaultAutoSelectFamily", 0x1026);
-pub const SPEC_NET_SET_ASF: NodeSpec =
-    NodeSpec::new("net:setDefaultAutoSelectFamily", 0x1027);
+pub const SPEC_NET_GET_ASF: NodeSpec = NodeSpec::new("net:getDefaultAutoSelectFamily", 0x1026);
+pub const SPEC_NET_SET_ASF: NodeSpec = NodeSpec::new("net:setDefaultAutoSelectFamily", 0x1027);
 pub const SPEC_NET_PIPE: NodeSpec = NodeSpec::new("net:Pipe", 0x1020);
 pub const SPEC_NET_PIPE_BIND: NodeSpec = NodeSpec::new("net:Pipe.bind", 0x1021);
 pub const SPEC_NET_BOUND_SOCKET: NodeSpec = NodeSpec::new("net:BoundSocket", 0x1022);
 pub const SPEC_NET_BOUND_SOCKET_ADDRESS: NodeSpec =
     NodeSpec::new("net:BoundSocket.address", 0x1023);
 pub const SPEC_NET_BOUND_SOCKET_FD: NodeSpec = NodeSpec::new("net:BoundSocket.fd", 0x1024);
-pub const SPEC_NET_BOUND_SOCKET_CLOSE: NodeSpec =
-    NodeSpec::new("net:BoundSocket.close", 0x1025);
+pub const SPEC_NET_BOUND_SOCKET_CLOSE: NodeSpec = NodeSpec::new("net:BoundSocket.close", 0x1025);
 pub const SPEC_NET_TCP: NodeSpec = NodeSpec::new("net:TCP", 0x1031);
 pub const SPEC_NET_TCP_BIND: NodeSpec = NodeSpec::new("net:TCP.bind", 0x1032);
 pub const SPEC_NET_SERVER_LISTEN2: NodeSpec = NodeSpec::new("net:server:_listen2", 0x1033);
@@ -653,8 +884,7 @@ pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 
 pub const SPEC_NET_SOCKET_SET_TIMEOUT: NodeSpec = NodeSpec::new("net:socket:setTimeout", 0x1017);
 pub const SPEC_NET_SOCKET_TIMEOUT_FIRE: NodeSpec = NodeSpec::new("net:socket:timeoutFire", 0x1018);
 pub const SPEC_NET_ASYNC_ITERATOR: NodeSpec = NodeSpec::new("net:asyncIterator", 0x1028);
-pub const SPEC_NET_ASYNC_ITERATOR_NEXT: NodeSpec =
-    NodeSpec::new("net:asyncIterator:next", 0x1029);
+pub const SPEC_NET_ASYNC_ITERATOR_NEXT: NodeSpec = NodeSpec::new("net:asyncIterator:next", 0x1029);
 pub const SPEC_NET_ASYNC_ITERATOR_RETURN: NodeSpec =
     NodeSpec::new("net:asyncIterator:return", 0x102A);
 pub const SPEC_NET_SOCKET_RESET_AND_DESTROY: NodeSpec =
@@ -677,6 +907,7 @@ pub const SPEC_FS_STATSYNC: NodeSpec = NodeSpec::new("fs:statSync", 0x1109);
 pub const SPEC_FS_READDIRSYNC: NodeSpec = NodeSpec::new("fs:readdirSync", 0x110A);
 pub const SPEC_FS_EXISTSSYNC: NodeSpec = NodeSpec::new("fs:existsSync", 0x110B);
 pub const SPEC_FS_REALSYNC: NodeSpec = NodeSpec::new("fs:realpathSync", 0x110C);
+pub const SPEC_FS_REALSYNC_NATIVE: NodeSpec = NodeSpec::new("fs:realpathSync.native", 0x7FE0);
 pub const SPEC_FS_LSTAT: NodeSpec = NodeSpec::new("fs:lstat", 0x110D);
 pub const SPEC_FS_ACCESS: NodeSpec = NodeSpec::new("fs:access", 0x110E);
 pub const SPEC_FS_RMDIR: NodeSpec = NodeSpec::new("fs:rmdir", 0x110F);
@@ -700,6 +931,41 @@ pub const SPEC_FS_READLINKSYNC: NodeSpec = NodeSpec::new("fs:readlinkSync", 0x11
 pub const SPEC_FS_CHMODSYNC: NodeSpec = NodeSpec::new("fs:chmodSync", 0x1121);
 pub const SPEC_FS_TRUNCATESYNC: NodeSpec = NodeSpec::new("fs:truncateSync", 0x1122);
 pub const SPEC_FS_SYMLINKSYNC: NodeSpec = NodeSpec::new("fs:symlinkSync", 0x1125);
+pub const SPEC_FS_LINKSYNC: NodeSpec = NodeSpec::new("fs:linkSync", 0x1126);
+pub const SPEC_FS_LINK: NodeSpec = NodeSpec::new("fs:link", 0x1127);
+pub const SPEC_FS_SYMLINK: NodeSpec = NodeSpec::new("fs:symlink", 0x1128);
+pub const SPEC_FS_CHOWN: NodeSpec = NodeSpec::new("fs:chown", 0x1129);
+pub const SPEC_FS_LCHOWN: NodeSpec = NodeSpec::new("fs:lchown", 0x112A);
+pub const SPEC_FS_UTIMES: NodeSpec = NodeSpec::new("fs:utimes", 0x112B);
+pub const SPEC_FS_LUTIMES: NodeSpec = NodeSpec::new("fs:lutimes", 0x112C);
+pub const SPEC_FS_CHOWNSYNC: NodeSpec = NodeSpec::new("fs:chownSync", 0x112D);
+pub const SPEC_FS_LCHOWNSYNC: NodeSpec = NodeSpec::new("fs:lchownSync", 0x112E);
+pub const SPEC_FS_UTIMESSYNC: NodeSpec = NodeSpec::new("fs:utimesSync", 0x112F);
+pub const SPEC_FS_LUTIMESSYNC: NodeSpec = NodeSpec::new("fs:lutimesSync", 0x113F);
+pub const SPEC_FS_LCHMOD: NodeSpec = NodeSpec::new("fs:lchmod", 0x7FB9);
+pub const SPEC_FS_LCHMODSYNC: NodeSpec = NodeSpec::new("fs:lchmodSync", 0x7FBA);
+pub const SPEC_FS_WATCHFILE: NodeSpec = NodeSpec::new("fs:watchFile", 0x7FD1);
+pub const SPEC_FS_UNWATCHFILE: NodeSpec = NodeSpec::new("fs:unwatchFile", 0x7FD2);
+pub const SPEC_FS_DIR_READ_SYNC: NodeSpec = NodeSpec::new("fs:Dir:readSync", 0x7FA0);
+pub const SPEC_FS_DIR_READ: NodeSpec = NodeSpec::new("fs:Dir:read", 0x7FA1);
+pub const SPEC_FS_DIR_CLOSE_SYNC: NodeSpec = NodeSpec::new("fs:Dir:closeSync", 0x7FA2);
+pub const SPEC_FS_DIR_CLOSE: NodeSpec = NodeSpec::new("fs:Dir:close", 0x7FA3);
+pub const SPEC_FS_DIR_PATH_GET: NodeSpec = NodeSpec::new("fs:Dir:path", 0x7FA4);
+pub const SPEC_FS_DIRENT: NodeSpec = NodeSpec::new("fs:Dirent", 0x7FA5);
+pub const SPEC_FS_STATS: NodeSpec = NodeSpec::new("fs:Stats", 0x7FDD);
+pub const SPEC_FS_FSTAT: NodeSpec = NodeSpec::new("fs:fstat", 0x7FC0);
+pub const SPEC_FS_FTRUNCATE: NodeSpec = NodeSpec::new("fs:ftruncate", 0x7FC1);
+pub const SPEC_FS_FCHMODSYNC: NodeSpec = NodeSpec::new("fs:fchmodSync", 0x7FC2);
+pub const SPEC_FS_FCHOWNSYNC: NodeSpec = NodeSpec::new("fs:fchownSync", 0x7FC3);
+pub const SPEC_FS_FUTIMESSYNC: NodeSpec = NodeSpec::new("fs:futimesSync", 0x7FC4);
+pub const SPEC_FS_READVSYNC: NodeSpec = NodeSpec::new("fs:readvSync", 0x7FC5);
+pub const SPEC_FS_WRITEVSYNC: NodeSpec = NodeSpec::new("fs:writevSync", 0x7FC6);
+pub const SPEC_FS_READV: NodeSpec = NodeSpec::new("fs:readv", 0x7FC7);
+pub const SPEC_FS_WRITEV: NodeSpec = NodeSpec::new("fs:writev", 0x7FC8);
+pub const SPEC_FS_FCHMOD: NodeSpec = NodeSpec::new("fs:fchmod", 0x7FC9);
+pub const SPEC_FS_FCHOWN: NodeSpec = NodeSpec::new("fs:fchown", 0x7FCA);
+pub const SPEC_FS_FUTIMES: NodeSpec = NodeSpec::new("fs:futimes", 0x7FCB);
+pub const SPEC_FS_FDATASYNC: NodeSpec = NodeSpec::new("fs:fdatasync", 0x7FCC);
 pub const SPEC_FS_MKDIRSYNC: NodeSpec = NodeSpec::new("fs:mkdirSync", 0x1123);
 pub const SPEC_FS_UNLINKSYNC: NodeSpec = NodeSpec::new("fs:unlinkSync", 0x1124);
 pub const SPEC_FS_STAT_ISFILE: NodeSpec = NodeSpec::new("fs:Stats:isFile", 0x1130);
@@ -710,6 +976,7 @@ pub const SPEC_FS_STAT_ISCHAR: NodeSpec = NodeSpec::new("fs:Stats:isCharacterDev
 pub const SPEC_FS_STAT_ISFIFO: NodeSpec = NodeSpec::new("fs:Stats:isFIFO", 0x1135);
 pub const SPEC_FS_STAT_ISSOCKET: NodeSpec = NodeSpec::new("fs:Stats:isSocket", 0x1136);
 pub const SPEC_FS_REALPATH: NodeSpec = NodeSpec::new("fs:realpath", 0x1137);
+pub const SPEC_FS_REALPATH_NATIVE: NodeSpec = NodeSpec::new("fs:realpath.native", 0x7FDF);
 pub const SPEC_FS_WATCH: NodeSpec = NodeSpec::new("fs:watch", 0x1152);
 pub const SPEC_FS_WATCH_CLOSE: NodeSpec = NodeSpec::new("fs:watch:close", 0x1157);
 pub const SPEC_FS_READSTREAM: NodeSpec = NodeSpec::new("fs:ReadStream", 0x1153);
@@ -728,6 +995,10 @@ pub const SPEC_FS_WRITE: NodeSpec = NodeSpec::new("fs:write", 0x1165);
 pub const SPEC_FS_FSTAT_SYNC: NodeSpec = NodeSpec::new("fs:fstatSync", 0x1166);
 pub const SPEC_FS_FTRUNCATE_SYNC: NodeSpec = NodeSpec::new("fs:ftruncateSync", 0x1167);
 pub const SPEC_FS_FSYNC_SYNC: NodeSpec = NodeSpec::new("fs:fsyncSync", 0x1168);
+pub const SPEC_FS_FSYNC: NodeSpec = NodeSpec::new("fs:fsync", 0x1173);
+pub const SPEC_FS_WRITE_STREAM_WRITE: NodeSpec = NodeSpec::new("fs:WriteStream:write", 0x1174);
+pub const SPEC_FS_WRITE_STREAM_CLOSE: NodeSpec = NodeSpec::new("fs:WriteStream:close", 0x1175);
+pub const SPEC_FS_WRITE_STREAM_OPEN: NodeSpec = NodeSpec::new("fs:WriteStream:open", 0x7FD4);
 pub const SPEC_FS_FDATASYNC_SYNC: NodeSpec = NodeSpec::new("fs:fdatasyncSync", 0x1169);
 pub const SPEC_FSP_OPEN: NodeSpec = NodeSpec::new("fs:promises:open", 0x116A);
 pub const SPEC_FS_HANDLE_READ: NodeSpec = NodeSpec::new("fs:FileHandle:read", 0x116B);
@@ -736,6 +1007,7 @@ pub const SPEC_FS_HANDLE_WRITE: NodeSpec = NodeSpec::new("fs:FileHandle:write", 
 pub const SPEC_FS_DIR: NodeSpec = NodeSpec::new("fs:Dir", 0x116D);
 pub const SPEC_FS_CLOSE: NodeSpec = NodeSpec::new("fs:close", 0x116E);
 pub const SPEC_FS_HANDLE_READFILE: NodeSpec = NodeSpec::new("fs:FileHandle:readFile", 0x116F);
+pub const SPEC_FS_HANDLE_FD: NodeSpec = NodeSpec::new("fs:FileHandle:fd", 0x1172);
 pub const SPEC_FS_READSTREAM_CLOSE: NodeSpec = NodeSpec::new("fs:ReadStream:close", 0x1170);
 pub const SPEC_FS_READSTREAM_DESTROY: NodeSpec = NodeSpec::new("fs:ReadStream:destroy", 0x1171);
 pub const SPEC_FSP_READFILE: NodeSpec = NodeSpec::new("fs:promises:readFile", 0x1140);
@@ -756,8 +1028,36 @@ pub const SPEC_FSP_READLINK: NodeSpec = NodeSpec::new("fs:promises:readlink", 0x
 pub const SPEC_FSP_CHMOD: NodeSpec = NodeSpec::new("fs:promises:chmod", 0x114F);
 pub const SPEC_FSP_TRUNCATE: NodeSpec = NodeSpec::new("fs:promises:truncate", 0x1150);
 pub const SPEC_FSP_REALPATH: NodeSpec = NodeSpec::new("fs:promises:realpath", 0x1151);
+pub const SPEC_FSP_CHOWN: NodeSpec = NodeSpec::new("fs:promises:chown", 0x7FDB);
+pub const SPEC_FSP_LCHOWN: NodeSpec = NodeSpec::new("fs:promises:lchown", 0x7FBD);
+pub const SPEC_FSP_LCHMOD: NodeSpec = NodeSpec::new("fs:promises:lchmod", 0x7FB7);
+pub const SPEC_FSP_OPENDIR: NodeSpec = NodeSpec::new("fs:promises:opendir", 0x7FBF);
+pub const SPEC_FSP_SYMLINK: NodeSpec = NodeSpec::new("fs:promises:symlink", 0x7FD5);
+pub const SPEC_FSP_UTIMES: NodeSpec = NodeSpec::new("fs:promises:utimes", 0x7FD6);
+pub const SPEC_FSP_LUTIMES: NodeSpec = NodeSpec::new("fs:promises:lutimes", 0x7FD7);
+pub const SPEC_FS_STATFS: NodeSpec = NodeSpec::new("fs:statfs", 0x7FD8);
+pub const SPEC_FS_STATFSSYNC: NodeSpec = NodeSpec::new("fs:statfsSync", 0x7FD9);
+pub const SPEC_FSP_STATFS: NodeSpec = NodeSpec::new("fs:promises:statfs", 0x7FDA);
+pub const SPEC_FS_TO_UNIX_TIMESTAMP: NodeSpec = NodeSpec::new("fs:_toUnixTimestamp", 0x7FDE);
+pub const SPEC_INTERNAL_FS_STRING_TO_FLAGS: NodeSpec =
+    NodeSpec::new("internal/fs/utils:stringToFlags", 0x7FBE);
+pub const SPEC_FSP_LINK: NodeSpec = NodeSpec::new("fs:promises:link", 0x7FD3);
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
+pub const SPEC_REQUIRE_RESOLVE: NodeSpec = NodeSpec::new("require:resolve", 0x1201);
+pub const SPEC_REQUIRE_RESOLVE_PATHS: NodeSpec = NodeSpec::new("require:resolve:paths", 0x1202);
+pub const SPEC_MODULE_IS_BUILTIN: NodeSpec = NodeSpec::new("module:isBuiltin", 0x1203);
+pub const SPEC_MODULE_NODE_MODULE_PATHS: NodeSpec =
+    NodeSpec::new("module:_nodeModulePaths", 0x1204);
+pub const SPEC_MODULE_RESOLVE_LOOKUP_PATHS: NodeSpec =
+    NodeSpec::new("module:_resolveLookupPaths", 0x1205);
+pub const SPEC_MODULE_INIT_PATHS: NodeSpec = NodeSpec::new("module:_initPaths", 0x1206);
+pub const SPEC_MODULE_CREATE_REQUIRE: NodeSpec = NodeSpec::new("module:createRequire", 0x1207);
+pub const SPEC_MODULE_CREATED_REQUIRE: NodeSpec = NodeSpec::new("module:createdRequire", 0x1208);
+pub const SPEC_MODULE_CREATED_RESOLVE: NodeSpec = NodeSpec::new("module:createdResolve", 0x120B);
+pub const SPEC_MODULE_STAT: NodeSpec = NodeSpec::new("module:stat", 0x1209);
+pub const SPEC_MODULE_SET_SOURCEMAPS_SUPPORT: NodeSpec =
+    NodeSpec::new("module:setSourceMapsSupport", 0x120A);
 pub const SPEC_SEA_IS_SEA: NodeSpec = NodeSpec::new("sea:isSea", 0x1a00);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
 
@@ -768,6 +1068,15 @@ pub const SPEC_ZLIB_DEFLATE_RAW: NodeSpec = NodeSpec::new("zlib:deflateRawSync",
 pub const SPEC_ZLIB_INFLATE_RAW: NodeSpec = NodeSpec::new("zlib:inflateRawSync", 0x1703);
 pub const SPEC_ZLIB_DEFLATE: NodeSpec = NodeSpec::new("zlib:deflateSync", 0x1704);
 pub const SPEC_ZLIB_INFLATE: NodeSpec = NodeSpec::new("zlib:inflateSync", 0x1705);
+pub const SPEC_ZLIB_CRC32: NodeSpec = NodeSpec::new("zlib:crc32", 0x1706);
+node_api! {
+    (SPEC_ZLIB_CREATE, CAP_ZLIB_CREATE, "zlib:create", 0x1710),
+    (SPEC_ZLIB_CONSTRUCT, CAP_ZLIB_CONSTRUCT, "zlib:constructor", 0x1711),
+    (SPEC_ZLIB_ASYNC, CAP_ZLIB_ASYNC, "zlib:async", 0x1712),
+    (SPEC_ZLIB_STREAM_METHOD, CAP_ZLIB_STREAM_METHOD, "zlib:streamMethod", 0x1713),
+    (SPEC_ZLIB_UNSUPPORTED_SYNC, CAP_ZLIB_UNSUPPORTED_SYNC, "zlib:unsupportedSync", 0x1714),
+    (SPEC_ZLIB_UNZIP, CAP_ZLIB_UNZIP, "zlib:unzipSync", 0x1715),
+}
 pub const SPEC_CJS_WRAP: NodeSpec = NodeSpec::new("__quench_cjs_wrap__", 0x1d00);
 pub const SPEC_CP_SPAWNSYNC: NodeSpec = NodeSpec::new("child_process:spawnSync", 0x1e00);
 pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0x1e01);
@@ -834,6 +1143,13 @@ node_api! {
     (SPEC_NODE_EVENT_TARGET_GET_MAX, CAP_NODE_EVENT_TARGET_GET_MAX, "nodeEventTarget:getMaxListeners", 0x0143),
     (SPEC_NODE_EVENT_TARGET_EMIT, CAP_NODE_EVENT_TARGET_EMIT, "nodeEventTarget:emit", 0x0144),
     (SPEC_MESSAGE_CHANNEL, CAP_MESSAGE_CHANNEL, "messageChannel:MessageChannel", 0x0145),
+    (SPEC_MESSAGE_PORT_POST, CAP_MESSAGE_PORT_POST, "messagePort:postMessage", 0x0146),
+    (SPEC_MESSAGE_PORT_CLOSE, CAP_MESSAGE_PORT_CLOSE, "messagePort:close", 0x0147),
+    (SPEC_MESSAGE_PORT_START, CAP_MESSAGE_PORT_START, "messagePort:start", 0x0148),
+    (SPEC_MESSAGE_PORT_REF, CAP_MESSAGE_PORT_REF, "messagePort:ref", 0x0149),
+    (SPEC_MESSAGE_PORT_UNREF, CAP_MESSAGE_PORT_UNREF, "messagePort:unref", 0x014A),
+    (SPEC_MESSAGE_PORT_HAS_REF, CAP_MESSAGE_PORT_HAS_REF, "messagePort:hasRef", 0x014B),
+    (SPEC_MESSAGE_PORT_DELIVER, CAP_MESSAGE_PORT_DELIVER, "messagePort:deliver", 0x014C),
 }
 node_api! {
     (SPEC_EVENT, CAP_EVENT, "Event", 0x0118),
@@ -869,21 +1185,230 @@ pub const SPEC_ASSERT_CONSTRUCTOR: NodeSpec = NodeSpec::new("assert:Assert", 0x1
 pub const SPEC_ASSERTION_ERROR_CONSTRUCTOR: NodeSpec =
     NodeSpec::new("assert:AssertionError", 0x142E);
 pub const SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL: NodeSpec =
-    NodeSpec::new("assert:partialDeepStrictEqual", 0x2202);
+    NodeSpec::new("assert:partialDeepStrictEqual", 0x1431);
 pub const SPEC_ASSERT_DEEP_EQUAL: NodeSpec = NodeSpec::new("assert:deepEqual", 0x142F);
 pub const SPEC_ASSERT_NOT_DEEP_EQUAL: NodeSpec = NodeSpec::new("assert:notDeepEqual", 0x1430);
+pub const SPEC_INTERNAL_ASSERT_MYERS_DIFF: NodeSpec =
+    NodeSpec::new("internal/assert:myersDiff", 0x1435);
+pub const SPEC_INTERNAL_HTTP2_UTIL: NodeSpec = NodeSpec::new("internal/http2:util", 0x1432);
+pub const SPEC_INTERNAL_VALIDATORS_VALIDATE_ONE_OF: NodeSpec =
+    NodeSpec::new("internal/validators:validateOneOf", 0x1433);
+pub const SPEC_INTERNAL_VALIDATORS_VALIDATE_PORT: NodeSpec =
+    NodeSpec::new("internal/validators:validatePort", 0x1434);
 
 pub const SPEC_VM_RUN_IN_NEW_CONTEXT: NodeSpec = NodeSpec::new("vm:runInNewContext", 0x1600);
 pub const SPEC_VM_CREATE_CONTEXT: NodeSpec = NodeSpec::new("vm:createContext", 0x1601);
 pub const SPEC_VM_RUN_IN_CONTEXT: NodeSpec = NodeSpec::new("vm:runInContext", 0x1602);
 pub const SPEC_VM_IS_CONTEXT: NodeSpec = NodeSpec::new("vm:isContext", 0x1603);
+pub const SPEC_VM_RUN_IN_THIS_CONTEXT: NodeSpec = NodeSpec::new("vm:runInThisContext", 0x1615);
+pub const SPEC_VM_SCRIPT: NodeSpec = NodeSpec::new("vm:Script", 0x1610);
+pub const SPEC_VM_SCRIPT_RUN_IN_CONTEXT: NodeSpec = NodeSpec::new("vm:Script:runInContext", 0x1611);
+pub const SPEC_VM_SCRIPT_RUN_IN_NEW_CONTEXT: NodeSpec =
+    NodeSpec::new("vm:Script:runInNewContext", 0x1612);
+pub const SPEC_VM_SCRIPT_CREATE_CACHED_DATA: NodeSpec =
+    NodeSpec::new("vm:Script:createCachedData", 0x1613);
+pub const SPEC_VM_SCRIPT_RUN_IN_THIS_CONTEXT: NodeSpec =
+    NodeSpec::new("vm:Script:runInThisContext", 0x1614);
 pub const SPEC_HTTPS_REQUEST: NodeSpec = NodeSpec::new("https:request", 0x1604);
 pub const SPEC_HTTPS_GET: NodeSpec = NodeSpec::new("https:get", 0x1605);
-pub const SPEC_TLS_CREATE_SECURE_CONTEXT: NodeSpec = NodeSpec::new("tls:createSecureContext", 0x1c10);
+pub const SPEC_HTTPS_CREATE_SERVER: NodeSpec = NodeSpec::new("https:createServer", 0x1606);
+pub const SPEC_TLS_CREATE_SECURE_CONTEXT: NodeSpec =
+    NodeSpec::new("tls:createSecureContext", 0x1c10);
 pub const SPEC_TLS_CREATE_SERVER: NodeSpec = NodeSpec::new("tls:createServer", 0x1c11);
 pub const SPEC_TLS_CONNECT: NodeSpec = NodeSpec::new("tls:connect", 0x1c12);
 pub const SPEC_TLS_CONVERT_ALPN: NodeSpec = NodeSpec::new("tls:convertALPNProtocols", 0x1c13);
 pub const SPEC_TLS_GET_CIPHERS: NodeSpec = NodeSpec::new("tls:getCiphers", 0x1c14);
+pub const SPEC_TLS_CHECK_SERVER_IDENTITY: NodeSpec =
+    NodeSpec::new("tls:checkServerIdentity", 0x1c15);
+pub const SPEC_TLS_GET_CA_CERTIFICATES: NodeSpec = NodeSpec::new("tls:getCACertificates", 0x1c16);
+pub const SPEC_TLS_SOCKET_GET_CIPHER: NodeSpec = NodeSpec::new("tls:socket:getCipher", 0x1c17);
+pub const SPEC_TLS_SOCKET_GET_PROTOCOL: NodeSpec = NodeSpec::new("tls:socket:getProtocol", 0x1c18);
+pub const SPEC_TLS_SOCKET_GET_PEER_CERTIFICATE: NodeSpec =
+    NodeSpec::new("tls:socket:getPeerCertificate", 0x1c1b);
+pub const SPEC_TLS_CONTEXT_ADD_CA_CERT: NodeSpec = NodeSpec::new("tls:context:addCACert", 0x1c19);
+pub const SPEC_TLS_CONTEXT_METHOD: NodeSpec = NodeSpec::new("tls:context:method", 0x1c1c);
+pub const SPEC_TLS_SOCKET_GET_ALPN: NodeSpec = NodeSpec::new("tls:socket:getALPNProtocol", 0x1c1a);
+pub const SPEC_WEBCRYPTO_GET_RANDOM_VALUES: NodeSpec =
+    NodeSpec::new("webcrypto:getRandomValues", 0x1c30);
+pub const SPEC_WEBCRYPTO_DIGEST: NodeSpec = NodeSpec::new("webcrypto:digest", 0x1c31);
+pub const SPEC_WEBCRYPTO_IMPORT_KEY: NodeSpec = NodeSpec::new("webcrypto:importKey", 0x1c32);
+pub const SPEC_WEBCRYPTO_GENERATE_KEY: NodeSpec = NodeSpec::new("webcrypto:generateKey", 0x1c33);
+pub const SPEC_WEBCRYPTO_ENCRYPT: NodeSpec = NodeSpec::new("webcrypto:encrypt", 0x1c34);
+pub const SPEC_WEBCRYPTO_DECRYPT: NodeSpec = NodeSpec::new("webcrypto:decrypt", 0x1c35);
+pub const SPEC_WEBCRYPTO_DERIVE_BITS: NodeSpec = NodeSpec::new("webcrypto:deriveBits", 0x1c36);
+pub const SPEC_WEBCRYPTO_KEY_CONSTRUCT: NodeSpec =
+    NodeSpec::new("webcrypto:CryptoKey:construct", 0x1c37);
+pub const SPEC_WEBCRYPTO_SIGN: NodeSpec = NodeSpec::new("webcrypto:sign", 0x1c38);
+pub const SPEC_WEBCRYPTO_VERIFY: NodeSpec = NodeSpec::new("webcrypto:verify", 0x1c39);
+pub const SPEC_WEBCRYPTO_EXPORT_KEY: NodeSpec = NodeSpec::new("webcrypto:exportKey", 0x1c3a);
+pub const SPEC_CRYPTO_CREATE_SECRET_KEY: NodeSpec = NodeSpec::new("crypto:createSecretKey", 0x1d50);
+pub const SPEC_CRYPTO_CREATE_HASH: NodeSpec = NodeSpec::new("crypto:createHash", 0x1d51);
+pub const SPEC_CRYPTO_HASH: NodeSpec = NodeSpec::new("crypto:hash", 0x1d52);
+pub const SPEC_CRYPTO_HASH_UPDATE: NodeSpec = NodeSpec::new("crypto:hash:update", 0x1d53);
+pub const SPEC_CRYPTO_HASH_DIGEST: NodeSpec = NodeSpec::new("crypto:hash:digest", 0x1d54);
+pub const SPEC_CRYPTO_CREATE_HMAC: NodeSpec = NodeSpec::new("crypto:createHmac", 0x1d55);
+pub const SPEC_CRYPTO_HMAC_UPDATE: NodeSpec = NodeSpec::new("crypto:hmac:update", 0x1d56);
+pub const SPEC_CRYPTO_HMAC_DIGEST: NodeSpec = NodeSpec::new("crypto:hmac:digest", 0x1d57);
+pub const SPEC_CRYPTO_GET_HASHES: NodeSpec = NodeSpec::new("crypto:getHashes", 0x1d58);
+pub const SPEC_CRYPTO_GET_FIPS: NodeSpec = NodeSpec::new("crypto:getFips", 0x1d5b);
+pub const SPEC_CRYPTO_RANDOM_BYTES: NodeSpec = NodeSpec::new("crypto:randomBytes", 0x1d5c);
+pub const SPEC_CRYPTO_RANDOM_FILL_SYNC: NodeSpec = NodeSpec::new("crypto:randomFillSync", 0x1d5d);
+pub const SPEC_CRYPTO_PBKDF2_SYNC: NodeSpec = NodeSpec::new("crypto:pbkdf2Sync", 0x1d5e);
+pub const SPEC_CRYPTO_PBKDF2: NodeSpec = NodeSpec::new("crypto:pbkdf2", 0x1d60);
+pub const SPEC_CRYPTO_SCRYPT_SYNC: NodeSpec = NodeSpec::new("crypto:scryptSync", 0x1d61);
+pub const SPEC_CRYPTO_SCRYPT: NodeSpec = NodeSpec::new("crypto:scrypt", 0x1d67);
+pub const SPEC_CRYPTO_KEY_TO_CRYPTO_KEY: NodeSpec =
+    NodeSpec::new("crypto:keyObject:toCryptoKey", 0x1d62);
+pub const SPEC_CRYPTO_CREATE_PRIVATE_KEY: NodeSpec =
+    NodeSpec::new("crypto:createPrivateKey", 0x1d63);
+pub const SPEC_CRYPTO_CREATE_PUBLIC_KEY: NodeSpec = NodeSpec::new("crypto:createPublicKey", 0x1d64);
+pub const SPEC_CRYPTO_KEY_EXPORT: NodeSpec = NodeSpec::new("crypto:keyObject:export", 0x1d65);
+pub const SPEC_CRYPTO_STREAM_END: NodeSpec = NodeSpec::new("crypto:stream:end", 0x1d59);
+pub const SPEC_CRYPTO_STREAM_READ: NodeSpec = NodeSpec::new("crypto:stream:read", 0x1d5a);
+pub const SPEC_CRYPTO_HASH_COPY: NodeSpec = NodeSpec::new("crypto:hash:copy", 0x1d5f);
+pub const SPEC_CRYPTO_CREATE_CIPHERIV: NodeSpec = NodeSpec::new("crypto:createCipheriv", 0x1d70);
+pub const SPEC_CRYPTO_CREATE_DECIPHERIV: NodeSpec =
+    NodeSpec::new("crypto:createDecipheriv", 0x1d71);
+pub const SPEC_CRYPTO_CIPHER_UPDATE: NodeSpec = NodeSpec::new("crypto:cipher:update", 0x1d72);
+pub const SPEC_CRYPTO_CIPHER_FINAL: NodeSpec = NodeSpec::new("crypto:cipher:final", 0x1d73);
+pub const SPEC_CRYPTO_CIPHER_SET_PADDING: NodeSpec =
+    NodeSpec::new("crypto:cipher:setAutoPadding", 0x1d74);
+pub const SPEC_CRYPTO_CIPHER_SET_AAD: NodeSpec = NodeSpec::new("crypto:cipher:setAAD", 0x1d75);
+pub const SPEC_CRYPTO_CIPHER_GET_TAG: NodeSpec = NodeSpec::new("crypto:cipher:getAuthTag", 0x1d76);
+pub const SPEC_CRYPTO_CIPHER_SET_TAG: NodeSpec = NodeSpec::new("crypto:cipher:setAuthTag", 0x1d77);
+pub const SPEC_CRYPTO_CIPHER_END: NodeSpec = NodeSpec::new("crypto:cipher:end", 0x1d78);
+pub const SPEC_CRYPTO_CIPHER_READ: NodeSpec = NodeSpec::new("crypto:cipher:read", 0x1d79);
+pub const SPEC_CRYPTO_GET_CIPHERS: NodeSpec = NodeSpec::new("crypto:getCiphers", 0x1d7a);
+pub const SPEC_CRYPTO_GET_CIPHER_INFO: NodeSpec = NodeSpec::new("crypto:getCipherInfo", 0x1d7b);
+pub const SPEC_CRYPTO_RANDOM_FILL: NodeSpec = NodeSpec::new("crypto:randomFill", 0x1d7c);
+pub const SPEC_CRYPTO_RANDOM_INT: NodeSpec = NodeSpec::new("crypto:randomInt", 0x1d7d);
+pub const SPEC_CRYPTO_RANDOM_UUIDV7: NodeSpec = NodeSpec::new("crypto:randomUUIDv7", 0x1d7e);
+pub const SPEC_CRYPTO_RANDOM_UUID: NodeSpec = NodeSpec::new("crypto:randomUUID", 0x1d84);
+pub const SPEC_CRYPTO_GENERATE_PRIME_SYNC: NodeSpec =
+    NodeSpec::new("crypto:generatePrimeSync", 0x1d85);
+pub const SPEC_CRYPTO_GENERATE_PRIME: NodeSpec = NodeSpec::new("crypto:generatePrime", 0x1d86);
+pub const SPEC_CRYPTO_HASH_PIPE: NodeSpec = NodeSpec::new("crypto:hash:pipe", 0x1d7f);
+pub const SPEC_CRYPTO_HASH_UNPIPE: NodeSpec = NodeSpec::new("crypto:hash:unpipe", 0x1d80);
+pub const SPEC_CRYPTO_HASH_SET_ENCODING: NodeSpec =
+    NodeSpec::new("crypto:hash:setEncoding", 0x1d81);
+pub const SPEC_CRYPTO_HASH_PAUSE: NodeSpec = NodeSpec::new("crypto:hash:pause", 0x1d82);
+pub const SPEC_CRYPTO_HASH_RESUME: NodeSpec = NodeSpec::new("crypto:hash:resume", 0x1d83);
+pub const SPEC_CRYPTO_CREATE_SIGN: NodeSpec = NodeSpec::new("crypto:createSign", 0x1d8a);
+pub const SPEC_CRYPTO_CREATE_VERIFY: NodeSpec = NodeSpec::new("crypto:createVerify", 0x1d8b);
+pub const SPEC_CRYPTO_SIGN: NodeSpec = NodeSpec::new("crypto:sign", 0x1d8c);
+pub const SPEC_CRYPTO_VERIFY: NodeSpec = NodeSpec::new("crypto:verify", 0x1d8d);
+pub const SPEC_CRYPTO_CREATE_DIFFIE_HELLMAN: NodeSpec =
+    NodeSpec::new("crypto:createDiffieHellman", 0x1d90);
+pub const SPEC_CRYPTO_GET_DIFFIE_HELLMAN: NodeSpec =
+    NodeSpec::new("crypto:getDiffieHellman", 0x1d91);
+pub const SPEC_CRYPTO_CREATE_DIFFIE_HELLMAN_GROUP: NodeSpec =
+    NodeSpec::new("crypto:createDiffieHellmanGroup", 0x1d92);
+pub const SPEC_CRYPTO_DH_GET_PRIME: NodeSpec = NodeSpec::new("crypto:dh:getPrime", 0x1d93);
+pub const SPEC_CRYPTO_DH_GET_GENERATOR: NodeSpec = NodeSpec::new("crypto:dh:getGenerator", 0x1d94);
+pub const SPEC_CRYPTO_DH_GENERATE_KEYS: NodeSpec = NodeSpec::new("crypto:dh:generateKeys", 0x1d95);
+pub const SPEC_CRYPTO_DH_GET_PUBLIC_KEY: NodeSpec = NodeSpec::new("crypto:dh:getPublicKey", 0x1d96);
+pub const SPEC_CRYPTO_DH_GET_PRIVATE_KEY: NodeSpec =
+    NodeSpec::new("crypto:dh:getPrivateKey", 0x1d97);
+pub const SPEC_CRYPTO_DH_SET_PUBLIC_KEY: NodeSpec = NodeSpec::new("crypto:dh:setPublicKey", 0x1d98);
+pub const SPEC_CRYPTO_DH_SET_PRIVATE_KEY: NodeSpec =
+    NodeSpec::new("crypto:dh:setPrivateKey", 0x1d99);
+pub const SPEC_CRYPTO_DH_COMPUTE_SECRET: NodeSpec =
+    NodeSpec::new("crypto:dh:computeSecret", 0x1d9a);
+pub const SPEC_CRYPTO_DH_GET_VERIFY_ERROR: NodeSpec =
+    NodeSpec::new("crypto:dh:getVerifyError", 0x1d9b);
+pub const SPEC_CRYPTO_CREATE_ECDH: NodeSpec = NodeSpec::new("crypto:createECDH", 0x1d9c);
+pub const SPEC_CRYPTO_GET_CURVES: NodeSpec = NodeSpec::new("crypto:getCurves", 0x1d9d);
+pub const SPEC_CRYPTO_ECDH_GENERATE_KEYS: NodeSpec =
+    NodeSpec::new("crypto:ecdh:generateKeys", 0x1d9e);
+pub const SPEC_CRYPTO_ECDH_GET_PUBLIC_KEY: NodeSpec =
+    NodeSpec::new("crypto:ecdh:getPublicKey", 0x1d9f);
+pub const SPEC_CRYPTO_ECDH_GET_PRIVATE_KEY: NodeSpec =
+    NodeSpec::new("crypto:ecdh:getPrivateKey", 0x1da0);
+pub const SPEC_CRYPTO_ECDH_SET_PUBLIC_KEY: NodeSpec =
+    NodeSpec::new("crypto:ecdh:setPublicKey", 0x1da1);
+pub const SPEC_CRYPTO_ECDH_SET_PRIVATE_KEY: NodeSpec =
+    NodeSpec::new("crypto:ecdh:setPrivateKey", 0x1da2);
+pub const SPEC_CRYPTO_ECDH_COMPUTE_SECRET: NodeSpec =
+    NodeSpec::new("crypto:ecdh:computeSecret", 0x1da3);
+pub const SPEC_CRYPTO_DIFFIE_HELLMAN: NodeSpec = NodeSpec::new("crypto:diffieHellman", 0x1da4);
+pub const SPEC_CRYPTO_GENERATE_KEY_PAIR_SYNC: NodeSpec =
+    NodeSpec::new("crypto:generateKeyPairSync", 0x1da5);
+pub const SPEC_CRYPTO_GENERATE_KEY_PAIR: NodeSpec = NodeSpec::new("crypto:generateKeyPair", 0x1da6);
+pub const SPEC_CRYPTO_KEY_OBJECT_CONSTRUCTOR: NodeSpec = NodeSpec::new("crypto:KeyObject", 0x1da7);
+pub const SPEC_CRYPTO_KEY_OBJECT_FROM: NodeSpec = NodeSpec::new("crypto:KeyObject.from", 0x1da8);
+pub const SPEC_CRYPTO_KEY_OBJECT_TO_STRING: NodeSpec =
+    NodeSpec::new("crypto:KeyObject.toString", 0x1da9);
+pub const SPEC_CRYPTO_PUBLIC_ENCRYPT: NodeSpec = NodeSpec::new("crypto:publicEncrypt", 0x1daa);
+pub const SPEC_CRYPTO_PRIVATE_DECRYPT: NodeSpec = NodeSpec::new("crypto:privateDecrypt", 0x1dab);
+pub const SPEC_CRYPTO_PUBLIC_DECRYPT: NodeSpec = NodeSpec::new("crypto:publicDecrypt", 0x1dac);
+pub const SPEC_CRYPTO_PRIVATE_ENCRYPT: NodeSpec = NodeSpec::new("crypto:privateEncrypt", 0x1dad);
+pub const SPEC_CRYPTO_GENERATE_KEY_SYNC: NodeSpec = NodeSpec::new("crypto:generateKeySync", 0x1dae);
+pub const SPEC_CRYPTO_GENERATE_KEY: NodeSpec = NodeSpec::new("crypto:generateKey", 0x1dc5);
+pub const SPEC_CRYPTO_SET_ENGINE: NodeSpec = NodeSpec::new("crypto:setEngine", 0x1dc6);
+pub const SPEC_CRYPTO_SECURE_HEAP_USED: NodeSpec = NodeSpec::new("crypto:secureHeapUsed", 0x1dc7);
+pub const SPEC_CRYPTO_HASH_ON: NodeSpec = NodeSpec::new("crypto:hash:on", 0x1dc8);
+pub const SPEC_CRYPTO_HASH_ONCE: NodeSpec = NodeSpec::new("crypto:hash:once", 0x1dc9);
+pub const SPEC_CRYPTO_HASH_EMIT: NodeSpec = NodeSpec::new("crypto:hash:emit", 0x1dca);
+pub const SPEC_CRYPTO_HASH_REMOVE_LISTENER: NodeSpec =
+    NodeSpec::new("crypto:hash:removeListener", 0x1dcb);
+pub const SPEC_CRYPTO_ENCAPSULATE: NodeSpec = NodeSpec::new("crypto:encapsulate", 0x1dcc);
+pub const SPEC_CRYPTO_DECAPSULATE: NodeSpec = NodeSpec::new("crypto:decapsulate", 0x1dcd);
+pub const SPEC_CRYPTO_ECDH_CONVERT_KEY: NodeSpec = NodeSpec::new("crypto:ecdh:convertKey", 0x1daf);
+pub const SPEC_CRYPTO_ARGON2: NodeSpec = NodeSpec::new("crypto:argon2", 0x1db0);
+pub const SPEC_CRYPTO_HKDF_SYNC: NodeSpec = NodeSpec::new("crypto:hkdfSync", 0x1db1);
+pub const SPEC_CRYPTO_HKDF: NodeSpec = NodeSpec::new("crypto:hkdf", 0x1db2);
+pub const SPEC_CRYPTO_SET_FIPS: NodeSpec = NodeSpec::new("crypto:setFips", 0x1db3);
+pub const SPEC_CRYPTO_CHECK_PRIME_SYNC: NodeSpec = NodeSpec::new("crypto:checkPrimeSync", 0x1db4);
+pub const SPEC_CRYPTO_CHECK_PRIME: NodeSpec = NodeSpec::new("crypto:checkPrime", 0x1db5);
+pub const SPEC_CRYPTO_KEY_OBJECT_EQUALS: NodeSpec =
+    NodeSpec::new("crypto:keyObject:equals", 0x1db6);
+pub const SPEC_CRYPTO_TEST_FIPS: NodeSpec = NodeSpec::new("crypto:testFipsCrypto", 0x1db7);
+pub const SPEC_CRYPTO_KEY_OBJECT_GET_TYPE: NodeSpec =
+    NodeSpec::new("crypto:keyObject:getType", 0x1db8);
+pub const SPEC_CRYPTO_KEY_OBJECT_GET_SIZE: NodeSpec =
+    NodeSpec::new("crypto:keyObject:getSize", 0x1db9);
+pub const SPEC_CRYPTO_KEY_OBJECT_GET_ASYM_TYPE: NodeSpec =
+    NodeSpec::new("crypto:keyObject:getAsymmetricKeyType", 0x1dba);
+pub const SPEC_CRYPTO_KEY_OBJECT_GET_DETAILS: NodeSpec =
+    NodeSpec::new("crypto:keyObject:getAsymmetricKeyDetails", 0x1dbb);
+pub const SPEC_CRYPTO_KEY_OBJECT_GET_SIZE_ASYM: NodeSpec =
+    NodeSpec::new("crypto:keyObject:getSizeAsymmetric", 0x1dbc);
+pub const SPEC_CRYPTO_X509_CONSTRUCTOR: NodeSpec = NodeSpec::new("crypto:X509Certificate", 0x1dbd);
+pub const SPEC_CRYPTO_X509_CHECK_PRIVATE_KEY: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:checkPrivateKey", 0x1dbe);
+pub const SPEC_CRYPTO_X509_VERIFY: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:verify", 0x1dbf);
+pub const SPEC_CRYPTO_X509_PUBLIC_KEY: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:publicKey", 0x1dc0);
+pub const SPEC_CRYPTO_X509_TO_LEGACY: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:toLegacyObject", 0x1dcf);
+pub const SPEC_CRYPTO_X509_TO_STRING: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:toString", 0x1dd0);
+pub const SPEC_CRYPTO_X509_TO_JSON: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:toJSON", 0x1dd1);
+pub const SPEC_CRYPTO_X509_CHECK_HOST: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:checkHost", 0x1dd2);
+pub const SPEC_CRYPTO_X509_CHECK_IP: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:checkIP", 0x1dd3);
+pub const SPEC_CRYPTO_X509_CHECK_EMAIL: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:checkEmail", 0x1dd4);
+pub const SPEC_CRYPTO_X509_CHECK_ISSUED: NodeSpec =
+    NodeSpec::new("crypto:X509Certificate:checkIssued", 0x1dd5);
+pub const SPEC_CRYPTO_CERTIFICATE_CONSTRUCTOR: NodeSpec =
+    NodeSpec::new("crypto:Certificate", 0x1dc1);
+pub const SPEC_CRYPTO_CERTIFICATE_VERIFY_SPKAC: NodeSpec =
+    NodeSpec::new("crypto:Certificate:verifySpkac", 0x1dc2);
+pub const SPEC_CRYPTO_CERTIFICATE_EXPORT_PUBLIC_KEY: NodeSpec =
+    NodeSpec::new("crypto:Certificate:exportPublicKey", 0x1dc3);
+pub const SPEC_CRYPTO_CERTIFICATE_EXPORT_CHALLENGE: NodeSpec =
+    NodeSpec::new("crypto:Certificate:exportChallenge", 0x1dc4);
+pub const SPEC_CRYPTO_CIPHER_PIPE: NodeSpec = NodeSpec::new("crypto:cipher:pipe", 0x1de0);
+pub const SPEC_CRYPTO_CIPHER_UNPIPE: NodeSpec = NodeSpec::new("crypto:cipher:unpipe", 0x1de1);
+pub const SPEC_CRYPTO_CIPHER_ON: NodeSpec = NodeSpec::new("crypto:cipher:on", 0x1de2);
+pub const SPEC_CRYPTO_CIPHER_PAUSE: NodeSpec = NodeSpec::new("crypto:cipher:pause", 0x1de3);
+pub const SPEC_CRYPTO_CIPHER_RESUME: NodeSpec = NodeSpec::new("crypto:cipher:resume", 0x1de4);
+pub const SPEC_CRYPTO_CIPHER_SET_ENCODING: NodeSpec =
+    NodeSpec::new("crypto:cipher:setEncoding", 0x1d89);
 pub const SPEC_TTY_READ_STREAM: NodeSpec = NodeSpec::new("tty:ReadStream", 0x1c20);
 pub const SPEC_TTY_WRITE_STREAM: NodeSpec = NodeSpec::new("tty:WriteStream", 0x1c21);
 
@@ -947,6 +1472,7 @@ pub const CAP_FS_STATSYNC: CapId = SPEC_FS_STATSYNC.cap;
 pub const CAP_FS_READDIRSYNC: CapId = SPEC_FS_READDIRSYNC.cap;
 pub const CAP_FS_EXISTSSYNC: CapId = SPEC_FS_EXISTSSYNC.cap;
 pub const CAP_FS_REALSYNC: CapId = SPEC_FS_REALSYNC.cap;
+pub const CAP_FS_REALSYNC_NATIVE: CapId = SPEC_FS_REALSYNC_NATIVE.cap;
 pub const CAP_FS_LSTAT: CapId = SPEC_FS_LSTAT.cap;
 pub const CAP_FS_ACCESS: CapId = SPEC_FS_ACCESS.cap;
 pub const CAP_FS_RMDIR: CapId = SPEC_FS_RMDIR.cap;
@@ -970,6 +1496,41 @@ pub const CAP_FS_READLINKSYNC: CapId = SPEC_FS_READLINKSYNC.cap;
 pub const CAP_FS_CHMODSYNC: CapId = SPEC_FS_CHMODSYNC.cap;
 pub const CAP_FS_TRUNCATESYNC: CapId = SPEC_FS_TRUNCATESYNC.cap;
 pub const CAP_FS_SYMLINKSYNC: CapId = SPEC_FS_SYMLINKSYNC.cap;
+pub const CAP_FS_LINKSYNC: CapId = SPEC_FS_LINKSYNC.cap;
+pub const CAP_FS_LINK: CapId = SPEC_FS_LINK.cap;
+pub const CAP_FS_SYMLINK: CapId = SPEC_FS_SYMLINK.cap;
+pub const CAP_FS_CHOWN: CapId = SPEC_FS_CHOWN.cap;
+pub const CAP_FS_LCHOWN: CapId = SPEC_FS_LCHOWN.cap;
+pub const CAP_FS_UTIMES: CapId = SPEC_FS_UTIMES.cap;
+pub const CAP_FS_LUTIMES: CapId = SPEC_FS_LUTIMES.cap;
+pub const CAP_FS_CHOWNSYNC: CapId = SPEC_FS_CHOWNSYNC.cap;
+pub const CAP_FS_LCHOWNSYNC: CapId = SPEC_FS_LCHOWNSYNC.cap;
+pub const CAP_FS_UTIMESSYNC: CapId = SPEC_FS_UTIMESSYNC.cap;
+pub const CAP_FS_LUTIMESSYNC: CapId = SPEC_FS_LUTIMESSYNC.cap;
+pub const CAP_FS_LCHMOD: CapId = SPEC_FS_LCHMOD.cap;
+pub const CAP_FS_LCHMODSYNC: CapId = SPEC_FS_LCHMODSYNC.cap;
+pub const CAP_FS_WATCHFILE: CapId = SPEC_FS_WATCHFILE.cap;
+pub const CAP_FS_UNWATCHFILE: CapId = SPEC_FS_UNWATCHFILE.cap;
+pub const CAP_FS_DIR_READ_SYNC: CapId = SPEC_FS_DIR_READ_SYNC.cap;
+pub const CAP_FS_DIR_READ: CapId = SPEC_FS_DIR_READ.cap;
+pub const CAP_FS_DIR_CLOSE_SYNC: CapId = SPEC_FS_DIR_CLOSE_SYNC.cap;
+pub const CAP_FS_DIR_CLOSE: CapId = SPEC_FS_DIR_CLOSE.cap;
+pub const CAP_FS_DIR_PATH_GET: CapId = SPEC_FS_DIR_PATH_GET.cap;
+pub const CAP_FS_DIRENT: CapId = SPEC_FS_DIRENT.cap;
+pub const CAP_FS_STATS: CapId = SPEC_FS_STATS.cap;
+pub const CAP_FS_FSTAT: CapId = SPEC_FS_FSTAT.cap;
+pub const CAP_FS_FTRUNCATE: CapId = SPEC_FS_FTRUNCATE.cap;
+pub const CAP_FS_FCHMODSYNC: CapId = SPEC_FS_FCHMODSYNC.cap;
+pub const CAP_FS_FCHOWNSYNC: CapId = SPEC_FS_FCHOWNSYNC.cap;
+pub const CAP_FS_FUTIMESSYNC: CapId = SPEC_FS_FUTIMESSYNC.cap;
+pub const CAP_FS_READVSYNC: CapId = SPEC_FS_READVSYNC.cap;
+pub const CAP_FS_WRITEVSYNC: CapId = SPEC_FS_WRITEVSYNC.cap;
+pub const CAP_FS_READV: CapId = SPEC_FS_READV.cap;
+pub const CAP_FS_WRITEV: CapId = SPEC_FS_WRITEV.cap;
+pub const CAP_FS_FCHMOD: CapId = SPEC_FS_FCHMOD.cap;
+pub const CAP_FS_FCHOWN: CapId = SPEC_FS_FCHOWN.cap;
+pub const CAP_FS_FUTIMES: CapId = SPEC_FS_FUTIMES.cap;
+pub const CAP_FS_FDATASYNC: CapId = SPEC_FS_FDATASYNC.cap;
 pub const CAP_FS_MKDIRSYNC: CapId = SPEC_FS_MKDIRSYNC.cap;
 pub const CAP_FS_UNLINKSYNC: CapId = SPEC_FS_UNLINKSYNC.cap;
 pub const CAP_FS_STAT_ISFILE: CapId = SPEC_FS_STAT_ISFILE.cap;
@@ -980,6 +1541,7 @@ pub const CAP_FS_STAT_ISCHAR: CapId = SPEC_FS_STAT_ISCHAR.cap;
 pub const CAP_FS_STAT_ISFIFO: CapId = SPEC_FS_STAT_ISFIFO.cap;
 pub const CAP_FS_STAT_ISSOCKET: CapId = SPEC_FS_STAT_ISSOCKET.cap;
 pub const CAP_FS_REALPATH: CapId = SPEC_FS_REALPATH.cap;
+pub const CAP_FS_REALPATH_NATIVE: CapId = SPEC_FS_REALPATH_NATIVE.cap;
 pub const CAP_FS_WATCH: CapId = SPEC_FS_WATCH.cap;
 pub const CAP_FS_WATCH_CLOSE: CapId = SPEC_FS_WATCH_CLOSE.cap;
 pub const CAP_FS_READSTREAM: CapId = SPEC_FS_READSTREAM.cap;
@@ -998,6 +1560,10 @@ pub const CAP_FS_WRITE: CapId = SPEC_FS_WRITE.cap;
 pub const CAP_FS_FSTAT_SYNC: CapId = SPEC_FS_FSTAT_SYNC.cap;
 pub const CAP_FS_FTRUNCATE_SYNC: CapId = SPEC_FS_FTRUNCATE_SYNC.cap;
 pub const CAP_FS_FSYNC_SYNC: CapId = SPEC_FS_FSYNC_SYNC.cap;
+pub const CAP_FS_FSYNC: CapId = SPEC_FS_FSYNC.cap;
+pub const CAP_FS_WRITE_STREAM_WRITE: CapId = SPEC_FS_WRITE_STREAM_WRITE.cap;
+pub const CAP_FS_WRITE_STREAM_CLOSE: CapId = SPEC_FS_WRITE_STREAM_CLOSE.cap;
+pub const CAP_FS_WRITE_STREAM_OPEN: CapId = SPEC_FS_WRITE_STREAM_OPEN.cap;
 pub const CAP_FS_FDATASYNC_SYNC: CapId = SPEC_FS_FDATASYNC_SYNC.cap;
 pub const CAP_FSP_OPEN: CapId = SPEC_FSP_OPEN.cap;
 pub const CAP_FS_HANDLE_READ: CapId = SPEC_FS_HANDLE_READ.cap;
@@ -1005,6 +1571,7 @@ pub const CAP_FS_HANDLE_CLOSE: CapId = SPEC_FS_HANDLE_CLOSE.cap;
 pub const CAP_FS_HANDLE_WRITE: CapId = SPEC_FS_HANDLE_WRITE.cap;
 pub const CAP_FS_CLOSE: CapId = SPEC_FS_CLOSE.cap;
 pub const CAP_FS_HANDLE_READFILE: CapId = SPEC_FS_HANDLE_READFILE.cap;
+pub const CAP_FS_HANDLE_FD: CapId = SPEC_FS_HANDLE_FD.cap;
 pub const CAP_FS_READSTREAM_CLOSE: CapId = SPEC_FS_READSTREAM_CLOSE.cap;
 pub const CAP_FS_READSTREAM_DESTROY: CapId = SPEC_FS_READSTREAM_DESTROY.cap;
 pub const CAP_FSP_READFILE: CapId = SPEC_FSP_READFILE.cap;
@@ -1025,6 +1592,19 @@ pub const CAP_FSP_READLINK: CapId = SPEC_FSP_READLINK.cap;
 pub const CAP_FSP_CHMOD: CapId = SPEC_FSP_CHMOD.cap;
 pub const CAP_FSP_TRUNCATE: CapId = SPEC_FSP_TRUNCATE.cap;
 pub const CAP_FSP_REALPATH: CapId = SPEC_FSP_REALPATH.cap;
+pub const CAP_FSP_CHOWN: CapId = SPEC_FSP_CHOWN.cap;
+pub const CAP_FSP_LCHOWN: CapId = SPEC_FSP_LCHOWN.cap;
+pub const CAP_FSP_LCHMOD: CapId = SPEC_FSP_LCHMOD.cap;
+pub const CAP_FSP_OPENDIR: CapId = SPEC_FSP_OPENDIR.cap;
+pub const CAP_FSP_SYMLINK: CapId = SPEC_FSP_SYMLINK.cap;
+pub const CAP_FSP_UTIMES: CapId = SPEC_FSP_UTIMES.cap;
+pub const CAP_FSP_LUTIMES: CapId = SPEC_FSP_LUTIMES.cap;
+pub const CAP_FS_STATFS: CapId = SPEC_FS_STATFS.cap;
+pub const CAP_FS_STATFSSYNC: CapId = SPEC_FS_STATFSSYNC.cap;
+pub const CAP_FSP_STATFS: CapId = SPEC_FSP_STATFS.cap;
+pub const CAP_FS_TO_UNIX_TIMESTAMP: CapId = SPEC_FS_TO_UNIX_TIMESTAMP.cap;
+pub const CAP_INTERNAL_FS_STRING_TO_FLAGS: CapId = SPEC_INTERNAL_FS_STRING_TO_FLAGS.cap;
+pub const CAP_FSP_LINK: CapId = SPEC_FSP_LINK.cap;
 pub const CAP_SEA_IS_SEA: CapId = SPEC_SEA_IS_SEA.cap;
 pub const CAP_ABORT_CONTROLLER: CapId = SPEC_ABORT_CONTROLLER.cap;
 pub const CAP_ABORT_CONTROLLER_ABORT: CapId = SPEC_ABORT_CONTROLLER_ABORT.cap;
@@ -1181,11 +1761,159 @@ pub const CAP_FS_DIR: CapId = SPEC_FS_DIR.cap;
 pub const CAP_GC: CapId = SPEC_GC.cap;
 pub const CAP_HTTPS_GET: CapId = SPEC_HTTPS_GET.cap;
 pub const CAP_HTTPS_REQUEST: CapId = SPEC_HTTPS_REQUEST.cap;
+pub const CAP_HTTPS_CREATE_SERVER: CapId = SPEC_HTTPS_CREATE_SERVER.cap;
 pub const CAP_TLS_CREATE_SECURE_CONTEXT: CapId = SPEC_TLS_CREATE_SECURE_CONTEXT.cap;
 pub const CAP_TLS_CREATE_SERVER: CapId = SPEC_TLS_CREATE_SERVER.cap;
 pub const CAP_TLS_CONNECT: CapId = SPEC_TLS_CONNECT.cap;
 pub const CAP_TLS_CONVERT_ALPN: CapId = SPEC_TLS_CONVERT_ALPN.cap;
 pub const CAP_TLS_GET_CIPHERS: CapId = SPEC_TLS_GET_CIPHERS.cap;
+pub const CAP_TLS_CHECK_SERVER_IDENTITY: CapId = SPEC_TLS_CHECK_SERVER_IDENTITY.cap;
+pub const CAP_TLS_GET_CA_CERTIFICATES: CapId = SPEC_TLS_GET_CA_CERTIFICATES.cap;
+pub const CAP_TLS_SOCKET_GET_CIPHER: CapId = SPEC_TLS_SOCKET_GET_CIPHER.cap;
+pub const CAP_TLS_SOCKET_GET_PROTOCOL: CapId = SPEC_TLS_SOCKET_GET_PROTOCOL.cap;
+pub const CAP_TLS_SOCKET_GET_PEER_CERTIFICATE: CapId = SPEC_TLS_SOCKET_GET_PEER_CERTIFICATE.cap;
+pub const CAP_TLS_CONTEXT_ADD_CA_CERT: CapId = SPEC_TLS_CONTEXT_ADD_CA_CERT.cap;
+pub const CAP_TLS_CONTEXT_METHOD: CapId = SPEC_TLS_CONTEXT_METHOD.cap;
+pub const CAP_TLS_SOCKET_GET_ALPN: CapId = SPEC_TLS_SOCKET_GET_ALPN.cap;
+pub const CAP_WEBCRYPTO_GET_RANDOM_VALUES: CapId = SPEC_WEBCRYPTO_GET_RANDOM_VALUES.cap;
+pub const CAP_WEBCRYPTO_DIGEST: CapId = SPEC_WEBCRYPTO_DIGEST.cap;
+pub const CAP_WEBCRYPTO_IMPORT_KEY: CapId = SPEC_WEBCRYPTO_IMPORT_KEY.cap;
+pub const CAP_WEBCRYPTO_GENERATE_KEY: CapId = SPEC_WEBCRYPTO_GENERATE_KEY.cap;
+pub const CAP_WEBCRYPTO_ENCRYPT: CapId = SPEC_WEBCRYPTO_ENCRYPT.cap;
+pub const CAP_WEBCRYPTO_DECRYPT: CapId = SPEC_WEBCRYPTO_DECRYPT.cap;
+pub const CAP_WEBCRYPTO_DERIVE_BITS: CapId = SPEC_WEBCRYPTO_DERIVE_BITS.cap;
+pub const CAP_WEBCRYPTO_KEY_CONSTRUCT: CapId = SPEC_WEBCRYPTO_KEY_CONSTRUCT.cap;
+pub const CAP_WEBCRYPTO_SIGN: CapId = SPEC_WEBCRYPTO_SIGN.cap;
+pub const CAP_WEBCRYPTO_VERIFY: CapId = SPEC_WEBCRYPTO_VERIFY.cap;
+pub const CAP_WEBCRYPTO_EXPORT_KEY: CapId = SPEC_WEBCRYPTO_EXPORT_KEY.cap;
+pub const CAP_CRYPTO_CREATE_SECRET_KEY: CapId = SPEC_CRYPTO_CREATE_SECRET_KEY.cap;
+pub const CAP_CRYPTO_CREATE_HASH: CapId = SPEC_CRYPTO_CREATE_HASH.cap;
+pub const CAP_CRYPTO_HASH: CapId = SPEC_CRYPTO_HASH.cap;
+pub const CAP_CRYPTO_HASH_UPDATE: CapId = SPEC_CRYPTO_HASH_UPDATE.cap;
+pub const CAP_CRYPTO_HASH_DIGEST: CapId = SPEC_CRYPTO_HASH_DIGEST.cap;
+pub const CAP_CRYPTO_CREATE_HMAC: CapId = SPEC_CRYPTO_CREATE_HMAC.cap;
+pub const CAP_CRYPTO_HMAC_UPDATE: CapId = SPEC_CRYPTO_HMAC_UPDATE.cap;
+pub const CAP_CRYPTO_HMAC_DIGEST: CapId = SPEC_CRYPTO_HMAC_DIGEST.cap;
+pub const CAP_CRYPTO_GET_HASHES: CapId = SPEC_CRYPTO_GET_HASHES.cap;
+pub const CAP_CRYPTO_GET_FIPS: CapId = SPEC_CRYPTO_GET_FIPS.cap;
+pub const CAP_CRYPTO_SET_FIPS: CapId = SPEC_CRYPTO_SET_FIPS.cap;
+pub const CAP_CRYPTO_SET_ENGINE: CapId = SPEC_CRYPTO_SET_ENGINE.cap;
+pub const CAP_CRYPTO_SECURE_HEAP_USED: CapId = SPEC_CRYPTO_SECURE_HEAP_USED.cap;
+pub const CAP_CRYPTO_HASH_ON: CapId = SPEC_CRYPTO_HASH_ON.cap;
+pub const CAP_CRYPTO_HASH_ONCE: CapId = SPEC_CRYPTO_HASH_ONCE.cap;
+pub const CAP_CRYPTO_HASH_EMIT: CapId = SPEC_CRYPTO_HASH_EMIT.cap;
+pub const CAP_CRYPTO_HASH_REMOVE_LISTENER: CapId = SPEC_CRYPTO_HASH_REMOVE_LISTENER.cap;
+pub const CAP_CRYPTO_ENCAPSULATE: CapId = SPEC_CRYPTO_ENCAPSULATE.cap;
+pub const CAP_CRYPTO_DECAPSULATE: CapId = SPEC_CRYPTO_DECAPSULATE.cap;
+pub const CAP_CRYPTO_CHECK_PRIME_SYNC: CapId = SPEC_CRYPTO_CHECK_PRIME_SYNC.cap;
+pub const CAP_CRYPTO_CHECK_PRIME: CapId = SPEC_CRYPTO_CHECK_PRIME.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_EQUALS: CapId = SPEC_CRYPTO_KEY_OBJECT_EQUALS.cap;
+pub const CAP_CRYPTO_TEST_FIPS: CapId = SPEC_CRYPTO_TEST_FIPS.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_GET_TYPE: CapId = SPEC_CRYPTO_KEY_OBJECT_GET_TYPE.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_GET_SIZE: CapId = SPEC_CRYPTO_KEY_OBJECT_GET_SIZE.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_GET_ASYM_TYPE: CapId = SPEC_CRYPTO_KEY_OBJECT_GET_ASYM_TYPE.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_GET_DETAILS: CapId = SPEC_CRYPTO_KEY_OBJECT_GET_DETAILS.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_GET_SIZE_ASYM: CapId = SPEC_CRYPTO_KEY_OBJECT_GET_SIZE_ASYM.cap;
+pub const CAP_CRYPTO_X509_CONSTRUCTOR: CapId = SPEC_CRYPTO_X509_CONSTRUCTOR.cap;
+pub const CAP_CRYPTO_X509_CHECK_PRIVATE_KEY: CapId = SPEC_CRYPTO_X509_CHECK_PRIVATE_KEY.cap;
+pub const CAP_CRYPTO_X509_VERIFY: CapId = SPEC_CRYPTO_X509_VERIFY.cap;
+pub const CAP_CRYPTO_X509_PUBLIC_KEY: CapId = SPEC_CRYPTO_X509_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_X509_TO_LEGACY: CapId = SPEC_CRYPTO_X509_TO_LEGACY.cap;
+pub const CAP_CRYPTO_X509_TO_STRING: CapId = SPEC_CRYPTO_X509_TO_STRING.cap;
+pub const CAP_CRYPTO_X509_TO_JSON: CapId = SPEC_CRYPTO_X509_TO_JSON.cap;
+pub const CAP_CRYPTO_X509_CHECK_HOST: CapId = SPEC_CRYPTO_X509_CHECK_HOST.cap;
+pub const CAP_CRYPTO_X509_CHECK_IP: CapId = SPEC_CRYPTO_X509_CHECK_IP.cap;
+pub const CAP_CRYPTO_X509_CHECK_EMAIL: CapId = SPEC_CRYPTO_X509_CHECK_EMAIL.cap;
+pub const CAP_CRYPTO_X509_CHECK_ISSUED: CapId = SPEC_CRYPTO_X509_CHECK_ISSUED.cap;
+pub const CAP_CRYPTO_CERTIFICATE_CONSTRUCTOR: CapId = SPEC_CRYPTO_CERTIFICATE_CONSTRUCTOR.cap;
+pub const CAP_CRYPTO_CERTIFICATE_VERIFY_SPKAC: CapId = SPEC_CRYPTO_CERTIFICATE_VERIFY_SPKAC.cap;
+pub const CAP_CRYPTO_CERTIFICATE_EXPORT_PUBLIC_KEY: CapId =
+    SPEC_CRYPTO_CERTIFICATE_EXPORT_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_CERTIFICATE_EXPORT_CHALLENGE: CapId =
+    SPEC_CRYPTO_CERTIFICATE_EXPORT_CHALLENGE.cap;
+pub const CAP_CRYPTO_RANDOM_BYTES: CapId = SPEC_CRYPTO_RANDOM_BYTES.cap;
+pub const CAP_CRYPTO_RANDOM_FILL_SYNC: CapId = SPEC_CRYPTO_RANDOM_FILL_SYNC.cap;
+pub const CAP_CRYPTO_PBKDF2_SYNC: CapId = SPEC_CRYPTO_PBKDF2_SYNC.cap;
+pub const CAP_CRYPTO_PBKDF2: CapId = SPEC_CRYPTO_PBKDF2.cap;
+pub const CAP_CRYPTO_SCRYPT_SYNC: CapId = SPEC_CRYPTO_SCRYPT_SYNC.cap;
+pub const CAP_CRYPTO_SCRYPT: CapId = SPEC_CRYPTO_SCRYPT.cap;
+pub const CAP_CRYPTO_KEY_TO_CRYPTO_KEY: CapId = SPEC_CRYPTO_KEY_TO_CRYPTO_KEY.cap;
+pub const CAP_CRYPTO_CREATE_PRIVATE_KEY: CapId = SPEC_CRYPTO_CREATE_PRIVATE_KEY.cap;
+pub const CAP_CRYPTO_CREATE_PUBLIC_KEY: CapId = SPEC_CRYPTO_CREATE_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_KEY_EXPORT: CapId = SPEC_CRYPTO_KEY_EXPORT.cap;
+pub const CAP_CRYPTO_STREAM_END: CapId = SPEC_CRYPTO_STREAM_END.cap;
+pub const CAP_CRYPTO_STREAM_READ: CapId = SPEC_CRYPTO_STREAM_READ.cap;
+pub const CAP_CRYPTO_HASH_COPY: CapId = SPEC_CRYPTO_HASH_COPY.cap;
+pub const CAP_CRYPTO_CREATE_CIPHERIV: CapId = SPEC_CRYPTO_CREATE_CIPHERIV.cap;
+pub const CAP_CRYPTO_CREATE_DECIPHERIV: CapId = SPEC_CRYPTO_CREATE_DECIPHERIV.cap;
+pub const CAP_CRYPTO_CIPHER_UPDATE: CapId = SPEC_CRYPTO_CIPHER_UPDATE.cap;
+pub const CAP_CRYPTO_CIPHER_FINAL: CapId = SPEC_CRYPTO_CIPHER_FINAL.cap;
+pub const CAP_CRYPTO_CIPHER_SET_PADDING: CapId = SPEC_CRYPTO_CIPHER_SET_PADDING.cap;
+pub const CAP_CRYPTO_CIPHER_SET_AAD: CapId = SPEC_CRYPTO_CIPHER_SET_AAD.cap;
+pub const CAP_CRYPTO_CIPHER_GET_TAG: CapId = SPEC_CRYPTO_CIPHER_GET_TAG.cap;
+pub const CAP_CRYPTO_CIPHER_SET_TAG: CapId = SPEC_CRYPTO_CIPHER_SET_TAG.cap;
+pub const CAP_CRYPTO_CIPHER_END: CapId = SPEC_CRYPTO_CIPHER_END.cap;
+pub const CAP_CRYPTO_CIPHER_READ: CapId = SPEC_CRYPTO_CIPHER_READ.cap;
+pub const CAP_CRYPTO_GET_CIPHERS: CapId = SPEC_CRYPTO_GET_CIPHERS.cap;
+pub const CAP_CRYPTO_GET_CIPHER_INFO: CapId = SPEC_CRYPTO_GET_CIPHER_INFO.cap;
+pub const CAP_CRYPTO_RANDOM_FILL: CapId = SPEC_CRYPTO_RANDOM_FILL.cap;
+pub const CAP_CRYPTO_RANDOM_INT: CapId = SPEC_CRYPTO_RANDOM_INT.cap;
+pub const CAP_CRYPTO_RANDOM_UUIDV7: CapId = SPEC_CRYPTO_RANDOM_UUIDV7.cap;
+pub const CAP_CRYPTO_RANDOM_UUID: CapId = SPEC_CRYPTO_RANDOM_UUID.cap;
+pub const CAP_CRYPTO_GENERATE_PRIME_SYNC: CapId = SPEC_CRYPTO_GENERATE_PRIME_SYNC.cap;
+pub const CAP_CRYPTO_GENERATE_PRIME: CapId = SPEC_CRYPTO_GENERATE_PRIME.cap;
+pub const CAP_CRYPTO_HASH_PIPE: CapId = SPEC_CRYPTO_HASH_PIPE.cap;
+pub const CAP_CRYPTO_HASH_UNPIPE: CapId = SPEC_CRYPTO_HASH_UNPIPE.cap;
+pub const CAP_CRYPTO_HASH_SET_ENCODING: CapId = SPEC_CRYPTO_HASH_SET_ENCODING.cap;
+pub const CAP_CRYPTO_HASH_PAUSE: CapId = SPEC_CRYPTO_HASH_PAUSE.cap;
+pub const CAP_CRYPTO_HASH_RESUME: CapId = SPEC_CRYPTO_HASH_RESUME.cap;
+pub const CAP_CRYPTO_CREATE_SIGN: CapId = SPEC_CRYPTO_CREATE_SIGN.cap;
+pub const CAP_CRYPTO_CREATE_VERIFY: CapId = SPEC_CRYPTO_CREATE_VERIFY.cap;
+pub const CAP_CRYPTO_SIGN: CapId = SPEC_CRYPTO_SIGN.cap;
+pub const CAP_CRYPTO_VERIFY: CapId = SPEC_CRYPTO_VERIFY.cap;
+pub const CAP_CRYPTO_CREATE_DIFFIE_HELLMAN: CapId = SPEC_CRYPTO_CREATE_DIFFIE_HELLMAN.cap;
+pub const CAP_CRYPTO_GET_DIFFIE_HELLMAN: CapId = SPEC_CRYPTO_GET_DIFFIE_HELLMAN.cap;
+pub const CAP_CRYPTO_CREATE_DIFFIE_HELLMAN_GROUP: CapId =
+    SPEC_CRYPTO_CREATE_DIFFIE_HELLMAN_GROUP.cap;
+pub const CAP_CRYPTO_DH_GET_PRIME: CapId = SPEC_CRYPTO_DH_GET_PRIME.cap;
+pub const CAP_CRYPTO_DH_GET_GENERATOR: CapId = SPEC_CRYPTO_DH_GET_GENERATOR.cap;
+pub const CAP_CRYPTO_DH_GENERATE_KEYS: CapId = SPEC_CRYPTO_DH_GENERATE_KEYS.cap;
+pub const CAP_CRYPTO_DH_GET_PUBLIC_KEY: CapId = SPEC_CRYPTO_DH_GET_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_DH_GET_PRIVATE_KEY: CapId = SPEC_CRYPTO_DH_GET_PRIVATE_KEY.cap;
+pub const CAP_CRYPTO_DH_SET_PUBLIC_KEY: CapId = SPEC_CRYPTO_DH_SET_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_DH_SET_PRIVATE_KEY: CapId = SPEC_CRYPTO_DH_SET_PRIVATE_KEY.cap;
+pub const CAP_CRYPTO_DH_COMPUTE_SECRET: CapId = SPEC_CRYPTO_DH_COMPUTE_SECRET.cap;
+pub const CAP_CRYPTO_DH_GET_VERIFY_ERROR: CapId = SPEC_CRYPTO_DH_GET_VERIFY_ERROR.cap;
+pub const CAP_CRYPTO_CREATE_ECDH: CapId = SPEC_CRYPTO_CREATE_ECDH.cap;
+pub const CAP_CRYPTO_GET_CURVES: CapId = SPEC_CRYPTO_GET_CURVES.cap;
+pub const CAP_CRYPTO_ECDH_GENERATE_KEYS: CapId = SPEC_CRYPTO_ECDH_GENERATE_KEYS.cap;
+pub const CAP_CRYPTO_ECDH_GET_PUBLIC_KEY: CapId = SPEC_CRYPTO_ECDH_GET_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_ECDH_GET_PRIVATE_KEY: CapId = SPEC_CRYPTO_ECDH_GET_PRIVATE_KEY.cap;
+pub const CAP_CRYPTO_ECDH_SET_PUBLIC_KEY: CapId = SPEC_CRYPTO_ECDH_SET_PUBLIC_KEY.cap;
+pub const CAP_CRYPTO_ECDH_SET_PRIVATE_KEY: CapId = SPEC_CRYPTO_ECDH_SET_PRIVATE_KEY.cap;
+pub const CAP_CRYPTO_ECDH_COMPUTE_SECRET: CapId = SPEC_CRYPTO_ECDH_COMPUTE_SECRET.cap;
+pub const CAP_CRYPTO_DIFFIE_HELLMAN: CapId = SPEC_CRYPTO_DIFFIE_HELLMAN.cap;
+pub const CAP_CRYPTO_GENERATE_KEY_PAIR_SYNC: CapId = SPEC_CRYPTO_GENERATE_KEY_PAIR_SYNC.cap;
+pub const CAP_CRYPTO_GENERATE_KEY_PAIR: CapId = SPEC_CRYPTO_GENERATE_KEY_PAIR.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_CONSTRUCTOR: CapId = SPEC_CRYPTO_KEY_OBJECT_CONSTRUCTOR.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_FROM: CapId = SPEC_CRYPTO_KEY_OBJECT_FROM.cap;
+pub const CAP_CRYPTO_KEY_OBJECT_TO_STRING: CapId = SPEC_CRYPTO_KEY_OBJECT_TO_STRING.cap;
+pub const CAP_CRYPTO_PUBLIC_ENCRYPT: CapId = SPEC_CRYPTO_PUBLIC_ENCRYPT.cap;
+pub const CAP_CRYPTO_PRIVATE_DECRYPT: CapId = SPEC_CRYPTO_PRIVATE_DECRYPT.cap;
+pub const CAP_CRYPTO_PUBLIC_DECRYPT: CapId = SPEC_CRYPTO_PUBLIC_DECRYPT.cap;
+pub const CAP_CRYPTO_PRIVATE_ENCRYPT: CapId = SPEC_CRYPTO_PRIVATE_ENCRYPT.cap;
+pub const CAP_CRYPTO_GENERATE_KEY_SYNC: CapId = SPEC_CRYPTO_GENERATE_KEY_SYNC.cap;
+pub const CAP_CRYPTO_GENERATE_KEY: CapId = SPEC_CRYPTO_GENERATE_KEY.cap;
+pub const CAP_CRYPTO_ECDH_CONVERT_KEY: CapId = SPEC_CRYPTO_ECDH_CONVERT_KEY.cap;
+pub const CAP_CRYPTO_ARGON2: CapId = SPEC_CRYPTO_ARGON2.cap;
+pub const CAP_CRYPTO_HKDF_SYNC: CapId = SPEC_CRYPTO_HKDF_SYNC.cap;
+pub const CAP_CRYPTO_HKDF: CapId = SPEC_CRYPTO_HKDF.cap;
+pub const CAP_CRYPTO_CIPHER_PIPE: CapId = SPEC_CRYPTO_CIPHER_PIPE.cap;
+pub const CAP_CRYPTO_CIPHER_UNPIPE: CapId = SPEC_CRYPTO_CIPHER_UNPIPE.cap;
+pub const CAP_CRYPTO_CIPHER_ON: CapId = SPEC_CRYPTO_CIPHER_ON.cap;
+pub const CAP_CRYPTO_CIPHER_PAUSE: CapId = SPEC_CRYPTO_CIPHER_PAUSE.cap;
+pub const CAP_CRYPTO_CIPHER_RESUME: CapId = SPEC_CRYPTO_CIPHER_RESUME.cap;
+pub const CAP_CRYPTO_CIPHER_SET_ENCODING: CapId = SPEC_CRYPTO_CIPHER_SET_ENCODING.cap;
 pub const CAP_TTY_READ_STREAM: CapId = SPEC_TTY_READ_STREAM.cap;
 pub const CAP_TTY_WRITE_STREAM: CapId = SPEC_TTY_WRITE_STREAM.cap;
 pub const CAP_HTTP_AGENT: CapId = SPEC_HTTP_AGENT.cap;
@@ -1225,6 +1953,8 @@ pub const CAP_HTTP_RES_SET_HEADER: CapId = SPEC_HTTP_RES_SET_HEADER.cap;
 pub const CAP_HTTP_RES_WRITE: CapId = SPEC_HTTP_RES_WRITE.cap;
 pub const CAP_HTTP_RES_WRITE_HEAD: CapId = SPEC_HTTP_RES_WRITE_HEAD.cap;
 pub const CAP_HTTP_RES_WRITE_CONTINUE: CapId = SPEC_HTTP_RES_WRITE_CONTINUE.cap;
+pub const CAP_HTTP_RES_WRITE_INFORMATION: CapId = SPEC_HTTP_RES_WRITE_INFORMATION.cap;
+pub const CAP_HTTP_RES_WRITE_PROCESSING: CapId = SPEC_HTTP_RES_WRITE_PROCESSING.cap;
 pub const CAP_HTTP_SERVER: CapId = SPEC_HTTP_SERVER.cap;
 pub const CAP_HTTP_OUTGOING: CapId = SPEC_HTTP_OUTGOING.cap;
 pub const CAP_HTTP_OUTGOING_WRITE: CapId = SPEC_HTTP_OUTGOING_WRITE.cap;
@@ -1317,6 +2047,7 @@ pub const CAP_PROCESS_CWD: CapId = SPEC_PROCESS_CWD.cap;
 pub const CAP_PROCESS_EMIT: CapId = SPEC_PROCESS_EMIT.cap;
 pub const CAP_PROCESS_EMIT_WARNING: CapId = SPEC_PROCESS_EMIT_WARNING.cap;
 pub const CAP_PROCESS_EXIT: CapId = SPEC_PROCESS_EXIT.cap;
+pub const CAP_PROCESS_RAW_DEBUG: CapId = SPEC_PROCESS_RAW_DEBUG.cap;
 pub const CAP_PROCESS_EXIT_CODE_GET: CapId = SPEC_PROCESS_EXIT_CODE_GET.cap;
 pub const CAP_PROCESS_EXIT_CODE_SET: CapId = SPEC_PROCESS_EXIT_CODE_SET.cap;
 pub const CAP_PROCESS_ENV_SET: CapId = SPEC_PROCESS_ENV_SET.cap;
@@ -1354,6 +2085,7 @@ pub const CAP_READLINE: CapId = SPEC_READLINE.cap;
 pub const CAP_READLINE_DONE: CapId = SPEC_READLINE_DONE.cap;
 pub const CAP_READLINE_DRIVER: CapId = SPEC_READLINE_DRIVER.cap;
 pub const CAP_REQUIRE: CapId = SPEC_REQUIRE.cap;
+pub const CAP_REQUIRE_RESOLVE: CapId = SPEC_REQUIRE_RESOLVE.cap;
 pub const CAP_STDERR_WRITE: CapId = SPEC_STDERR_WRITE.cap;
 pub const CAP_STDOUT_WRITE: CapId = SPEC_STDOUT_WRITE.cap;
 pub const CAP_STREAM_DUPLEX: CapId = SPEC_STREAM_DUPLEX.cap;
@@ -1372,6 +2104,19 @@ pub const CAP_TEST_BEFORE_EACH: CapId = SPEC_TEST_BEFORE_EACH.cap;
 pub const CAP_TEST_CONTEXT_SKIP: CapId = SPEC_TEST_CONTEXT_SKIP.cap;
 pub const CAP_TEST_CONTEXT_TODO: CapId = SPEC_TEST_CONTEXT_TODO.cap;
 pub const CAP_TEST_GET_CONTEXT: CapId = SPEC_TEST_GET_CONTEXT.cap;
+pub const CAP_TEST_ASSERT_CALL: CapId = SPEC_TEST_ASSERT_CALL.cap;
+pub const CAP_TEST_ASSERT_REGISTER: CapId = SPEC_TEST_ASSERT_REGISTER.cap;
+pub const CAP_TEST_CONTEXT_PLAN: CapId = SPEC_TEST_CONTEXT_PLAN.cap;
+pub const CAP_TEST_SHORTHAND: CapId = SPEC_TEST_SHORTHAND.cap;
+pub const CAP_TEST_CONTEXT_WAIT_FOR: CapId = SPEC_TEST_CONTEXT_WAIT_FOR.cap;
+pub const CAP_TEST_CONTEXT_DIAGNOSTIC: CapId = SPEC_TEST_CONTEXT_DIAGNOSTIC.cap;
+pub const CAP_TEST_BEFORE: CapId = SPEC_TEST_BEFORE.cap;
+pub const CAP_TEST_AFTER: CapId = SPEC_TEST_AFTER.cap;
+pub const CAP_TEST_CONVERT_STRING_TO_REGEXP: CapId = SPEC_TEST_CONVERT_STRING_TO_REGEXP.cap;
+pub const CAP_TEST_CREATE_SEEDED_GENERATOR: CapId = SPEC_TEST_CREATE_SEEDED_GENERATOR.cap;
+pub const CAP_TEST_SEEDED_GENERATOR_NEXT: CapId = SPEC_TEST_SEEDED_GENERATOR_NEXT.cap;
+pub const CAP_TEST_MOCK_MODULE_RESTORE: CapId = SPEC_TEST_MOCK_MODULE_RESTORE.cap;
+pub const CAP_TEST_MOCK_TIMERS_RUN_ALL: CapId = SPEC_TEST_MOCK_TIMERS_RUN_ALL.cap;
 pub const CAP_TEST_MOCK_ACCESS_COUNT: CapId = SPEC_TEST_MOCK_ACCESS_COUNT.cap;
 pub const CAP_TEST_MOCK_BIND: CapId = SPEC_TEST_MOCK_BIND.cap;
 pub const CAP_TEST_MOCK_BOUND_CALL: CapId = SPEC_TEST_MOCK_BOUND_CALL.cap;
@@ -1420,6 +2165,11 @@ pub const CAP_UTIL_FORMAT_WITH_OPTIONS: CapId = SPEC_UTIL_FORMAT_WITH_OPTIONS.ca
 pub const CAP_UTIL_GETCALLSITES: CapId = SPEC_UTIL_GETCALLSITES.cap;
 pub const CAP_UTIL_INHERITS: CapId = SPEC_UTIL_INHERITS.cap;
 pub const CAP_UTIL_INSPECT: CapId = SPEC_UTIL_INSPECT.cap;
+pub const CAP_UTIL_TRANSFERABLE_ABORT_SIGNAL: CapId = SPEC_UTIL_TRANSFERABLE_ABORT_SIGNAL.cap;
+pub const CAP_UTIL_TRANSFERABLE_ABORT_CONTROLLER: CapId =
+    SPEC_UTIL_TRANSFERABLE_ABORT_CONTROLLER.cap;
+pub const CAP_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE: CapId =
+    SPEC_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE.cap;
 pub const CAP_UTIL_IS_DEEP_STRICT_EQUAL: CapId = SPEC_UTIL_IS_DEEP_STRICT_EQUAL.cap;
 pub const CAP_UTIL_IS_NATIVE_ERROR: CapId = SPEC_UTIL_IS_NATIVE_ERROR.cap;
 pub const CAP_UTIL_PARSE_ENV: CapId = SPEC_UTIL_PARSE_ENV.cap;
@@ -1434,7 +2184,13 @@ pub const CAP_VM_MODULE_EVALUATE: CapId = SPEC_VM_MODULE_EVALUATE.cap;
 pub const CAP_VM_MODULE_LINK: CapId = SPEC_VM_MODULE_LINK.cap;
 pub const CAP_VM_RUN_IN_CONTEXT: CapId = SPEC_VM_RUN_IN_CONTEXT.cap;
 pub const CAP_VM_RUN_IN_NEW_CONTEXT: CapId = SPEC_VM_RUN_IN_NEW_CONTEXT.cap;
+pub const CAP_VM_RUN_IN_THIS_CONTEXT: CapId = SPEC_VM_RUN_IN_THIS_CONTEXT.cap;
 pub const CAP_VM_SOURCE_TEXT_MODULE: CapId = SPEC_VM_SOURCE_TEXT_MODULE.cap;
+pub const CAP_VM_SCRIPT: CapId = SPEC_VM_SCRIPT.cap;
+pub const CAP_VM_SCRIPT_RUN_IN_CONTEXT: CapId = SPEC_VM_SCRIPT_RUN_IN_CONTEXT.cap;
+pub const CAP_VM_SCRIPT_RUN_IN_NEW_CONTEXT: CapId = SPEC_VM_SCRIPT_RUN_IN_NEW_CONTEXT.cap;
+pub const CAP_VM_SCRIPT_CREATE_CACHED_DATA: CapId = SPEC_VM_SCRIPT_CREATE_CACHED_DATA.cap;
+pub const CAP_VM_SCRIPT_RUN_IN_THIS_CONTEXT: CapId = SPEC_VM_SCRIPT_RUN_IN_THIS_CONTEXT.cap;
 pub const CAP_WASI_CONSTRUCTOR: CapId = SPEC_WASI_CONSTRUCTOR.cap;
 pub const CAP_WASI_IMPORT_OBJECT: CapId = SPEC_WASI_IMPORT_OBJECT.cap;
 pub const CAP_WASI_INITIALIZE: CapId = SPEC_WASI_INITIALIZE.cap;
@@ -1484,8 +2240,17 @@ pub fn namespace_bindings(
     exec_path: &str,
     title: &str,
 ) -> Vec<(String, quench_runtime::value::Value)> {
+    namespace_bindings_with_exec_argv(argv, exec_path, title, &[])
+}
+
+pub fn namespace_bindings_with_exec_argv(
+    argv: &[String],
+    exec_path: &str,
+    title: &str,
+    exec_argv: &[String],
+) -> Vec<(String, quench_runtime::value::Value)> {
     let mut out = Vec::new();
-    push_bindings(&mut out, argv, exec_path, title);
+    push_bindings_with_exec_argv(&mut out, argv, exec_path, title, exec_argv);
     out.push(timers_binding(
         "setTimeout",
         crate::registry::SPEC_TIMERS_SETTIMEOUT,
@@ -1564,7 +2329,31 @@ pub fn namespace_bindings(
         float16_constructor.clone(),
     );
     out.push(("Float16Array".to_string(), float16_constructor));
-    out.push(("require".to_string(), crate::host::capability(SPEC_REQUIRE)));
+    let require = quench_runtime::host_api::capability_function_with_properties(
+        crate::host::capability_ref(SPEC_REQUIRE),
+        vec![
+            (
+                "resolve".to_string(),
+                crate::modules::require::resolve_capability(),
+            ),
+            (
+                "cache".to_string(),
+                quench_runtime::host_api::object(Vec::new()),
+            ),
+            (
+                "extensions".to_string(),
+                quench_runtime::host_api::object(Vec::new()),
+            ),
+        ],
+    );
+    out.push(("require".to_string(), require));
+    out.push((
+        "internalBinding".to_string(),
+        quench_runtime::host_api::capability_function_with_properties(
+            crate::host::capability_ref(crate::registry::SPEC_INTERNAL_BINDING),
+            Vec::new(),
+        ),
+    ));
     out.push((
         "__quench_cjs_wrap__".to_string(),
         crate::host::capability(crate::registry::SPEC_CJS_WRAP),
@@ -1780,11 +2569,12 @@ fn define_event_constant(
     quench_runtime::execute::define_property(target.clone(), name, descriptor).unwrap_or(target)
 }
 
-fn push_bindings(
+fn push_bindings_with_exec_argv(
     out: &mut Vec<(String, quench_runtime::value::Value)>,
     argv: &[String],
     exec_path: &str,
     title: &str,
+    exec_argv: &[String],
 ) {
     out.push((
         "console".to_string(),
@@ -1792,9 +2582,13 @@ fn push_bindings(
     ));
     out.push((
         "process".to_string(),
-        crate::modules::process::build_with_title(argv, exec_path, title),
+        crate::modules::process::build_with_title_and_exec_argv(argv, exec_path, title, exec_argv),
     ));
-    out.push(("Buffer".to_string(), crate::modules::buffer::build_object()));
+    let buffer = crate::modules::buffer::build_object();
+    out.push(("Buffer".to_string(), buffer.clone()));
+    // Internal Node modules use the unexported constructor name while public
+    // code observes `Buffer`; both spellings are one identity.
+    out.push(("NodeBuffer".to_string(), buffer));
 }
 
 fn install_event_prototype(

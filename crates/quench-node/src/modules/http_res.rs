@@ -11,7 +11,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::http::{chunk_bytes, Res, RES_ID_PROP};
+use super::http::{chunk_bytes, Res, RES_ID_PROP, RESPONSE_CLOSE_PENDING_PROP};
 use crate::modules::net;
 
 fn res_state(receiver: Option<&Value>) -> Option<u64> {
@@ -20,6 +20,15 @@ fn res_state(receiver: Option<&Value>) -> Option<u64> {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
     }
+}
+
+fn body_chunk(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
+    if matches!(value, Some(Value::Array(_))) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"chunk\" argument must be of type string or an instance of Buffer or Uint8Array".into(),
+        ));
+    }
+    Ok(super::http::chunk_bytes(value))
 }
 
 /// `res.setHeader(name, value)` — replace any existing header of that name.
@@ -37,10 +46,14 @@ pub fn res_set_header(
         .res
         .get(&id)
         .is_some_and(|res| res.headers_sent)
-        || matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "headersSent"), Value::Boolean(true));
-    if headers_sent
-    {
-        return Err(headers_sent_error("Cannot set headers after they are sent to the client"));
+        || matches!(
+            execute::get_property(receiver.unwrap_or(&Value::Undefined), "headersSent"),
+            Value::Boolean(true)
+        );
+    if headers_sent {
+        return Err(headers_sent_error(
+            "Cannot set headers after they are sent to the client",
+        ));
     }
     let name = args.first().map(execute::to_js_string).transpose()?;
     let Some(name) = name else {
@@ -82,7 +95,9 @@ pub fn res_set_headers(
             Value::Boolean(true)
         );
     if headers_sent {
-        return Err(headers_sent_error("Cannot set headers after they are sent to the client"));
+        return Err(headers_sent_error(
+            "Cannot set headers after they are sent to the client",
+        ));
     }
     let Some(source) = args.first() else {
         return Err(invalid_headers_argument());
@@ -106,10 +121,7 @@ fn invalid_headers_argument() -> VmError {
 }
 
 fn header_entries(source: &Value) -> Option<Vec<(String, String)>> {
-    let is_headers = matches!(
-        execute::get_property(source, "_entries"),
-        Value::Array(_)
-    );
+    let is_headers = matches!(execute::get_property(source, "_entries"), Value::Array(_));
     if !matches!(source, Value::Map(_)) && !is_headers {
         return None;
     }
@@ -169,10 +181,23 @@ fn header_values_for(name: &str, value: Option<&Value>) -> Result<Vec<String>, V
 }
 
 pub(crate) const NON_REPEATABLE_HEADERS: &[&str] = &[
-    "content-type", "user-agent", "referer", "host", "authorization",
-    "proxy-authorization", "if-modified-since", "if-unmodified-since", "from",
-    "location", "max-forwards", "retry-after", "etag", "last-modified", "server",
-    "age", "expires",
+    "content-type",
+    "user-agent",
+    "referer",
+    "host",
+    "authorization",
+    "proxy-authorization",
+    "if-modified-since",
+    "if-unmodified-since",
+    "from",
+    "location",
+    "max-forwards",
+    "retry-after",
+    "etag",
+    "last-modified",
+    "server",
+    "age",
+    "expires",
 ];
 
 pub fn res_remove_header(
@@ -202,7 +227,8 @@ pub fn res_remove_header(
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
     if let Some(res) = state.borrow_mut().http.res.get_mut(&id) {
-        res.headers.retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+        res.headers
+            .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -237,7 +263,9 @@ pub fn res_write_head(
                 let Ok(name) = execute::to_js_string(&execute::get_property(&array, name)) else {
                     continue;
                 };
-                let Ok(values) = header_values_for(&name, Some(&execute::get_property(&array, value))) else {
+                let Ok(values) =
+                    header_values_for(&name, Some(&execute::get_property(&array, value)))
+                else {
                     continue;
                 };
                 for value in &values {
@@ -331,7 +359,11 @@ pub fn res_uncork(
             Value::Number(value) if value.is_finite() && value > 0.0 => value as u64 - 1,
             _ => 0,
         };
-        net::set_socket_property(&socket, "writableCorked", Value::Number(socket_depth as f64));
+        net::set_socket_property(
+            &socket,
+            "writableCorked",
+            Value::Number(socket_depth as f64),
+        );
     }
     if depth == 0
         && matches!(
@@ -370,7 +402,9 @@ fn validate_header_value(name: &str, value: &str) -> Result<(), VmError> {
     {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::TypeError,
-            &[Value::String(format!("Invalid character in header content [\"{name}\"]"))],
+            &[Value::String(format!(
+                "Invalid character in header content [\"{name}\"]"
+            ))],
         );
         return Err(VmError::Thrown(execute::set_property(
             error,
@@ -396,27 +430,37 @@ pub fn res_write(
         let value = args
             .first()
             .ok_or_else(|| execute::type_error("chunk required"))?;
-        chunk_bytes(Some(value))
+        body_chunk(Some(value))?
     };
     let high_water_mark = state
         .borrow()
         .http
         .res
         .get(&id)
-        .map(|res| execute::get_property(&execute::get_property(&res.socket, "_writableState"), "highWaterMark"))
+        .map(|res| {
+            execute::get_property(
+                &execute::get_property(&res.socket, "_writableState"),
+                "highWaterMark",
+            )
+        })
         .and_then(|value| match value {
             Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
             _ => None,
         })
         .unwrap_or(16_384.0);
-    let current_length = match receiver.map(|value| execute::get_property(value, "writableLength")) {
+    let current_length = match receiver.map(|value| execute::get_property(value, "writableLength"))
+    {
         Some(Value::Number(value)) if value.is_finite() && value >= 0.0 => value,
         _ => 0.0,
     };
     let writable_length = current_length + bytes.len() as f64;
     let writable_ok = writable_length <= high_water_mark;
     if let Some(receiver) = receiver {
-        execute::set_property_in_place(receiver, "writableHighWaterMark", Value::Number(high_water_mark));
+        execute::set_property_in_place(
+            receiver,
+            "writableHighWaterMark",
+            Value::Number(high_water_mark),
+        );
         execute::set_property_in_place(receiver, "writableLength", Value::Number(writable_length));
         execute::set_property_in_place(receiver, "writableNeedDrain", Value::Boolean(!writable_ok));
     }
@@ -464,7 +508,10 @@ pub fn res_write(
             res.socket.clone(),
             res.keep_alive,
             res.http10,
-            !matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"), Value::Boolean(false)),
+            !matches!(
+                execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"),
+                Value::Boolean(false)
+            ),
             first_write,
             chunked,
         )
@@ -492,7 +539,10 @@ pub fn res_write(
     if let Some(callback) = args
         .get(1)
         .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)))
+        .or_else(|| {
+            args.get(2)
+                .filter(|value| quench_runtime::is_callable(value))
+        })
     {
         execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
@@ -527,6 +577,73 @@ pub fn res_write_continue(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+/// `res.writeInformation(statusCode[, headers])` — send an interim 1xx
+/// response without committing the final response headers.
+pub fn res_write_information(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = res_state(receiver) else {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    };
+    let Some(status) = args.first().and_then(valid_status) else {
+        return Err(invalid_status(args.first().unwrap_or(&Value::Undefined)));
+    };
+    if !(100..200).contains(&status) || status == 101 {
+        return Err(invalid_status(args.first().unwrap_or(&Value::Undefined)));
+    }
+    let mut headers = Vec::new();
+    if let Some(source) = args.get(1) {
+        for key in execute::own_enumerable_keys(source) {
+            let name = key.to_string();
+            let values = header_values_for(&name, Some(&execute::get_property(source, &key)))?;
+            for value in values {
+                validate_header_value(&name, &value)?;
+                headers.push((name.clone(), value));
+            }
+        }
+    }
+    let socket = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .map(|res| res.socket.clone());
+    if let Some(socket) = socket {
+        let mut payload = format!("HTTP/1.1 {status} {}\r\n", information_reason(status)).into_bytes();
+        for (name, value) in headers {
+            payload.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+        }
+        payload.extend_from_slice(b"\r\n");
+        net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Legacy spelling for a 102 Processing informational response.
+pub fn res_write_processing(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let headers = args.first().cloned().unwrap_or(Value::Undefined);
+    res_write_information(
+        state,
+        receiver,
+        &[Value::Number(102.0), headers],
+    )
+}
+
+fn information_reason(status: u16) -> &'static str {
+    match status {
+        100 => "Continue",
+        102 => "Processing",
+        103 => "Early Hints",
+        _ => "",
+    }
+}
+
 /// `res.end([chunk])` — compose and send the response, then close the
 /// socket.
 pub fn res_end(
@@ -537,7 +654,10 @@ pub fn res_end(
     let Some(id) = res_state(receiver) else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
-    if let Some(data) = args.first().filter(|data| !matches!(data, Value::Undefined)) {
+    if let Some(data) = args
+        .first()
+        .filter(|data| !matches!(data, Value::Undefined))
+    {
         let headers_sent = state
             .borrow()
             .http
@@ -548,7 +668,7 @@ pub fn res_end(
         if headers_sent {
             res_write(state, receiver, std::slice::from_ref(data))?;
         } else {
-            let bytes = chunk_bytes(Some(data));
+            let bytes = body_chunk(Some(data))?;
             if let Some(res) = state.borrow_mut().http.res.get_mut(&id) {
                 res.body.extend_from_slice(&bytes);
             }
@@ -567,25 +687,93 @@ pub fn res_end(
             res.socket.clone(),
             res.keep_alive,
             res.http10,
-            !matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"), Value::Boolean(false)),
+            !matches!(
+                execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"),
+                Value::Boolean(false)
+            ),
             res.headers_sent,
             res.chunked,
         )
     };
     let status = status_code(receiver, status);
     let keep_alive = response_keep_alive(&headers, keep_alive);
+    if let Some(response) = receiver {
+        let status_message = execute::get_property(response, "statusMessage");
+        if matches!(status_message, Value::Undefined)
+            || (matches!(status_message, Value::String(ref value) if value == "OK")
+                && status != 200)
+        {
+            let message = match status as u16 {
+                200 => "OK",
+                201 => "Created",
+                204 => "No Content",
+                400 => "Bad Request",
+                417 => "Expectation Failed",
+                404 => "Not Found",
+                _ => "",
+            };
+            execute::set_property_in_place(
+                response,
+                "statusMessage",
+                Value::String(message.into()),
+            );
+        }
+        if !matches!(
+            execute::get_property(response, "\0quench:http-perf-recorded"),
+            Value::Boolean(true)
+        ) {
+            let request = execute::get_property(response, "req");
+            crate::modules::http::record_http_entry(
+                state,
+                "HttpRequest",
+                request,
+                response.clone(),
+            );
+            execute::set_property_in_place(
+                response,
+                "\0quench:http-perf-recorded",
+                Value::Boolean(true),
+            );
+        }
+    }
+    let wire_text = receiver
+        .and_then(|response| match execute::get_property(response, "statusMessage") {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or(text);
     if !headers_sent {
-        let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive, http10, send_date));
+        let payload = host_api::bytes(&compose(
+            status, &wire_text, &headers, &body, keep_alive, http10, send_date,
+        ));
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     } else if chunked {
         let terminator = host_api::bytes(b"0\r\n\r\n");
         crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&terminator))?;
     }
     if let Some(socket_id) = net::net_id(&socket) {
+        if let Some(res) = state.borrow_mut().http.res.get_mut(&id) {
+            res.ended = true;
+        }
         if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
             conn.response_done = true;
         }
         crate::modules::http::resume_connection(state, socket_id)?;
+    }
+    if let Some(response) = receiver {
+        execute::set_property_in_place(response, "finished", Value::Boolean(true));
+        execute::set_property_in_place(response, "writableEnded", Value::Boolean(true));
+        execute::set_property_in_place(response, "destroyed", Value::Boolean(true));
+        net::emit(state, response, "finish", Vec::new())?;
+        // Node's ServerResponse closes as a writable stream completes; this
+        // is independent of whether its HTTP socket is retained by keep-alive.
+        if !matches!(
+            execute::get_property(response, RESPONSE_CLOSE_PENDING_PROP),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(response, RESPONSE_CLOSE_PENDING_PROP, Value::Boolean(true));
+            net::emit(state, response, "close", Vec::new())?;
+        }
     }
     if !keep_alive {
         crate::modules::net::socket_end(state, Some(&socket), &[])?;
@@ -593,7 +781,10 @@ pub fn res_end(
     if let Some(callback) = args
         .get(1)
         .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)))
+        .or_else(|| {
+            args.get(2)
+                .filter(|value| quench_runtime::is_callable(value))
+        })
     {
         execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
@@ -618,11 +809,11 @@ pub fn res_destroy(
         .map(|res| res.socket.clone());
     if let Some(socket) = socket {
         net::socket_destroy(state, Some(&socket), &[])?;
-        state
-            .borrow_mut()
-            .net
-            .pending_events
-            .push((receiver.cloned().unwrap_or(Value::Undefined), "close".into(), Vec::new()));
+        state.borrow_mut().net.pending_events.push((
+            receiver.cloned().unwrap_or(Value::Undefined),
+            "close".into(),
+            Vec::new(),
+        ));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
@@ -669,7 +860,10 @@ pub fn res_flush_headers(
         &[],
         keep_alive,
         http10,
-        !matches!(execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"), Value::Boolean(false)),
+        !matches!(
+            execute::get_property(receiver.unwrap_or(&Value::Undefined), "sendDate"),
+            Value::Boolean(false)
+        ),
     ));
     net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -701,16 +895,18 @@ fn compose(
     let chunked = headers.iter().any(|(key, value)| {
         key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     });
-    if !http10 && !chunked
+    if !http10
+        && !chunked
         && !headers
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
     {
         out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     }
-    if send_date && !headers
-        .iter()
-        .any(|(key, _)| key.eq_ignore_ascii_case("date"))
+    if send_date
+        && !headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("date"))
     {
         out.extend_from_slice(b"Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n");
     }
@@ -763,9 +959,7 @@ fn chunk_frame(body: &[u8]) -> Vec<u8> {
 fn valid_status(value: &Value) -> Option<u16> {
     match value {
         Value::Number(number)
-            if number.is_finite()
-                && number.fract() == 0.0
-                && (100.0..=999.0).contains(number) =>
+            if number.is_finite() && number.fract() == 0.0 && (100.0..=999.0).contains(number) =>
         {
             Some(*number as u16)
         }

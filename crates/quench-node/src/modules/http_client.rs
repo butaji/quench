@@ -39,6 +39,8 @@ struct RequestOptions {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
+    secure: bool,
+    tls_options: Option<Value>,
 }
 
 /// One outbound HTTP request, keyed by `CLIENT_ID_PROP`.
@@ -209,34 +211,17 @@ pub fn agent_keep_socket_alive(
     Ok(Value::Boolean(true))
 }
 
-pub fn agent_construct(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+pub fn agent_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let options = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
     let option = |name: &str| execute::get_property(&options, name);
     let max_total_sockets = validate_agent_limit("maxTotalSockets", option("maxTotalSockets"))?;
     let mut object = crate::modules::events::new_emitter_object(state)?;
     if let Some(prototype) = state.borrow().http.agent_prototype.clone() {
-        // The bootstrap Agent class is installed after the initial module
-        // table is built. Copy its closure-backed mechanical methods lazily
-        // when the first user Agent is constructed.
-        let global = quench_runtime::vm::current_global_object();
-        let node_http = execute::get_property(&global, "__nodeHttp");
-        let node_agent = execute::get_property(&node_http, "Agent");
-        let node_agent_prototype = execute::get_property(&node_agent, "prototype");
-        for name in [
-            "addRequest",
-            "keepSocketAlive",
-            "reuseSocket",
-            "removeSocket",
-            "createSocket",
-        ] {
-            let method = execute::get_property(&node_agent_prototype, name);
-            if quench_runtime::is_callable(&method) {
-                execute::set_property_in_place(&prototype, name, method);
-            }
-        }
+        // Agent mechanics are native capabilities on the shared prototype;
+        // do not import closure-backed methods from the legacy JS facade.
         object = execute::set_prototype_of(&object, &prototype)?;
     }
     object = execute::set_property(object, "sockets", host_api::object(Vec::new()));
@@ -244,29 +229,49 @@ pub fn agent_construct(
     object = execute::set_property(object, "requests", host_api::object(Vec::new()));
     object = execute::set_property(object, AGENT_MARKER_PROP, Value::Boolean(true));
     object = execute::set_property(object, "options", options.clone());
-    object = execute::set_property(object, "keepAlive", match option("keepAlive") {
-        Value::Boolean(value) => Value::Boolean(value),
-        _ => Value::Boolean(false),
-    });
-    object = execute::set_property(object, "keepAliveMsecs", match option("keepAliveMsecs") {
-        Value::Number(value) => Value::Number(value),
-        _ => Value::Number(1000.0),
-    });
-    object = execute::set_property(object, "maxSockets", match option("maxSockets") {
-        Value::Number(value) => Value::Number(value),
-        _ => Value::Number(f64::INFINITY),
-    });
+    object = execute::set_property(
+        object,
+        "keepAlive",
+        match option("keepAlive") {
+            Value::Boolean(value) => Value::Boolean(value),
+            _ => Value::Boolean(false),
+        },
+    );
+    object = execute::set_property(
+        object,
+        "keepAliveMsecs",
+        match option("keepAliveMsecs") {
+            Value::Number(value) => Value::Number(value),
+            _ => Value::Number(1000.0),
+        },
+    );
+    object = execute::set_property(
+        object,
+        "maxSockets",
+        match option("maxSockets") {
+            Value::Number(value) => Value::Number(value),
+            _ => Value::Number(f64::INFINITY),
+        },
+    );
     object = execute::set_property(object, "maxTotalSockets", Value::Number(max_total_sockets));
-    object = execute::set_property(object, "scheduling", match option("scheduling") {
-        Value::String(value) => Value::String(value),
-        _ => Value::String("lifo".into()),
-    });
+    object = execute::set_property(
+        object,
+        "scheduling",
+        match option("scheduling") {
+            Value::String(value) => Value::String(value),
+            _ => Value::String("lifo".into()),
+        },
+    );
     object = execute::set_property(object, "defaultPort", Value::Number(80.0));
     object = execute::set_property(object, "protocol", Value::String("http:".into()));
-    object = execute::set_property(object, "timeout", match option("timeout") {
-        Value::Number(value) if value.is_finite() && value >= 0.0 => Value::Number(value),
-        _ => Value::Number(0.0),
-    });
+    object = execute::set_property(
+        object,
+        "timeout",
+        match option("timeout") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Value::Number(value),
+            _ => Value::Number(0.0),
+        },
+    );
     object = execute::set_property(
         object,
         "agentKeepAliveTimeoutBuffer",
@@ -317,7 +322,10 @@ fn agent_name_part(value: &Value) -> String {
         Value::Boolean(value) => value.to_string(),
         Value::Uint8Array(view) => {
             let bytes = view.buffer.bytes.borrow();
-            let end = view.byte_offset.saturating_add(view.byte_length()).min(bytes.len());
+            let end = view
+                .byte_offset
+                .saturating_add(view.byte_length())
+                .min(bytes.len());
             String::from_utf8_lossy(&bytes[view.byte_offset.min(end)..end]).into_owned()
         }
         Value::Array(values) => (0..values.logical_len())
@@ -369,7 +377,9 @@ pub fn agent_get_name(
         receiver.map(|value| execute::get_property(value, "\0quench:https-agent")),
         Some(Value::Boolean(true))
     ) {
-        return Ok(Value::String(format!("{host}:{port}:{local}{family}{socket_path}")));
+        return Ok(Value::String(format!(
+            "{host}:{port}:{local}{family}{socket_path}"
+        )));
     }
     let part = |name: &str| match execute::get_property(&options, name) {
         value => agent_name_part(&value),
@@ -471,10 +481,7 @@ pub(crate) fn agent_keylog_attach(
 /// Mark every observable Agent-pool view of a socket as destroyed. Runtime
 /// values can cross the VM boundary as aliases, so updating only the net
 /// record is insufficient for a freeSockets entry held by user code.
-pub(crate) fn mark_socket_destroyed_in_agents(
-    state: &Rc<RefCell<HostState>>,
-    socket: &Value,
-) {
+pub(crate) fn mark_socket_destroyed_in_agents(state: &Rc<RefCell<HostState>>, socket: &Value) {
     let agents = state
         .borrow()
         .http
@@ -533,7 +540,11 @@ pub fn res_read(
     let remaining = (1..array.logical_len())
         .map(|index| array.index_value(index))
         .collect();
-    set_response_property(response, RESPONSE_READ_BUFFER_PROP, host_api::array(remaining));
+    set_response_property(
+        response,
+        RESPONSE_READ_BUFFER_PROP,
+        host_api::array(remaining),
+    );
     Ok(value)
 }
 
@@ -640,11 +651,7 @@ pub fn res_set_timeout(
             &emit,
             &[response.clone(), Value::String("timeout".into())],
         )?;
-        net::socket_set_timeout(
-            state,
-            Some(&socket),
-            &[Value::Number(timeout), relay],
-        )?;
+        net::socket_set_timeout(state, Some(&socket), &[Value::Number(timeout), relay])?;
     }
     Ok(response.clone())
 }
@@ -677,7 +684,36 @@ fn queue_response_data(response: &Value, data: Value) {
 
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    request_inner(state, args, false)
+}
+
+pub fn https_request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    request_inner(state, args, true)
+}
+
+fn request_inner(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+    secure_hint: bool,
+) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
+    let secure = secure_hint || opts.secure;
+    let tls_options = if secure {
+        option_source_object(args).or_else(|| opts.tls_options.clone())
+    } else {
+        None
+    };
+    let tls_rejected = secure
+        && tls_options.as_ref().is_none_or(|options| {
+            !matches!(
+                execute::get_property(options, "ca"),
+                Value::String(_) | Value::StringUnits(_) | Value::Array(_) | Value::Uint8Array(_)
+            ) && !matches!(
+                execute::get_property(options, "rejectUnauthorized"),
+                Value::Boolean(false)
+            )
+        })
+        && !tls_verification_disabled();
     let option_source = match args.first() {
         Some(Value::String(_) | Value::StringUnits(_)) => args.get(1),
         _ => args.first(),
@@ -689,19 +725,22 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .find(|value| quench_runtime::is_callable(value)),
         _ => args.get(1),
     };
-    let high_water_mark = option_source.and_then(|options| {
-        matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
-            match execute::get_property(options, "highWaterMark") {
-                Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
-                _ => None,
-            }
+    let high_water_mark = option_source
+        .and_then(|options| {
+            matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
+                match execute::get_property(options, "highWaterMark") {
+                    Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value),
+                    _ => None,
+                }
+            })
         })
-    }).flatten();
-    let signal = option_source.and_then(|options| {
-        matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
-            execute::get_property(options, "signal")
+        .flatten();
+    let signal = option_source
+        .and_then(|options| {
+            matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+                .then(|| execute::get_property(options, "signal"))
         })
-    }).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
     let agent = option_source.and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
@@ -791,7 +830,10 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             state.borrow_mut().http.client_signals.insert(target, id);
             let listener = crate::host::capability(crate::registry::SPEC_HTTP_REQ_SIGNAL_ABORT);
             let options = host_api::object(vec![("once".into(), Value::Boolean(true))]);
-            if matches!(execute::get_property(&signal, "aborted"), Value::Boolean(true)) {
+            if matches!(
+                execute::get_property(&signal, "aborted"),
+                Value::Boolean(true)
+            ) {
                 state.borrow_mut().http.client_signals.remove(&target);
                 preabort_request(state, &req);
             } else {
@@ -812,7 +854,9 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             )?;
         }
     }
-    if let Some(options) = option_source.filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+    if let Some(options) =
+        option_source.filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
         let timeout = execute::get_property(options, "timeout");
         if !matches!(timeout, Value::Undefined) {
             if !matches!(timeout, Value::Number(_)) {
@@ -824,7 +868,11 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         }
     }
     if expect_continue {
-        set_request_property(Some(&req), CLIENT_EXPECT_CONTINUE_PROP, Value::Boolean(true));
+        set_request_property(
+            Some(&req),
+            CLIENT_EXPECT_CONTINUE_PROP,
+            Value::Boolean(true),
+        );
         let _ = req_end(state, Some(&req), &[])?;
     } else {
         start_request_socket(state, &req)?;
@@ -835,14 +883,22 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 /// Node reserves a ClientRequest's socket as soon as the request is created.
 /// Keep the request body deferred until `end()` while exposing the same
 /// socket identity through the ordinary pending `"socket"` transition.
-fn start_request_socket(
-    state: &Rc<RefCell<HostState>>,
-    request: &Value,
-) -> Result<(), VmError> {
+fn start_request_socket(state: &Rc<RefCell<HostState>>, request: &Value) -> Result<(), VmError> {
     let Some(id) = client_id(Some(request)) else {
         return Ok(());
     };
-    let (target, agent, lookup, high_water_mark, initial_timeout, aborted, existing) = {
+    let (
+        target,
+        agent,
+        lookup,
+        high_water_mark,
+        initial_timeout,
+        aborted,
+        existing,
+        secure,
+        tls_options,
+        tls_rejected,
+    ) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
             return Ok(());
@@ -855,6 +911,9 @@ fn start_request_socket(
             req.initial_timeout,
             req.aborted,
             req.socket.clone(),
+            req.secure,
+            req.tls_options.clone(),
+            req.tls_rejected,
         )
     };
     if aborted || existing.is_some() || lookup.is_some() {
@@ -892,11 +951,7 @@ fn start_request_socket(
             &[Value::String("timeout".into())],
         )?;
         if let Some(value) = high_water_mark {
-            execute::set_property_in_place(
-                &socket,
-                "writableHighWaterMark",
-                Value::Number(value),
-            );
+            execute::set_property_in_place(&socket, "writableHighWaterMark", Value::Number(value));
         }
         if let Some(value) = initial_timeout {
             execute::set_property_in_place(&socket, "timeout", Value::Number(value));
@@ -909,6 +964,12 @@ fn start_request_socket(
         }
         socket
     };
+    if secure {
+        crate::modules::tls::decorate_socket(&socket, tls_options.as_ref());
+        if tls_rejected {
+            crate::modules::tls::mark_rejected(&socket);
+        }
+    }
     if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
         req.socket = Some(socket.clone());
         set_request_property(Some(&req.req), "socket", socket.clone());
@@ -916,6 +977,15 @@ fn start_request_socket(
         if let Some(agent) = req.agent.clone() {
             let name = agent_name(&target, &agent);
             add_agent_socket(&agent, &name, &socket);
+        }
+    }
+    if secure {
+        crate::modules::tls::decorate_socket(&socket, tls_options.as_ref());
+        if tls_rejected {
+            crate::modules::tls::mark_rejected(&socket);
+        }
+        if let Some(req) = state.borrow().http.clientreqs.get(&id) {
+            set_request_property(Some(&req.req), "socket", socket.clone());
         }
     }
     if let Some(socket_id) = net::net_id(&socket) {
@@ -932,6 +1002,21 @@ fn start_request_socket(
         .net
         .pending_events
         .push((request.clone(), "socket".into(), vec![socket]));
+    if tls_rejected {
+        let rejected_socket = state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&id)
+            .and_then(|req| req.socket.clone());
+        if let Some(socket) = rejected_socket {
+            state.borrow_mut().net.pending_events.push((
+                socket,
+                "error".into(),
+                vec![tls_verification_error()],
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1015,7 +1100,12 @@ pub fn req_signal_abort(
     let Some(id) = state.borrow_mut().http.client_signals.remove(&target) else {
         return Ok(Value::Undefined);
     };
-    let request = state.borrow().http.clientreqs.get(&id).map(|req| req.req.clone());
+    let request = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .map(|req| req.req.clone());
     if let Some(request) = request {
         let error = abort_error();
         req_destroy(state, Some(&request), &[error])?;
@@ -1039,15 +1129,16 @@ pub fn req_abort(
         let Some(req) = guard.http.clientreqs.get_mut(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         };
-        if req.aborted || matches!(execute::get_property(&req.req, "destroyed"), Value::Boolean(true)) {
+        if req.aborted
+            || matches!(
+                execute::get_property(&req.req, "destroyed"),
+                Value::Boolean(true)
+            )
+        {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
         req.aborted = true;
-        (
-            req.req.clone(),
-            req.socket.clone(),
-            req.target.clone(),
-        )
+        (req.req.clone(), req.socket.clone(), req.target.clone())
     };
     clear_request_timeout(state, id)?;
     state
@@ -1160,10 +1251,8 @@ pub fn req_destroy(
             &[Value::String("socket hang up".into())],
         );
         let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
-        let error_ctor = execute::get_property(
-            &quench_runtime::vm::current_global_object(),
-            "Error",
-        );
+        let error_ctor =
+            execute::get_property(&quench_runtime::vm::current_global_object(), "Error");
         let error = execute::set_property(error, "constructor", error_ctor);
         state
             .borrow_mut()
@@ -1207,6 +1296,11 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     req_end(state, Some(&req), &[])
 }
 
+pub fn https_get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let req = https_request(state, args)?;
+    req_end(state, Some(&req), &[])
+}
+
 /// `req.write(chunk)` — buffer a request body fragment.
 pub fn req_write(
     state: &Rc<RefCell<HostState>>,
@@ -1242,7 +1336,12 @@ pub fn req_write(
         let request = receiver.cloned().unwrap_or(Value::Undefined);
         req_end(state, Some(&request), &[])?;
     } else if open {
-        let target = state.borrow().http.clientreqs.get(&id).map(|req| req.target.clone());
+        let target = state
+            .borrow()
+            .http
+            .clientreqs
+            .get(&id)
+            .map(|req| req.target.clone());
         if let Some(target) = target {
             let socket = open_socket(state, &target)?;
             if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
@@ -1293,7 +1392,10 @@ fn invoke_write_callback(receiver: Option<&Value>, args: &[Value]) -> Result<(),
     let callback = args
         .get(1)
         .filter(|value| quench_runtime::is_callable(value))
-        .or_else(|| args.get(2).filter(|value| quench_runtime::is_callable(value)));
+        .or_else(|| {
+            args.get(2)
+                .filter(|value| quench_runtime::is_callable(value))
+        });
     if let Some(callback) = callback {
         execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
@@ -1336,6 +1438,192 @@ pub fn req_set_header(
             .extend(values.into_iter().map(|value| (name.clone(), value)));
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn req_header_name(args: &[Value]) -> Result<String, VmError> {
+    args.first()
+        .map(execute::to_js_string)
+        .transpose()?
+        .map(|name| name.to_ascii_lowercase())
+        .ok_or_else(|| crate::modules::buffer_enc::invalid_arg_type(
+            "The \"name\" argument must be of type string".into(),
+        ))
+}
+
+fn req_header_values(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Vec<(String, String)> {
+    let Some(id) = client_id(receiver) else {
+        return Vec::new();
+    };
+    state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&id)
+        .map(|request| request.headers.clone())
+        .unwrap_or_default()
+}
+
+pub fn req_get_header(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let name = req_header_name(args)?;
+    let values = req_header_values(state, receiver)
+        .into_iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(&name))
+        .map(|(_, value)| Value::String(value))
+        .collect::<Vec<_>>();
+    Ok(match values.as_slice() {
+        [] => Value::Undefined,
+        [value] => value.clone(),
+        _ => host_api::array(values),
+    })
+}
+
+pub fn req_has_header(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let name = req_header_name(args)?;
+    Ok(Value::Boolean(
+        req_header_values(state, receiver)
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case(&name)),
+    ))
+}
+
+pub fn req_get_header_names(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let mut names = Vec::<String>::new();
+    for (key, _) in req_header_values(state, receiver) {
+        let key = key.to_ascii_lowercase();
+        if !names.iter().any(|current| current == &key) {
+            names.push(key);
+        }
+    }
+    if !names.iter().any(|name| name == "connection") {
+        names.push("connection".into());
+    }
+    Ok(host_api::array(names.into_iter().map(Value::String).collect()))
+}
+
+pub fn req_get_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let mut headers = Vec::new();
+    for (key, value) in req_header_values(state, receiver) {
+        let key = key.to_ascii_lowercase();
+        let entry = headers.iter_mut().find(|(name, _)| name == &key);
+        if let Some((_, current)) = entry {
+            *current = match &*current {
+                Value::Array(array) => {
+                    let mut values = (0..array.logical_len())
+                        .map(|index| array.index_value(index))
+                        .collect::<Vec<_>>();
+                    values.push(Value::String(value));
+                    host_api::array(values)
+                }
+                previous => host_api::array(vec![previous.clone(), Value::String(value)]),
+            };
+        } else {
+            headers.push((key, Value::String(value)));
+        }
+    }
+    if !headers.iter().any(|(name, _)| name == "connection") {
+        headers.push(("connection".into(), Value::String("keep-alive".into())));
+    }
+    Ok(host_api::object(headers))
+}
+
+pub fn req_remove_header(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let name = req_header_name(args)?;
+    if let Some(id) = client_id(receiver) {
+        if let Some(request) = state.borrow_mut().http.clientreqs.get_mut(&id) {
+            request.headers.retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn req_socket(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Option<Value> {
+    let id = client_id(receiver)?;
+    state.borrow().http.clientreqs.get(&id)?.socket.clone()
+}
+
+pub fn req_set_no_delay(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(socket) = req_socket(state, receiver) {
+        let _ = net::socket_set_no_delay(state, Some(&socket), args)?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn req_set_keep_alive(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(socket) = req_socket(state, receiver) {
+        let _ = net::socket_set_keep_alive(state, Some(&socket), args)?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn req_set_socket_timeout(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(socket) = req_socket(state, receiver) {
+        let _ = net::socket_set_timeout(state, Some(&socket), args)?;
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn req_cork(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let depth = match execute::get_property(receiver, "writableCorked") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as u64,
+        _ => 0,
+    } + 1;
+    execute::set_property_in_place(receiver, "writableCorked", Value::Number(depth as f64));
+    Ok(receiver.clone())
+}
+
+pub fn req_uncork(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let depth = match execute::get_property(receiver, "writableCorked") {
+        Value::Number(value) if value.is_finite() && value > 0.0 => value as u64 - 1,
+        _ => 0,
+    };
+    execute::set_property_in_place(receiver, "writableCorked", Value::Number(depth as f64));
+    Ok(receiver.clone())
 }
 
 /// `req.setTimeout(msecs[, callback])` — schedule the request timeout event.
@@ -1478,10 +1766,8 @@ pub fn req_set_timeout(
         // `start_request_socket()` will attach the socket before the request
         // is observable by user code; `req.end()` owns timer installation.
     } else if timeout > 0.0 {
-        let timer = crate::modules::timers::set_timeout(
-            state,
-            &[timeout_cb, Value::Number(timeout)],
-        )?;
+        let timer =
+            crate::modules::timers::set_timeout(state, &[timeout_cb, Value::Number(timeout)])?;
         if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&id) {
             req.timeout = Some(timer.clone());
         }
@@ -1509,7 +1795,11 @@ pub fn req_timeout_fire(
         return Ok(Value::Undefined);
     };
     let active = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
-        !req.aborted && !matches!(execute::get_property(&req.req, "destroyed"), Value::Boolean(true))
+        !req.aborted
+            && !matches!(
+                execute::get_property(&req.req, "destroyed"),
+                Value::Boolean(true)
+            )
     });
     if !active {
         return Ok(Value::Undefined);
@@ -1557,8 +1847,10 @@ pub fn req_end(
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
     let expect_started = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
-        matches!(execute::get_property(&req.req, CLIENT_EXPECT_CONTINUE_PROP), Value::Boolean(true))
-            && req.socket.is_some()
+        matches!(
+            execute::get_property(&req.req, CLIENT_EXPECT_CONTINUE_PROP),
+            Value::Boolean(true)
+        ) && req.socket.is_some()
     });
     let already_dispatched = state
         .borrow()
@@ -1719,7 +2011,10 @@ pub fn req_end(
         if req.aborted {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
-        if matches!(execute::get_property(&req.req, "finished"), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&req.req, "finished"),
+            Value::Boolean(true)
+        ) {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
         }
         (
@@ -1765,7 +2060,10 @@ pub fn req_end(
         .as_ref()
         .and_then(|agent| custom_connection(state, agent));
     let custom_socket = agent.as_ref().and_then(|agent| {
-        custom.is_none().then(|| custom_socket(state, agent)).flatten()
+        custom
+            .is_none()
+            .then(|| custom_socket(state, agent))
+            .flatten()
     });
     let existing = state
         .borrow()
@@ -1834,7 +2132,11 @@ pub fn req_end(
                 vec![receiver.cloned().unwrap_or(Value::Undefined)],
             );
             let call_args = if custom_socket.is_some() {
-                vec![receiver.cloned().unwrap_or(Value::Undefined), options, callback]
+                vec![
+                    receiver.cloned().unwrap_or(Value::Undefined),
+                    options,
+                    callback,
+                ]
             } else {
                 vec![options, callback]
             };
@@ -1899,7 +2201,11 @@ pub fn req_end(
             if let RequestTarget::Tcp { port, .. } = &target {
                 options.push(("port".into(), Value::Number(*port as f64)));
             }
-            net::connect(state, &[host_api::object(options)])?
+            let socket = net::connect(state, &[host_api::object(options)])?;
+            if secure {
+                crate::modules::tls::decorate_socket(&socket, tls_options.as_ref());
+            }
+            socket
         }
         (None, None) => send_request(
             state,
@@ -1912,6 +2218,9 @@ pub fn req_end(
             receiver.cloned().unwrap_or(Value::Undefined),
         )?,
     };
+    if secure {
+        crate::modules::tls::decorate_socket(&socket, tls_options.as_ref());
+    }
     let high_water_mark = state
         .borrow()
         .http
@@ -1920,11 +2229,7 @@ pub fn req_end(
         .and_then(|req| req.high_water_mark);
     if reused {
         if let Some(value) = high_water_mark {
-            execute::set_property_in_place(
-                &socket,
-                "writableHighWaterMark",
-                Value::Number(value),
-            );
+            execute::set_property_in_place(&socket, "writableHighWaterMark", Value::Number(value));
         }
     }
     let socket_id = net::net_id(&socket);
@@ -1946,6 +2251,13 @@ pub fn req_end(
     }
     drop(guard);
     subscribe_socket(state, &socket)?;
+    if tls_rejected {
+        state.borrow_mut().net.pending_events.push((
+            socket.clone(),
+            "error".into(),
+            vec![tls_verification_error()],
+        ));
+    }
     let (request, request_timeout, timeout_cb, agent_timeout) = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&id) else {
@@ -1955,7 +2267,9 @@ pub fn req_end(
             req.req.clone(),
             execute::get_property(&req.req, "timeout"),
             execute::get_property(&req.req, "timeoutCb"),
-            req.agent.as_ref().map(|agent| execute::get_property(agent, "timeout")),
+            req.agent
+                .as_ref()
+                .map(|agent| execute::get_property(agent, "timeout")),
         )
     };
     let pending_timer = {
@@ -2105,6 +2419,27 @@ fn invoke_end_callback(receiver: Option<&Value>, args: &[Value]) -> Result<(), V
     Ok(())
 }
 
+fn tls_verification_error() -> Value {
+    host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        (
+            "message".into(),
+            Value::String("unable to verify the first certificate".into()),
+        ),
+        (
+            "code".into(),
+            Value::String("UNABLE_TO_VERIFY_LEAF_SIGNATURE".into()),
+        ),
+    ])
+}
+
+fn tls_verification_disabled() -> bool {
+    let global = quench_runtime::vm::current_global_object();
+    let process = execute::get_property(&global, "process");
+    let env = execute::get_property(&process, "env");
+    matches!(execute::get_property(&env, "NODE_TLS_REJECT_UNAUTHORIZED"), Value::String(value) if value == "0")
+}
+
 fn send_request(
     state: &Rc<RefCell<HostState>>,
     target: &RequestTarget,
@@ -2116,7 +2451,14 @@ fn send_request(
     request: Value,
 ) -> Result<Value, VmError> {
     let socket = open_socket(state, target)?;
-    let head = request_head(&request_host(target), method, path, headers, body.len(), omit_host);
+    let head = request_head(
+        &request_host(target),
+        method,
+        path,
+        headers,
+        body.len(),
+        omit_host,
+    );
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
     state
@@ -2127,10 +2469,7 @@ fn send_request(
     Ok(socket)
 }
 
-fn open_socket(
-    state: &Rc<RefCell<HostState>>,
-    target: &RequestTarget,
-) -> Result<Value, VmError> {
+fn open_socket(state: &Rc<RefCell<HostState>>, target: &RequestTarget) -> Result<Value, VmError> {
     match target {
         RequestTarget::Tcp { host, port } => net::connect(
             state,
@@ -2145,6 +2484,59 @@ fn target_host(target: &RequestTarget) -> String {
         RequestTarget::Tcp { host, .. } => host.clone(),
         RequestTarget::Unix { .. } => "localhost".into(),
     }
+}
+
+fn target_port(target: &RequestTarget) -> u16 {
+    match target {
+        RequestTarget::Tcp { port, .. } => *port,
+        RequestTarget::Unix { .. } => 0,
+    }
+}
+
+fn client_performance_request(state: &Rc<RefCell<HostState>>, client_id: u64) -> Value {
+    let (target, method, path, headers) = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| {
+            (
+                req.target.clone(),
+                req.method.clone(),
+                req.path.clone(),
+                req.headers.clone(),
+            )
+        })
+        .unwrap_or((
+            RequestTarget::Tcp {
+                host: "localhost".into(),
+                port: 80,
+            },
+            "GET".into(),
+            "/".into(),
+            Vec::new(),
+        ));
+    host_api::object(vec![
+        ("method".into(), Value::String(method)),
+        (
+            "url".into(),
+            Value::String(format!(
+                "http://{}:{}{}",
+                target_host(&target),
+                target_port(&target),
+                path
+            )),
+        ),
+        (
+            "headers".into(),
+            host_api::object(
+                headers
+                    .into_iter()
+                    .map(|(key, value)| (key, Value::String(value)))
+                    .collect(),
+            ),
+        ),
+    ])
 }
 
 fn request_host(target: &RequestTarget) -> String {
@@ -2218,7 +2610,10 @@ fn default_empty_body(method: &str) -> bool {
 }
 
 fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<(), VmError> {
-    if matches!(execute::get_property(socket, CLIENT_SOCKET_SUBSCRIBED_PROP), Value::Boolean(true)) {
+    if matches!(
+        execute::get_property(socket, CLIENT_SOCKET_SUBSCRIBED_PROP),
+        Value::Boolean(true)
+    ) {
         return Ok(());
     }
     execute::set_property_in_place(socket, CLIENT_SOCKET_SUBSCRIBED_PROP, Value::Boolean(true));
@@ -2257,11 +2652,12 @@ pub fn req_error(
         .clientreqs
         .get(&client_id)
         .is_some_and(|req| req.response_closed);
-    let agent_target = state.borrow().http.clientreqs.get(&client_id).and_then(|req| {
-        req.agent
-            .clone()
-            .map(|agent| (agent, req.target.clone()))
-    });
+    let agent_target = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .and_then(|req| req.agent.clone().map(|agent| (agent, req.target.clone())));
     if let (Some((agent, target)), Some(request)) = (agent_target, request.as_ref()) {
         let name = agent_name(&target, &agent);
         remove_idle_agent_socket(&agent, &name, socket, request);
@@ -2272,6 +2668,16 @@ pub fn req_error(
     }
     if !request_closed {
         if let (Some(request), Some(error)) = (request, args.first().cloned()) {
+            let suppress_tls_pipe = state
+                .borrow()
+                .http
+                .clientreqs
+                .get(&client_id)
+                .is_some_and(|req| req.secure && !req.tls_rejected)
+                && matches!(execute::get_property(&error, "code"), Value::String(ref code) if code == "EPIPE");
+            if suppress_tls_pipe {
+                return Ok(Value::Undefined);
+            }
             // A transport-supplied error is already the request's terminal
             // failure; req_close must not append a generic ECONNRESET.
             set_request_property(Some(&request), "errored", error.clone());
@@ -2297,11 +2703,7 @@ fn subscribe_event(
     } else {
         let on = execute::get_property(socket, "on");
         if quench_runtime::is_callable(&on) {
-            execute::call(
-                &on,
-                socket,
-                &[Value::String(event.to_string()), listener],
-            )?;
+            execute::call(&on, socket, &[Value::String(event.to_string()), listener])?;
         }
         Ok(())
     }
@@ -2338,26 +2740,24 @@ pub(crate) fn apply_deferred_request_timeout(
             .map(|request| execute::get_property(&request.req, "socket"))
             .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         {
-            execute::set_property_in_place(
-                &request_socket,
-                "timeout",
-                Value::Number(timeout),
-            );
+            execute::set_property_in_place(&request_socket, "timeout", Value::Number(timeout));
         }
     }
     Ok(())
 }
 
-pub(crate) fn request_write_allowed(
-    state: &Rc<RefCell<HostState>>,
-    request: &Value,
-) -> bool {
+pub(crate) fn request_write_allowed(state: &Rc<RefCell<HostState>>, request: &Value) -> bool {
     let Some(id) = client_id(Some(request)) else {
         return false;
     };
     let allowed = state.borrow().http.clientreqs.get(&id).is_some_and(|req| {
         !req.aborted
-            && !matches!(execute::get_property(&req.req, "destroyed"), Value::Boolean(true))
+            && !req.tls_rejected
+            && matches!(execute::get_property(&req.req, "errored"), Value::Undefined)
+            && !matches!(
+                execute::get_property(&req.req, "destroyed"),
+                Value::Boolean(true)
+            )
     });
     allowed
 }
@@ -2374,16 +2774,28 @@ pub fn req_close(
     crate::modules::http::clear_idle_socket(state, socket);
     crate::modules::http::abort_server_signal(state, socket)?;
     let Some(client_id) = client_id_for_socket(state, socket) else {
-        let requests = state.borrow().http.conns.values()
+        let requests = state
+            .borrow()
+            .http
+            .conns
+            .values()
             .flat_map(|conn| conn.requests.iter().cloned())
             .collect::<Vec<_>>();
         for request in requests {
-            if matches!(execute::get_property(&request, crate::modules::http::REQ_CLOSE_PROP), Value::Boolean(true)) {
+            if matches!(
+                execute::get_property(&request, crate::modules::http::REQ_CLOSE_PROP),
+                Value::Boolean(true)
+            ) {
                 continue;
             }
-            execute::set_property_in_place(&request, crate::modules::http::REQ_CLOSE_PROP, Value::Boolean(true));
+            execute::set_property_in_place(
+                &request,
+                crate::modules::http::REQ_CLOSE_PROP,
+                Value::Boolean(true),
+            );
             net::emit(state, &request, "close", Vec::new())?;
-            let resource = execute::get_property(&request, crate::modules::http::REQ_ASYNC_RESOURCE_PROP);
+            let resource =
+                execute::get_property(&request, crate::modules::http::REQ_ASYNC_RESOURCE_PROP);
             crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
         }
         return Ok(Value::Undefined);
@@ -2433,12 +2845,17 @@ pub fn req_close(
             let has_error_listener = crate::modules::emitter::emitter_id(request)
                 .and_then(|id| state.borrow().emitters.get(id))
                 .is_some_and(|emitter| !emitter.borrow().listeners_of("error").is_empty());
-            if has_error_listener && !explicit_error {
+            let explicitly_aborted = matches!(
+                execute::get_property(request, "aborted"),
+                Value::Boolean(true)
+            );
+            if has_error_listener && !explicit_error && !explicitly_aborted {
                 let error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::Error,
                     &[Value::String("socket hang up".into())],
                 );
-                let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+                let error =
+                    execute::set_property(error, "code", Value::String("ECONNRESET".into()));
                 net::emit(state, request, "error", vec![error])?;
             }
         }
@@ -2463,12 +2880,17 @@ pub fn req_close(
     if let (Some(agent), Some(target)) = (agent.as_ref(), target.as_ref()) {
         let name = agent_name(target, agent);
         let has_pending = state.borrow().http.agent_pending.iter().any(|id| {
-            state.borrow().http.clientreqs.get(id).is_some_and(|request| {
-                request.agent.as_ref().is_some_and(|candidate| {
-                    execute::same_identity(candidate, agent)
-                        && agent_name(&request.target, agent) == name
+            state
+                .borrow()
+                .http
+                .clientreqs
+                .get(id)
+                .is_some_and(|request| {
+                    request.agent.as_ref().is_some_and(|candidate| {
+                        execute::same_identity(candidate, agent)
+                            && agent_name(&request.target, agent) == name
+                    })
                 })
-            })
         });
         if has_pending {
             emit_agent_free(state, agent, target, socket)?;
@@ -2515,9 +2937,10 @@ pub fn req_close(
             if has_error_listener {
                 let error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::Error,
-                    &[Value::String("socket hang up".into())],
+                    &[Value::String("aborted".into())],
                 );
-                let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
+                let error =
+                    execute::set_property(error, "code", Value::String("ECONNRESET".into()));
                 net::emit(state, &response, "error", vec![error])?;
             }
             net::emit(state, &response, "close", Vec::new())?;
@@ -2542,9 +2965,10 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
             .filter(|request| {
                 request.dispatched
                     && !request.response_closed
-                    && request.agent.as_ref().is_some_and(|candidate| {
-                        execute::same_identity(candidate, agent)
-                    })
+                    && request
+                        .agent
+                        .as_ref()
+                        .is_some_and(|candidate| execute::same_identity(candidate, agent))
             })
             .count();
         let position = guard.http.agent_pending.iter().position(|id| {
@@ -2552,7 +2976,10 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
                 return false;
             };
             if request.aborted
-                || matches!(execute::get_property(&request.req, "destroyed"), Value::Boolean(true))
+                || matches!(
+                    execute::get_property(&request.req, "destroyed"),
+                    Value::Boolean(true)
+                )
             {
                 return false;
             }
@@ -2590,7 +3017,9 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
             })
         })
     };
-    let Some(id) = pending else { return; };
+    let Some(id) = pending else {
+        return;
+    };
     let (request, agent_request) = state
         .borrow()
         .http
@@ -2609,7 +3038,9 @@ fn drain_agent_pending(state: &Rc<RefCell<HostState>>, agent: &Value, name: &str
     if let Some((agent, name)) = agent_request {
         remove_agent_request(&agent, &name, &request);
     }
-    if matches!(request, Value::Undefined) { return; }
+    if matches!(request, Value::Undefined) {
+        return;
+    }
     set_request_property(Some(&request), "finished", Value::Boolean(false));
     let _ = req_end(state, Some(&request), &[]);
 }
@@ -2620,16 +3051,15 @@ fn agent_name(target: &RequestTarget, agent: &Value) -> String {
             ("host".into(), Value::String(host.clone())),
             ("port".into(), Value::Number(*port as f64)),
         ]),
-        RequestTarget::Unix { path } => host_api::object(vec![(
-            "socketPath".into(),
-            Value::String(path.clone()),
-        )]),
+        RequestTarget::Unix { path } => {
+            host_api::object(vec![("socketPath".into(), Value::String(path.clone()))])
+        }
     };
-    execute::to_js_string(&execute::call(
-        &execute::get_property(agent, "getName"),
-        agent,
-        &[options],
-    ).unwrap_or(Value::String(String::new()))).unwrap_or_default()
+    execute::to_js_string(
+        &execute::call(&execute::get_property(agent, "getName"), agent, &[options])
+            .unwrap_or(Value::String(String::new())),
+    )
+    .unwrap_or_default()
 }
 
 fn emit_agent_free(
@@ -2734,7 +3164,11 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
             Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
             _ => return None,
         };
-        let key = if lifo { (length - 1).to_string() } else { "0".into() };
+        let key = if lifo {
+            (length - 1).to_string()
+        } else {
+            "0".into()
+        };
         let socket = execute::get_property(&list, &key);
         if lifo {
             let pop = execute::get_property(&list, "pop");
@@ -2756,7 +3190,10 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
             }
         }
         if matches!(socket, Value::Object(_) | Value::ObjectAlias(_))
-            && !matches!(execute::get_property(&socket, "destroyed"), Value::Boolean(true))
+            && !matches!(
+                execute::get_property(&socket, "destroyed"),
+                Value::Boolean(true)
+            )
         {
             return Some(socket);
         }
@@ -2886,12 +3323,36 @@ pub fn data_handler(
                 net::socket_destroy(state, Some(socket), &[])?;
                 return Ok(Value::Undefined);
             }
-            if response_status(&head) == Some(100) {
+            if let Some(status) = response_status(&head).filter(|status| (100..200).contains(status)) {
                 if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                     req.head_parsed = false;
                 }
                 if let Some(request) = client_value(state, client_id, true) {
-                    net::emit(state, &request, "continue", Vec::new())?;
+                    if status == 100 {
+                        net::emit(state, &request, "continue", Vec::new())?;
+                    } else if status != 101 {
+                        let info = build_incoming(state, client_id, &head)?;
+                        net::emit(state, &request, "information", vec![info])?;
+                    }
+                    // A socket read may contain both the interim head and the
+                    // final response head/body.  Re-enter the parser for the
+                    // buffered remainder instead of waiting for another read.
+                    let remainder = {
+                        let mut guard = state.borrow_mut();
+                        guard
+                            .http
+                            .clientreqs
+                            .get_mut(&client_id)
+                            .map(|req| std::mem::take(&mut req.buffer))
+                            .unwrap_or_default()
+                    };
+                    if !remainder.is_empty() {
+                        return data_handler(
+                            state,
+                            Some(socket),
+                            &[host_api::bytes(&remainder)],
+                        );
+                    }
                 }
                 return Ok(Value::Undefined);
             }
@@ -2948,15 +3409,41 @@ pub fn data_handler(
             finish_known_response(state, client_id)
         }
         None if head_parsed => {
-            if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
-                req.response_received = req.response_received.saturating_add(bytes.len());
-                if bytes.windows(5).any(|window| window == b"0\r\n\r\n") {
-                    req.response_chunked_done = true;
+            let chunked = client_value(state, client_id, false)
+                .map(|response| response_is_chunked(&response))
+                .unwrap_or(false);
+            let body = if chunked {
+                let body = {
+                    let mut guard = state.borrow_mut();
+                    let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
+                        return Ok(Value::Undefined);
+                    };
+                    req.buffer.extend_from_slice(&bytes);
+                    let (body, consumed, done) = decode_chunked_prefix(&req.buffer);
+                    let remainder = req.buffer[consumed..].to_vec();
+                    req.buffer = remainder;
+                    req.response_received = req
+                        .response_received
+                        .saturating_add(body.len());
+                    if done {
+                        req.response_chunked_done = true;
+                    }
+                    body
+                };
+                body
+            } else {
+                if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                    req.response_received = req.response_received.saturating_add(bytes.len());
                 }
-            }
+                bytes
+            };
             if let Some(res) = client_value(state, client_id, false) {
                 net::emit(state, &res, "readable", Vec::new())?;
-                let body = response_body_bytes(&res, &bytes);
+                let body = if chunked {
+                    body
+                } else {
+                    response_body_bytes(&res, &body)
+                };
                 if !body.is_empty() {
                     let data = response_data(&res, &body);
                     queue_response_data(&res, data.clone());
@@ -3016,30 +3503,41 @@ fn client_value(state: &Rc<RefCell<HostState>>, client_id: u64, req: bool) -> Op
 
 /// Emit leftover buffered bytes as `'data'` once `'response'` fired.
 fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmError> {
-    let (res, rest, consumed) = {
+    let (res, body) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
             return Ok(());
         };
-        let consumed = req
-            .res
-            .as_ref()
-            .and_then(response_content_length)
-            .map(|expected| expected.saturating_sub(req.response_received).min(req.buffer.len()))
-            .unwrap_or(req.buffer.len());
-        req.response_received = req.response_received.saturating_add(consumed);
-        if req.buffer.windows(5).any(|window| window == b"0\r\n\r\n") {
+        let chunked = req.res.as_ref().is_some_and(response_is_chunked);
+        let (body, consumed, done) = if chunked {
+            decode_chunked_prefix(&req.buffer)
+        } else {
+            let consumed = req
+                .res
+                .as_ref()
+                .and_then(response_content_length)
+                .map(|expected| {
+                    expected
+                        .saturating_sub(req.response_received)
+                        .min(req.buffer.len())
+                })
+                .unwrap_or(req.buffer.len());
+            (req.buffer[..consumed].to_vec(), consumed, false)
+        };
+        req.response_received = req.response_received.saturating_add(body.len());
+        if done {
             req.response_chunked_done = true;
         }
-        let buffer = std::mem::take(&mut req.buffer);
-        if consumed < buffer.len() {
-            req.buffer.extend_from_slice(&buffer[consumed..]);
-        }
-        (req.res.clone(), buffer, consumed)
+        req.buffer.drain(..consumed);
+        (req.res.clone(), body)
     };
     if let Some(res) = res {
-        if consumed > 0 {
-            let body = response_body_bytes(&res, &rest[..consumed]);
+        if !body.is_empty() {
+            let body = if response_is_chunked(&res) {
+                body
+            } else {
+                response_body_bytes(&res, &body)
+            };
             if !body.is_empty() {
                 let data = response_data(&res, &body);
                 queue_response_data(&res, data.clone());
@@ -3057,13 +3555,29 @@ fn response_content_length(response: &Value) -> Option<usize> {
         .and_then(|value| value.parse().ok())
 }
 
+fn response_is_chunked(response: &Value) -> bool {
+    let headers = execute::get_property(response, "headers");
+    execute::to_js_string(&execute::get_property(&headers, "transfer-encoding"))
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("chunked"))
+}
+
 fn ensure_http_handle(socket: &Value) {
-    if !matches!(execute::get_property(socket, "_handle"), Value::Null | Value::Undefined) {
+    if !matches!(
+        execute::get_property(socket, "_handle"),
+        Value::Null | Value::Undefined
+    ) {
         return;
     }
     let handle = host_api::object(vec![
-        ("close".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-        ("asyncReset".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        (
+            "close".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "asyncReset".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
     ]);
     let updated = execute::set_property(socket.clone(), "_handle", handle);
     execute::replace_value(socket, &updated);
@@ -3095,10 +3609,7 @@ fn response_status(head: &[u8]) -> Option<u16> {
         .and_then(|value| value.parse().ok())
 }
 
-fn finish_known_response(
-    state: &Rc<RefCell<HostState>>,
-    client_id: u64,
-) -> Result<(), VmError> {
+fn finish_known_response(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmError> {
     let socket = {
         let guard = state.borrow();
         let Some(req) = guard.http.clientreqs.get(&client_id) else {
@@ -3129,6 +3640,30 @@ fn finish_known_response(
             net::emit(state, &request, "error", vec![error])?;
             net::socket_destroy(state, Some(&socket), &[])?;
             return Ok(());
+        }
+        let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+        if !matches!(
+            execute::get_property(&request, "\0quench:http-perf-recorded"),
+            Value::Boolean(true)
+        ) {
+            let response = state
+                .borrow()
+                .http
+                .clientreqs
+                .get(&client_id)
+                .and_then(|req| req.res.clone())
+                .unwrap_or(Value::Undefined);
+            crate::modules::http::record_http_entry(
+                state,
+                "HttpClient",
+                client_performance_request(state, client_id),
+                response,
+            );
+            set_request_property(
+                Some(&request),
+                "\0quench:http-perf-recorded",
+                Value::Boolean(true),
+            );
         }
         res_end_handler(state, Some(&socket), &[])?;
     }
@@ -3171,10 +3706,18 @@ fn invalid_response_framing(head: &[u8], body: &[u8]) -> Option<Value> {
         quench_runtime::ops::Builtin::Error,
         &[Value::String(format!("Parse Error: {reason}"))],
     );
-    let error = execute::set_property(error, "code", Value::String("HPE_INVALID_TRANSFER_ENCODING".into()));
+    let error = execute::set_property(
+        error,
+        "code",
+        Value::String("HPE_INVALID_TRANSFER_ENCODING".into()),
+    );
     let error = execute::set_property(error, "reason", Value::String(reason.into()));
     let error = execute::set_property(error, "bytesParsed", Value::Number((head.len() + 4) as f64));
-    Some(execute::set_property(error, "rawPacket", crate::modules::buffer_proto::make_buffer(&raw)))
+    Some(execute::set_property(
+        error,
+        "rawPacket",
+        crate::modules::buffer_proto::make_buffer(&raw),
+    ))
 }
 
 fn duplicate_content_length(head: &[u8]) -> Option<Value> {
@@ -3190,7 +3733,9 @@ fn duplicate_content_length(head: &[u8]) -> Option<Value> {
     }
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
-        &[Value::String("Parse Error: Duplicate Content-Length".into())],
+        &[Value::String(
+            "Parse Error: Duplicate Content-Length".into(),
+        )],
     );
     Some(execute::set_property(
         error,
@@ -3200,11 +3745,19 @@ fn duplicate_content_length(head: &[u8]) -> Option<Value> {
 }
 
 fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
+    decode_chunked_prefix(bytes).0
+}
+
+/// Decode complete HTTP/1.1 chunks from the front of `bytes`, retaining any
+/// partial framing for the next transport read. The returned cursor advances
+/// only across complete chunks (and the terminating zero chunk).
+fn decode_chunked_prefix(bytes: &[u8]) -> (Vec<u8>, usize, bool) {
     let mut output = Vec::new();
     let mut cursor = 0;
     while cursor < bytes.len() {
+        let chunk_start = cursor;
         let Some(line_end) = bytes[cursor..].windows(2).position(|pair| pair == b"\r\n") else {
-            break;
+            return (output, cursor, false);
         };
         let line_end = cursor + line_end;
         let Ok(size) = usize::from_str_radix(
@@ -3214,23 +3767,27 @@ fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
                 .unwrap_or(""),
             16,
         ) else {
-            break;
+            return (output, cursor, false);
         };
         cursor = line_end + 2;
         if cursor + size > bytes.len() {
-            break;
+            return (output, chunk_start, false);
         }
         if size == 0 {
-            break;
+            return if bytes.get(cursor..cursor + 2) == Some(b"\r\n") {
+                (output, cursor + 2, true)
+            } else {
+                (output, chunk_start, false)
+            };
         }
-        output.extend_from_slice(&bytes[cursor..cursor + size]);
-        cursor += size;
-        if bytes.get(cursor..cursor + 2) != Some(b"\r\n") {
-            break;
+        let body_end = cursor + size;
+        if bytes.get(body_end..body_end + 2) != Some(b"\r\n") {
+            return (output, chunk_start, false);
         }
-        cursor += 2;
+        output.extend_from_slice(&bytes[cursor..body_end]);
+        cursor = body_end + 2;
     }
-    output
+    (output, cursor, false)
 }
 
 fn pool_response_socket(
@@ -3266,8 +3823,10 @@ fn pool_response_socket(
                 .and_then(|_| request.res.as_ref())
         })
         .is_some_and(|response| {
-            matches!(execute::get_property(&agent, "keepAlive"), Value::Boolean(true))
-                && response_allows_reuse(response)
+            matches!(
+                execute::get_property(&agent, "keepAlive"),
+                Value::Boolean(true)
+            ) && response_allows_reuse(response)
         });
     let drained = net::net_id(socket).is_some_and(|id| {
         state
@@ -3299,7 +3858,11 @@ fn pool_response_socket(
         }
         let keep_socket_alive = execute::get_property(&agent, "keepSocketAlive");
         let keep_result = if quench_runtime::is_callable(&keep_socket_alive) {
-            Some(execute::call(&keep_socket_alive, &agent, &[socket.clone()])?)
+            Some(execute::call(
+                &keep_socket_alive,
+                &agent,
+                &[socket.clone()],
+            )?)
         } else {
             None
         };
@@ -3309,7 +3872,8 @@ fn pool_response_socket(
         let name = agent_name(&target, &agent);
         move_agent_socket_to_free(&agent, &name, socket);
         crate::modules::http::mark_idle_socket(state, socket);
-        if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0) {
+        if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0)
+        {
             // `keepSocketAlive` may replace the Agent timeout (for example a
             // subclass can install a custom idle timeout). Schedule using
             // the socket's resulting value instead of overwriting it.
@@ -3363,26 +3927,34 @@ pub fn res_end_handler(
             return Ok(Value::Undefined);
         }
         req.response_ended = true;
-        (req.res.clone(), req.response_received, req.response_chunked_done)
+        (
+            req.res.clone(),
+            req.response_received,
+            req.response_chunked_done,
+        )
     };
     if let Some(res) = res {
-        if matches!(execute::get_property(&res, "complete"), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&res, "complete"),
+            Value::Boolean(true)
+        ) {
             reject_trailing_response(state, client_id, socket)?;
             return Ok(Value::Undefined);
         }
         let expected = match execute::get_property(&res, "headers") {
             headers @ (Value::Object(_) | Value::ObjectAlias(_)) => {
-                execute::to_js_string(&execute::get_property(&headers, "content-length")).ok()
+                execute::to_js_string(&execute::get_property(&headers, "content-length"))
+                    .ok()
                     .and_then(|value| value.parse::<usize>().ok())
             }
             _ => None,
         };
         let chunked = match execute::get_property(&res, "headers") {
-            headers @ (Value::Object(_) | Value::ObjectAlias(_)) => execute::to_js_string(
-                &execute::get_property(&headers, "transfer-encoding"),
-            )
-            .ok()
-            .is_some_and(|value| value.eq_ignore_ascii_case("chunked")),
+            headers @ (Value::Object(_) | Value::ObjectAlias(_)) => {
+                execute::to_js_string(&execute::get_property(&headers, "transfer-encoding"))
+                    .ok()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("chunked"))
+            }
             _ => false,
         };
         if expected.is_some_and(|expected| received > expected) {
@@ -3400,6 +3972,22 @@ pub fn res_end_handler(
         set_response_property(&res, "complete", Value::Boolean(true));
         set_response_property(&res, "readable", Value::Boolean(false));
         if let Some(request) = client_value(state, client_id, true) {
+            if !matches!(
+                execute::get_property(&request, "\0quench:http-perf-recorded"),
+                Value::Boolean(true)
+            ) {
+                crate::modules::http::record_http_entry(
+                    state,
+                    "HttpClient",
+                    client_performance_request(state, client_id),
+                    res.clone(),
+                );
+                set_request_property(
+                    Some(&request),
+                    "\0quench:http-perf-recorded",
+                    Value::Boolean(true),
+                );
+            }
             set_request_property(Some(&request), "destroyed", Value::Boolean(true));
         }
         pool_response_socket(state, client_id, socket)?;
@@ -3423,7 +4011,11 @@ pub fn res_end_handler(
             // the underlying keep-alive socket remains in Agent.freeSockets.
             // Mark the terminal request transition so the later socket close
             // cannot emit a duplicate request `'close'` event.
-            set_request_property(Some(&request), CLIENT_CLOSE_PENDING_PROP, Value::Boolean(true));
+            set_request_property(
+                Some(&request),
+                CLIENT_CLOSE_PENDING_PROP,
+                Value::Boolean(true),
+            );
             net::emit(state, &request, "close", Vec::new())?;
             set_response_property(&res, "destroyed", Value::Boolean(true));
             net::emit(state, &res, "close", Vec::new())?;
@@ -3439,14 +4031,15 @@ pub fn res_end_handler(
             .get(&client_id)
             .is_some_and(|request| {
                 !request.aborted
-                    && request
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| matches!(agent, Value::Object(_) | Value::ObjectAlias(_)))
-                    && request
-                        .agent
-                        .as_ref()
-                        .is_some_and(|agent| matches!(execute::get_property(agent, "keepAlive"), Value::Boolean(true)))
+                    && request.agent.as_ref().is_some_and(|agent| {
+                        matches!(agent, Value::Object(_) | Value::ObjectAlias(_))
+                    })
+                    && request.agent.as_ref().is_some_and(|agent| {
+                        matches!(
+                            execute::get_property(agent, "keepAlive"),
+                            Value::Boolean(true)
+                        )
+                    })
                     && request.res.as_ref().is_some_and(response_allows_reuse)
             });
         if pooled {
@@ -3527,9 +4120,12 @@ fn detach_parser_data_listener(
 }
 
 fn invalid_response_start(state: &Rc<RefCell<HostState>>, client_id: u64) -> Option<Value> {
-    let (parsed, raw) = state.borrow().http.clientreqs.get(&client_id).map(|req| {
-        (req.head_parsed, req.buffer.clone())
-    })?;
+    let (parsed, raw) = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| (req.head_parsed, req.buffer.clone()))?;
     if parsed || raw.is_empty() || raw.starts_with(b"HTTP/") {
         return None;
     }
@@ -3581,9 +4177,15 @@ fn invalid_response_header(head: &[u8]) -> Option<Value> {
     }
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
-        &[Value::String("Parse Error: Missing expected LF after CR".into())],
+        &[Value::String(
+            "Parse Error: Missing expected LF after CR".into(),
+        )],
     );
-    Some(execute::set_property(error, "code", Value::String("HPE_LF_EXPECTED".into())))
+    Some(execute::set_property(
+        error,
+        "code",
+        Value::String("HPE_LF_EXPECTED".into()),
+    ))
 }
 
 fn abort_incomplete_response(
@@ -3603,7 +4205,7 @@ fn abort_incomplete_response(
     if has_error_listener {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
-            &[Value::String("socket hang up".into())],
+            &[Value::String("aborted".into())],
         );
         let error = execute::set_property(error, "code", Value::String("ECONNRESET".into()));
         net::emit(state, response, "error", vec![error])?;
@@ -3644,8 +4246,52 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
             ),
             (
+                "flushHeaders".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
+            ),
+            (
                 "setHeader".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_HEADER),
+            ),
+            (
+                "getHeader".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_GET_HEADER),
+            ),
+            (
+                "getHeaders".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_GET_HEADERS),
+            ),
+            (
+                "getHeaderNames".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_GET_HEADER_NAMES),
+            ),
+            (
+                "hasHeader".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_HAS_HEADER),
+            ),
+            (
+                "removeHeader".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_REMOVE_HEADER),
+            ),
+            (
+                "setNoDelay".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_NO_DELAY),
+            ),
+            (
+                "setSocketKeepAlive".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_KEEP_ALIVE),
+            ),
+            (
+                "setSocketTimeout".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_TIMEOUT_SOCKET),
+            ),
+            (
+                "cork".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_CORK),
+            ),
+            (
+                "uncork".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_UNCORK),
             ),
             (
                 "setTimeout".to_string(),
@@ -3663,13 +4309,12 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             ("_header".to_string(), Value::String(String::new())),
             ("aborted".to_string(), Value::Boolean(false)),
             ("destroyed".to_string(), Value::Boolean(false)),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("writableCorked".to_string(), Value::Number(0.0)),
             ("finished".to_string(), Value::Boolean(false)),
             ("timeout".to_string(), Value::Number(0.0)),
             (CLIENT_TIMEOUT_PROP.to_string(), Value::Undefined),
-            (
-                CLIENT_CLOSE_PENDING_PROP.to_string(),
-                Value::Boolean(false),
-            ),
+            (CLIENT_CLOSE_PENDING_PROP.to_string(), Value::Boolean(false)),
             (
                 CLIENT_SOCKET_EVENT_QUEUED_PROP.to_string(),
                 Value::Boolean(false),
@@ -3714,7 +4359,10 @@ pub fn req_path_set(
 ) -> Result<Value, VmError> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     let path = execute::to_js_string(&value)?;
-    if path.chars().any(|character| !(('\u{21}'..='\u{FF}').contains(&character))) {
+    if path
+        .chars()
+        .any(|character| !(('\u{21}'..='\u{FF}').contains(&character)))
+    {
         return Err(unescaped_path_error());
     }
     if let Some(request) = receiver {
@@ -3797,7 +4445,11 @@ fn client_id_for_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Optio
         .http
         .clientreqs
         .iter()
-        .find(|(_, req)| req.socket.as_ref().is_some_and(|value| same_socket(value, socket)))
+        .find(|(_, req)| {
+            req.socket
+                .as_ref()
+                .is_some_and(|value| same_socket(value, socket))
+        })
         .map(|(id, _)| *id)
 }
 
@@ -3870,6 +4522,7 @@ fn build_incoming(
         .unwrap_or(0);
     let message = fields.collect::<Vec<_>>().join(" ");
     let mut headers: Vec<(String, Value)> = Vec::new();
+    let mut raw_headers = Vec::new();
     for line in lines {
         if line.is_empty() {
             break;
@@ -3877,6 +4530,8 @@ fn build_incoming(
         if let Some(colon) = line.find(':') {
             let key = line[..colon].trim().to_lowercase();
             let value = line[colon + 1..].trim();
+            raw_headers.push(Value::String(line[..colon].trim().to_string()));
+            raw_headers.push(Value::String(value.to_string()));
             if let Some((_, existing)) = headers.iter_mut().find(|(name, _)| name == &key) {
                 if crate::modules::http_res::NON_REPEATABLE_HEADERS
                     .iter()
@@ -3946,6 +4601,7 @@ fn build_incoming(
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
         ("headers".to_string(), host_api::object(headers)),
+        ("rawHeaders".to_string(), host_api::array(raw_headers)),
         ("req".to_string(), request_alias),
         (
             RESPONSE_READ_BUFFER_PROP.to_string(),
@@ -3975,20 +4631,24 @@ fn build_incoming(
         // the host already drains response bytes eagerly, so the same
         // identity-preserving capability is sufficient here.
         (
+            "pause".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
+        ),
+        (
             "resume".to_string(),
             crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
         ),
-        ("signal".to_string(), crate::modules::http::new_http_signal(state)?),
+        (
+            "signal".to_string(),
+            crate::modules::http::new_http_signal(state)?,
+        ),
         ("complete".to_string(), Value::Boolean(false)),
         ("readable".to_string(), Value::Boolean(true)),
         ("aborted".to_string(), Value::Boolean(false)),
         ("destroyed".to_string(), Value::Boolean(false)),
         ("errored".to_string(), Value::Null),
         ("closed".to_string(), Value::Boolean(false)),
-        (
-            RES_ASYNC_RESOURCE_PROP.to_string(),
-            request_resource,
-        ),
+        (RES_ASYNC_RESOURCE_PROP.to_string(), request_resource),
         (
             crate::modules::http::INCOMING_CLOSE_PENDING_PROP.to_string(),
             Value::Boolean(false),
@@ -4005,7 +4665,10 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             let options = value.cloned().unwrap_or(Value::Undefined);
             validate_agent_option(&options)?;
             let parser_option = execute::get_property(&options, "insecureHTTPParser");
-            if !matches!(parser_option, Value::Undefined | Value::Null | Value::Boolean(_)) {
+            if !matches!(
+                parser_option,
+                Value::Undefined | Value::Null | Value::Boolean(_)
+            ) {
                 return Err(invalid_boolean_option_error(
                     "options.insecureHTTPParser",
                     &parser_option,
@@ -4054,7 +4717,10 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             if !matches!(hv, Value::Undefined | Value::Null) {
                 if let Ok(host_header) = execute::get_property_result(&hv, "host") {
                     if is_array_value(&host_header)
-                        || !matches!(host_header, Value::Undefined | Value::Null | Value::String(_))
+                        || !matches!(
+                            host_header,
+                            Value::Undefined | Value::Null | Value::String(_)
+                        )
                     {
                         return Err(invalid_header_type_error());
                     }
@@ -4068,7 +4734,9 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
                             .ok()
                             .and_then(|v| execute::to_js_string(&v).ok());
                         let value = execute::get_property_result(&pair, "1").ok().and_then(|v| {
-                            if name.as_deref().is_some_and(|key| key.eq_ignore_ascii_case("cookie"))
+                            if name
+                                .as_deref()
+                                .is_some_and(|key| key.eq_ignore_ascii_case("cookie"))
                                 && matches!(v, Value::Array(_))
                             {
                                 Some(
@@ -4127,8 +4795,18 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             }
             let target = socket_path
                 .filter(|path| !path.is_empty())
-                .map_or(RequestTarget::Tcp { host, port }, |path| RequestTarget::Unix { path });
-            Ok(RequestOptions { target, method, path, headers })
+                .map_or(RequestTarget::Tcp { host, port }, |path| {
+                    RequestTarget::Unix { path }
+                });
+            let secure = matches!(execute::get_property(&options, "protocol"), Value::String(ref p) if p.eq_ignore_ascii_case("https:"));
+            Ok(RequestOptions {
+                target,
+                method,
+                path,
+                headers,
+                secure,
+                tls_options: Some(options),
+            })
         }
         _ => Err(execute::type_error("options must be a string or object")),
     }
@@ -4138,7 +4816,11 @@ fn unescaped_path_error() -> VmError {
     let error = execute::type_error("Request path contains unescaped characters");
     let error = match error {
         VmError::Thrown(value) => execute::set_property(
-            execute::set_property(value, "code", Value::String("ERR_UNESCAPED_CHARACTERS".into())),
+            execute::set_property(
+                value,
+                "code",
+                Value::String("ERR_UNESCAPED_CHARACTERS".into()),
+            ),
             "name",
             Value::String("TypeError".into()),
         ),
@@ -4149,12 +4831,16 @@ fn unescaped_path_error() -> VmError {
 
 fn validate_agent_option(options: &Value) -> Result<(), VmError> {
     let agent = execute::get_property(options, "agent");
-    let valid = matches!(agent, Value::Undefined | Value::Null | Value::Boolean(false))
-        || matches!(agent, Value::Object(_) | Value::ObjectAlias(_))
-            && (matches!(execute::get_property(&agent, AGENT_MARKER_PROP), Value::Boolean(true))
-                || ["addRequest", "createConnection", "createSocket"]
-                    .into_iter()
-                    .any(|name| quench_runtime::is_callable(&execute::get_property(&agent, name))));
+    let valid = matches!(
+        agent,
+        Value::Undefined | Value::Null | Value::Boolean(false)
+    ) || matches!(agent, Value::Object(_) | Value::ObjectAlias(_))
+        && (matches!(
+            execute::get_property(&agent, AGENT_MARKER_PROP),
+            Value::Boolean(true)
+        ) || ["addRequest", "createConnection", "createSocket"]
+            .into_iter()
+            .any(|name| quench_runtime::is_callable(&execute::get_property(&agent, name))));
     if valid {
         return Ok(());
     }
@@ -4202,12 +4888,14 @@ fn invalid_boolean_option_error(name: &str, value: &Value) -> VmError {
 }
 
 fn invalid_method_error(method: &str) -> VmError {
-    let error = execute::type_error(&format!(
-        "Method must be a valid HTTP token [\"{method}\"]"
-    ));
+    let error = execute::type_error(&format!("Method must be a valid HTTP token [\"{method}\"]"));
     let error = match error {
         VmError::Thrown(value) => execute::set_property(
-            execute::set_property(value, "code", Value::String("ERR_INVALID_HTTP_TOKEN".into())),
+            execute::set_property(
+                value,
+                "code",
+                Value::String("ERR_INVALID_HTTP_TOKEN".into()),
+            ),
             "name",
             Value::String("TypeError".into()),
         ),
@@ -4221,17 +4909,17 @@ fn invalid_method_type_error(value: &Value) -> VmError {
         "type symbol (Symbol())".to_string()
     } else {
         match value {
-        Value::Null => "null".to_string(),
-        Value::Boolean(value) => format!("type boolean ({value})"),
-        Value::Number(value) => format!("type number ({value})"),
-        Value::String(value) => format!("type string ({value})"),
-        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_) | Value::Uint8Array(_) => {
-            let constructor = execute::get_property(value, "constructor");
-            let name = execute::to_js_string(&execute::get_property(&constructor, "name"))
-                .unwrap_or_else(|_| "Object".into());
-            format!("an instance of {name}")
-        }
-        _ => "type unknown".to_string(),
+            Value::Null => "null".to_string(),
+            Value::Boolean(value) => format!("type boolean ({value})"),
+            Value::Number(value) => format!("type number ({value})"),
+            Value::String(value) => format!("type string ({value})"),
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_) | Value::Uint8Array(_) => {
+                let constructor = execute::get_property(value, "constructor");
+                let name = execute::to_js_string(&execute::get_property(&constructor, "name"))
+                    .unwrap_or_else(|_| "Object".into());
+                format!("an instance of {name}")
+            }
+            _ => "type unknown".to_string(),
         }
     };
     let error = execute::type_error(&format!(
@@ -4249,9 +4937,9 @@ fn invalid_method_type_error(value: &Value) -> VmError {
 
 fn is_http_token(method: &str) -> bool {
     !method.is_empty()
-        && method.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
-        })
+        && method
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -4268,7 +4956,11 @@ fn base64_encode(bytes: &[u8]) -> String {
         } else {
             '='
         });
-        output.push(if chunk.len() > 2 { TABLE[third & 63] as char } else { '=' });
+        output.push(if chunk.len() > 2 {
+            TABLE[third & 63] as char
+        } else {
+            '='
+        });
     }
     output
 }
@@ -4322,7 +5014,11 @@ fn own_option(options: &Value, key: &str) -> bool {
 }
 
 fn http_url(value: &str) -> Result<RequestOptions, VmError> {
-    let rest = value.strip_prefix("http://").unwrap_or(value);
+    let secure = value.starts_with("https://");
+    let rest = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+        .unwrap_or(value);
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
@@ -4336,5 +5032,13 @@ fn http_url(value: &str) -> Result<RequestOptions, VmError> {
         method: "GET".to_string(),
         path: path.to_string(),
         headers: Vec::new(),
+        secure,
+        tls_options: None,
+    })
+}
+
+fn option_source_object(args: &[Value]) -> Option<Value> {
+    args.first().and_then(|value| {
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_)).then(|| value.clone())
     })
 }
