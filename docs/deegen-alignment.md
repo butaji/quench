@@ -24,7 +24,7 @@ optimizations below — not an optimizing JIT or deopt.
 | 5 | JIT-side λi/λe as self-modifying-code (SMC) IC stub chain (§7.1) | **Absent** | Repatch is hole-patching of pre-rendered bytes in a bounded arena (`stencil_patch.rs`), not an SMC stub chain that grows/branches at runtime. |
 | 6 | Tag register optimization (§5.3) | **Blocked (dependency unavailable)** | Task 030's Gate 0 produced a safe grouped `DispatchState` pointer, not a reliably pinned physical register. Because stable Rust exposes no portable GHCcc-style fixed-register ABI, replacing `TAG_PREFIX`/`TAG_SHIFT`/`TAG_MASK` immediates in stencil code would have no sound pinned base. No boxing layout or constant semantics were changed. |
 | 7 | Register pinning for VM state across dispatch (§6.1) | **Present (safe approximation)** | `vm_runtime.rs` `DispatchState` groups `CodeView`/`RegisterFile`/`VmContext`/tier owner behind one stable state pointer across the CPS chain. Gate-0 DWARF/sample + ARM64 disassembly measured dispatch stack-memory operations at 259/1030 (25.15%) before and 242/1006 (24.06%) after; `run_instruction` remained 16.42% vs 16.52%. Rust has no portable GHCcc equivalent, so this is deliberately not a fixed physical-register ABI or unsafe register hack. |
-| 8 | Bytecode quickening — literal opcode/instruction rewrite on IC hit (§6.2) | **Absent (misleading name)** | `quickening.rs` implements a side-table IC (item 3), not literal bytecode-stream mutation. No opcode/instruction write-back found anywhere in the file. The paper's quickening specifically replaces the instruction itself; this doesn't. |
+| 8 | Bytecode quickening — opcode/instruction rewrite on IC hit (§6.2) | **Present (bounded logical rewrite)** | `ir.rs` declares generated `GetPropertyQuickened`/`GetNQuickened`/`AGetIQuickened` variants. `machine.rs` stores a fixed-size per-instruction rewrite cell; `CodeView::instruction` exposes the specialized opcode after a confirmed shape hit, and `dequicken_instruction` restores the canonical opcode on shape/key/descriptor mismatch. The immutable canonical stream and complete generic handler remain the fallback; no source/fixture identity is involved. |
 | 9 | Baseline JIT stencil granularity: one stencil per bytecode variant (§7) | **Diverges by design** | quench fuses multi-opcode **region** stencils instead (`docs/copy-and-patch-jit.md`: "this project's own extension beyond the paper"). Currently only a handful of hand-enumerated regions exist (Number Add+Return, one guarded property region, a two-region fallthrough — see `stencil_select.rs`), narrower in breadth than the paper's full per-bytecode coverage even though the fusion technique itself is a deliberate, documented extension. |
 | 10 | Polymorphic IC + IC inline slab in JIT (§7.1) | **Absent** | No SMC stub chain and no inline-slab-vs-outlined-stub distinction anywhere in `stencil_arena.rs`/`stencil_patch.rs`. |
 | 11 | Hot-cold code splitting by block-frequency analysis, fallthrough branch elimination (§7.2) | **Absent** | `CodeView::cold`/`cold_at` (`machine.rs:2006-2013`) is an unrelated compact-instruction operand-overflow side table, not frequency-based code splitting. `docs/copy-and-patch-jit.md` explicitly disclaims hotness-triggered mechanisms for the current tier. |
@@ -45,9 +45,9 @@ document it as not the paper's (nonexistent) optimizing JIT.
 
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
   counting (#12), OSR-entry wiring and admission test (#13), and the shared
-  slow-path CPS gateway (#3b).
-- **Real gaps, worth closing**: tag register optimization (#6), true bytecode quickening
-  as instruction rewrite (#8), JIT-side SMC IC stub chain + inline slab
+  slow-path CPS gateway (#3b), plus bounded logical instruction quickening
+  (#8).
+- **Real gaps, worth closing**: tag register optimization (#6), JIT-side SMC IC stub chain + inline slab
   (#5/#10), hot-cold code splitting (#11), stencil region breadth (#9).
 - Register pinning is represented by the safe one-pointer dispatch-state
   approximation above; a fixed-register ABI remains unavailable in stable Rust.

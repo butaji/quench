@@ -36,6 +36,14 @@ pub struct InstructionMeta {
     /// opcode has no generated physical guard site.
     pub quickening_site: u32,
     pub named_cache: std::cell::Cell<u64>,
+    /// Logical instruction-stream rewrite state.  The canonical instruction
+    /// remains immutable; `CodeView::instruction` overlays this bounded cell
+    /// so all readers observe the quickened opcode while the generic opcode
+    /// remains available for dequickening/fallback.
+    pub quickened_opcode: std::cell::Cell<Option<crate::ir::Opcode>>,
+    pub quickened_shape: std::cell::Cell<u32>,
+    pub quickened_property: std::cell::Cell<u32>,
+    pub quickened_slot: std::cell::Cell<u32>,
 }
 
 impl InstructionMeta {
@@ -47,6 +55,10 @@ impl InstructionMeta {
             operand_window: u32::MAX,
             quickening_site: u32::MAX,
             named_cache: std::cell::Cell::new(0),
+            quickened_opcode: std::cell::Cell::new(None),
+            quickened_shape: std::cell::Cell::new(u32::MAX),
+            quickened_property: std::cell::Cell::new(u32::MAX),
+            quickened_slot: std::cell::Cell::new(u32::MAX),
         }
     }
 }
@@ -171,6 +183,10 @@ fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
         operand_window: u32::MAX,
         quickening_site: u32::MAX,
         named_cache: std::cell::Cell::new(0),
+        quickened_opcode: std::cell::Cell::new(None),
+        quickened_shape: std::cell::Cell::new(u32::MAX),
+        quickened_property: std::cell::Cell::new(u32::MAX),
+        quickened_slot: std::cell::Cell::new(u32::MAX),
     }
 }
 
@@ -2006,7 +2022,54 @@ impl<'a> CodeView<'a> {
 
     #[inline]
     pub fn instruction(self, pc: usize) -> Option<crate::ir::Instruction> {
-        (pc < self.len()).then(|| self.store.instructions[(self.range.start as usize) + pc])
+        if pc >= self.len() {
+            return None;
+        }
+        let mut instruction = self.store.instructions[(self.range.start as usize) + pc];
+        if let Some(metadata) = self.metadata_at(pc) {
+            if let Some(opcode) = metadata.quickened_opcode.get() {
+                instruction.opcode = opcode;
+            }
+        }
+        Some(instruction)
+    }
+
+    /// Rewrite one bounded instruction view after a confirmed generic-IC hit.
+    /// The canonical bytes and complete fallback remain intact; a guard
+    /// mismatch can clear this cell and expose the original opcode again.
+    pub(crate) fn quicken_instruction(
+        self,
+        pc: usize,
+        opcode: crate::ir::Opcode,
+        shape: u32,
+        property: u32,
+        slot: u32,
+    ) {
+        if let Some(metadata) = self.metadata_at(pc) {
+            metadata.quickened_shape.set(shape);
+            metadata.quickened_property.set(property);
+            metadata.quickened_slot.set(slot);
+            metadata.quickened_opcode.set(Some(opcode));
+        }
+    }
+
+    pub(crate) fn quickened_state(self, pc: usize) -> Option<(crate::ir::Opcode, u32, u32, u32)> {
+        let metadata = self.metadata_at(pc)?;
+        Some((
+            metadata.quickened_opcode.get()?,
+            metadata.quickened_shape.get(),
+            metadata.quickened_property.get(),
+            metadata.quickened_slot.get(),
+        ))
+    }
+
+    pub(crate) fn dequicken_instruction(self, pc: usize) {
+        if let Some(metadata) = self.metadata_at(pc) {
+            metadata.quickened_opcode.set(None);
+            metadata.quickened_shape.set(u32::MAX);
+            metadata.quickened_property.set(u32::MAX);
+            metadata.quickened_slot.set(u32::MAX);
+        }
     }
 
     #[inline]

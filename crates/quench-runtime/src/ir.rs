@@ -290,6 +290,9 @@ vm_op! {
     StoreLocalChecked = 26 / 2 => [MayThrow] / store_local_checked / None / Next / [] / run_store_local_checked,
     InitLocal = 27 / 2 => [Pure] / init_local / None / Next / [] / run_init_local,
     StoreLocal = 28 / 2 => [Pure] / store_local / None / Next / [] / run_store_local,
+    GetPropertyQuickened = 29 / 3 => [ReadHeap, MayThrow, Observable] / get_property / Value / Next / [] / run_compact_get_property,
+    GetNQuickened = 30 / 3 => [ReadHeap, MayThrow, Observable] / get_named / Value / Next / [] / run_compact_get_named,
+    AGetIQuickened = 31 / 3 => [ReadHeap, MayThrow, Observable] / get_element / Value / Next / [] / run_compact_get_index,
 }
 
 macro_rules! compact_binary_operators {
@@ -1390,7 +1393,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::StoreLocal as u8);
+        assert_eq!(Opcode::COUNT, Opcode::AGetIQuickened as u8);
         assert!(Opcode::Slow.is_compact());
     }
 

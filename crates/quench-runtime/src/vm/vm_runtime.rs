@@ -1692,6 +1692,36 @@ fn quickened_own_slot_data<'a>(
     if data.has_replacement() || data.is_dictionary() {
         return None;
     }
+    if let Some((opcode, cached_shape, cached_property, cached_slot)) = code.quickened_state(pc) {
+        let property = crate::identity::property_key_id(key);
+        if cached_shape == data.semantic_layout_id() && cached_property == property.0 {
+            if let Some(word) = crate::vm::cached_plain_own_word(
+                data,
+                key,
+                cached_shape,
+                cached_slot,
+            ) {
+                let valid = !matches!(
+                    word.load(),
+                    crate::value::Value::BindingCell(_) | crate::value::Value::WeakFunction(_)
+                );
+                if valid {
+                    return Some(word);
+                }
+            }
+        }
+        // A rewritten opcode is only a guarded fast path. Any shape/key or
+        // descriptor mismatch restores the canonical opcode and re-enters the
+        // complete generic-IC path below.
+        if matches!(
+            opcode,
+            crate::ir::Opcode::GetPropertyQuickened
+                | crate::ir::Opcode::GetNQuickened
+                | crate::ir::Opcode::AGetIQuickened
+        ) {
+            code.dequicken_instruction(pc);
+        }
+    }
     let site = code.quickening_site(pc)?;
     // The named-property cache already interns this object's canonical
     // property layout.  Reuse that derived identity for the IC guard instead
@@ -1713,6 +1743,24 @@ fn quickened_own_slot_data<'a>(
                 crate::value::Value::BindingCell(_) | crate::value::Value::WeakFunction(_)
             );
             if valid {
+                if let Some(quickened_opcode) = code.instruction(pc).and_then(|instruction| {
+                    match instruction.opcode {
+                        crate::ir::Opcode::GetProperty => {
+                            Some(crate::ir::Opcode::GetPropertyQuickened)
+                        }
+                        crate::ir::Opcode::GetN => Some(crate::ir::Opcode::GetNQuickened),
+                        crate::ir::Opcode::AGetI => Some(crate::ir::Opcode::AGetIQuickened),
+                        _ => None,
+                    }
+                }) {
+                    code.quicken_instruction(
+                        pc,
+                        quickened_opcode,
+                        shape.0,
+                        property.0,
+                        cached_slot,
+                    );
+                }
                 return Some(word);
             }
             site.invalidate_shape(shape);
@@ -2293,6 +2341,21 @@ mod compact_handler_tests {
             quickened_own_get(code, 0, &object, "value"),
             Some(Value::Number(7.0))
         );
+        assert_eq!(
+            code.instruction(0).expect("rewritten instruction").opcode,
+            crate::ir::Opcode::AGetIQuickened
+        );
+        let other = Value::Object(Rc::new(ObjectData::new(vec![
+            ("other".into(), Value::Number(1.0)),
+            ("value".into(), Value::Number(9.0)),
+        ])));
+        // A shape miss dequickens the logical instruction and takes the
+        // complete generic path; only the following confirmed hit rewrites
+        // it again for the new bounded state.
+        assert_eq!(quickened_own_get(code, 0, &other, "value"), None);
+        assert_eq!(code.instruction(0).expect("generic instruction").opcode, crate::ir::Opcode::AGetI);
+        assert_eq!(quickened_own_get(code, 0, &other, "value"), Some(Value::Number(9.0)));
+        assert_eq!(code.instruction(0).expect("rewritten instruction").opcode, crate::ir::Opcode::AGetIQuickened);
     }
 
     #[test]
