@@ -430,8 +430,12 @@ fn remember_pending_async_for_of(state: crate::value::AsyncForOfState) {
     PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).push(state) });
 }
 
-pub(crate) fn take_pending_async_for_of() -> Option<crate::value::AsyncForOfState> {
-    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).pop() })
+pub(crate) fn take_pending_async_for_of(owner: usize) -> Option<crate::value::AsyncForOfState> {
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe {
+        let pending = &mut *pending.get();
+        let index = pending.iter().rposition(|state| state.owner == owner)?;
+        Some(pending.remove(index))
+    })
 }
 
 pub(crate) fn reset_fixture_state() {
@@ -596,6 +600,7 @@ fn iterate_loop_values(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let pending = crate::value::AsyncForOfState {
+        owner: crate::generator::current_generator_id(),
         label: label.clone(),
         slot,
         body: body_code,
@@ -604,6 +609,8 @@ fn iterate_loop_values(
         iterator: iterator.clone(),
         dst,
         await_dst: 0,
+        await_values,
+        bindings: Vec::new(),
         body_pc: 0,
     };
     loop {
@@ -629,7 +636,7 @@ fn iterate_loop_values(
         let (body_result, body_pc) = if await_values {
             execute_async_loop_body(registers, body, label, 0)?
         } else {
-            (execute_loop_body(registers, label, body)?, 0)
+            execute_async_loop_body(registers, body, label, 0)?
         };
         match body_result {
             crate::completion::LoopTransition::Continue(_) => {}
@@ -641,9 +648,11 @@ fn iterate_loop_values(
             }
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
-                    if await_values {
+                    if matches!(completion, crate::completion::Completion::Suspend(_)) {
                         let mut pending = pending.clone();
                         pending.body_pc = body_pc;
+                        pending.await_dst = body_await_destination(body, body_pc);
+                        pending.bindings = capture_iteration_bindings(slot, iteration_slots);
                         remember_pending_async_for_of(pending);
                     } else {
                         remember_for_of(iterator);
@@ -679,6 +688,7 @@ pub(crate) fn resume_async_for_of(
     };
     loop {
         if body_pc != 0 {
+            let _binding = crate::locals::IterationBinding::install_many(spec.bindings.clone());
             let (completion, next_pc) =
                 execute_async_loop_body(registers, body, &spec.label, body_pc)?;
             match completion {
@@ -694,16 +704,23 @@ pub(crate) fn resume_async_for_of(
                 }
                 crate::completion::LoopTransition::Propagate(completion) => {
                     if completion.is_suspension() {
-                        let mut pending = spec.clone();
-                        pending.body_pc = next_pc;
-                        return Ok((completion, Some(pending)));
+                        if matches!(completion, crate::completion::Completion::Suspend(_)) {
+                            let mut pending = spec.clone();
+                            pending.body_pc = next_pc;
+                            pending.await_dst = body_await_destination(body, next_pc);
+                            pending.bindings =
+                                capture_iteration_bindings(spec.slot, &spec.iteration_slots);
+                            return Ok((completion, Some(pending)));
+                        }
+                        remember_for_of(spec.iterator.clone());
+                        return Ok((completion, None));
                     }
                     let completion = attach_loop_completion(registers, spec.dst, completion)?;
                     return crate::collections::iterator::close(spec.iterator.clone(), completion)
                         .map(|completion| (completion, None));
                 }
             }
-            next_value = match crate::collections::iterator::step_value_await(&spec.iterator) {
+            next_value = match step_iterator_value(&spec.iterator, spec.await_values) {
                 Ok(value) => value,
                 Err(crate::execute::VmError::Suspended(promise)) => {
                     let mut pending = spec.clone();
@@ -739,16 +756,23 @@ pub(crate) fn resume_async_for_of(
             }
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
-                    let mut pending = spec.clone();
-                    pending.body_pc = body_next_pc;
-                    return Ok((completion, Some(pending)));
+                    if matches!(completion, crate::completion::Completion::Suspend(_)) {
+                        let mut pending = spec.clone();
+                        pending.body_pc = body_next_pc;
+                        pending.await_dst = body_await_destination(body, body_next_pc);
+                        pending.bindings =
+                            capture_iteration_bindings(spec.slot, &spec.iteration_slots);
+                        return Ok((completion, Some(pending)));
+                    }
+                    remember_for_of(spec.iterator.clone());
+                    return Ok((completion, None));
                 }
                 let completion = attach_loop_completion(registers, spec.dst, completion)?;
                 return crate::collections::iterator::close(spec.iterator.clone(), completion)
                     .map(|completion| (completion, None));
             }
         }
-        next_value = match crate::collections::iterator::step_value_await(&spec.iterator) {
+        next_value = match step_iterator_value(&spec.iterator, spec.await_values) {
             Ok(value) => value,
             Err(crate::execute::VmError::Suspended(promise)) => {
                 remember_pending_async_for_of(spec.clone());
@@ -760,6 +784,45 @@ pub(crate) fn resume_async_for_of(
             Err(error) => return Err(error),
         };
     }
+}
+
+fn step_iterator_value(
+    iterator: &crate::value::Value,
+    await_values: bool,
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    if await_values {
+        crate::collections::iterator::step_value_await(iterator)
+    } else {
+        crate::collections::iterator::step_value(iterator)
+    }
+}
+
+fn body_await_destination(body: crate::machine::CodeView<'_>, body_pc: usize) -> u16 {
+    body_pc
+        .checked_sub(1)
+        .and_then(|index| body.cold_at(index))
+        .and_then(|op| match op {
+            crate::ops::Op::Await { dst, .. } => Some(*dst),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+fn capture_iteration_bindings(
+    slot: u16,
+    iteration_slots: &[u16],
+) -> Vec<(u16, crate::value::Value)> {
+    std::iter::once(slot)
+        .chain(iteration_slots.iter().copied())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .scan(None, |last, slot| {
+            (*last != Some(slot)).then(|| {
+                *last = Some(slot);
+                (slot, crate::locals::current().get(slot))
+            })
+        })
+        .collect()
 }
 
 fn bind_iteration(
@@ -814,7 +877,13 @@ fn execute_async_loop_body(
 ) -> Result<(crate::completion::LoopTransition, usize), crate::execute::VmError> {
     let mut pc = start;
     loop {
-        let step = crate::vm::execute_code_completion_step_from_in_place(body, pc, registers)?;
+        let step = {
+            let defer = crate::module_bindings::fulfilled_await_defers();
+            crate::module_bindings::defer_fulfilled_await(false);
+            let result = crate::vm::execute_code_completion_step_from_in_place(body, pc, registers);
+            crate::module_bindings::defer_fulfilled_await(defer);
+            result?
+        };
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {

@@ -182,6 +182,19 @@ fn add_listener(
     let Some(id) = ensure_emitter(state, receiver) else {
         return Err(execute::type_error("receiver is not an EventEmitter"));
     };
+    if let Some(receiver) = receiver {
+        if let Some(id) = crate::modules::net::net_id(receiver) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                let alpn = execute::get_property(
+                    &socket.borrow().js,
+                    crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                );
+                if !matches!(alpn, Value::Undefined) {
+                    execute::set_property_in_place(receiver, "alpnProtocol", alpn);
+                }
+            }
+        }
+    }
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Err(execute::type_error("receiver is not an EventEmitter"));
     };
@@ -261,7 +274,13 @@ fn add_listener(
             limit,
         );
     }
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+    // Listener registration may publish a copy-on-write representative while
+    // initializing the emitter. Return that live identity so fluent calls
+    // (`socket.on(...).on(...)`) retain host-owned connection metadata.
+    let result = receiver
+        .map(execute::canonical_value)
+        .unwrap_or(Value::Undefined);
+    Ok(result)
 }
 
 fn mark_event_warned(receiver: &Value, event: &str) {
@@ -362,7 +381,10 @@ pub fn method_on(
     let result = add_listener(state, receiver, args, false, false)?;
     if matches!(args.first(), Some(Value::String(event)) if event == "keylog")
         && receiver.is_some_and(|value| {
-            matches!(execute::get_property(value, "\0quench:http:agent"), Value::Boolean(true))
+            matches!(
+                execute::get_property(value, "\0quench:http:agent"),
+                Value::Boolean(true)
+            )
         })
     {
         if let Some(listener) = args.get(1) {
@@ -477,7 +499,10 @@ pub fn method_emit(
         let initially_destroyed = matches!(
             execute::get_property(receiver, "destroyed"),
             Value::Boolean(true)
-        ) || matches!(execute::get_property(&owner, "destroyed"), Value::Boolean(true));
+        ) || matches!(
+            execute::get_property(&owner, "destroyed"),
+            Value::Boolean(true)
+        );
         for listener in &snapshot {
             let _ = execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]));
         }
@@ -487,6 +512,19 @@ pub fn method_emit(
         return Ok(Value::Boolean(true));
     }
     let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
+    for value in &rest {
+        if let Some(id) = crate::modules::net::net_id(value) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                let alpn = execute::get_property(
+                    &socket.borrow().js,
+                    crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                );
+                if !matches!(alpn, Value::Undefined) {
+                    execute::set_property_in_place(value, "alpnProtocol", alpn);
+                }
+            }
+        }
+    }
     for listener in &snapshot {
         if listener.once
             && !emitter
@@ -498,9 +536,10 @@ pub fn method_emit(
             continue;
         }
         if listener.once {
-            let removed = emitter
-                .borrow_mut()
-                .remove_for_scope(&event, &listener.callback, process_scope);
+            let removed =
+                emitter
+                    .borrow_mut()
+                    .remove_for_scope(&event, &listener.callback, process_scope);
             if removed && event != "removeListener" {
                 let _ = method_emit(
                     state,
@@ -715,11 +754,8 @@ fn route_domain_error(
     ) {
         Ok(value) => Ok(Some(value)),
         Err(VmError::Thrown(reason)) => {
-            let reason = execute::set_property(
-                reason,
-                crate::modules::domain::HANDLER_DOMAIN,
-                domain,
-            );
+            let reason =
+                execute::set_property(reason, crate::modules::domain::HANDLER_DOMAIN, domain);
             Err(VmError::Thrown(reason))
         }
         Err(error) => Err(error),
@@ -1348,11 +1384,8 @@ pub fn build() -> Value {
             &Value::Undefined,
             &[value.clone(), resource_constructor],
         ) {
-            let _ = execute::set_callable_property(
-                &value,
-                "EventEmitterAsyncResource",
-                async_emitter,
-            );
+            let _ =
+                execute::set_callable_property(&value, "EventEmitterAsyncResource", async_emitter);
         }
     }
     let once = eval_function(
@@ -1446,7 +1479,10 @@ pub fn build() -> Value {
             cleanup();
             if (error) {
               const waiter = takeWaiter();
-              if (waiter) waiter.reject(error);
+              // Promise rejection is delivered at the microtask boundary;
+              // callers commonly attach Promise.allSettled/then handlers in
+              // the same turn as emitter.emit('error').
+              if (waiter) queueMicrotask(() => waiter.reject(error));
             }
             while (waiterCount) {
               const waiter = takeWaiter();
@@ -1476,12 +1512,17 @@ pub fn build() -> Value {
           const iterator = {
             next() {
               if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
-              if (failure) return Promise.reject(failure);
               if (done) return Promise.resolve({ value: undefined, done: true });
-              return new Promise((resolve, reject) => {
+              if (failure) return Promise.reject(failure);
+              const promise = new Promise((resolve, reject) => {
                 waiters[nextWaiter++] = { resolve, reject };
                 waiterCount++;
               });
+              // The iterator owns the rejection edge; consumers may attach
+              // Promise combinators later in the same turn. Mark this source
+              // promise handled without changing the value returned to them.
+              promise.catch(() => {});
+              return promise;
             },
             return() { finish(); return Promise.resolve({ value: undefined, done: true }); },
             throw(reason) {
