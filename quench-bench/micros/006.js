@@ -1,9 +1,9 @@
 // VM micro-case 006
-// family=numeric; operation=integer-divide-modulo; variant=6; work_units=211; memory=none
+// family=numeric; operation=integer-divide-modulo; variant=6; work_units=4220; memory=none
 "use strict";
 const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
 function microRun() {
-  let total = 0; for (let i = 1; i <= 211; i++) total = (total + (i * 7919) % (102)) | 0; return total;
+  let total = 0; for (let i = 1; i <= 4220; i++) total = (total + (i * 7919) % (102)) | 0; return total;
 }
 globalThis.microRun = microRun;
 const result = microRun();

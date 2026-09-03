@@ -1,9 +1,9 @@
 // VM micro-case 029
-// family=arrays; operation=array-copy; variant=9; work_units=56; memory=allocation-heavy
+// family=arrays; operation=array-copy; variant=9; work_units=50400; memory=allocation-heavy
 "use strict";
 const assert = (condition, message) => { if (!condition) throw new Error("micro assertion failed: " + message); };
 function microRun() {
-  const source = Array.from({ length: 56 }, (_, i) => i + 8); let total = 0; for (let i = 0; i < 6; i++) { const copy = source.slice(i, source.length - i); total += copy.length + copy[0]; } return total;
+  const source = Array.from({ length: 560 }, (_, i) => i + 8); let total = 0; for (let i = 0; i < 90; i++) { const copy = source.slice(i, source.length - i); total += copy.length + copy[0]; } return total;
 }
 globalThis.microRun = microRun;
 const result = microRun();
