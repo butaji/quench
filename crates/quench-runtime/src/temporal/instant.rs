@@ -628,9 +628,9 @@ fn time_zone_offset(zone: &str) -> Option<i64> {
         if let Some(offset) = fixed_offset(annotation) {
             return Some(offset);
         }
-        if let Ok(canonical) = crate::temporal::parse_timezone_identifier(
-            &Value::String(annotation.to_string()),
-        ) {
+        if let Ok(canonical) =
+            crate::temporal::parse_timezone_identifier(&Value::String(annotation.to_string()))
+        {
             return time_zone_offset(&canonical);
         }
         return time_zone_offset(base);

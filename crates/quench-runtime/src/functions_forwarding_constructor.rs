@@ -2,6 +2,22 @@ struct ForwardingConstructorFact;
 
 const DIRECT_CONSTRUCTOR_SLOTS: usize = 64;
 
+fn forward_value(
+    source: &crate::facts::ForwardValueSource,
+    function: &crate::value::FunctionValue,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Option<crate::value::Value> {
+    use crate::facts::ForwardValueSource::*;
+    match source {
+        Receiver => Some(receiver.clone()),
+        ReceiverProperty(property) => crate::execute::get_property_result(receiver, property).ok(),
+        Argument(index) => arguments.get(usize::from(*index)).cloned(),
+        Integer(value) => Some(crate::value::Value::Number(f64::from(*value))),
+        Capture(slot) => Some(function.captures.get(*slot)),
+    }
+}
+
 struct DirectConstructorPlan {
     function: std::rc::Weak<crate::value::FunctionValue>,
     prototype: std::rc::Weak<crate::value::ObjectData>,
@@ -98,10 +114,7 @@ fn forward_constructor(
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
     let initializer = crate::execute::get_property_result(this_value, "initialize")?;
     let apply = crate::execute::get_property_result(&initializer, "apply")?;
-    if matches!(
-        apply,
-        crate::value::Value::Builtin(crate::ops::Builtin::FunctionApply)
-    ) {
+    if is_canonical_function_apply(&apply, &initializer) {
         if let Some(receiver) = direct_forward_receiver(&initializer, this_value, arguments) {
             crate::execution_trace::kernel("direct_forward_constructor", false);
             return Ok((crate::value::Value::Undefined, receiver));
@@ -115,22 +128,46 @@ fn forward_constructor(
     Ok((crate::value::Value::Undefined, final_this))
 }
 
+fn is_canonical_function_apply(
+    apply: &crate::value::Value,
+    initializer: &crate::value::Value,
+) -> bool {
+    match apply {
+        crate::value::Value::Builtin(crate::ops::Builtin::FunctionApply) => true,
+        crate::value::Value::BoundFunction(bound) => {
+            matches!(
+                bound.target,
+                crate::value::Value::Builtin(crate::ops::Builtin::FunctionApply)
+            ) && bound.arguments.is_empty()
+                && crate::builtins::same_value(Some(&bound.receiver), Some(initializer))
+        }
+        _ => false,
+    }
+}
+
 fn direct_forward_receiver(
     initializer: &crate::value::Value,
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<crate::value::Value> {
     let crate::value::Value::Function(function) = initializer else {
+        crate::execution_trace::kernel("direct_forward_reject_initializer", true);
         return None;
     };
     let crate::value::Value::Object(receiver) = receiver else {
+        crate::execution_trace::kernel("direct_forward_reject_receiver", true);
         return None;
     };
     if receiver.has_replacement() || receiver.hot_properties().len() != 1 {
+        crate::execution_trace::kernel("direct_forward_reject_state", true);
         return None;
     }
     let prototype = receiver.hot_properties().slot_value(0)?;
-    direct_constructor_object(function, prototype, arguments)
+    let value = direct_constructor_object(function, prototype, arguments);
+    if value.is_none() {
+        crate::execution_trace::kernel("direct_forward_reject_plan", true);
+    }
+    value
 }
 
 pub(crate) fn direct_constructor_object(
@@ -150,6 +187,110 @@ pub(crate) fn direct_constructor_object(
     Some(crate::value::Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::from_shared_properties(properties),
     )))
+}
+
+pub(crate) fn composed_constructor_object(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    prototype: crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Object(prototype_object) = &prototype else { return None };
+    (!prototype_object.has_replacement()).then_some(())?;
+    let mut properties = crate::value::ObjectProperties::with_capacity(10);
+    properties.push(("\0prototype".into(), prototype.clone()));
+    apply_constructor_steps(function, arguments, &mut properties, 0)?;
+    validate_composed_fields(&prototype, &properties)?;
+    let value = crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::from_shared_properties(properties),
+    ));
+    Some(value)
+}
+
+fn validate_composed_fields(
+    prototype: &crate::value::Value,
+    properties: &crate::value::ObjectProperties,
+) -> Option<()> {
+    for name in properties.names().filter(|name| name.as_str() != "\0prototype") {
+        crate::property_define::accessor(prototype, name, "set").is_none().then_some(())?;
+        (!crate::properties::inherited_write_blocked(prototype, name)).then_some(())?;
+    }
+    Some(())
+}
+
+fn apply_constructor_steps(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    arguments: &[crate::value::Value],
+    properties: &mut crate::value::ObjectProperties,
+    depth: usize,
+) -> Option<()> {
+    (depth < 8).then_some(())?;
+    let steps = function.code.facts().composed_constructor.as_ref();
+    for step in steps {
+        match step {
+            crate::facts::ComposedConstructorStep::Field(field) => {
+                let value = direct_constructor_value(
+                    &field.source, function, arguments, &std::cell::Cell::new(0),
+                )?;
+                store_constructor_field(properties, field.name.as_str(), value);
+            }
+            crate::facts::ComposedConstructorStep::SuperCall { owner_slot, arguments: sources } => {
+                let (super_function, forwarded) = composed_super_target(
+                    function, *owner_slot, sources, arguments,
+                )?;
+                apply_constructor_body(&super_function, &forwarded, properties, depth + 1)?;
+            }
+        }
+    }
+    Some(())
+}
+
+fn apply_constructor_body(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    arguments: &[crate::value::Value],
+    properties: &mut crate::value::ObjectProperties,
+    depth: usize,
+) -> Option<()> {
+    if !function.code.facts().composed_constructor.is_empty() {
+        return apply_constructor_steps(function, arguments, properties, depth);
+    }
+    let cache = std::cell::Cell::new(0);
+    for field in function.code.facts().direct_constructor.iter() {
+        let value = direct_constructor_value(&field.source, function, arguments, &cache)?;
+        store_constructor_field(properties, field.name.as_str(), value);
+    }
+    (!function.code.facts().direct_constructor.is_empty()).then_some(())
+}
+
+fn composed_super_target(
+    function: &crate::value::FunctionValue,
+    owner_slot: u16,
+    sources: &[crate::facts::ForwardValueSource],
+    arguments: &[crate::value::Value],
+) -> Option<(std::rc::Rc<crate::value::FunctionValue>, Vec<crate::value::Value>)> {
+    let crate::value::Value::Function(owner) = crate::locals::resolved_replacement(
+        function.captures.get(owner_slot),
+    ) else { return None };
+    let target = crate::locals::resolved_replacement(
+        crate::vm::proven_function_own_data(&owner, "superConstructor")?,
+    );
+    let crate::value::Value::Function(target) = crate::construct::peel_construct_value(&target)
+        else { return None };
+    let forwarded = sources.iter().map(|source| forward_value(
+        source, function, &crate::value::Value::Undefined, arguments,
+    )).collect::<Option<Vec<_>>>()?;
+    Some((target, forwarded))
+}
+
+fn store_constructor_field(
+    properties: &mut crate::value::ObjectProperties,
+    name: &str,
+    value: crate::value::Value,
+) {
+    if let Some(slot) = properties.position_rev(name) {
+        properties.store_slot(slot, value);
+    } else {
+        properties.push((name.into(), value));
+    }
 }
 
 fn direct_constructor_value(
@@ -172,18 +313,39 @@ fn direct_constructor_value(
             Some(crate::value::Value::Number(f64::from(*value)))
         }
         crate::facts::DirectConstructorSource::Null => Some(crate::value::Value::Null),
+        crate::facts::DirectConstructorSource::EmptyArray => {
+            guarded_array(function, global_array_cache, &[])
+        }
+        crate::facts::DirectConstructorSource::FalsyArgumentOrInteger { argument, fallback } => {
+            let value = arguments.get(usize::from(*argument)).cloned()
+                .unwrap_or(crate::value::Value::Undefined);
+            Some(if crate::conversion::to_boolean(&value) { value }
+                else { crate::value::Value::Number(f64::from(*fallback)) })
+        }
+        crate::facts::DirectConstructorSource::ConstructCapture {
+            constructor_slot, arguments: sources,
+        } => {
+            let crate::value::Value::Function(constructor) = crate::locals::resolved_replacement(
+                function.captures.get(*constructor_slot),
+            ) else { return None };
+            let nested = sources.iter().map(|source| forward_value(
+                source, function, &crate::value::Value::Undefined, arguments,
+            )).collect::<Option<Vec<_>>>()?;
+            let prototype = crate::locals::resolved_replacement(
+                crate::vm::proven_function_own_data(&constructor, "prototype")?,
+            );
+            direct_constructor_object(&constructor, prototype, &nested)
+        }
+        crate::facts::DirectConstructorSource::CaptureProperty { owner_slot, property } => {
+            let crate::value::Value::Function(owner) = crate::locals::resolved_replacement(
+                function.captures.get(*owner_slot),
+            ) else { return None };
+            Some(crate::locals::resolved_replacement(
+                crate::vm::proven_function_own_data(&owner, property)?,
+            ))
+        }
         crate::facts::DirectConstructorSource::GuardedArray { length_slot } => {
-            let global = function.captures.get(0);
-            let constructor =
-                crate::vm::get_named_property_result(&global, "Array", global_array_cache)
-                    .ok()?;
-            if !matches!(
-                constructor,
-                crate::value::Value::Builtin(crate::ops::Builtin::Array)
-            ) {
-                return None;
-            }
-            crate::builtins::array(&[function.captures.get(*length_slot)]).ok()
+            guarded_array(function, global_array_cache, &[function.captures.get(*length_slot)])
         }
         crate::facts::DirectConstructorSource::NullishSelectCapture {
             argument,
@@ -204,6 +366,20 @@ fn direct_constructor_value(
     }
 }
 
+fn guarded_array(
+    function: &crate::value::FunctionValue,
+    cache: &std::cell::Cell<u64>,
+    arguments: &[crate::value::Value],
+) -> Option<crate::value::Value> {
+    let constructor = crate::vm::get_named_property_result(
+        &function.captures.get(0), "Array", cache,
+    ).ok()?;
+    matches!(constructor, crate::value::Value::Builtin(crate::ops::Builtin::Array))
+        .then_some(())?;
+    let value = crate::builtins::array(arguments).ok()?;
+    Some(value)
+}
+
 fn direct_constructor_plan(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     prototype: &crate::value::Value,
@@ -216,7 +392,7 @@ fn direct_constructor_plan(
         return Some(plan);
     }
     let fields = direct_constructor_fields(function);
-    if fields.len() < 3 {
+    if fields.is_empty() {
         return None;
     }
     direct_constructor_prototype(prototype, &fields)?;
@@ -224,6 +400,15 @@ fn direct_constructor_plan(
     Some(install_direct_constructor(
         slot, function, prototype, fields,
     ))
+}
+
+pub(crate) fn direct_constructor_allocation_is_scalarizable(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    prototype: &crate::value::Value,
+) -> bool {
+    function.instance_fields.borrow().is_empty()
+        && crate::functions::is_constructible(function)
+        && direct_constructor_plan(function, prototype).is_some()
 }
 
 fn direct_constructor_fields(

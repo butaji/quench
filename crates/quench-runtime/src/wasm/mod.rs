@@ -37,13 +37,19 @@ pub fn load(bytes: &[u8], features: WasmFeatures) -> Result<HirModule, LowerErro
                 Some(ty) => {
                     let (super_idx, is_final) = match ty {
                         crate::hir::GcType::Func {
-                            super_idx, is_final, ..
+                            super_idx,
+                            is_final,
+                            ..
                         }
                         | crate::hir::GcType::Struct {
-                            super_idx, is_final, ..
+                            super_idx,
+                            is_final,
+                            ..
                         }
                         | crate::hir::GcType::Array {
-                            super_idx, is_final, ..
+                            super_idx,
+                            is_final,
+                            ..
                         } => (*super_idx, *is_final),
                     };
                     (
@@ -70,11 +76,21 @@ pub fn load(bytes: &[u8], features: WasmFeatures) -> Result<HirModule, LowerErro
         let mut arities = Vec::new();
         for im in raw.imports.iter() {
             if let crate::hir::ImportKind::Tag { type_idx } = im.kind {
-                arities.push(types.get(type_idx as usize).map(|t| t.params.len()).unwrap_or(0));
+                arities.push(
+                    types
+                        .get(type_idx as usize)
+                        .map(|t| t.params.len())
+                        .unwrap_or(0),
+                );
             }
         }
         for idx in raw.tags.iter() {
-            arities.push(types.get(*idx as usize).map(|t| t.params.len()).unwrap_or(0));
+            arities.push(
+                types
+                    .get(*idx as usize)
+                    .map(|t| t.params.len())
+                    .unwrap_or(0),
+            );
         }
         arities
     };
@@ -87,7 +103,15 @@ pub fn load(bytes: &[u8], features: WasmFeatures) -> Result<HirModule, LowerErro
     for (index, body) in raw.bodies.iter().enumerate() {
         let ty_index = raw.func_types.get(import_funcs + index).copied();
         funcs.push(
-            lower_func(&types, ty_index, &raw.func_types, &raw.gc_types, &tag_arities, body).ok(),
+            lower_func(
+                &types,
+                ty_index,
+                &raw.func_types,
+                &raw.gc_types,
+                &tag_arities,
+                body,
+            )
+            .ok(),
         );
     }
     Ok(HirModule {
@@ -175,12 +199,7 @@ fn type_chain(
     out.into_boxed_slice()
 }
 
-fn rec_fp(
-    types: &[crate::hir::GcType],
-    rec_meta: &[(u32, u32)],
-    start: u32,
-    len: u32,
-) -> u64 {
+fn rec_fp(types: &[crate::hir::GcType], rec_meta: &[(u32, u32)], start: u32, len: u32) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for i in 0..len {
@@ -198,8 +217,13 @@ fn member_fp(
 ) -> String {
     match types.get(idx as usize) {
         Some(crate::hir::GcType::Func {
-            super_idx, is_final, ..
-        }) => format!("f{is_final}{}", rel(*super_idx, start, len, types, rec_meta)),
+            super_idx,
+            is_final,
+            ..
+        }) => format!(
+            "f{is_final}{}",
+            rel(*super_idx, start, len, types, rec_meta)
+        ),
         Some(crate::hir::GcType::Struct {
             fields,
             super_idx,

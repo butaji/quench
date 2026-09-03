@@ -12,6 +12,7 @@
 // The gate derives wall_ms at the host boundary when the sample omits it.
 const fs = require("fs");
 const cp = require("child_process");
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 const [budgetFile, command, ...args] = process.argv.slice(2);
 if (!budgetFile || !command) {
@@ -41,7 +42,11 @@ for (const [name, limit] of budgetEntries) {
   }
 }
 const started = process.hrtime.bigint();
-const result = cp.spawnSync(command, args, { encoding: "utf8" });
+const result = cp.spawnSync(command, args, {
+  encoding: "utf8",
+  timeout: DEFAULT_TIMEOUT_MS,
+  killSignal: "SIGKILL",
+});
 const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
 if (result.error) throw result.error;
 if (result.status !== 0) {

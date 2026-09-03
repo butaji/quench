@@ -30,7 +30,15 @@ macro_rules! heap_lifecycles {
                     } else {
                         &heap_lifecycle::$dropped
                     };
-                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Values can be dropped while this thread's TLS values
+                    // are themselves being destroyed. `with` would panic in
+                    // that teardown window and turn optional accounting into
+                    // a process abort; a failed `try_with` simply omits a
+                    // counter update, which is the only safe outcome then.
+                    let _ = COUNTERS.try_with(|counters| {
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let _ = counters;
+                    });
                 }
             }
         )+
@@ -167,6 +175,7 @@ struct Counters {
     allocations: HashMap<&'static str, u64>,
     last_index: HashMap<&'static str, u64>,
     kernels: HashMap<&'static str, (u64, u64)>,
+    quickening: HashMap<&'static str, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
 }
@@ -255,6 +264,7 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
             "descriptor_views_by_op": top_map(&counters.descriptor_views_by_op, 32),
             "alloc": named_buckets(&counters.allocations,
                 &["match_result", "descriptor_view", "environment", "other"]),
+            "alloc_detail": top_map(&counters.allocations, 32),
             "last_index": named_buckets(&counters.last_index,
                 &["header", "getn", "binding_cell"])},
         "l4": host_profile(counters),
@@ -290,7 +300,13 @@ fn top_compact_sites(values: &HashMap<CompactSiteKey, u64>) -> Vec<serde_json::V
 
 #[cfg(feature = "execution-trace")]
 fn l0_profile(counters: &Counters) -> serde_json::Value {
-    let event = |event: Event| counters.events[event as usize];
+    let event = |event: Event| {
+        counters
+            .events
+            .get(event as usize)
+            .copied()
+            .unwrap_or_default()
+    };
     serde_json::json!({
             "word_reads": {
                 "fixed": event(Event::FixedWordRead),
@@ -326,7 +342,13 @@ fn l0_profile(counters: &Counters) -> serde_json::Value {
 
 #[cfg(feature = "execution-trace")]
 fn l1_profile(counters: &Counters) -> serde_json::Value {
-    let event = |event: Event| counters.events[event as usize];
+    let event = |event: Event| {
+        counters
+            .events
+            .get(event as usize)
+            .copied()
+            .unwrap_or_default()
+    };
     let mut kernels = counters.kernels.iter().collect::<Vec<_>>();
     kernels.sort_unstable_by_key(|(_, counts)| std::cmp::Reverse(counts.0));
     let kernels = kernels
@@ -491,7 +513,7 @@ pub(crate) fn object_shape(_: &crate::value::ObjectProperties) {}
 #[cfg(feature = "execution-trace")]
 pub(crate) fn function_shape(captures: usize, code_len: usize, allocated: bool) {
     if enabled() {
-        COUNTERS.with(|counters| {
+        let _ = COUNTERS.try_with(|counters| {
             let mut counters = counters.borrow_mut();
             let counts = counters
                 .function_shapes
@@ -675,6 +697,19 @@ fn dump_function_fragment(label: &str, code: Option<crate::machine::CodeView<'_>
             .metadata_at(pc)
             .and_then(|metadata| metadata.name.as_deref());
         eprintln!("      {pc}: {instruction:?} cold={cold:?} name={name:?}");
+        if let Some(crate::ops::Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            ..
+        }) = code.cold(instruction)
+        {
+            dump_function_fragment("init", init.code());
+            dump_function_fragment("test", test.code());
+            dump_function_fragment("body", body.code());
+            dump_function_fragment("update", update.code());
+        }
         if let Some(crate::ops::Op::Branch {
             then_ops, else_ops, ..
         }) = code.cold(instruction)
@@ -846,7 +881,7 @@ pub(crate) fn named_property_word(_: &'static str, _: &'static str) {}
 #[cfg(feature = "execution-trace")]
 pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
     use std::hash::{Hash, Hasher};
-    if !enabled() {
+    if !loop_trace_enabled() {
         return 0;
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -911,7 +946,7 @@ pub(crate) fn loop_shape_entries(_: u64, _: usize) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn counted_loop_iterations(fingerprint: u64, iterations: usize) {
-    if !enabled() || iterations == 0 {
+    if !loop_trace_enabled() || iterations == 0 {
         return;
     }
     let iterations = iterations as u64;
@@ -935,8 +970,13 @@ pub(crate) fn counted_loop_iterations(_: u64, _: usize) {}
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
 #[cfg(feature = "execution-trace")]
+static LOOP_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+#[cfg(feature = "execution-trace")]
 thread_local! {
-    static COUNTERS: RefCell<Counters> = RefCell::new(Counters::default());
+    static COUNTERS: RefCell<Counters> = RefCell::new(Counters {
+        events: vec![0; EVENT_NAMES.len()],
+        ..Counters::default()
+    });
     static DECODE_SITE: std::cell::Cell<DecodeSite> = const { std::cell::Cell::new(DecodeSite::Other) };
     static CURRENT_OP: std::cell::Cell<&'static str> = const { std::cell::Cell::new("outside_vm") };
 }
@@ -989,6 +1029,12 @@ pub(crate) fn enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("QUENCH_EXEC_TRACE").is_some())
 }
 
+#[cfg(feature = "execution-trace")]
+#[inline(always)]
+fn loop_trace_enabled() -> bool {
+    enabled() || *LOOP_TRACE_ENABLED.get_or_init(|| std::env::var_os("QUENCH_LOOP_TRACE").is_some())
+}
+
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) const fn enabled() -> bool {
@@ -1015,8 +1061,8 @@ pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
-    enter_decode(DecodeSite::Other, opcode.name())
+pub(crate) const fn compact(_: crate::ir::Opcode) -> DecodeGuard {
+    DecodeGuard
 }
 
 #[inline(always)]
@@ -1031,8 +1077,8 @@ pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) -> DecodeGuard {
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) -> DecodeGuard {
-    enter_decode(DecodeSite::Other, opcode.name())
+pub(crate) const fn leaf_compact(_: crate::ir::Opcode) -> DecodeGuard {
+    DecodeGuard
 }
 
 #[inline(always)]
@@ -1177,8 +1223,8 @@ fn constant_name(value: &crate::ops::Constant) -> &'static str {
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
-    enter_decode(DecodeSite::Other, op.variant_name())
+pub(crate) const fn slow(_: &crate::ops::Op) -> DecodeGuard {
+    DecodeGuard
 }
 
 #[inline(always)]
@@ -1417,9 +1463,59 @@ pub(crate) fn kernel(id: &'static str, deopt: bool) {
     let _ = (id, deopt);
 }
 
+/// Record a generic quickening observation and expose a narrow hit-dominance
+/// hint to bounded caches. The hint is runtime shape data only; it carries no
+/// fixture, source, or persistent profile identity.
+#[inline(always)]
+pub(crate) fn quickening_observation(opcode: crate::ir::Opcode, hit: bool) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            let counts = counters.quickening.entry(opcode.name()).or_default();
+            if hit {
+                counts.0 += 1;
+            } else {
+                counts.1 += 1;
+            }
+        });
+    }
+    let _ = (opcode, hit);
+}
+
+#[inline(always)]
+pub(crate) fn quickening_prefers_hot(opcode: crate::ir::Opcode) -> bool {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        return COUNTERS.with(|counters| {
+            counters
+                .borrow()
+                .quickening
+                .get(opcode.name())
+                .is_some_and(|(hits, misses)| *hits > *misses)
+        });
+    }
+    let _ = opcode;
+    false
+}
+
+#[cfg(feature = "execution-trace")]
+fn quickening_profile(counters: &Counters) -> serde_json::Map<String, serde_json::Value> {
+    counters
+        .quickening
+        .iter()
+        .map(|(name, &(hits, misses))| {
+            (
+                (*name).to_owned(),
+                serde_json::json!({ "hits": hits, "misses": misses }),
+            )
+        })
+        .collect()
+}
+
 #[cfg(feature = "execution-trace")]
 pub fn snapshot() -> Option<serde_json::Value> {
-    enabled().then(|| {
+    loop_trace_enabled().then(|| {
         COUNTERS.with(|counters| {
             let counters = counters.borrow();
             let compact = (1..=crate::ir::Opcode::COUNT)
@@ -1462,7 +1558,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .map(|(index, name)| {
                     (
                         (*name).to_owned(),
-                        serde_json::json!(counters.events[index]),
+                        serde_json::json!(counters.events.get(index).copied().unwrap_or_default()),
                     )
                 })
                 .collect::<serde_json::Map<_, _>>();
@@ -1493,6 +1589,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .iter()
                 .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
                 .collect::<serde_json::Map<_, _>>();
+            let quickening = quickening_profile(&counters);
             let compact_total: u64 = counters.compact.iter().sum();
             let slow_total: u64 = counters.slow.values().sum();
             let mut transitions: Vec<_> = counters.transitions.iter().collect();
@@ -1600,6 +1697,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "leaf_rejections": leaf_rejections,
                 "call_shapes": call_shapes,
                 "call_targets": call_targets,
+                "quickening": quickening,
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
@@ -1651,6 +1749,15 @@ mod lane_profile_tests {
         assert_eq!(profile["l2"]["handlers"], 8);
         assert_eq!(profile["l3"]["handlers"], 2);
         assert_eq!(profile["l2"]["vm_share_ppm"], 800_000);
+    }
+
+    #[test]
+    fn exposes_quickening_profile_facts_for_consumers() {
+        let mut counters = Counters::default();
+        counters.quickening.insert("GetProperty", (9, 2));
+        let profile = quickening_profile(&counters);
+        assert_eq!(profile["GetProperty"]["hits"], 9);
+        assert_eq!(profile["GetProperty"]["misses"], 2);
     }
 
     #[test]

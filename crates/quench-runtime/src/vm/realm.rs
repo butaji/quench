@@ -60,6 +60,7 @@ pub(super) fn register_global(token: &HostCapabilityValue, global: ObjectPropert
     if !state.token.same_identity(token) {
         return false;
     }
+    global.mark_realm_global();
     state.global.replace(global);
     let target = Rc::downgrade(&state.global.borrow().clone());
     state.global_aliases.borrow_mut().retain(|alias| {
@@ -86,11 +87,8 @@ pub(super) fn global(id: RealmId) -> Option<Value> {
     state(id).map(|state| Value::Object(state.global.borrow().clone()))
 }
 
-pub(super) fn global_identity(id: RealmId) -> Option<u64> {
-    state(id).map(|state| state.global.borrow().identity())
-}
-
 pub(super) fn initialize_current_global(global: ObjectProperties) {
+    global.mark_realm_global();
     let initialized = super::GLOBAL_OBJECT.with(|slot| {
         if slot.borrow().is_some() {
             return false;

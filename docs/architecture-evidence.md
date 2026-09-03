@@ -24,9 +24,11 @@ it does not authorize a specialization.
 The execution-seam inventory is intentionally mechanical: `ir.rs` owns the
 catalog and compact encoding, `machine.rs` owns code arenas and site
 attachment, `quickening.rs` owns bounded physical cache state, and
-`vm_runtime.rs`/`vm_dispatch.rs` own ordinary semantic gateways. The benchmark
-crate and `tools/` contain measurement adapters only; they are not imported by
-the runtime's execution path.
+`vm_runtime.rs`/`vm_dispatch.rs` own ordinary semantic gateways. The generated
+stencil catalog is validated from one build-time `RegionDeclaration` table;
+its runtime path only selects, allocates, copies, patches, and executes. The
+benchmark crate and `tools/` contain measurement adapters only; they are not
+imported by the runtime's execution path.
 
 ## Correctness gates
 

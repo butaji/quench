@@ -107,12 +107,9 @@ pub(crate) fn execute_scope(
     else {
         return Err(VmError::MissingReturn);
     };
-    let Some(body) = body.code() else {
-        return Err(VmError::MissingReturn);
-    };
     let _scope = Guard::install(names, labels);
     let _class_name = class_name.as_deref().map(ClassNameGuard::install);
-    let completion = crate::vm::execute_code_completion_in_current_frame(body, registers)?;
+    let completion = crate::vm::execute_function_code_completion_in_current_frame(body, registers)?;
     if completion.is_suspension() {
         SUSPENDED.with(|slot| *slot.borrow_mut() = Some(current()));
     }

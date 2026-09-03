@@ -91,10 +91,7 @@ pub(crate) fn execute_label(
     let Op::Label { name, body } = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let Some(body) = body.code() else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
-    let completion = crate::vm::execute_code_completion_in_current_frame(body, registers)?;
+    let completion = crate::vm::execute_function_code_completion_in_current_frame(body, registers)?;
     // Per spec 13.13.14 step 4: a matching break becomes
     // NormalCompletion(stmtResult.[[Value]]), not an empty normal
     // completion. Preserve the break's carried value.

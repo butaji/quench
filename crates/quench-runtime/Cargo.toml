@@ -10,6 +10,7 @@ execution-trace = []
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+libc = "0.2"
 chrono-tz = "0.10"
 icu_collator = { version = "2.3", features = ["compiled_data"] }
 icu_calendar = { version = "2.3", features = ["compiled_data"] }
@@ -18,6 +19,7 @@ icu_locale_core = "2.3"
 icu_provider = "2.3"
 icu_properties = { version = "2.3", features = ["compiled_data"] }
 num-bigint = "0.4"
+rug = { version = "1.30", default-features = false, features = ["integer", "std"] }
 oxc = { version = "0.47", features = ["semantic"] }
 regress = { version = "0.12", features = ["utf16"] }
 stacker = "0.1"

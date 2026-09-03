@@ -640,11 +640,8 @@ fn route_domain_error(
     ) {
         Ok(value) => Ok(Some(value)),
         Err(VmError::Thrown(reason)) => {
-            let reason = execute::set_property(
-                reason,
-                crate::modules::domain::HANDLER_DOMAIN,
-                domain,
-            );
+            let reason =
+                execute::set_property(reason, crate::modules::domain::HANDLER_DOMAIN, domain);
             Err(VmError::Thrown(reason))
         }
         Err(error) => Err(error),
@@ -1252,11 +1249,8 @@ pub fn build() -> Value {
             &Value::Undefined,
             &[value.clone(), resource_constructor],
         ) {
-            let _ = execute::set_callable_property(
-                &value,
-                "EventEmitterAsyncResource",
-                async_emitter,
-            );
+            let _ =
+                execute::set_callable_property(&value, "EventEmitterAsyncResource", async_emitter);
         }
     }
     let once = eval_function(

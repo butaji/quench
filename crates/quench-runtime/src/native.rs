@@ -18,7 +18,10 @@ pub use simd::SimdOp;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefVal {
     Null,
-    Func { inst: u32, index: u32 },
+    Func {
+        inst: u32,
+        index: u32,
+    },
     Extern(u32),
     Host(u32),
     Struct(u32),

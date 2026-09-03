@@ -428,7 +428,12 @@ mod tests {
             "{} proposals-mid failures:\n{}\n{}",
             failed.len(),
             summary,
-            failed.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+            failed
+                .iter()
+                .take(20)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
@@ -479,7 +484,12 @@ mod tests {
             failed.is_empty(),
             "{} gc/exn failures:\n{}",
             failed.len(),
-            failed.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+            failed
+                .iter()
+                .take(30)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
@@ -515,7 +525,12 @@ mod tests {
             failed.is_empty(),
             "{} custom-descriptors failures:\n{}",
             failed.len(),
-            failed.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+            failed
+                .iter()
+                .take(40)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 

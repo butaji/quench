@@ -80,7 +80,10 @@ pub enum CatchRule {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Failure {
     Trap(Trap),
-    Exception { tag: u32, args: Vec<crate::slot::Slot> },
+    Exception {
+        tag: u32,
+        args: Vec<crate::slot::Slot>,
+    },
     Throw(Dynamic),
 }
 

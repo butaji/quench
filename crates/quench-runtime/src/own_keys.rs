@@ -267,8 +267,8 @@ fn is_boxed_primitive<P: crate::value::PropertyEntries + ?Sized>(properties: &P)
 }
 
 fn enumerable_created(data: &crate::value::ObjectData) -> Vec<String> {
-    let properties: Vec<(String, Value)> = data
-        .created
+    let created = data.creation_order_values();
+    let properties: Vec<(String, Value)> = created
         .iter()
         .filter(|key| !key.starts_with('\0'))
         .filter(|key| descriptor_enumerable(data, key))

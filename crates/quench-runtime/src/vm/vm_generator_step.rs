@@ -42,26 +42,54 @@ fn run_generator_code_steps(
     if !matches!(resume, crate::completion::Completion::Normal)
         && !matches!(code.cold_at(pc), Some(Op::YieldStar { .. }))
     {
-        return Ok(GeneratorStep { completion: resume, pc, suspension: None });
+        return Ok(GeneratorStep {
+            completion: resume,
+            pc,
+            suspension: None,
+        });
     }
-    for next in pc..code.len() {
+    let mut next = pc;
+    while next < code.len() {
         let instruction = code.instruction(next).ok_or(VmError::MissingReturn)?;
         if let Some(op @ Op::YieldStar { .. }) = code.cold(instruction) {
             if let Some(step) = run_yield_star_step(registers, op, &resume, next)? {
                 return Ok(step);
             }
+            next += 1;
             continue;
         }
-        let result = match run_instruction(code, next, instruction, registers, context) {
-            Ok(result) => result,
+        let transition = match run_instruction(code, next, instruction, registers, context) {
+            Ok(transition) => transition,
             Err(error) => match crate::completion::Completion::from_vm_error(error) {
-                Ok(completion) => Some(completion),
+                Ok(completion) => {
+                    let target = if matches!(&completion, crate::completion::Completion::Normal) {
+                        crate::vm::DispatchTarget::Callee(next + 1)
+                    } else {
+                        crate::vm::DispatchTarget::Exit
+                    };
+                    crate::vm::DispatchTransition {
+                        next_pc: next + 1,
+                        completion: Some(completion),
+                        target,
+                    }
+                }
                 Err(error) => return Err(error),
             },
         };
-        if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
+        // The handler supplies the continuation target.  `next_pc` remains
+        // metadata for exit reporting; normal generator dispatch follows the
+        // callee-directed target rather than recomputing a successor.
+        let next_pc = match transition.target {
+            crate::vm::DispatchTarget::Callee(target) => target,
+            crate::vm::DispatchTarget::Exit => transition.next_pc,
+        };
+        if let Some(completion) = transition
+            .completion
+            .filter(|value| !matches!(value, crate::completion::Completion::Normal))
+        {
             if let crate::completion::Completion::Call(continuation) = completion {
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+                next = next_pc;
                 continue;
             }
             crate::vm::flush_global_declaration_batch(registers);
@@ -70,11 +98,20 @@ fn run_generator_code_steps(
                     .then(|| direct_suspension(op, next))
                     .flatten()
             });
-            return Ok(GeneratorStep { completion, pc: next + 1, suspension });
+            return Ok(GeneratorStep {
+                completion,
+                pc: next_pc,
+                suspension,
+            });
         }
+        next = next_pc;
     }
     crate::vm::flush_global_declaration_batch(registers);
-    Ok(GeneratorStep { completion: crate::completion::Completion::Normal, pc: code.len(), suspension: None })
+    Ok(GeneratorStep {
+        completion: crate::completion::Completion::Normal,
+        pc: code.len(),
+        suspension: None,
+    })
 }
 
 fn run_generator_steps(
@@ -143,11 +180,13 @@ fn run_yield_star_step(
     let offset = usize::from(!completion.is_suspension());
     let suspension =
         matches!(completion, crate::completion::Completion::Yield(_)).then(|| match op {
-            Op::YieldStar { dst, iterator, .. } => crate::continuation::SuspensionPoint::YieldStar {
-                pc: next,
-                dst: *dst,
-                iterator: *iterator,
-            },
+            Op::YieldStar { dst, iterator, .. } => {
+                crate::continuation::SuspensionPoint::YieldStar {
+                    pc: next,
+                    dst: *dst,
+                    iterator: *iterator,
+                }
+            }
             _ => crate::continuation::SuspensionPoint::Yield { pc: next, src: 0 },
         });
     Ok(Some(GeneratorStep {

@@ -60,8 +60,8 @@ fn collect_construct_arguments(
     registers: &crate::register_file::RegisterFile,
     args: &[u16],
     spreads: &[bool],
-) -> Result<Vec<Value>, crate::execute::VmError> {
-    let mut arguments = Vec::new();
+) -> Result<crate::completion::CallArguments, crate::execute::VmError> {
+    let mut arguments = crate::completion::CallArguments::with_capacity(args.len());
     for (index, spread) in args.iter().zip(spreads) {
         let value = crate::execute::read_register(registers, *index)?;
         if *spread {
@@ -76,7 +76,8 @@ pub(crate) fn construct_value(
     target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    construct_with_new_target(target, target, arguments)
+    let result = construct_with_new_target(target, target, arguments);
+    result
 }
 pub(crate) fn construct_value_with_new_target(
     target: &Value,
@@ -555,6 +556,17 @@ fn construct_function(
         return finish_derived_construct(result, final_this);
     }
     if function.instance_fields.borrow().is_empty() && !matches!(target, Value::Proxy(_)) {
+        if !function.code.facts().composed_constructor.is_empty() {
+            let prototype = get_prototype_from_constructor(target, |realm| {
+                crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
+            });
+            if let Some(object) =
+                crate::functions::composed_constructor_object(function, prototype, arguments)
+            {
+                crate::execution_trace::kernel("composed_record_constructor", false);
+                return Ok(object);
+            }
+        }
         if let Some(object) = try_record_constructor(function, target, arguments) {
             return Ok(object);
         }

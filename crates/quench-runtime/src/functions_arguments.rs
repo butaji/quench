@@ -175,7 +175,9 @@ pub(crate) fn execute_bound(
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(&bound.target) => {
             execute_bound_builtin(*builtin, bound, &combined)
         }
-        crate::value::Value::Function(function) => execute_bound_function(function, bound, &combined),
+        crate::value::Value::Function(function) => {
+            execute_bound_function(function, bound, &combined)
+        }
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
         crate::value::Value::Proxy(_) => {
             let realm = bound
@@ -255,7 +257,9 @@ fn finish_bound_result(
     } else if let Some(realm) = realm.filter(|_| crate::value::is_object(&result)) {
         let caller = wrapper_caller_realm(bound).unwrap_or(realm);
         if wrapper_caller_realm_explicit(bound) {
-            Err(crate::reflect::shadow_wrapped_object_error_for_realm(caller))
+            Err(crate::reflect::shadow_wrapped_object_error_for_realm(
+                caller,
+            ))
         } else {
             Err(crate::reflect::shadow_wrapped_object_error(caller))
         }
@@ -293,14 +297,9 @@ fn wrapper_caller_realm(bound: &crate::value::BoundFunctionValue) -> Option<crat
 }
 
 fn wrapper_caller_realm_explicit(bound: &crate::value::BoundFunctionValue) -> bool {
-    bound
-        .properties
-        .borrow()
-        .iter()
-        .rev()
-        .any(|(key, value)| {
-            key == "\0caller_realm_explicit" && *value == crate::value::Value::Boolean(true)
-        })
+    bound.properties.borrow().iter().rev().any(|(key, value)| {
+        key == "\0caller_realm_explicit" && *value == crate::value::Value::Boolean(true)
+    })
 }
 
 fn wrap_shadow_arguments(
@@ -371,7 +370,10 @@ pub(crate) fn execute_target(
             execute_in_function_realm(function, receiver, arguments)
         }
         crate::value::Value::BoundFunction(bound)
-            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+            if matches!(
+                bound.target,
+                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) =>
         {
             let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) =
                 bound.target
@@ -406,8 +408,10 @@ pub(crate) fn execute_target(
             // using it here made method properties (and host capabilities)
             // fail with "not callable" or an incompatible-receiver error.
             let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ")
-                || matches!(builtin, crate::ops::Builtin::StringToString | crate::ops::Builtin::StringValueOf)
-            {
+                || matches!(
+                    builtin,
+                    crate::ops::Builtin::StringToString | crate::ops::Builtin::StringValueOf
+                ) {
                 receiver
             } else {
                 &bound.receiver
@@ -493,11 +497,7 @@ fn execute_function_call_in_realm(
                     | crate::ops::Builtin::ErrorPrototypeStackSetter
             )
         ) {
-            return execute_target(
-                &bound.target,
-                &this,
-                arguments.get(1..).unwrap_or_default(),
-            );
+            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
         let receiver_bound = bound.properties.borrow().iter().any(|(key, value)| {
             key == "\0receiver_bound_method" && *value == crate::value::Value::Boolean(true)
@@ -649,12 +649,5 @@ fn bound_function_length(target: &crate::value::Value, bound_args: f64) -> f64 {
     (value - bound_args).max(0.0)
 }
 
-include!("functions_word_call.rs");
-include!("functions_leaf_execution.rs");
-include!("functions_shape_kernels.rs");
-include!("functions_plan_kernel.rs");
-include!("functions_slot_alu.rs");
-include!("functions_forward_construct_call.rs");
-include!("functions_forward_then_call.rs");
 include!("functions_arguments_execution.rs");
 include!("functions_arguments_helpers.rs");

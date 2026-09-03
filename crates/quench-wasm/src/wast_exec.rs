@@ -43,15 +43,25 @@ impl Store {
     }
 
     pub fn define_quote(&mut self, module: &mut QuoteWat<'_>, features: WasmFeatures) {
-        if let (Some(name), Ok(bytes)) = (module.name().map(|id| id.name().to_string()), module.encode()) {
+        if let (Some(name), Ok(bytes)) = (
+            module.name().map(|id| id.name().to_string()),
+            module.encode(),
+        ) {
             self.defs.insert(name, bytes);
         }
         let _ = features;
     }
 
-    pub fn instantiate_def(&mut self, instance: Option<&str>, module: Option<&str>, features: WasmFeatures) {
+    pub fn instantiate_def(
+        &mut self,
+        instance: Option<&str>,
+        module: Option<&str>,
+        features: WasmFeatures,
+    ) {
         let Some(module) = module else { return };
-        let Some(bytes) = self.defs.get(module).cloned() else { return };
+        let Some(bytes) = self.defs.get(module).cloned() else {
+            return;
+        };
         let built = self.build(&bytes, features);
         if let Some(name) = instance {
             self.named.insert(name.to_string(), built.clone());
@@ -418,10 +428,7 @@ fn ret_matches(want: &WastRet<'_>, got: &Slot) -> bool {
                 WastRetCore::V128(pattern),
                 Slot::Native(quench_runtime::native::Native::V128(bits)),
             ) => v128_matches(pattern, *bits),
-            (
-                WastRetCore::I32(v),
-                Slot::Native(quench_runtime::native::Native::I32(g)),
-            ) => v == g,
+            (WastRetCore::I32(v), Slot::Native(quench_runtime::native::Native::I32(g))) => v == g,
             _ => false,
         });
     }
@@ -456,7 +463,7 @@ fn ret_matches(want: &WastRet<'_>, got: &Slot) -> bool {
             WastRet::Core(WastRetCore::RefExtern(None)),
             Slot::Native(quench_runtime::native::Native::Ref(
                 quench_runtime::native::RefVal::Extern(_)
-                    | quench_runtime::native::RefVal::ExternBox(_),
+                | quench_runtime::native::RefVal::ExternBox(_),
             )),
         ) => true,
         (
@@ -469,10 +476,10 @@ fn ret_matches(want: &WastRet<'_>, got: &Slot) -> bool {
             WastRet::Core(WastRetCore::RefAny),
             Slot::Native(quench_runtime::native::Native::Ref(
                 quench_runtime::native::RefVal::Host(_)
-                    | quench_runtime::native::RefVal::I31(_)
-                    | quench_runtime::native::RefVal::Struct(_)
-                    | quench_runtime::native::RefVal::Array(_)
-                    | quench_runtime::native::RefVal::Func { .. },
+                | quench_runtime::native::RefVal::I31(_)
+                | quench_runtime::native::RefVal::Struct(_)
+                | quench_runtime::native::RefVal::Array(_)
+                | quench_runtime::native::RefVal::Func { .. },
             )),
         ) => true,
         (
@@ -483,9 +490,9 @@ fn ret_matches(want: &WastRet<'_>, got: &Slot) -> bool {
         ) => true,
         (
             WastRet::Core(WastRetCore::RefI31),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::I31(_),
-            )),
+            Slot::Native(quench_runtime::native::Native::Ref(quench_runtime::native::RefVal::I31(
+                _,
+            ))),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefArray),

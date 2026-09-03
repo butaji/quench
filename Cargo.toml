@@ -34,3 +34,10 @@ inherits = "release"
 inherits = "production"
 debug = 0
 strip = "symbols"
+
+# Optimized measurements with full address-to-source attribution. DWARF makes
+# samples explainable; operation counts still come from explicit counters.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"

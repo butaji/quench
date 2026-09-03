@@ -12,6 +12,7 @@ pub(crate) mod vm_arithmetic;
 pub(crate) mod vm_ops;
 mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
+pub(crate) use vm_arithmetic::numeric_to_int32;
 
 pub fn reset_host_agent_state() {
     reset_agent_state();
