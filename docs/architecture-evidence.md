@@ -85,6 +85,20 @@ index was 248.23 with 0.768x wall-time and 0.321x peak-RSS ratios versus Node
 noise). Raw output is `target/micro-neutral-after-029.json`; the before/after
 size reports are disposable files under `target/`.
 
+Task 030 Gate 0 profiled the hot dispatch path before changing its state shape.
+With the DWARF-enabled profiling artifact, a five-second macOS `sample` run
+captured 3,819 `dispatch_callee` samples. ARM64 disassembly counted 259 stack
+memory operations in 1,030 `dispatch_callee` instructions (25.15%) and 933 in
+5,683 `run_instruction` instructions (16.42%). After introducing the safe Rust
+`DispatchState` one-pointer approximation, the same measurement counted 242/1,006
+(24.06%) and 939/5,684 (16.52%), respectively. The gate therefore showed a
+measurable dispatch-state cost, but not a justification for an unsafe fixed-register
+ABI; the implementation keeps ordinary Rust ownership and LLVM allocation.
+The optimized three-run neutral corpus remained 100/100 exact matches with an
+overall index of 248.13 (0.792x wall time, 0.319x peak RSS, 1.050x instructions,
+and 0.752x cycles versus Node). This is within the prior host-noise range and
+the bounded-state change adds no per-callsite metadata.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
@@ -167,6 +181,7 @@ shared fact.
 | 017–018 | tagged-value/shape unit tests and `target/micro-object-evidence.json` |
 | 021–026 | `docs/copy-and-patch-jit.md` and stencil unit/differential tests |
 | 029 | `enter_slow_path` transition tests, cold `#[inline(never)]` gateway, and zero-delta architecture-size comparison |
+| 030 | Gate-0 DWARF/sample + ARM64 disassembly before/after counts, full runtime/node gates, and `target/micro-neutral-after-030.json` (100/100) |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.
