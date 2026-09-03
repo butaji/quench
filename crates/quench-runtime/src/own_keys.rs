@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{execute::VmError, value::Value};
+use crate::{execute::VmError, value::PropertyEntries, value::Value};
 
 pub(crate) fn names(target: Option<&Value>) -> Result<Value, VmError> {
     pack_keys(listed(require_object(target)?, false)?, false)
@@ -370,6 +370,17 @@ pub(crate) fn is_enumerable_property(target: &Value, key: &str) -> bool {
         if matches!(object, Value::Null | Value::Undefined) {
             break;
         }
+        // Ordinary objects keep a build-time interned layout index beside the
+        // canonical property vector.  Use that index to validate the own
+        // property directly instead of rebuilding the complete enumerable-key
+        // vector for every key in a `for...in` snapshot.  The old path was
+        // correct but quadratic for a stable object: each of N keys rebuilt
+        // and scanned an N-element key vector.  Unsupported/special objects
+        // still use the complete generic path below, preserving proxy,
+        // boxed-string, global-view, and array semantics.
+        if let Some(enumerable) = ordinary_own_enumerability(&object, key) {
+            return enumerable;
+        }
         if owns_string_key(&object, key) {
             return own_enumerable_string_keys(&object)
                 .iter()
@@ -382,6 +393,45 @@ pub(crate) fn is_enumerable_property(target: &Value, key: &str) -> bool {
         };
     }
     false
+}
+
+/// Return the own enumerable state for an ordinary object when the canonical
+/// layout can answer the membership check directly. `None` means either that
+/// the object is a special representation or that it does not own `key`;
+/// callers then continue through the complete generic path.
+#[inline(always)]
+fn ordinary_own_enumerability(target: &Value, key: &str) -> Option<bool> {
+    let Value::Object(object) = target else {
+        return None;
+    };
+    if object.has_replacement() || object.is_script_global_view() || key.starts_with('\0') {
+        return None;
+    }
+    let physical = object.physical_slot_for_name(key)?;
+    if !object
+        .hot_properties()
+        .name_at(physical)
+        .is_some_and(|name| name == key)
+    {
+        return None;
+    }
+    if object.has_deleted_key(key) {
+        return Some(false);
+    }
+    // Boxed primitives intentionally hide these implementation properties.
+    // Membership uses the same interned layout facts and therefore does not
+    // require a second scan of the canonical vector.
+    let boxed = object.physical_slot_for_name("_value").is_some()
+        && object.physical_slot_for_name("constructor").is_some();
+    if boxed && matches!(key, "_value" | "constructor") {
+        return Some(false);
+    }
+    Some(
+        !object
+            .descriptor_metadata_for_key(key)
+            .as_ref()
+            .is_some_and(|descriptor| !descriptor_enumerable_value(Some(descriptor))),
+    )
 }
 
 fn owns_string_key(target: &Value, key: &str) -> bool {
@@ -753,8 +803,9 @@ fn require_object(target: Option<&Value>) -> Result<&Value, VmError> {
 
 #[cfg(test)]
 mod tests {
-    use super::names;
-    use crate::value::Value;
+    use super::{enumerate_object_properties, is_enumerable_property, names};
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
 
     #[test]
     fn array_names_include_indices_and_length() {
@@ -770,5 +821,36 @@ mod tests {
                 Value::String("length".into())
             ]
         );
+    }
+
+    #[test]
+    fn dictionary_for_in_membership_uses_the_canonical_layout() {
+        let object = Value::Object(Rc::new(ObjectData::new(
+            (0..128)
+                .map(|index| (format!("k{index}"), Value::Number(index as f64)))
+                .collect(),
+        )));
+        let keys = enumerate_object_properties(&object);
+        assert_eq!(keys.len(), 128);
+        assert_eq!(keys.first().map(String::as_str), Some("k0"));
+        assert_eq!(keys.last().map(String::as_str), Some("k127"));
+        assert!(is_enumerable_property(&object, "k64"));
+        assert!(!is_enumerable_property(&object, "missing"));
+    }
+
+    #[test]
+    fn direct_for_in_membership_preserves_non_enumerable_descriptors() {
+        let descriptor = Value::Object(Rc::new(ObjectData::new(vec![(
+            "enumerable".into(),
+            Value::Boolean(false),
+        )])));
+        let object = Value::Object(Rc::new(ObjectData::new(vec![
+            ("visible".into(), Value::Number(1.0)),
+            ("hidden".into(), Value::Number(2.0)),
+            (crate::builtins::descriptor_key("hidden"), descriptor),
+        ])));
+        assert!(is_enumerable_property(&object, "visible"));
+        assert!(!is_enumerable_property(&object, "hidden"));
+        assert_eq!(enumerate_object_properties(&object), vec!["visible"]);
     }
 }
