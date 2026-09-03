@@ -2934,10 +2934,12 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "repl" => Some(crate::modules::repl::build()),
         "wasi" => Some(crate::modules::wasi::build()),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
-        "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "isSea".to_string(),
-            crate::host::capability(crate::registry::SPEC_SEA_IS_SEA),
-        )])),
+        "sea" => {
+            let factory = eval_module_factory(
+                "() => ({ isSea: false, getAsset() { const error = new Error('Cannot use require(\\\"sea\\\") outside a single executable application'); error.code = 'ERR_NOT_SUPPORTED'; throw error; } })",
+            )?;
+            execute::call(&factory, &Value::Undefined, &[]).ok()
+        }
         // `node:test` exports the callable `test` function itself, with
         // `test`, `describe`, and `it` aliases plus `.skip` variants.
         "test" => {
