@@ -118,6 +118,16 @@ produced 100/100 exact matches with overall index 248.26 (0.785x wall time,
 0.320x peak RSS, 1.054x instructions, and 0.746x cycles versus Node). Raw
 output is `target/micro-neutral-after-032.json`.
 
+Task 033 adds `IcStubChain`, a fixed-capacity λe chain for rendered sites. Each
+distinct key gets one insertion-ordered stub until `MAX_IC_STUBS`; chain miss
+and the (N+1)th key return `None`, which is the caller's complete interpreter
+fallback. `install` places a fitting stub in the reserved inline slab and
+routes an oversized stub to the outlined area. Unit tests cover cold/warm,
+polymorphic, exhausted, both placement classes, repeated adversarial keys, and
+the fixed peak state; existing call/property differential tests cover the
+semantic gateways. The mechanism is disposable metadata and does not alter
+the W^X publication boundary.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
@@ -203,6 +213,7 @@ shared fact.
 | 030 | Gate-0 DWARF/sample + ARM64 disassembly before/after counts, full runtime/node gates, and `target/micro-neutral-after-030.json` (100/100) |
 | 031 | Gate-0 dependency audit recorded above; blocked without a physical pinned register, so no implementation was attempted |
 | 032 | Side-table vs rewritten-opcode Gate-0 timing, opcode rewrite/dequicken differential test, full runtime/node gates, and `target/micro-neutral-after-032.json` (100/100) |
+| 033 | `IcStubChain` chain/placement/bounded-state unit tests plus call/property differential gateways |
 
 Rows intentionally point to reproducible checks rather than embedding a
 benchmark-specific threshold in production code.
