@@ -685,6 +685,7 @@ pub struct ObjectProperties {
     names: Vec<PropertyName>,
     values: Vec<crate::register_file::SlotWord>,
     layout_hash: std::cell::Cell<u64>,
+    lookup: Option<std::collections::HashMap<PropertyName, usize>>,
 }
 
 const OBJECT_LAYOUT_HASH_SEED: u64 = 0xcbf2_9ce4_8422_2325;
@@ -695,6 +696,7 @@ impl Default for ObjectProperties {
             names: Vec::new(),
             values: Vec::new(),
             layout_hash: std::cell::Cell::new(OBJECT_LAYOUT_HASH_SEED),
+            lookup: None,
         }
     }
 }
@@ -706,6 +708,7 @@ impl Clone for ObjectProperties {
             names: self.names.clone(),
             values: self.values.clone(),
             layout_hash: std::cell::Cell::new(self.layout_hash.get()),
+            lookup: self.lookup.clone(),
         }
     }
 }
@@ -750,6 +753,9 @@ impl ObjectProperties {
         let mut properties = Self::default();
         properties.names.reserve(capacity);
         properties.values.reserve(capacity);
+        if capacity >= 64 {
+            properties.lookup = Some(std::collections::HashMap::with_capacity(capacity));
+        }
         properties
     }
 
@@ -794,6 +800,9 @@ impl ObjectProperties {
 
     #[inline]
     pub(crate) fn position_rev(&self, key: &str) -> Option<usize> {
+        if let Some(lookup) = &self.lookup {
+            return lookup.get(key).copied();
+        }
         if let Some(index) = numeric_property_index(key) {
             // Object literals used as array-likes commonly establish
             // `length` first and then append numeric keys in order. Derive
@@ -843,13 +852,22 @@ impl ObjectProperties {
     pub(crate) fn shrink_to_fit(&mut self) {
         self.names.shrink_to_fit();
         self.values.shrink_to_fit();
+        if let Some(lookup) = &mut self.lookup {
+            lookup.shrink_to_fit();
+        }
     }
 
     pub fn push(&mut self, (name, value): (PropertyName, Value)) {
         self.layout_hash
             .set(mix_object_layout_hash(self.layout_hash.get(), &name));
+        let slot = self.names.len();
         self.names.push(name);
         self.values.push(crate::register_file::SlotWord::new(value));
+        if self.lookup.is_none() && self.names.len() >= 64 {
+            self.rebuild_lookup_if_large();
+        } else if let Some(lookup) = &mut self.lookup {
+            lookup.insert(self.names[slot].clone(), slot);
+        }
     }
 
     pub fn iter(
@@ -892,8 +910,21 @@ impl ObjectProperties {
         }
         self.names = names;
         self.values = values;
+        self.lookup = None;
+        self.rebuild_lookup_if_large();
         self.layout_hash
             .set(compute_object_layout_hash(&self.names));
+    }
+
+    fn rebuild_lookup_if_large(&mut self) {
+        if self.names.len() < 64 {
+            return;
+        }
+        let mut lookup = std::collections::HashMap::with_capacity(self.names.len());
+        for (slot, name) in self.names.iter().enumerate() {
+            lookup.insert(name.clone(), slot);
+        }
+        self.lookup = Some(lookup);
     }
 
     /// Hash of the canonical property-name sequence, maintained at mutation
@@ -1107,6 +1138,14 @@ pub struct ObjectData {
     // Derived RegExp internal-slot fact. The canonical marker property remains
     // authoritative; named writes consume this bit instead of scanning it.
     regexp_internal_slot: std::cell::Cell<bool>,
+    // Derived prototype fact used by ordinary named/indexed write admission.
+    // Keep the internal marker in the canonical property vector, but cache
+    // the one-time classification so sequential dynamic writes do not scan
+    // every previously-created public property.
+    prototype_state: std::cell::Cell<u8>,
+    // Derived extensibility marker fact; the marker itself remains in the
+    // canonical property vector for descriptor semantics.
+    extensible_state: std::cell::Cell<u8>,
 }
 
 impl Drop for ObjectData {
@@ -1141,6 +1180,8 @@ impl Clone for ObjectData {
             script_global_view: std::cell::Cell::new(self.script_global_view.get()),
             realm_global: std::cell::Cell::new(self.realm_global.get()),
             regexp_internal_slot: std::cell::Cell::new(self.regexp_internal_slot.get()),
+            prototype_state: std::cell::Cell::new(0),
+            extensible_state: std::cell::Cell::new(0),
         }
     }
 }
@@ -1150,6 +1191,12 @@ impl ObjectData {
     /// replacement. This is reserved for identity-sensitive host state such
     /// as the event currently being dispatched.
     pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        if key == "\0prototype" {
+            self.prototype_state.set(0);
+        }
+        if key == "\0quench:non_extensible" {
+            self.extensible_state.set(0);
+        }
         if key == "\0regexp" {
             self.regexp_internal_slot
                 .set(matches!(&value, Value::Boolean(true)));
@@ -1184,7 +1231,7 @@ impl ObjectData {
                 return;
             }
         }
-        let index = { self.properties.iter().rposition(|(name, _)| name == key) };
+        let index = self.properties.position_rev(key);
         if let Some(index) = index {
             if let Some((_, mut current)) = self.properties.iter_mut().nth(index) {
                 *current = value;
@@ -1244,6 +1291,8 @@ impl ObjectData {
         self.layout_id.set(0);
         self.descriptor_metadata_state.set(0);
         self.deleted_marker_state.set(0);
+        self.prototype_state.set(0);
+        self.extensible_state.set(0);
     }
 
     pub(crate) fn new(properties: Vec<(String, Value)>) -> Self {
@@ -1296,6 +1345,43 @@ impl ObjectData {
         self.original_prototype.borrow().clone()
     }
 
+    /// Whether the internal prototype marker is absent or names the ordinary
+    /// Object prototype. The property vector remains authoritative; this
+    /// derived fact only avoids rescanning it on every dynamic write.
+    #[inline]
+    pub(crate) fn has_default_internal_prototype(&self) -> bool {
+        match self.prototype_state.get() {
+            1 => true,
+            2 => false,
+            _ => {
+                let state = prototype_state(&self.properties);
+                self.prototype_state.set(state);
+                state == 1
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_fast_extensible(&self) -> bool {
+        match self.extensible_state.get() {
+            1 => true,
+            2 => false,
+            _ => {
+                let state = if self
+                    .properties
+                    .names()
+                    .any(|name| name == "\0quench:non_extensible")
+                {
+                    2
+                } else {
+                    1
+                };
+                self.extensible_state.set(state);
+                state == 1
+            }
+        }
+    }
+
     pub(crate) fn capture_original_prototype(&self, prototype: Value) {
         let mut original = self.original_prototype.borrow_mut();
         if original.is_none() {
@@ -1318,6 +1404,7 @@ impl ObjectData {
             .any(|(name, value)| name == "\0regexp" && matches!(value, Value::Boolean(true)));
         let created_derived = creation_order_matches(&properties, &created);
         let created = if created_derived { Vec::new() } else { created };
+        let prototype_state = prototype_state(&properties);
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
@@ -1333,6 +1420,8 @@ impl ObjectData {
             script_global_view: std::cell::Cell::new(script_global_view),
             realm_global: std::cell::Cell::new(false),
             regexp_internal_slot: std::cell::Cell::new(regexp_internal_slot),
+            prototype_state: std::cell::Cell::new(prototype_state),
+            extensible_state: std::cell::Cell::new(0),
         }
     }
 
@@ -1348,6 +1437,7 @@ impl ObjectData {
         let regexp_internal_slot = properties
             .iter()
             .any(|(name, value)| name == "\0regexp" && matches!(value, Value::Boolean(true)));
+        let prototype_state = prototype_state(&properties);
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
@@ -1363,6 +1453,8 @@ impl ObjectData {
             script_global_view: std::cell::Cell::new(script_global_view),
             realm_global: std::cell::Cell::new(false),
             regexp_internal_slot: std::cell::Cell::new(regexp_internal_slot),
+            prototype_state: std::cell::Cell::new(prototype_state),
+            extensible_state: std::cell::Cell::new(0),
         }
     }
 
@@ -1466,6 +1558,8 @@ impl std::ops::DerefMut for ObjectData {
         self.layout_id.set(0);
         self.descriptor_metadata_state.set(0);
         self.deleted_marker_state.set(0);
+        self.prototype_state.set(0);
+        self.extensible_state.set(0);
         &mut self.properties
     }
 }
@@ -1605,6 +1699,16 @@ fn creation_order(properties: &ObjectProperties) -> Vec<PropertyName> {
         created.push(key.clone());
     }
     created
+}
+
+fn prototype_state(properties: &ObjectProperties) -> u8 {
+    match properties
+        .iter()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value))
+    {
+        None | Some(Value::Builtin(crate::ops::Builtin::ObjectPrototype)) => 1,
+        Some(_) => 2,
+    }
 }
 
 fn creation_order_matches(properties: &ObjectProperties, created: &[PropertyName]) -> bool {

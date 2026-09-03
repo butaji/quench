@@ -222,10 +222,24 @@ pub(crate) fn execute_set_property(
             return Ok(());
         }
     }
+    // Dynamic named writes on an ordinary object are common in builders. Once
+    // the receiver proves an extensible/default-prototype shape and the key
+    // is not already present, consult only that prototype's descriptor before
+    // appending in place. Accessors, read-only inherited data, custom
+    // prototypes, and existing properties retain the complete setter path.
     if let crate::value::Value::Object(object_data) = &target {
-        if crate::builtins::object_alias::plain_index_write(object_data, &key)
-            && !rejects_new_property(&target, &key)
+        if crate::builtins::object_alias::plain_named_write(object_data, &key)
+            && object_data.hot_properties().position_rev(&key).is_none()
+            && inherited_prototype_allows_plain_write(&target, &key)?
         {
+            let updated =
+                crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
+            crate::execute::write_value(registers, object, updated);
+            return Ok(());
+        }
+    }
+    if let crate::value::Value::Object(object_data) = &target {
+        if crate::builtins::object_alias::plain_index_write(object_data, &key) {
             let updated =
                 crate::builtins::object_alias::set(std::rc::Rc::clone(object_data), &key, value);
             crate::execute::write_value(registers, object, updated);
@@ -252,6 +266,30 @@ pub(crate) fn execute_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:finish");
     finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn inherited_prototype_allows_plain_write(
+    target: &crate::value::Value,
+    key: &str,
+) -> Result<bool, crate::execute::VmError> {
+    let prototype = crate::builtins::object::get_prototype_of(Some(target))?;
+    let descriptor = crate::builtins::object::descriptor(
+        Some(&prototype),
+        Some(&crate::value::Value::String(key.to_owned())),
+    )?;
+    let crate::value::Value::Object(fields) = descriptor else {
+        return Ok(true);
+    };
+    if fields
+        .iter()
+        .any(|(name, _)| name == "get" || name == "set")
+    {
+        return Ok(false);
+    }
+    let writable = fields.iter().any(|(name, value)| {
+        name == "writable" && matches!(value, crate::value::Value::Boolean(true))
+    });
+    Ok(writable)
 }
 
 fn typed_array_buffer_detached(value: &crate::value::Value) -> bool {
@@ -297,9 +335,7 @@ fn try_plain_index_dynamic_write(
         return Ok(false);
     };
     let key = index.to_string();
-    if !crate::builtins::object_alias::plain_index_write(object_data, &key)
-        || rejects_new_property(&target, &key)
-    {
+    if !crate::builtins::object_alias::plain_index_write(object_data, &key) {
         return Ok(false);
     }
     let value = unwrap_assignment_value(&crate::execute::read_register(registers, *src)?);
