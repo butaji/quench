@@ -363,7 +363,12 @@ fn integrity_array_descriptor(
         descriptor_flag_field(existing.as_ref(), "enumerable").unwrap_or(true) && key != "length";
     let mut fields = Vec::new();
     if !accessor || key == "length" {
-        if key != "length" {
+        if key == "length" {
+            fields.push((
+                "value".to_string(),
+                crate::value::Value::Number(data.logical_len() as f64),
+            ));
+        } else {
             let value = crate::arrays::array_index(key)
                 .and_then(|index| data.get_index(index as usize))
                 .or_else(|| data.property(key));
