@@ -44,6 +44,7 @@ if (corpusErrors.length) {
 }
 if (!Number.isInteger(first) || !Number.isInteger(last) || first > last) throw new Error("invalid --from/--to range");
 if (!Number.isInteger(runs) || runs < 1) throw new Error("invalid --runs");
+if (!Number.isFinite(timeout) || timeout <= 0) throw new Error("invalid --timeout-ms");
 
 const timeBinary = existsSync("/usr/bin/time") ? "/usr/bin/time" : null;
 const timeFlags = process.platform === "darwin" ? ["-l"] : ["-v"];

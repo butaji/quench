@@ -73,7 +73,7 @@
       "family": "numeric",
       "operation": "integer-recurrence",
       "variant": 1,
-      "work_units": 96,
+      "work_units": 1920,
       "memory_profile": "ephemeral",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; integer-recurrence"
     },
@@ -83,7 +83,7 @@
       "family": "numeric",
       "operation": "float-stencil",
       "variant": 2,
-      "work_units": 119,
+      "work_units": 24800,
       "memory_profile": "ephemeral",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; float-stencil"
     },
@@ -93,7 +93,7 @@
       "family": "numeric",
       "operation": "bitwise-mixer",
       "variant": 3,
-      "work_units": 142,
+      "work_units": 5680,
       "memory_profile": "none",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; bitwise-mixer"
     },
@@ -103,7 +103,7 @@
       "family": "numeric",
       "operation": "transcendental-scan",
       "variant": 4,
-      "work_units": 165,
+      "work_units": 1650,
       "memory_profile": "none",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; transcendental-scan"
     },
@@ -113,7 +113,7 @@
       "family": "numeric",
       "operation": "bigint-accumulator",
       "variant": 5,
-      "work_units": 188,
+      "work_units": 1880,
       "memory_profile": "ephemeral",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; bigint-accumulator"
     },
@@ -123,7 +123,7 @@
       "family": "numeric",
       "operation": "integer-divide-modulo",
       "variant": 6,
-      "work_units": 211,
+      "work_units": 4220,
       "memory_profile": "none",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; integer-divide-modulo"
     },
@@ -133,7 +133,7 @@
       "family": "numeric",
       "operation": "float-rounding",
       "variant": 7,
-      "work_units": 234,
+      "work_units": 4680,
       "memory_profile": "none",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; float-rounding"
     },
@@ -143,7 +143,7 @@
       "family": "numeric",
       "operation": "polynomial-evaluation",
       "variant": 8,
-      "work_units": 257,
+      "work_units": 5140,
       "memory_profile": "none",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; polynomial-evaluation"
     },
@@ -153,7 +153,7 @@
       "family": "numeric",
       "operation": "numeric-conversion",
       "variant": 9,
-      "work_units": 280,
+      "work_units": 2800,
       "memory_profile": "allocation-heavy",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; numeric-conversion"
     },
@@ -163,7 +163,7 @@
       "family": "numeric",
       "operation": "typed-lane-arithmetic",
       "variant": 10,
-      "work_units": 303,
+      "work_units": 4545,
       "memory_profile": "external",
       "description": "integer, floating-point, bitwise, transcendental, and BigInt arithmetic; typed-lane-arithmetic"
     },
@@ -173,7 +173,7 @@
       "family": "control",
       "operation": "branch-predict",
       "variant": 1,
-      "work_units": 80,
+      "work_units": 6400,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; branch-predict"
     },
@@ -183,7 +183,7 @@
       "family": "control",
       "operation": "nested-count",
       "variant": 2,
-      "work_units": 388,
+      "work_units": 9360,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; nested-count"
     },
@@ -193,7 +193,7 @@
       "family": "control",
       "operation": "switch-dispatch",
       "variant": 3,
-      "work_units": 114,
+      "work_units": 6840,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; switch-dispatch"
     },
@@ -203,7 +203,7 @@
       "family": "control",
       "operation": "exception-recovery",
       "variant": 4,
-      "work_units": 131,
+      "work_units": 1310,
       "memory_profile": "allocation-heavy",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; exception-recovery"
     },
@@ -213,7 +213,7 @@
       "family": "control",
       "operation": "state-machine",
       "variant": 5,
-      "work_units": 148,
+      "work_units": 5920,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; state-machine"
     },
@@ -223,7 +223,7 @@
       "family": "control",
       "operation": "early-exit-search",
       "variant": 6,
-      "work_units": 165,
+      "work_units": 9900,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; early-exit-search"
     },
@@ -233,7 +233,7 @@
       "family": "control",
       "operation": "labeled-nesting",
       "variant": 7,
-      "work_units": 182,
+      "work_units": 10000,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; labeled-nesting"
     },
@@ -243,7 +243,7 @@
       "family": "control",
       "operation": "try-finally-control",
       "variant": 8,
-      "work_units": 199,
+      "work_units": 3980,
       "memory_profile": "allocation-heavy",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; try-finally-control"
     },
@@ -253,7 +253,7 @@
       "family": "control",
       "operation": "boolean-short-circuit",
       "variant": 9,
-      "work_units": 216,
+      "work_units": 8640,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; boolean-short-circuit"
     },
@@ -263,7 +263,7 @@
       "family": "control",
       "operation": "recurrence-branch",
       "variant": 10,
-      "work_units": 233,
+      "work_units": 4660,
       "memory_profile": "none",
       "description": "branches, nesting, switch dispatch, exceptions, and state machines; recurrence-branch"
     },
@@ -273,7 +273,7 @@
       "family": "arrays",
       "operation": "packed-map-reduce",
       "variant": 1,
-      "work_units": 72,
+      "work_units": 360,
       "memory_profile": "ephemeral",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; packed-map-reduce"
     },
@@ -283,7 +283,7 @@
       "family": "arrays",
       "operation": "sparse-probe",
       "variant": 2,
-      "work_units": 28,
+      "work_units": 420,
       "memory_profile": "ephemeral",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; sparse-probe"
     },
@@ -293,7 +293,7 @@
       "family": "arrays",
       "operation": "sort-and-search",
       "variant": 3,
-      "work_units": 1024,
+      "work_units": 2765,
       "memory_profile": "ephemeral",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; sort-and-search"
     },
@@ -303,7 +303,7 @@
       "family": "arrays",
       "operation": "splice-rotate",
       "variant": 4,
-      "work_units": 36,
+      "work_units": 150,
       "memory_profile": "allocation-heavy",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; splice-rotate"
     },
@@ -313,7 +313,7 @@
       "family": "arrays",
       "operation": "nested-flatten",
       "variant": 5,
-      "work_units": 160,
+      "work_units": 260,
       "memory_profile": "retained-ring",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; nested-flatten"
     },
@@ -323,7 +323,7 @@
       "family": "arrays",
       "operation": "prefix-sum",
       "variant": 6,
-      "work_units": 44,
+      "work_units": 660,
       "memory_profile": "ephemeral",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; prefix-sum"
     },
@@ -333,7 +333,7 @@
       "family": "arrays",
       "operation": "binary-search",
       "variant": 7,
-      "work_units": 384,
+      "work_units": 5760,
       "memory_profile": "ephemeral",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; binary-search"
     },
@@ -343,7 +343,7 @@
       "family": "arrays",
       "operation": "ring-buffer",
       "variant": 8,
-      "work_units": 52,
+      "work_units": 3120,
       "memory_profile": "retained-ring",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; ring-buffer"
     },
@@ -353,7 +353,7 @@
       "family": "arrays",
       "operation": "array-copy",
       "variant": 9,
-      "work_units": 56,
+      "work_units": 50400,
       "memory_profile": "allocation-heavy",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; array-copy"
     },
@@ -363,7 +363,7 @@
       "family": "arrays",
       "operation": "matrix-multiply",
       "variant": 10,
-      "work_units": 3600,
+      "work_units": 10648,
       "memory_profile": "ephemeral",
       "description": "packed, sparse, algorithmic, mutating, and nested array workloads; matrix-multiply"
     },
@@ -373,7 +373,7 @@
       "family": "objects",
       "operation": "monomorphic-load-store",
       "variant": 1,
-      "work_units": 32,
+      "work_units": 1920,
       "memory_profile": "ephemeral",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; monomorphic-load-store"
     },
@@ -383,7 +383,7 @@
       "family": "objects",
       "operation": "polymorphic-shapes",
       "variant": 2,
-      "work_units": 37,
+      "work_units": 740,
       "memory_profile": "ephemeral",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; polymorphic-shapes"
     },
@@ -393,7 +393,7 @@
       "family": "objects",
       "operation": "descriptor-churn",
       "variant": 3,
-      "work_units": 42,
+      "work_units": 420,
       "memory_profile": "allocation-heavy",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; descriptor-churn"
     },
@@ -403,7 +403,7 @@
       "family": "objects",
       "operation": "prototype-accessor",
       "variant": 4,
-      "work_units": 47,
+      "work_units": 940,
       "memory_profile": "ephemeral",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; prototype-accessor"
     },
@@ -413,7 +413,7 @@
       "family": "objects",
       "operation": "symbol-key-retention",
       "variant": 5,
-      "work_units": 52,
+      "work_units": 200,
       "memory_profile": "retained-ring",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; symbol-key-retention"
     },
@@ -423,7 +423,7 @@
       "family": "objects",
       "operation": "property-order-churn",
       "variant": 6,
-      "work_units": 57,
+      "work_units": 570,
       "memory_profile": "allocation-heavy",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; property-order-churn"
     },
@@ -433,7 +433,7 @@
       "family": "objects",
       "operation": "prototype-chain-depth",
       "variant": 7,
-      "work_units": 62,
+      "work_units": 1240,
       "memory_profile": "ephemeral",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; prototype-chain-depth"
     },
@@ -443,7 +443,7 @@
       "family": "objects",
       "operation": "accessor-cache",
       "variant": 8,
-      "work_units": 67,
+      "work_units": 1340,
       "memory_profile": "allocation-heavy",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; accessor-cache"
     },
@@ -453,7 +453,7 @@
       "family": "objects",
       "operation": "sealed-frozen-properties",
       "variant": 9,
-      "work_units": 72,
+      "work_units": 1080,
       "memory_profile": "ephemeral",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; sealed-frozen-properties"
     },
@@ -463,7 +463,7 @@
       "family": "objects",
       "operation": "object-graph-walk",
       "variant": 10,
-      "work_units": 77,
+      "work_units": 200,
       "memory_profile": "retained-ring",
       "description": "shapes, descriptors, prototypes, accessors, and symbols; object-graph-walk"
     },
@@ -473,7 +473,7 @@
       "family": "functions",
       "operation": "closure-capture",
       "variant": 1,
-      "work_units": 20,
+      "work_units": 1600,
       "memory_profile": "ephemeral",
       "description": "closures, recursion, receiver calls, constructors, and classes; closure-capture"
     },
@@ -483,7 +483,7 @@
       "family": "functions",
       "operation": "recursive-fold",
       "variant": 2,
-      "work_units": 23,
+      "work_units": 460,
       "memory_profile": "none",
       "description": "closures, recursion, receiver calls, constructors, and classes; recursive-fold"
     },
@@ -493,7 +493,7 @@
       "family": "functions",
       "operation": "receiver-call-mix",
       "variant": 3,
-      "work_units": 26,
+      "work_units": 520,
       "memory_profile": "allocation-heavy",
       "description": "closures, recursion, receiver calls, constructors, and classes; receiver-call-mix"
     },
@@ -503,7 +503,7 @@
       "family": "functions",
       "operation": "constructor-prototype",
       "variant": 4,
-      "work_units": 29,
+      "work_units": 580,
       "memory_profile": "ephemeral",
       "description": "closures, recursion, receiver calls, constructors, and classes; constructor-prototype"
     },
@@ -513,7 +513,7 @@
       "family": "functions",
       "operation": "class-method-dispatch",
       "variant": 5,
-      "work_units": 32,
+      "work_units": 1280,
       "memory_profile": "ephemeral",
       "description": "closures, recursion, receiver calls, constructors, and classes; class-method-dispatch"
     },
@@ -523,7 +523,7 @@
       "family": "functions",
       "operation": "higher-order-map",
       "variant": 6,
-      "work_units": 35,
+      "work_units": 4900,
       "memory_profile": "allocation-heavy",
       "description": "closures, recursion, receiver calls, constructors, and classes; higher-order-map"
     },
@@ -533,7 +533,7 @@
       "family": "functions",
       "operation": "tail-like-iteration",
       "variant": 7,
-      "work_units": 38,
+      "work_units": 760,
       "memory_profile": "none",
       "description": "closures, recursion, receiver calls, constructors, and classes; tail-like-iteration"
     },
@@ -543,7 +543,7 @@
       "family": "functions",
       "operation": "bound-method-cache",
       "variant": 8,
-      "work_units": 41,
+      "work_units": 1640,
       "memory_profile": "allocation-heavy",
       "description": "closures, recursion, receiver calls, constructors, and classes; bound-method-cache"
     },
@@ -553,7 +553,7 @@
       "family": "functions",
       "operation": "function-property-shapes",
       "variant": 9,
-      "work_units": 44,
+      "work_units": 660,
       "memory_profile": "ephemeral",
       "description": "closures, recursion, receiver calls, constructors, and classes; function-property-shapes"
     },
@@ -563,7 +563,7 @@
       "family": "functions",
       "operation": "mutual-recursion",
       "variant": 10,
-      "work_units": 47,
+      "work_units": 940,
       "memory_profile": "none",
       "description": "closures, recursion, receiver calls, constructors, and classes; mutual-recursion"
     },
@@ -573,7 +573,7 @@
       "family": "strings",
       "operation": "concat-rope",
       "variant": 1,
-      "work_units": 28,
+      "work_units": 336,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; concat-rope"
     },
@@ -583,7 +583,7 @@
       "family": "strings",
       "operation": "unicode-codepoints",
       "variant": 2,
-      "work_units": 32,
+      "work_units": 288,
       "memory_profile": "ephemeral",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; unicode-codepoints"
     },
@@ -593,7 +593,7 @@
       "family": "strings",
       "operation": "regexp-scan",
       "variant": 3,
-      "work_units": 36,
+      "work_units": 216,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; regexp-scan"
     },
@@ -603,7 +603,7 @@
       "family": "strings",
       "operation": "replace-split",
       "variant": 4,
-      "work_units": 40,
+      "work_units": 240,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; replace-split"
     },
@@ -613,7 +613,7 @@
       "family": "strings",
       "operation": "normalization",
       "variant": 5,
-      "work_units": 44,
+      "work_units": 264,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; normalization"
     },
@@ -623,7 +623,7 @@
       "family": "strings",
       "operation": "substring-scan",
       "variant": 6,
-      "work_units": 48,
+      "work_units": 960,
       "memory_profile": "ephemeral",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; substring-scan"
     },
@@ -633,7 +633,7 @@
       "family": "strings",
       "operation": "template-render",
       "variant": 7,
-      "work_units": 52,
+      "work_units": 624,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; template-render"
     },
@@ -643,7 +643,7 @@
       "family": "strings",
       "operation": "case-folding",
       "variant": 8,
-      "work_units": 56,
+      "work_units": 336,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; case-folding"
     },
@@ -653,7 +653,7 @@
       "family": "strings",
       "operation": "regex-replace",
       "variant": 9,
-      "work_units": 60,
+      "work_units": 1440,
       "memory_profile": "allocation-heavy",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; regex-replace"
     },
@@ -663,7 +663,7 @@
       "family": "strings",
       "operation": "string-search",
       "variant": 10,
-      "work_units": 64,
+      "work_units": 384,
       "memory_profile": "none",
       "description": "concatenation, Unicode, regular expressions, replacement, and normalization; string-search"
     },
@@ -673,7 +673,7 @@
       "family": "iterables",
       "operation": "custom-iterator",
       "variant": 1,
-      "work_units": 12,
+      "work_units": 240,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; custom-iterator"
     },
@@ -683,7 +683,7 @@
       "family": "iterables",
       "operation": "generator-yield",
       "variant": 2,
-      "work_units": 13,
+      "work_units": 260,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; generator-yield"
     },
@@ -693,7 +693,7 @@
       "family": "iterables",
       "operation": "destructure-rest",
       "variant": 3,
-      "work_units": 14,
+      "work_units": 260,
       "memory_profile": "ephemeral",
       "description": "custom iterators, generators, destructuring, spread, and for-of; destructure-rest"
     },
@@ -703,7 +703,7 @@
       "family": "iterables",
       "operation": "spread-merge",
       "variant": 4,
-      "work_units": 15,
+      "work_units": 225,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; spread-merge"
     },
@@ -713,7 +713,7 @@
       "family": "iterables",
       "operation": "forof-set",
       "variant": 5,
-      "work_units": 16,
+      "work_units": 384,
       "memory_profile": "ephemeral",
       "description": "custom iterators, generators, destructuring, spread, and for-of; forof-set"
     },
@@ -723,7 +723,7 @@
       "family": "iterables",
       "operation": "iterator-close",
       "variant": 6,
-      "work_units": 17,
+      "work_units": 200,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; iterator-close"
     },
@@ -733,7 +733,7 @@
       "family": "iterables",
       "operation": "generator-throw",
       "variant": 7,
-      "work_units": 18,
+      "work_units": 234,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; generator-throw"
     },
@@ -743,7 +743,7 @@
       "family": "iterables",
       "operation": "iterator-composition",
       "variant": 8,
-      "work_units": 19,
+      "work_units": 228,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; iterator-composition"
     },
@@ -753,7 +753,7 @@
       "family": "iterables",
       "operation": "destructure-defaults",
       "variant": 9,
-      "work_units": 20,
+      "work_units": 260,
       "memory_profile": "ephemeral",
       "description": "custom iterators, generators, destructuring, spread, and for-of; destructure-defaults"
     },
@@ -763,7 +763,7 @@
       "family": "iterables",
       "operation": "iterator-reuse",
       "variant": 10,
-      "work_units": 21,
+      "work_units": 1260,
       "memory_profile": "allocation-heavy",
       "description": "custom iterators, generators, destructuring, spread, and for-of; iterator-reuse"
     },
@@ -773,7 +773,7 @@
       "family": "collections",
       "operation": "map-set-get",
       "variant": 1,
-      "work_units": 48,
+      "work_units": 480,
       "memory_profile": "allocation-heavy",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; map-set-get"
     },
@@ -783,7 +783,7 @@
       "family": "collections",
       "operation": "set-membership",
       "variant": 2,
-      "work_units": 28,
+      "work_units": 560,
       "memory_profile": "allocation-heavy",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; set-membership"
     },
@@ -793,7 +793,7 @@
       "family": "collections",
       "operation": "weakmap-identity",
       "variant": 3,
-      "work_units": 32,
+      "work_units": 320,
       "memory_profile": "ephemeral",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; weakmap-identity"
     },
@@ -803,7 +803,7 @@
       "family": "collections",
       "operation": "object-key-identity",
       "variant": 4,
-      "work_units": 36,
+      "work_units": 360,
       "memory_profile": "ephemeral",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; object-key-identity"
     },
@@ -813,7 +813,7 @@
       "family": "collections",
       "operation": "bounded-map-cache",
       "variant": 5,
-      "work_units": 40,
+      "work_units": 400,
       "memory_profile": "retained-ring",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; bounded-map-cache"
     },
@@ -823,7 +823,7 @@
       "family": "collections",
       "operation": "map-delete-reinsert",
       "variant": 6,
-      "work_units": 44,
+      "work_units": 440,
       "memory_profile": "allocation-heavy",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; map-delete-reinsert"
     },
@@ -833,7 +833,7 @@
       "family": "collections",
       "operation": "set-churn",
       "variant": 7,
-      "work_units": 48,
+      "work_units": 480,
       "memory_profile": "allocation-heavy",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; set-churn"
     },
@@ -843,7 +843,7 @@
       "family": "collections",
       "operation": "weakmap-lifetime",
       "variant": 8,
-      "work_units": 52,
+      "work_units": 520,
       "memory_profile": "ephemeral",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; weakmap-lifetime"
     },
@@ -853,7 +853,7 @@
       "family": "collections",
       "operation": "map-object-values",
       "variant": 9,
-      "work_units": 56,
+      "work_units": 560,
       "memory_profile": "allocation-heavy",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; map-object-values"
     },
@@ -863,7 +863,7 @@
       "family": "collections",
       "operation": "multi-key-index",
       "variant": 10,
-      "work_units": 60,
+      "work_units": 600,
       "memory_profile": "retained-ring",
       "description": "Map, Set, WeakMap, identity, iteration, and bounded caches; multi-key-index"
     },
@@ -873,7 +873,7 @@
       "family": "typed-memory",
       "operation": "uint8-indexing",
       "variant": 1,
-      "work_units": 32,
+      "work_units": 480,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; uint8-indexing"
     },
@@ -883,7 +883,7 @@
       "family": "typed-memory",
       "operation": "dataview-endian",
       "variant": 2,
-      "work_units": 38,
+      "work_units": 570,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; dataview-endian"
     },
@@ -893,7 +893,7 @@
       "family": "typed-memory",
       "operation": "float64-transform",
       "variant": 3,
-      "work_units": 44,
+      "work_units": 660,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; float64-transform"
     },
@@ -903,7 +903,7 @@
       "family": "typed-memory",
       "operation": "bigint64-typed",
       "variant": 4,
-      "work_units": 50,
+      "work_units": 180,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; bigint64-typed"
     },
@@ -913,7 +913,7 @@
       "family": "typed-memory",
       "operation": "buffer-copy-slice",
       "variant": 5,
-      "work_units": 56,
+      "work_units": 840,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; buffer-copy-slice"
     },
@@ -923,7 +923,7 @@
       "family": "typed-memory",
       "operation": "int16-saturation",
       "variant": 6,
-      "work_units": 62,
+      "work_units": 930,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; int16-saturation"
     },
@@ -933,7 +933,7 @@
       "family": "typed-memory",
       "operation": "uint32-bitfields",
       "variant": 7,
-      "work_units": 68,
+      "work_units": 1020,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; uint32-bitfields"
     },
@@ -943,7 +943,7 @@
       "family": "typed-memory",
       "operation": "float32-reduction",
       "variant": 8,
-      "work_units": 74,
+      "work_units": 1110,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; float32-reduction"
     },
@@ -953,7 +953,7 @@
       "family": "typed-memory",
       "operation": "shared-view-alias",
       "variant": 9,
-      "work_units": 80,
+      "work_units": 1200,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; shared-view-alias"
     },
@@ -963,7 +963,7 @@
       "family": "typed-memory",
       "operation": "typed-sort-copy",
       "variant": 10,
-      "work_units": 86,
+      "work_units": 1290,
       "memory_profile": "external",
       "description": "typed arrays, DataView, floating point, BigInt, and buffers; typed-sort-copy"
     },
@@ -973,7 +973,7 @@
       "family": "meta",
       "operation": "proxy-get-set",
       "variant": 1,
-      "work_units": 18,
+      "work_units": 108,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; proxy-get-set"
     },
@@ -983,7 +983,7 @@
       "family": "meta",
       "operation": "reflect-property",
       "variant": 2,
-      "work_units": 21,
+      "work_units": 126,
       "memory_profile": "ephemeral",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; reflect-property"
     },
@@ -993,7 +993,7 @@
       "family": "meta",
       "operation": "json-roundtrip",
       "variant": 3,
-      "work_units": 24,
+      "work_units": 1728,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; json-roundtrip"
     },
@@ -1003,7 +1003,7 @@
       "family": "meta",
       "operation": "date-calendar",
       "variant": 4,
-      "work_units": 27,
+      "work_units": 162,
       "memory_profile": "ephemeral",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; date-calendar"
     },
@@ -1013,7 +1013,7 @@
       "family": "meta",
       "operation": "error-and-function",
       "variant": 5,
-      "work_units": 30,
+      "work_units": 90,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; error-and-function"
     },
@@ -1023,7 +1023,7 @@
       "family": "meta",
       "operation": "proxy-ownkeys",
       "variant": 6,
-      "work_units": 33,
+      "work_units": 2970,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; proxy-ownkeys"
     },
@@ -1033,7 +1033,7 @@
       "family": "meta",
       "operation": "json-replacer-reviver",
       "variant": 7,
-      "work_units": 36,
+      "work_units": 1296,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; json-replacer-reviver"
     },
@@ -1043,7 +1043,7 @@
       "family": "meta",
       "operation": "date-format-fields",
       "variant": 8,
-      "work_units": 39,
+      "work_units": 234,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; date-format-fields"
     },
@@ -1053,7 +1053,7 @@
       "family": "meta",
       "operation": "dynamic-function",
       "variant": 9,
-      "work_units": 42,
+      "work_units": 126,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; dynamic-function"
     },
@@ -1063,7 +1063,7 @@
       "family": "meta",
       "operation": "proxy-invariant",
       "variant": 10,
-      "work_units": 45,
+      "work_units": 270,
       "memory_profile": "allocation-heavy",
       "description": "Proxy, Reflect, JSON, Date, errors, and dynamic function construction; proxy-invariant"
     }
