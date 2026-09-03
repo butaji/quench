@@ -458,7 +458,7 @@ pub(crate) fn open_async(value: Value) -> Result<Value, crate::execute::VmError>
         return Ok(if matches!(iterator, Value::Iterator(_)) {
             iterator
         } else {
-            make_protocol(iterator)
+            make_protocol_async(iterator)
         });
     }
     Ok(make_protocol_async(open(value)?))
@@ -520,7 +520,7 @@ pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmErr
     }
 }
 
-pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
+pub fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     let iterator = open(value)?;
     collect(&iterator)
 }
