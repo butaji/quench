@@ -23,6 +23,9 @@ fn call_timer(
     receiver: &Value,
     args: &[Value],
 ) -> Result<(), VmError> {
+    if !quench_runtime::is_callable(callback) {
+        return Ok(());
+    }
     if let Some(domain) = domain {
         let mut call_args = Vec::with_capacity(args.len() + 1);
         call_args.push(callback.clone());
@@ -158,6 +161,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
+        cleanup_retired_timers(state);
         // Timer/immediate callbacks can queue promise jobs; drain them
         // before deciding whether any work remains.
         drain_ticks(state)?;
@@ -356,6 +360,13 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             .is_empty()
         {
             emit_uncaught_rejection(state, &reason)?;
+        } else if matches!(mode, crate::modules::process::UnhandledRejectionMode::Throw) {
+            // With no lifecycle handler Node terminates the process for an
+            // unhandled rejection and reports the rejection reason as the
+            // uncaught error. Preserve both edges: the exit status and the
+            // thrown value must cross the host boundary independently.
+            state.borrow_mut().process.exit_code = Some(1);
+            return Err(VmError::Thrown(reason.clone()));
         }
     }
     Ok(())
@@ -492,10 +503,7 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         }
         result => result,
     };
-    state
-        .borrow_mut()
-        .cluster
-        .set_process_scope(previous_scope);
+    state.borrow_mut().cluster.set_process_scope(previous_scope);
     state
         .borrow()
         .event_loop
@@ -507,8 +515,11 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
 /// explicit host event-loop turn, so it also runs unref'd timers that would
 /// not keep a real process alive on their own.
 pub(crate) fn drain_mock_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
-    fire_due_timers(state)?;
+    // Mock-clock turns follow Node's check phase: immediates scheduled for the
+    // turn run before zero-delay timeouts, even when both are due at the same
+    // virtual timestamp.
     drain_immediates(state)?;
+    fire_due_timers(state)?;
     drain_ticks(state)?;
     quench_runtime::drain_promise_jobs();
     Ok(())
@@ -516,20 +527,35 @@ pub(crate) fn drain_mock_timers(state: &Rc<RefCell<HostState>>) -> Result<(), Vm
 
 fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let now = super::timers::monotonic_ms();
-    let mut due: Vec<(u64, u64)> = state
+    let mut due: Vec<(u64, u64, u64)> = state
         .borrow()
         .timers
         .timers
         .iter()
         .filter(|(_, t)| !matches!(t.kind, TimerKind::Immediate) && t.active && t.fire_at <= now)
-        .map(|(id, t)| (t.fire_at, *id))
+        .map(|(id, t)| (t.fire_at, t.order, *id))
         .collect();
     due.sort();
-    for (_, id) in due {
+    for (_, _, id) in due {
         fire_one_timer(state, id, now)?;
         drain_ticks(state)?;
     }
     Ok(())
+}
+
+fn cleanup_retired_timers(state: &Rc<RefCell<HostState>>) {
+    let retired = state
+        .borrow()
+        .timers
+        .timers
+        .iter()
+        .filter_map(|(id, timer)| timer.retired.then_some(*id))
+        .collect::<Vec<_>>();
+    for id in retired {
+        if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
+            super::timers::clear_timer_metadata(&timer.object);
+        }
+    }
 }
 
 fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(), VmError> {
@@ -576,6 +602,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
             timer.kind = TimerKind::Interval;
             timer.active = true;
+            timer.retired = false;
             timer.referenced = true;
             timer.fire_at = now.saturating_add(timer.period.max(1));
             *timer.destroyed.borrow_mut() = Value::Boolean(false);
@@ -604,8 +631,10 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             timer.active && matches!(*timer.destroyed.borrow(), Value::Boolean(false))
         });
     if destroy && !converted && !refreshed {
-        if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
-            super::timers::mark_destroyed(&timer);
+        if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+            timer.active = false;
+            timer.retired = true;
+            super::timers::mark_destroyed(timer);
         }
         crate::modules::async_hooks::resource_destroy(state, Some(&resource), &[])?;
     }
@@ -652,6 +681,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         // resource keeps the loop alive. With no such resource Node exits
         // without invoking it.
         if !timer.referenced && !has_referenced_work(state) {
+            super::timers::clear_timer_metadata(&timer.object);
             continue;
         }
         crate::modules::async_hooks::resource_before(state, Some(&timer.async_resource), &[])?;
@@ -668,6 +698,7 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         };
         crate::modules::async_hooks::resource_after(state, None, &[])?;
         crate::modules::async_hooks::resource_destroy(state, Some(&timer.async_resource), &[])?;
+        super::timers::clear_timer_metadata(&timer.object);
         defer_ticks |= result?;
         if !defer_ticks {
             drain_ticks(state)?;
@@ -693,6 +724,7 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
     let guard = state.borrow();
     quench_runtime::has_pending_promise_jobs()
         || quench_runtime::has_pending_unhandled_rejections()
+        || !guard.event_loop.microtasks.borrow().is_empty()
         || !guard.event_loop.immediates.borrow().is_empty()
         || guard
             .timers
