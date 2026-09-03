@@ -161,6 +161,49 @@ holds even when every optimization is engaged, per `AGENTS.md` rule 12. This
 stage exists because a suite that only proves optimizations fire without also
 proving they fail safe is incomplete evidence.
 
+## Calibration findings (2026-09, against a real build)
+
+The suite was built with guessed instrumentation thresholds, then actually
+run against a compiled `quench-node --features execution-trace` and
+recalibrated against real numbers. Two categories of finding came out of
+that pass, both recorded in `manifest.json`'s `instrumentation_gaps` and
+reflected in the current `expect` clauses:
+
+**Instrumentation gaps** (counters that don't move the way a naive model
+predicts, so the affected cases are marked correctness-only rather than
+asserting something false): bounded-polymorphic and multi-argument-shaped
+recursive call sites don't move `quickening.Call` (cases 007, 029); per-access
+property-read counters don't scale with iteration count once a site
+stabilizes (cases 011, 015). The lane-share proxy
+(`lanes.l2.vm_share_ppm` / `lanes.l3.handlers`) proved the most reliable real
+signal across the board and is now the primary source for stages 1 and 4.
+
+**Real performance findings** (not suite bugs — genuine gaps this suite exists
+to surface, expected given tasks 027-037 are still in progress): running the
+full 38-case suite with `--wall-ratio-max 3 --rss-ratio-max 1.5` against Node,
+RSS is consistently ~0.5x Node (genuinely lighter representation) but several
+cases run far past the 3x wall-time bar — recursion (case 010: fib(22), 15x;
+case 029: ackermann, correctness-only but slow), megamorphic property access
+(case 014: 400 distinct shapes, 11x), single-invocation hot loops (case 025:
+35x; case 027: nested loops, 29x), and general closure workloads (case 028:
+tree traversal, 47x; case 032: string/regex processing, 30x). These track
+directly onto the still-open backlog items (027/028 tier-up+OSR verification,
+029 slow-path outlining, 032 quickening, 033 JIT-side IC) — the curriculum
+proves the gap exists, closing it is VM work for that backlog, not a change
+to the suite itself.
+
+**Confirmed correctness-relevant performance bug**: case 026 (`for...in` over
+a plain object) is not merely slow, it's a scaling cliff. Isolated
+measurement: building 500 dynamic properties takes 0.55s (already ~20x
+Node's near-zero, itself notable), but the same object enumerated with
+`for...in` and read back takes 5.73s total — i.e. the enumeration step alone
+costs ~5.2s for 500 keys, versus Node's entire build+enumerate run at 0.026s
+(~200x slower for the enumeration step in isolation). The case's actual
+n=3000 body exceeds any reasonable timeout entirely. Strongly suggestive of
+an O(n²) or worse cost in property enumeration or the underlying shape/slot
+lookup it depends on — reported to codex as a VM-level fix, not something
+this suite's tuning can address.
+
 ## What "done" means for this curriculum
 
 Not a fixed case count. Done means: every mechanism in
