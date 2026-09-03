@@ -29,6 +29,16 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         object.set_property_in_place(key, value);
         return Value::Object(properties);
     }
+    if plain_named_write(&properties, key) {
+        // The same identity rule applies to ordinary named data writes.  The
+        // old COW path cloned and retargeted the complete property vector for
+        // every new key, turning a sequence of distinct writes into O(n^2)
+        // work.  Prototype/accessor/metadata cases stay on the complete COW
+        // path below, and self-referential values were handled above.
+        let object = unsafe { &mut *(Rc::as_ptr(&properties) as *mut ObjectData) };
+        object.set_property_in_place(key, value);
+        return Value::Object(properties);
+    }
     crate::execution_trace::kernel("object_alias_rebuild", false);
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
@@ -62,6 +72,26 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
     Value::Object(object)
+}
+
+/// Admit only ordinary named data writes whose complete semantics have already
+/// been resolved by the property setter.  Special objects and metadata remain
+/// on the replacement path, which preserves prototype/accessor and alias
+/// behavior without making the common object-literal write quadratic.
+fn plain_named_write(properties: &Rc<ObjectData>, key: &str) -> bool {
+    !key.starts_with('\0')
+        && crate::arrays::array_index(key).is_none()
+        && properties.original_prototype().is_none()
+        && properties
+            .value_for_key("\0prototype")
+            .is_none_or(|prototype| {
+                matches!(
+                    prototype,
+                    Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+                )
+            })
+        && !properties.has_replacement()
+        && crate::builtins::descriptor_metadata(properties.as_ref(), key).is_none()
 }
 
 pub(crate) fn plain_index_write(properties: &Rc<ObjectData>, key: &str) -> bool {
