@@ -523,6 +523,10 @@ pub fn promises_open(
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_READFILE),
         ),
         (
+            "write".into(),
+            crate::host::capability(crate::registry::SPEC_FS_HANDLE_WRITE),
+        ),
+        (
             "close".into(),
             crate::host::capability(crate::registry::SPEC_FS_HANDLE_CLOSE),
         ),
@@ -589,6 +593,27 @@ pub fn file_handle_read_file(
             args.first().cloned().unwrap_or(Value::Undefined),
         ],
     );
+    Ok(settle(result))
+}
+
+pub fn file_handle_write(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let fd = descriptor_arg(execute::get_property_result(receiver, "fd").ok().as_ref())?;
+    let mut write_args = vec![Value::Number(fd as f64)];
+    write_args.extend_from_slice(args);
+    let result = write_sync(state, None, &write_args).map(|bytes_written| {
+        host_api::object(vec![
+            ("bytesWritten".into(), bytes_written),
+            (
+                "buffer".into(),
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ),
+        ])
+    });
     Ok(settle(result))
 }
 
