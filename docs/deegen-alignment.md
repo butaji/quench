@@ -1,67 +1,60 @@
 # Alignment with the Deegen paper (arXiv:2411.11469)
 
-This document replaces the closed `tasks/` queue (001-026, all themes
-complete) as the source of truth for what the VM plan still owes the paper.
-Previously the project sanctioned exactly one Deegen technique — copy-and-patch
-baseline-JIT code generation (§7) — and explicitly excluded the rest of the
-paper's two-tier design. That boundary is now lifted: the plan aligns on the
-paper's full architecture, and the gap below is the new task backlog.
+This document is the source of truth for what the VM plan owes the paper.
+Status below is from a direct code audit (file:line evidence), not from doc
+comments or names alone — several existing names are misleading (see #8).
 
-## What the paper describes (full scope)
+**Deegen is a two-tier design.** Per §1: "Deegen currently automatically
+generates a VM with a state-of-the-art interpreter, a state-of-the-art
+baseline JIT, and the tier-switching logic that connects the two tiers." An
+optimizing JIT and deoptimization are both named explicitly as unimplemented
+future work in the paper itself. Complete alignment means the interpreter,
+the baseline JIT, tier-switching (tier-up + OSR-entry), and the paper's named
+optimizations below — not an optimizing JIT or deopt.
 
-1. **Single bytecode semantics source of truth** generating every tier
-   (interpreter, baseline JIT, optimizing JIT) from one declaration (§3, §5.1).
-2. **Baseline JIT via copy-and-patch** stencil code generation (§7).
-3. **Generic inline caches** with a λi (idempotent probe) / λe (effectful
-   apply) split, reused across interpreter and JIT tiers (§5.2).
-4. **Profiling and tier-up policy** — call-count/loop-count thresholds that
-   promote a function from interpreter to baseline JIT to optimizing JIT (§3).
-5. **Optimizing JIT tier** — a DFG-style IR built from collected type
-   feedback, doing real instruction selection, register allocation, and
-   speculative type-based optimization (§5.1, algorithm 𝒜 extended beyond
-   type-check elimination into full specialization).
-6. **OSR entry** — on-stack replacement so a hot loop already running in a
-   lower tier can jump into optimizing-JIT code mid-execution (§3).
-7. **Deoptimization protocol** — bailout from speculative optimizing-JIT code
-   back to the baseline tier/interpreter when a guarded assumption fails,
-   including correct frame/stack reconstruction (§3).
+## Audited status, mechanism by mechanism
 
-## What quench already has
+| # | Paper mechanism (section) | Status | Evidence |
+|---|---|---|---|
+| 1 | Single-source DSL generating interpreter+JIT+IC bodies (§2-3) | **Partial** | `vm_op!` (`ir.rs:48-262`) generates the opcode catalog, dispatch metadata, and stencil/IC *eligibility facts* — it does not generate handler bodies, stencil machine code, or IC logic; those are hand-written Rust. One fact source, not one source emitting all three artifacts' bodies (the paper's stronger claim). |
+| 2 | Call inline caching, dual monomorphic/polymorphic (§3) | **Present** | `quickening.rs` `GuardedCallHit`/`InstallCallGuard`, bounded-polymorphic call sites (`quickening.rs:400-404`) |
+| 3 | Generic IC λi/λe split (§4, §5.2) | **Partial** | `GenericIcDecision<S>`/`GenericInlineCache` implement the idempotent-probe half (`quickening.rs:32-62`). |
+| 3b | Slow-path outlining, `EnterSlowPath`-style CPS transfer, AOT-compiled non-inlined slow path (§4) | **Absent** | `Opcode::Slow` / `run_instruction_fallback` are ordinary fallback handlers, not a CPS "enter and never return" construct. |
+| 4 | Type-check elimination algorithm 𝒜 (§5.1) | **Present** | `stencil_fact.rs` `BoxingFact`/`RegionKey::from_facts` over `Certainty::Proven/Guarded` vectors; `docs/copy-and-patch-jit.md` names this explicitly as mirroring 𝒜. |
+| 5 | JIT-side λi/λe as self-modifying-code (SMC) IC stub chain (§7.1) | **Absent** | Repatch is hole-patching of pre-rendered bytes in a bounded arena (`stencil_patch.rs`), not an SMC stub chain that grows/branches at runtime. |
+| 6 | Tag register optimization (§5.3) | **Absent** | No pinned register holding a large boxing constant for small-offset field access; `tagged_value.rs` embeds NaN-tagging constants as immediates. No `tag_register`/`TAG_REG` anywhere in the crate. |
+| 7 | Register pinning for VM state across dispatch (§6.1) | **Absent** | `vm_dispatch.rs`/`vm_runtime.rs` pass `CodeView`/`RegisterFile`/`VmContext` as ordinary parameters; no fixed-register calling convention, register allocation left to rustc/LLVM. |
+| 8 | Bytecode quickening — literal opcode/instruction rewrite on IC hit (§6.2) | **Absent (misleading name)** | `quickening.rs` implements a side-table IC (item 3), not literal bytecode-stream mutation. No opcode/instruction write-back found anywhere in the file. The paper's quickening specifically replaces the instruction itself; this doesn't. |
+| 9 | Baseline JIT stencil granularity: one stencil per bytecode variant (§7) | **Diverges by design** | quench fuses multi-opcode **region** stencils instead (`docs/copy-and-patch-jit.md`: "this project's own extension beyond the paper"). Currently only a handful of hand-enumerated regions exist (Number Add+Return, one guarded property region, a two-region fallthrough — see `stencil_select.rs`), narrower in breadth than the paper's full per-bytecode coverage even though the fusion technique itself is a deliberate, documented extension. |
+| 10 | Polymorphic IC + IC inline slab in JIT (§7.1) | **Absent** | No SMC stub chain and no inline-slab-vs-outlined-stub distinction anywhere in `stencil_arena.rs`/`stencil_patch.rs`. |
+| 11 | Hot-cold code splitting by block-frequency analysis, fallthrough branch elimination (§7.2) | **Absent** | `CodeView::cold`/`cold_at` (`machine.rs:2006-2013`) is an unrelated compact-instruction operand-overflow side table, not frequency-based code splitting. `docs/copy-and-patch-jit.md` explicitly disclaims hotness-triggered mechanisms for the current tier. |
+| 12 | Tier-up via per-function retired-bytecode counting (§3) | **Present, committed and verified** | `TierState{invocations, retired, threshold:32}` (`machine.rs:1940-1961`), `enter_invocation()`/`retire_at()` (`machine.rs:2241-2340`) — counts bytecodes retired within the function, matching the paper's design exactly. Covered by the runtime library gates and the neutral-corpus run recorded for task 027. |
+| 13 | OSR-entry: branch into already-compiled JIT code at a back-edge (§7.1) | **Present; end-to-end audit pending** | `is_osr_candidate`/`is_osr_entry` (`machine.rs`) computes admission and the runtime dispatch path contains `maybe_osr_switch` (`vm_runtime.rs`). Task 028 adds the synthetic firing assertion and confirms the `ForI` exclusion. |
 
-| Paper component | Status | Evidence |
-|---|---|---|
-| Single-source bytecode semantics (`vm_op!`) | Done | tasks 003-006 (closed queue) |
-| Copy-and-patch baseline JIT | Done | `docs/copy-and-patch-jit.md`, `stencil_*.rs` |
-| Inline caches (quickening sites) | Done, partial paper fidelity | `quickening.rs`, tasks 013-016 (closed queue) — bounded polymorphic cache, not yet the paper's fully generic reusable λi/λe IC body shared *across* interpreter and JIT |
-| Callee-directed CPS dispatch | Done | task 026 (closed queue), prerequisite for tier-up/OSR entry points too |
+## Extra, beyond-paper: `ExecutionTier::Optimizing`
 
-## What's missing (the new backlog)
+`machine.rs` has a third promotion tier (`ExecutionTier::Optimizing`,
+`OptimizingPlan`) beyond the paper's two tiers. Its own doc comment: "a
+physical execution view, not a second semantic IR" — re-wraps the same
+baseline entries/stencil plans, x86_64-gated, no real instruction selection,
+register allocation, or speculation (so no deopt needed — it never
+speculates). **Decision: keep it**, verify it's a measured net win (task 030),
+document it as not the paper's (nonexistent) optimizing JIT.
 
-- **Profiling/tier-up policy.** No call-count or loop-count instrumentation,
-  no promotion decision from interpreter → baseline JIT → optimizing JIT.
-  Stencil rendering today is memoized-by-fact, not hotness-triggered — the
-  paper's tier-up is a different mechanism entirely and doesn't exist yet.
-- **Optimizing JIT tier.** No DFG-style IR, no real instruction selection or
-  register allocation, no speculative type specialization beyond the
-  region-stencil's build-time type-check elimination. This is the largest
-  gap.
-- **OSR entry.** No mechanism to transfer a live interpreter/baseline-JIT
-  frame into optimizing-JIT code mid-loop.
-- **Deoptimization protocol.** No bailout path from speculative code back to
-  a lower tier with reconstructed frame state. The stencil tier's `Repatch`/
-  `Retired` degrade path (task 024) is the closest existing analog but only
-  handles fact staleness, not mid-execution speculation failure.
-- **Fully generic IC bodies shared across tiers.** Current inline caches are
-  interpreter-side only; the paper reuses the same λi/λe IC across baseline
-  and optimizing JIT.
+## Summary: what's real work vs. what's misnamed vs. what's done
+
+- **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
+  counting (#12).
+- **Real gaps, worth closing**: slow-path outlining/EnterSlowPath (#3b), tag
+  register optimization (#6), register pinning (#7), true bytecode quickening
+  as instruction rewrite (#8), JIT-side SMC IC stub chain + inline slab
+  (#5/#10), hot-cold code splitting (#11), OSR-entry wiring verification
+  (#13), stencil region breadth (#9).
+- **Intentional, documented divergence, not a gap**: region-fused stencils
+  instead of one-per-bytecode (#9's fusion *technique* itself) — keep as is,
+  it's this project's own sanctioned extension.
 
 ## Sequencing
 
-Tier-up policy and OSR entry are prerequisites for the optimizing JIT tier
-(you cannot promote into code that doesn't exist, and you cannot deoptimize
-out of a tier that's never entered). Deopt is a prerequisite for admitting any
-*speculative* optimization in the optimizing tier — without it, the tier can
-only do what the existing build-time-proven region stencils already do, which
-would make it redundant. Recommended order: profiling/tier-up → OSR entry →
-deopt protocol → optimizing JIT IR (bring-up with deopt as the safety net from
-day one, not bolted on after).
+See `tasks/index.json` theme `deegen_full_jit` (027-037) for the ordered
+backlog closing these gaps.

@@ -86,9 +86,11 @@ These remain load-bearing for correctness even without a gate script:
    (see `docs/benchmark-integrity.md`).
 
 This tier's implementation breakdown (tasks 021-026) is closed; see git
-history for those task files. The remaining gap to the paper's full design —
-tier-up, OSR, deopt, and the optimizing JIT tier — is tracked in
-`docs/deegen-alignment.md` and `tasks/index.json` (tasks 027-031).
+history for those task files. Deegen's own scope is two tiers (interpreter +
+this baseline JIT) plus tier-switching — no optimizing JIT, no deopt; see
+`docs/deegen-alignment.md`. Committing/verifying tier-up and OSR-entry and
+closing any remaining named-technique gaps is tracked in `tasks/index.json`
+(tasks 027-031).
 
 ## Current implementation evidence
 
