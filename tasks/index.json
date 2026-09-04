@@ -45,9 +45,13 @@
             "070: 300-second ARM64 release rebaseline completed all eight v8-v7 fixtures with output_equal:true; Crypto/EarleyBoyer/RegExp are finite but extremely slow (215.17s/66.55s/225.18s), and RegExp's 1.59GiB peak RSS is now an explicit memory finding rather than a timeout unknown",
             "055: allocation-throughput survey completed on Splay, RayTrace, and EarleyBoyer with execution-trace allocation/lifecycle counts and native samples; allocation events were 7.3%, 10.7%, and 3.2% of handler events while slow lanes were dispatch/trace/call dominated, so no bounded allocation site or Rc-model change was justified"
             ,"062: architecture invariant suite covers object/shape/call/enumeration/dispatch scaling; all five task invariants pass in both feature configurations and each ratio gate was validated against a temporary representative regression before restoration"
+            ,"063: array/Map/Set invariants pass in both feature configurations; packed access, cross-instance collection access, and mutation-history iteration each rejected deliberate scaling regressions before restoration"
+            ,"064: string append/search/comparison invariants pass in both feature configurations; each rejected a deliberate superlinear or unrelated-state regression before restoration"
+            ,"065: closure creation, recursive frame, and argument marshaling invariants pass in both feature configurations; all three rejected deliberate history/depth/catalog scans before restoration"
+            ,"066: allocation and drop invariants pass in both feature configurations; both rejected deliberate live-heap scans before restoration, with arena-specific coverage deferred until task 059"
         ],
         "remaining_slices": [
-            "048", "049", "054", "059", "060", "063", "064", "065", "066", "067", "073"
+            "048", "049", "054", "059", "060", "067", "073"
         ]
     },
     "themes": {
