@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use base64::Engine;
+use aes_gcm::{aead::{Aead, Payload}, Aes128Gcm, Aes256Gcm, KeyInit, Nonce};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
@@ -782,7 +783,9 @@ pub fn verify(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let algorithm = args.first().unwrap_or(&Value::Undefined);
     let key = args.get(1).unwrap_or(&Value::Undefined);
     let signature = args.get(2).and_then(bytes).unwrap_or_default();
@@ -838,8 +841,30 @@ pub fn encrypt(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let data = args.get(2).and_then(bytes).unwrap_or_default();
+    let algorithm = args.first().and_then(aes_gcm_algorithm);
+    let key = args.get(1).and_then(|value| {
+        let (Value::Object(_) | Value::ObjectAlias(_)) = value else { return None };
+        bytes(&execute::get_property(value, KEY_DATA_PROP))
+    });
+    if let (Some((iv, aad)), Some(key)) = (algorithm, key) {
+        let result = match key.len() {
+            16 => Aes128Gcm::new_from_slice(&key)
+                .expect("validated AES-128 key length")
+                .encrypt(Nonce::from_slice(&iv), Payload { msg: &data, aad: &aad }),
+            32 => Aes256Gcm::new_from_slice(&key)
+                .expect("validated AES-256 key length")
+                .encrypt(Nonce::from_slice(&iv), Payload { msg: &data, aad: &aad }),
+            _ => return Ok(settled(Ok(array_buffer(&data)))),
+        };
+        return Ok(settled(result.map_or_else(
+            |_| Err(operation_error("Encryption failed")),
+            |bytes| Ok(array_buffer(&bytes)),
+        )));
+    }
     Ok(settled(Ok(array_buffer(&data))))
 }
 
@@ -848,7 +873,9 @@ pub fn decrypt(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let algorithm = args
         .first()
         .and_then(|value| Some(execute::to_js_string(&execute::get_property(value, "name")).ok()?))
