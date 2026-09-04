@@ -90,3 +90,9 @@ handlers and traces:
 The only correctness-sensitive check in this survey is the packed/holey array
 pair above. All other categories remain complete ordinary semantics with no
 new speculative or representation-specific fast path.
+
+Task 043's stencil-local tag-register audit found no eligible region: all
+040/041 bridges are pointer-only dispatch stencils, while the existing numeric
+and property leaves either use unboxed doubles or load an already-tagged word.
+No scratch-register materialization was added because there is no repeated
+boxing constant to amortize.
