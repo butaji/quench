@@ -190,7 +190,15 @@ reverted. A second source-level regression in the transition path was also
 introduced with a bounded O(N) scan; it produced a 20.80x ratio and failed
 the transition bound before being reverted. These checks validate that the
 suite's ratio bounds are sensitive to the claimed failure class rather than
-being unconditional timing smoke tests.
+being unconditional timing smoke tests. The historical-callee test was also
+fault-injected with a proportional per-callee scan (20.72x, failing its <16x
+bound), and the mutation-history enumeration test with a proportional history
+scan (28.09x, failing its <16x bound); both hooks were reverted. The
+program-length dispatch claim was fault-injected in the real dispatch loop:
+a temporary O(N) scan produced a 4.49x ratio, and tightening that test's
+temporary bound to <4x caught it. Both the bound and hook were then restored.
+This validates all five task-062 ratio gates against representative
+complexity regressions.
 
 The enumeration invariant now also includes a live-key scaling companion,
 `enumeration_scales_linearly_with_live_key_count` (20 versus 200 live keys,
