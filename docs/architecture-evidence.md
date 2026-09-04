@@ -843,3 +843,16 @@ stencil execution remains opt-in pending task 068. The required anti-cheat
 grep was run for this cycle; matches are generic semantic names such as the
 `RegExp` builtin and no production path detects fixture identity, source file,
 or benchmark-specific input.
+
+## Task 068 recheck after LOOP_BODY coverage
+
+Enabling `QUENCH_ENABLE_AARCH64_STENCILS=1` was re-tested after task 048's
+seven-op region was added. The unchanged fallback/default run scored 285.389
+on the neutral 100-case corpus (speed 222.199, memory 366.549); native ARM64
+enabled scored 236.048 (speed 152.400, memory 365.609), with 100/100 outputs in
+both runs. Curriculum cases 017-019 likewise remained correct but fell from
+the fallback profile (speed 227.1, memory 378.4) to native-enabled speed 116.9
+and memory 376.0. The regression is therefore not explained by missing region
+coverage; the current native call boundary and per-entry executable transfer
+still cost more than the canonical Rust path. The ARM64 default remains off,
+and no unsafe ABI shim was introduced.
