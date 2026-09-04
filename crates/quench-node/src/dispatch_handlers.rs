@@ -599,13 +599,21 @@ pub fn util_inspect(
             )
         }));
     }
-    if let (Value::Object(_), Some(options)) = (&arg, args.get(1)) {
+    if let (Value::Object(_) | Value::ObjectAlias(_), Some(options)) = (&arg, args.get(1)) {
         let depth = execute::get_property(options, "depth");
         let tag = execute::get_property(&arg, "Symbol.toStringTag");
         if matches!(depth, Value::Number(value) if value < 0.0)
             && matches!(tag, Value::String(ref value) if value == "Event" || value == "CustomEvent")
         {
             return Ok(tag);
+        }
+        if matches!(depth, Value::Number(value) if value < 0.0)
+            && matches!(
+                execute::get_property(&arg, "\0quench:broadcast-channel"),
+                Value::Boolean(true)
+            )
+        {
+            return Ok(Value::String("BroadcastChannel".into()));
         }
     }
     let depth = args
