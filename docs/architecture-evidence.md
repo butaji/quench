@@ -192,6 +192,15 @@ the transition bound before being reverted. These checks validate that the
 suite's ratio bounds are sensitive to the claimed failure class rather than
 being unconditional timing smoke tests.
 
+The enumeration invariant now also includes a live-key scaling companion,
+`enumeration_scales_linearly_with_live_key_count` (20 versus 200 live keys,
+with a 32x bound for ARM64 debug noise). A fresh no-trace run measured 19.71x
+per-enumeration cost and passed. As a deliberate regression check, temporarily
+removing the canonical-layout membership fast path caused the same test to
+run beyond 60 seconds (the old per-key key-vector rebuild), catching the
+historical quadratic failure class; the fast path was restored immediately.
+The existing history-only probe remains the mutation-history regression check.
+
 Task 063 extends the module with three collection invariants. Fresh ARM64
 debug runs measured 1.53x (packed-array index-0 access at lengths 10 versus
 100,000), 0.92x (Map/Set access across 10 versus 1,000 unrelated instances),
