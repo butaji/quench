@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::rc::Rc;
 use std::str::FromStr;
 
@@ -25,20 +25,15 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    complete_lookup, connect, connect_existing, connect_path, create_server, server_address,
-    server_close, server_close_idle, server_listen, server_ref, server_unref, socket_abort,
-    bound_socket_address, bound_socket_close, bound_socket_construct, bound_socket_fd, pipe_bind,
-    pipe_construct, socket_address, socket_construct, socket_destroy, socket_end,
-    socket_pause, socket_ref,
-    socket_reset_and_destroy,
-    socket_onread,
-    register_fd_stream,
+    bound_socket_address, bound_socket_close, bound_socket_construct, bound_socket_fd,
+    complete_lookup, connect, connect_existing, connect_path, create_server, pipe_bind,
+    pipe_construct, register_fd_stream, server_address, server_close, server_close_idle,
+    server_get_connections, server_listen, server_listen2, server_ref, server_unref, socket_abort,
+    socket_address, socket_construct, socket_destroy, socket_end, socket_get_type_of_service,
+    socket_handle_close, socket_onread, socket_pause, socket_ref, socket_reset_and_destroy,
     socket_resume, socket_set_encoding, socket_set_keep_alive, socket_set_no_delay,
-    socket_set_type_of_service, socket_get_type_of_service, socket_handle_close,
-    socket_set_timeout, socket_timeout_fire, socket_unref, socket_write,
-    server_get_connections,
-    tcp_bind, tcp_construct,
-    server_listen2,
+    socket_set_timeout, socket_set_type_of_service, socket_timeout_fire, socket_unref,
+    socket_write, tcp_bind, tcp_construct,
 };
 pub use pump::{finalize, poll};
 
@@ -155,6 +150,9 @@ pub struct NetState {
     pub next_pipe_fd: i64,
     pub async_streams: HashMap<u64, NetAsyncStream>,
     pub socket_prototype: Option<Value>,
+    /// Bootstrap PerformanceObserver bridge captured while a VM context is
+    /// active; the event-loop pump may run outside that context.
+    pub performance_record: Option<Value>,
 }
 
 /// Buffered values and pending consumers for one server/socket iterator.
@@ -200,6 +198,7 @@ impl NetState {
             next_pipe_fd: 100,
             async_streams: HashMap::new(),
             socket_prototype: None,
+            performance_record: None,
         }
     }
 }
@@ -421,7 +420,10 @@ fn server_props() -> Vec<(&'static str, Value)> {
         ),
         ("unref", cap(crate::registry::SPEC_NET_SERVER_UNREF)),
         ("ref", cap(crate::registry::SPEC_NET_SERVER_REF)),
-        ("Symbol.asyncIterator", cap(crate::registry::SPEC_NET_ASYNC_ITERATOR)),
+        (
+            "Symbol.asyncIterator",
+            cap(crate::registry::SPEC_NET_ASYNC_ITERATOR),
+        ),
     ]
 }
 
@@ -523,7 +525,10 @@ fn socket_props() -> Vec<(&'static str, Value)> {
             "uncork",
             Value::Builtin(quench_runtime::ops::Builtin::Object),
         ),
-        ("Symbol.asyncIterator", cap(crate::registry::SPEC_NET_ASYNC_ITERATOR)),
+        (
+            "Symbol.asyncIterator",
+            cap(crate::registry::SPEC_NET_ASYNC_ITERATOR),
+        ),
     ]
 }
 
@@ -611,11 +616,7 @@ pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
 }
 
 /// Move a transferred net handle into the logical process that received it.
-pub(crate) fn transfer_handle_scope(
-    state: &Rc<RefCell<HostState>>,
-    receiver: &Value,
-    scope: u64,
-) {
+pub(crate) fn transfer_handle_scope(state: &Rc<RefCell<HostState>>, receiver: &Value, scope: u64) {
     let Some(id) = net_id(receiver) else {
         return;
     };
@@ -662,10 +663,7 @@ pub fn async_iterator(
     ]);
     install_methods(
         iterator,
-        vec![(
-            ASYNC_ITER_TARGET_PROP.to_string(),
-            Value::Number(id as f64),
-        )],
+        vec![(ASYNC_ITER_TARGET_PROP.to_string(), Value::Number(id as f64))],
     )
 }
 
@@ -677,9 +675,8 @@ pub fn async_iterator_next(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let id = async_target(receiver).ok_or_else(|| execute::type_error("not a net iterator"))?;
-    let promise = quench_runtime::value::PromiseData::allocate(
-        quench_runtime::value::PromiseState::Pending,
-    );
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     let outcome = {
         let mut host = state.borrow_mut();
         let stream = host
@@ -709,9 +706,8 @@ pub fn async_iterator_return(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let promise = quench_runtime::value::PromiseData::allocate(
-        quench_runtime::value::PromiseState::Pending,
-    );
+    let promise =
+        quench_runtime::value::PromiseData::allocate(quench_runtime::value::PromiseState::Pending);
     quench_runtime::resolve_promise(&promise, iterator_result(Value::Undefined, true));
     Ok(Value::Promise(promise))
 }
@@ -882,14 +878,23 @@ pub(crate) fn emit(
 ) -> Result<(), VmError> {
     let global = quench_runtime::vm::current_global_object();
     let previous_resource = execute::get_property(&global, "__nodeCurrentAsyncResource");
-    let resource = [
+    let resource_keys = [
         crate::modules::http_client::CLIENT_ASYNC_RESOURCE_PROP,
         crate::modules::http_client::RES_ASYNC_RESOURCE_PROP,
         crate::modules::http::REQ_ASYNC_RESOURCE_PROP,
-    ]
-    .into_iter()
-    .map(|key| execute::get_property(receiver, key))
-    .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));
+    ];
+    let resource = resource_keys
+        .iter()
+        .map(|key| execute::get_property(receiver, key))
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .or_else(|| {
+            args.iter().find_map(|value| {
+                resource_keys
+                    .iter()
+                    .map(|key| execute::get_property(value, key))
+                    .find(|resource| matches!(resource, Value::Object(_) | Value::ObjectAlias(_)))
+            })
+        });
     if let Some(resource) = resource.as_ref() {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
@@ -918,6 +923,36 @@ pub(crate) fn emit(
             listeners
         })
         .unwrap_or_default();
+    let mut args = args;
+    if let Some(id) = net_id(receiver) {
+        if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+            let source = socket.borrow().js.clone();
+            for key in [
+                "getProtocol",
+                "getCipher",
+                "getPeerCertificate",
+                "getSession",
+            ] {
+                let value = execute::get_property(&source, key);
+                if quench_runtime::is_callable(&value) {
+                    execute::set_property_in_place(receiver, key, value);
+                }
+            }
+        }
+    }
+    for value in &mut args {
+        if let Some(id) = net_id(value) {
+            if let Some(socket) = state.borrow().net.sockets.get(&id).cloned() {
+                let alpn = execute::get_property(
+                    &socket.borrow().js,
+                    crate::modules::tls::TLS_NEGOTIATED_ALPN_PROP,
+                );
+                if !matches!(alpn, Value::Undefined) {
+                    execute::set_property_in_place(value, "alpnProtocol", alpn);
+                }
+            }
+        }
+    }
     let result = if listeners.is_empty() {
         if event == "error" {
             Err(unhandled_error(args.first()))
@@ -930,9 +965,11 @@ pub(crate) fn emit(
             if listener.once {
                 if let Some(id) = id {
                     if let Some(emitter) = state.borrow().emitters.get(id) {
-                        emitter
-                            .borrow_mut()
-                            .remove_for_scope(event, &listener.callback, process_scope);
+                        emitter.borrow_mut().remove_for_scope(
+                            event,
+                            &listener.callback,
+                            process_scope,
+                        );
                     }
                 }
             }
@@ -1025,6 +1062,42 @@ pub fn is_ipv6(args: &[Value]) -> bool {
     parse_ipv6(&s).is_some()
 }
 
+/// Node's internal/net predicate accepts host spellings used by connection
+/// options, including bracketed IPv6 literals and the localhost alias.
+pub fn is_loopback(args: &[Value]) -> bool {
+    let value = args.first().map(value_to_string).unwrap_or_default();
+    if value == "localhost" {
+        return true;
+    }
+    if let Ok(address) = value.parse::<std::net::Ipv4Addr>() {
+        return address.octets()[0] == 127;
+    }
+    let literal = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(&value);
+    literal
+        .parse::<std::net::Ipv6Addr>()
+        .is_ok_and(|address| address.is_loopback())
+}
+
+pub fn internal_module() -> Value {
+    let global = quench_runtime::vm::current_global_object();
+    let normalized = execute::get_property(&global, "__quenchNetNormalizedArgsSymbol");
+    let normalized = if matches!(normalized, Value::Undefined) {
+        Value::String("Symbol(normalizedArgs)\0quench".into())
+    } else {
+        normalized
+    };
+    crate::host::namespace_object_from_pairs(vec![
+        (
+            "isLoopback".into(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_NET_IS_LOOPBACK),
+        ),
+        ("normalizedArgsSymbol".into(), normalized),
+    ])
+}
+
 fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
     let (address, zone) = value
         .split_once('%')
@@ -1045,21 +1118,53 @@ pub fn build() -> Value {
 }
 
 pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
-    let socket_prototype = host_api::object(Vec::new());
+    let mut socket_prototype = host_api::object(Vec::new());
     let global = quench_runtime::vm::current_global_object();
     let require = execute::get_property(&global, "require");
     if quench_runtime::is_callable(&require) {
-        if let Ok(stream) = execute::call(&require, &Value::Undefined, &[Value::String("stream".into())]) {
+        if let Ok(stream) = execute::call(
+            &require,
+            &Value::Undefined,
+            &[Value::String("stream".into())],
+        ) {
             let duplex = execute::get_property(&stream, "Duplex");
             let prototype = execute::get_property(&duplex, "prototype");
-            let pipe = execute::get_property(&prototype, "pipe");
-            if quench_runtime::is_callable(&pipe) {
-                execute::set_property_in_place(&socket_prototype, "pipe", pipe);
+            for name in ["pipe", "unpipe"] {
+                let method = execute::get_property(&prototype, name);
+                if quench_runtime::is_callable(&method) {
+                    execute::set_property_in_place(&socket_prototype, name, method);
+                }
             }
         }
     }
+    socket_prototype = execute::define_property(
+        socket_prototype,
+        "alpnProtocol",
+        host_api::object(vec![(
+            "get".into(),
+            crate::host::capability(crate::registry::SPEC_TLS_SOCKET_GET_ALPN),
+        )]),
+    )
+    .unwrap_or_else(|_| host_api::object(Vec::new()));
+    for (name, method) in [
+        (
+            "getProtocol",
+            crate::host::capability(crate::registry::SPEC_TLS_SOCKET_GET_PROTOCOL),
+        ),
+        (
+            "getCipher",
+            crate::host::capability(crate::registry::SPEC_TLS_SOCKET_GET_CIPHER),
+        ),
+    ] {
+        execute::set_property_in_place(&socket_prototype, name, method);
+    }
     if let Some(state) = state {
-        state.borrow_mut().net.socket_prototype = Some(socket_prototype.clone());
+        let mut host = state.borrow_mut();
+        host.net.socket_prototype = Some(socket_prototype.clone());
+        let record = execute::get_property(&global, "__nodePerformanceRecord");
+        if quench_runtime::is_callable(&record) {
+            host.net.performance_record = Some(record);
+        }
     }
     execute::set_property_in_place(
         &global,
@@ -1081,6 +1186,32 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
         "prototype",
         host_api::object(vec![("isPipe".into(), Value::Boolean(false))]),
     );
+    let block_list = crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST);
+    let _ = execute::set_property(
+        block_list.clone(),
+        "isBlockList",
+        crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_IS),
+    );
+    let private_ranges = host_api::array(
+        [
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
+            "169.254.0.0/16", "::1/128", "fe80::/10", "fc00::/7",
+        ]
+        .into_iter()
+        .map(|value| Value::String(value.into()))
+        .collect(),
+    );
+    let private_ranges = {
+        let object = execute::get_property(&global, "Object");
+        let freeze = execute::get_property(&object, "freeze");
+        execute::call(&freeze, &Value::Undefined, &[private_ranges.clone()])
+            .unwrap_or(private_ranges)
+    };
+    let _ = execute::set_property(
+        block_list.clone(),
+        "PRIVATE_RANGES",
+        private_ranges,
+    );
     crate::host::namespace_object(vec![
         (
             "connect",
@@ -1100,7 +1231,11 @@ pub fn build_with_state(state: Option<&Rc<RefCell<HostState>>>) -> Value {
         ("BoundSocket", bound_socket_ctor),
         (
             "BlockList",
-            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST),
+            block_list,
+        ),
+        (
+            "SocketAddress",
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET_ADDRESS_CONSTRUCT),
         ),
         (
             "isIP",
@@ -1138,11 +1273,13 @@ pub fn block_list_construct(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(host_api::object(vec![
+    let object = host_api::object(vec![
         (
             "\0quench:blocklist:addresses".into(),
             host_api::array(Vec::new()),
         ),
+        ("\0quench:blocklist:ranges".into(), host_api::array(Vec::new())),
+        ("\0quench:blocklist:subnets".into(), host_api::array(Vec::new())),
         (
             "addSubnet".into(),
             crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_SUBNET),
@@ -1152,10 +1289,45 @@ pub fn block_list_construct(
             crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_ADDRESS),
         ),
         (
+            "addRange".into(),
+            crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_RANGE),
+        ),
+        (
             "check".into(),
             crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_CHECK),
         ),
-    ]))
+        ("clear".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_CLEAR)),
+        ("addAddresses".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_ADDRESSES)),
+        ("addCIDR".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_CIDR)),
+        ("addCIDRs".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_ADD_CIDRS)),
+        ("removeAddress".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_REMOVE_ADDRESS)),
+        ("removeRange".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_REMOVE_RANGE)),
+        ("removeSubnet".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_REMOVE_SUBNET)),
+        ("removeCIDR".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_REMOVE_CIDR)),
+        ("toJSON".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_TO_JSON)),
+        ("fromJSON".into(), crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_FROM_JSON)),
+        ("\0quench:blocklist:marker".into(), Value::Boolean(true)),
+        ("\0original_constructor_name".into(), Value::String("BlockList".into())),
+        ("Symbol.toStringTag".into(), Value::String("BlockList".into())),
+        (
+            "rules".into(),
+            host_api::array(Vec::new()),
+        ),
+        ("size".into(), Value::Number(0.0)),
+    ]);
+    execute::define_property(
+        object,
+        "Symbol.for.nodejs.util.inspect.custom\0",
+        host_api::object(vec![
+            (
+                "value".into(),
+                crate::host::capability(crate::registry::SPEC_NET_BLOCK_LIST_INSPECT),
+            ),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )
 }
 
 pub fn block_list_add_address(
@@ -1166,20 +1338,67 @@ pub fn block_list_add_address(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    let list = execute::get_property(receiver, "\0quench:blocklist:addresses");
-    let mut values = match list {
-        Value::Array(array) => (0..array.logical_len())
-            .map(|i| array.index_value(i))
-            .collect(),
-        _ => Vec::new(),
+    let (address, object_family) = blocklist_address_arg(args.first())?;
+    let requested = blocklist_family(args.get(1))?.or(object_family);
+    let explicit = args.get(1).is_some_and(|value| !matches!(value, Value::Undefined)) || object_family.is_some();
+    let ip = parse_blocklist_ip(&address)?;
+    let family = blocklist_family_name(requested, ip);
+    if requested.is_some_and(|family| family != blocklist_ip_family(ip)) {
+        return Err(blocklist_error(
+            "TypeError",
+            "ERR_INVALID_ARG_VALUE",
+            "The address does not match the requested IP family",
+        ));
+    }
+    if blocklist_entries(receiver, "\0quench:blocklist:addresses")
+        .iter()
+        .any(|entry| execute::get_property(entry, "address") == Value::String(address.clone()))
+    {
+        return Ok(Value::Undefined);
+    }
+    let entry = host_api::object(vec![
+        ("address".into(), Value::String(address.clone())),
+        ("family".into(), Value::String(family.into())),
+        ("explicit".into(), Value::Boolean(explicit)),
+    ]);
+    append_blocklist_entry(receiver, "\0quench:blocklist:addresses", entry);
+    append_blocklist_rule(receiver, format!("Address: {} {address}", blocklist_family_label(family)));
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_add_range(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation"));
     };
-    values.push(Value::String(
-        args.first().map(value_to_string).unwrap_or_default(),
-    ));
-    execute::set_property_in_place(
+    let (start, start_family) = blocklist_address_arg(args.first())?;
+    let (end, end_family) = blocklist_address_arg(args.get(1))?;
+    let requested = blocklist_family(args.get(2))?.or(start_family).or(end_family);
+    let start_ip = parse_blocklist_ip(&start)?;
+    let end_ip = parse_blocklist_ip(&end)?;
+    let family = blocklist_family_name(requested, start_ip);
+    if blocklist_ip_family(start_ip) != blocklist_ip_family(end_ip)
+        || requested.is_some_and(|value| value != blocklist_ip_family(start_ip))
+        || blocklist_ip_value(start_ip) > blocklist_ip_value(end_ip)
+    {
+        return Err(blocklist_error(
+            "TypeError",
+            "ERR_INVALID_ARG_VALUE",
+            "The value of \"start\" must be lower than \"end\"",
+        ));
+    }
+    let entry = host_api::object(vec![
+        ("start".into(), Value::String(start.clone())),
+        ("end".into(), Value::String(end.clone())),
+        ("family".into(), Value::String(family.into())),
+    ]);
+    append_blocklist_entry(receiver, "\0quench:blocklist:ranges", entry);
+    append_blocklist_rule(
         receiver,
-        "\0quench:blocklist:addresses",
-        host_api::array(values),
+        format!("Range: {} {start}-{end}", blocklist_family_label(family)),
     );
     Ok(Value::Undefined)
 }
@@ -1189,18 +1408,39 @@ pub fn block_list_check(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let address = args.first().map(value_to_string).unwrap_or_default();
-    let blocked = receiver
-        .and_then(
-            |value| match execute::get_property(value, "\0quench:blocklist:addresses") {
-                Value::Array(array) => Some(
-                    (0..array.logical_len())
-                        .any(|i| value_to_string(&array.index_value(i)) == address),
-                ),
+    let Some(receiver) = receiver else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation"));
+    };
+    let (address, object_family) = blocklist_address_arg(args.first())?;
+    let requested = blocklist_family(args.get(1))?.or(object_family);
+    let ip = match parse_blocklist_ip(&address) {
+        Ok(ip) => ip,
+        Err(_) => return Ok(Value::Boolean(false)),
+    };
+    let family = requested.unwrap_or_else(|| blocklist_ip_family(ip));
+    let blocked = blocklist_entries(receiver, "\0quench:blocklist:addresses")
+        .iter()
+        .any(|entry| {
+            let candidate = execute::get_property(entry, "address");
+            let candidate = match candidate {
+                Value::String(value) => parse_blocklist_ip(&value).ok(),
                 _ => None,
-            },
-        )
-        .unwrap_or(false);
+            };
+            let candidate_explicit = matches!(execute::get_property(entry, "explicit"), Value::Boolean(true));
+            if requested.is_none()
+                && candidate_explicit
+                && matches!(candidate, Some(IpAddr::V6(value)) if value.to_ipv4_mapped().is_none())
+            {
+                return false;
+            }
+            candidate.is_some_and(|candidate| blocklist_match_ip(ip, family, candidate))
+        })
+        || blocklist_entries(receiver, "\0quench:blocklist:ranges")
+            .iter()
+            .any(|entry| blocklist_match_range(entry, ip, family))
+        || blocklist_entries(receiver, "\0quench:blocklist:subnets")
+            .iter()
+            .any(|entry| blocklist_match_subnet(entry, ip, family));
     Ok(Value::Boolean(blocked))
 }
 
@@ -1209,14 +1449,444 @@ pub fn block_list_add_subnet(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(prefix) = args.get(1) else {
-        return Err(execute::type_error("prefix must be a number"));
+    let Some(receiver) = _receiver else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation"));
     };
-    if !matches!(prefix, Value::Number(value) if value.is_finite() && *value >= 0.0) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("RangeError".into())),
-            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-        ])));
+    let (network, object_family) = blocklist_address_arg(args.first())?;
+    let Some(Value::Number(prefix)) = args.get(1) else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "prefix must be a number"));
+    };
+    let requested = blocklist_family(args.get(2))?.or(object_family);
+    let ip = parse_blocklist_ip(&network)?;
+    let family = requested.unwrap_or_else(|| blocklist_ip_family(ip));
+    let max = if family == "ipv4" { 32.0 } else { 128.0 };
+    if !prefix.is_finite() || prefix.fract() != 0.0 || *prefix < 0.0 || *prefix > max {
+        return Err(blocklist_error("RangeError", "ERR_OUT_OF_RANGE", "prefix is out of range"));
+    }
+    if requested.is_some_and(|value| value != blocklist_ip_family(ip)) {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid IP family"));
+    }
+    let entry = host_api::object(vec![
+        ("network".into(), Value::String(network.clone())),
+        ("prefix".into(), Value::Number(*prefix)),
+        ("family".into(), Value::String(family.into())),
+    ]);
+    append_blocklist_entry(receiver, "\0quench:blocklist:subnets", entry);
+    append_blocklist_rule(
+        receiver,
+        format!("Subnet: {} {network}/{prefix}", blocklist_family_label(family)),
+    );
+    Ok(Value::Undefined)
+}
+
+pub fn socket_address_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "options must be an object"));
+    }
+    let address = execute::get_property(&options, "address");
+    let address = match address {
+        Value::String(value) => value,
+        _ => String::new(),
+    };
+    let family = execute::get_property(&options, "family");
+    if !address.is_empty() && address.parse::<IpAddr>().is_err() {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ADDRESS", "Invalid socket address"));
+    }
+    if !matches!(family, Value::Undefined | Value::String(_)) {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "family must be a string"));
+    }
+    if let Value::String(value) = &family {
+        if !value.eq_ignore_ascii_case("ipv4") && !value.eq_ignore_ascii_case("ipv6") {
+            return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid IP family"));
+        }
+    }
+    Ok(host_api::object(vec![
+        ("address".into(), Value::String(address)),
+        ("family".into(), family),
+        ("flowlabel".into(), execute::get_property(&options, "flowlabel")),
+        ("port".into(), execute::get_property(&options, "port")),
+        ("Symbol.toStringTag".into(), Value::String("SocketAddress".into())),
+    ]))
+}
+
+pub fn block_list_clear(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else { return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation")); };
+    for key in ["\0quench:blocklist:addresses", "\0quench:blocklist:ranges", "\0quench:blocklist:subnets", "rules"] {
+        let _ = execute::set_property_in_place(receiver, key, host_api::array(Vec::new()));
+    }
+    let _ = execute::set_property_in_place(receiver, "size", Value::Number(0.0));
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_add_addresses(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Array(array)) = args.first() else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "addresses must be an array"));
+    };
+    let family = blocklist_family(args.get(1))?;
+    let values: Vec<Value> = (0..array.logical_len()).map(|index| array.index_value(index)).collect();
+    for value in &values {
+        let (address, object_family) = blocklist_address_arg(Some(value))?;
+        let requested = family.or(object_family);
+        let ip = parse_blocklist_ip(&address)?;
+        if requested.is_some_and(|value| value != blocklist_ip_family(ip)) {
+            return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid IP family"));
+        }
+    }
+    for value in values {
+        let mut one = vec![value];
+        if let Some(family) = family { one.push(Value::String(family.into())); }
+        block_list_add_address(_state, receiver, &one)?;
     }
     Ok(Value::Undefined)
+}
+
+pub fn block_list_add_cidr(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(value)) = args.first() else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "CIDR must be a string"));
+    };
+    let Some((address, prefix)) = value.rsplit_once('/') else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid CIDR"));
+    };
+    let prefix = prefix.parse::<f64>().map_err(|_| blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid CIDR"))?;
+    let values = [Value::String(address.into()), Value::Number(prefix)];
+    block_list_add_subnet(_state, receiver, &values)
+}
+
+pub fn block_list_add_cidrs(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Array(array)) = args.first() else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "CIDRs must be an array"));
+    };
+    let values: Vec<Value> = (0..array.logical_len()).map(|index| array.index_value(index)).collect();
+    for value in &values { if !matches!(value, Value::String(_)) { return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "CIDR must be a string")); } }
+    for value in &values {
+        let Value::String(value) = value else { unreachable!() };
+        if !value.contains('/') { return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid CIDR")); }
+    }
+    for value in values { block_list_add_cidr(_state, receiver, &[value])?; }
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_remove_address(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else { return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation")); };
+    let (address, object_family) = blocklist_address_arg(args.first())?;
+    let requested = blocklist_family(args.get(1))?.or(object_family);
+    let ip = parse_blocklist_ip(&address)?;
+    let mut values = blocklist_entries(receiver, "\0quench:blocklist:addresses");
+    values.retain(|entry| {
+        let Value::String(value) = execute::get_property(entry, "address") else { return true; };
+        let Ok(candidate) = parse_blocklist_ip(&value) else { return true; };
+        !blocklist_match_ip(ip, requested.unwrap_or(blocklist_ip_family(ip)), candidate)
+    });
+    let _ = execute::set_property_in_place(receiver, "\0quench:blocklist:addresses", host_api::array(values));
+    rebuild_blocklist_rules(receiver);
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_remove_range(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else { return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation")); };
+    let (start, start_family) = blocklist_address_arg(args.first())?;
+    let (end, end_family) = blocklist_address_arg(args.get(1))?;
+    let requested = blocklist_family(args.get(2))?.or(start_family).or(end_family);
+    let (Ok(start), Ok(end)) = (parse_blocklist_ip(&start), parse_blocklist_ip(&end)) else { return Ok(Value::Undefined); };
+    let mut values = blocklist_entries(receiver, "\0quench:blocklist:ranges");
+    values.retain(|entry| {
+        let (Value::String(a), Value::String(b)) = (execute::get_property(entry, "start"), execute::get_property(entry, "end")) else { return true; };
+        let Ok(a) = parse_blocklist_ip(&a) else { return true; }; let Ok(b) = parse_blocklist_ip(&b) else { return true; };
+        !(a == start && b == end && requested.is_none_or(|family| family == blocklist_ip_family(a)))
+    });
+    let _ = execute::set_property_in_place(receiver, "\0quench:blocklist:ranges", host_api::array(values));
+    rebuild_blocklist_rules(receiver);
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_remove_subnet(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else { return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation")); };
+    let (network, object_family) = blocklist_address_arg(args.first())?;
+    let Some(Value::Number(prefix)) = args.get(1) else { return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "prefix must be a number")); };
+    let requested = blocklist_family(args.get(2))?.or(object_family);
+    let mut values = blocklist_entries(receiver, "\0quench:blocklist:subnets");
+    values.retain(|entry| {
+        execute::get_property(entry, "network") != Value::String(network.clone())
+            || execute::get_property(entry, "prefix") != Value::Number(*prefix)
+            || requested.is_some_and(|family| execute::get_property(entry, "family") != Value::String(family.into()))
+    });
+    let _ = execute::set_property_in_place(receiver, "\0quench:blocklist:subnets", host_api::array(values));
+    rebuild_blocklist_rules(receiver);
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_remove_cidr(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(value)) = args.first() else { return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "CIDR must be a string")); };
+    let Some((address, prefix)) = value.rsplit_once('/') else { return Ok(Value::Undefined); };
+    let prefix = prefix.parse::<f64>().unwrap_or(-1.0);
+    block_list_remove_subnet(_state, receiver, &[Value::String(address.into()), Value::Number(prefix)])
+}
+
+pub fn block_list_to_json(
+    _state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else { return Err(blocklist_error("TypeError", "ERR_INVALID_THIS", "Illegal invocation")); };
+    Ok(host_api::array(blocklist_entries(receiver, "rules")))
+}
+
+pub fn block_list_from_json(
+    state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().ok_or_else(|| blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "rules must be an array"))?;
+    let value = match value {
+        Value::String(text) => quench_runtime::parse_json(text).map_err(|_| blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "invalid JSON"))?,
+        other => other.clone(),
+    };
+    let Value::Array(array) = value else { return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "rules must be an array")); };
+    let mut rules = Vec::new();
+    for index in 0..array.logical_len() {
+        let entry = array.index_value(index);
+        if execute::is_symbol(&entry) {
+            return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "rules must contain strings"));
+        }
+        let Value::String(rule) = entry else { return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "rules must contain strings")); };
+        rules.push(rule);
+    }
+    for rule in rules {
+        if let Some(value) = rule.strip_prefix("Address: IPv4 ") { block_list_add_address(state, receiver, &[Value::String(value.into())])?; }
+        else if let Some(value) = rule.strip_prefix("Address: IPv6 ") { block_list_add_address(state, receiver, &[Value::String(value.into()), Value::String("ipv6".into())])?; }
+        else if let Some(value) = rule.strip_prefix("Subnet: IPv4 ") { block_list_add_cidr(state, receiver, &[Value::String(value.into())])?; }
+        else if let Some(value) = rule.strip_prefix("Subnet: IPv6 ") { block_list_add_cidr(state, receiver, &[Value::String(value.into())])?; }
+        else if let Some(value) = rule.strip_prefix("Range: IPv4 ") { if let Some((a,b)) = value.split_once('-') { block_list_add_range(state, receiver, &[Value::String(a.into()), Value::String(b.into())])?; } }
+        else if let Some(value) = rule.strip_prefix("Range: IPv6 ") { if let Some((a,b)) = value.split_once('-') { block_list_add_range(state, receiver, &[Value::String(a.into()), Value::String(b.into()), Value::String("ipv6".into())])?; } }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_is(
+    _state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(args.first().is_some_and(|value| matches!(execute::get_property(value, "\0quench:blocklist:marker"), Value::Boolean(true)))))
+}
+
+pub fn block_list_inspect(
+    _state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    if matches!(args.first(), Some(Value::Number(depth)) if *depth < 0.0) {
+        return Ok(Value::String("[BlockList]".into()));
+    }
+    Ok(Value::String("BlockList { rules: [] }".into()))
+}
+
+fn rebuild_blocklist_rules(receiver: &Value) {
+    let mut rules = Vec::new();
+    for entry in blocklist_entries(receiver, "\0quench:blocklist:addresses") {
+        if let (Value::String(address), Value::String(family)) = (execute::get_property(&entry, "address"), execute::get_property(&entry, "family")) {
+            rules.push(Value::String(format!("Address: {} {address}", blocklist_family_label(&family))));
+        }
+    }
+    for entry in blocklist_entries(receiver, "\0quench:blocklist:ranges") {
+        if let (Value::String(start), Value::String(end), Value::String(family)) = (execute::get_property(&entry, "start"), execute::get_property(&entry, "end"), execute::get_property(&entry, "family")) {
+            rules.push(Value::String(format!("Range: {} {start}-{end}", blocklist_family_label(&family))));
+        }
+    }
+    for entry in blocklist_entries(receiver, "\0quench:blocklist:subnets") {
+        if let (Value::String(network), Value::Number(prefix), Value::String(family)) = (execute::get_property(&entry, "network"), execute::get_property(&entry, "prefix"), execute::get_property(&entry, "family")) {
+            rules.push(Value::String(format!("Subnet: {} {network}/{prefix}", blocklist_family_label(&family))));
+        }
+    }
+    let _ = execute::set_property_in_place(receiver, "rules", host_api::array(rules.clone()));
+    let _ = execute::set_property_in_place(receiver, "size", Value::Number(rules.len() as f64));
+}
+
+fn blocklist_error(name: &str, code: &str, message: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String(name.into())),
+        ("message".into(), Value::String(message.into())),
+        ("code".into(), Value::String(code.into())),
+    ]))
+}
+
+fn blocklist_address_arg(value: Option<&Value>) -> Result<(String, Option<&'static str>), VmError> {
+    match value {
+        Some(Value::String(value)) => Ok((value.clone(), None)),
+        Some(value @ (Value::Object(_) | Value::ObjectAlias(_))) => {
+            let address = execute::get_property(value, "address");
+            let Value::String(address) = address else {
+                return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "address must be a string"));
+            };
+            let family = match execute::get_property(value, "family") {
+                Value::String(family) if family.eq_ignore_ascii_case("ipv4") => Some("ipv4"),
+                Value::String(family) if family.eq_ignore_ascii_case("ipv6") => Some("ipv6"),
+                _ => None,
+            };
+            Ok((address, family))
+        }
+        _ => Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "address must be a string")),
+    }
+}
+
+fn blocklist_family(value: Option<&Value>) -> Result<Option<&'static str>, VmError> {
+    let Some(value) = value.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(None);
+    };
+    let Value::String(value) = value else {
+        return Err(blocklist_error("TypeError", "ERR_INVALID_ARG_TYPE", "type must be a string"));
+    };
+    if value.eq_ignore_ascii_case("ipv4") {
+        Ok(Some("ipv4"))
+    } else if value.eq_ignore_ascii_case("ipv6") {
+        Ok(Some("ipv6"))
+    } else {
+        Err(blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid IP family"))
+    }
+}
+
+fn parse_blocklist_ip(address: &str) -> Result<IpAddr, VmError> {
+    address.parse().map_err(|_| {
+        blocklist_error("TypeError", "ERR_INVALID_ARG_VALUE", "invalid IP address")
+    })
+}
+
+fn blocklist_ip_family(ip: IpAddr) -> &'static str {
+    match ip {
+        IpAddr::V4(_) => "ipv4",
+        IpAddr::V6(_) => "ipv6",
+    }
+}
+
+fn blocklist_family_name(requested: Option<&str>, ip: IpAddr) -> &'static str {
+    match requested {
+        Some("ipv4") => "ipv4",
+        Some("ipv6") => "ipv6",
+        _ => blocklist_ip_family(ip),
+    }
+}
+
+fn blocklist_family_label(family: &str) -> &'static str {
+    match family {
+        "ipv4" => "IPv4",
+        _ => "IPv6",
+    }
+}
+
+fn blocklist_ip_value(ip: IpAddr) -> u128 {
+    match ip {
+        IpAddr::V4(value) => u32::from(value) as u128,
+        IpAddr::V6(value) => u128::from(value),
+    }
+}
+
+fn blocklist_entries(receiver: &Value, key: &str) -> Vec<Value> {
+    match execute::get_property(receiver, key) {
+        Value::Array(array) => (0..array.logical_len()).map(|index| array.index_value(index)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn append_blocklist_entry(receiver: &Value, key: &str, entry: Value) {
+    let mut values = blocklist_entries(receiver, key);
+    values.push(entry);
+    let _ = execute::set_property_in_place(receiver, key, host_api::array(values));
+}
+
+fn append_blocklist_rule(receiver: &Value, rule: String) {
+    append_blocklist_entry(receiver, "rules", Value::String(rule));
+    let size = blocklist_entries(receiver, "rules").len();
+    let _ = execute::set_property_in_place(receiver, "size", Value::Number(size as f64));
+}
+
+fn blocklist_match_ip(query: IpAddr, family: &str, candidate: IpAddr) -> bool {
+    if family == "ipv4" {
+        return match (query, candidate) {
+            (IpAddr::V4(left), IpAddr::V4(right)) => left == right,
+            (IpAddr::V4(query), IpAddr::V6(candidate)) => candidate.to_ipv4_mapped() == Some(query),
+            _ => false,
+        };
+    }
+    match (query, candidate) {
+        (IpAddr::V6(query), IpAddr::V6(candidate)) => query == candidate,
+        (IpAddr::V6(query), IpAddr::V4(candidate)) => query.to_ipv4_mapped() == Some(candidate),
+        (IpAddr::V4(query), IpAddr::V6(candidate)) => candidate.to_ipv4_mapped() == Some(query),
+        _ => false,
+    }
+}
+
+fn blocklist_match_range(entry: &Value, query: IpAddr, family: &str) -> bool {
+    let Value::String(start) = execute::get_property(entry, "start") else { return false; };
+    let Value::String(end) = execute::get_property(entry, "end") else { return false; };
+    let (Ok(start), Ok(end)) = (parse_blocklist_ip(&start), parse_blocklist_ip(&end)) else { return false; };
+    match (query, start, end) {
+        (IpAddr::V4(query), IpAddr::V4(start), IpAddr::V4(end)) if family == "ipv4" => {
+            u32::from(start) <= u32::from(query) && u32::from(query) <= u32::from(end)
+        }
+        (IpAddr::V6(query), IpAddr::V4(start), IpAddr::V4(end))
+            if query.to_ipv4_mapped().is_some() =>
+        {
+            let query = u32::from(query.to_ipv4_mapped().expect("mapped address"));
+            u32::from(start) <= query && query <= u32::from(end)
+        }
+        (IpAddr::V4(query), IpAddr::V6(start), IpAddr::V6(end))
+            if start.to_ipv4_mapped().is_some() && end.to_ipv4_mapped().is_some() =>
+        {
+            let start = u32::from(start.to_ipv4_mapped().expect("mapped address"));
+            let end = u32::from(end.to_ipv4_mapped().expect("mapped address"));
+            start <= u32::from(query) && u32::from(query) <= end
+        }
+        (IpAddr::V6(query), IpAddr::V6(start), IpAddr::V6(end)) if family == "ipv6" => {
+            u128::from(start) <= u128::from(query) && u128::from(query) <= u128::from(end)
+        }
+        _ => false,
+    }
+}
+
+fn blocklist_match_subnet(entry: &Value, query: IpAddr, family: &str) -> bool {
+    let Value::String(network) = execute::get_property(entry, "network") else { return false; };
+    let Value::Number(prefix) = execute::get_property(entry, "prefix") else { return false; };
+    let Ok(network) = parse_blocklist_ip(&network) else { return false; };
+    let (query, network, bits) = match (query, network) {
+        (IpAddr::V4(query), IpAddr::V4(network)) if family == "ipv4" => {
+            (u32::from(query) as u128, u32::from(network) as u128, 32)
+        }
+        (IpAddr::V6(query), IpAddr::V4(network)) if query.to_ipv4_mapped().is_some() => {
+            (u32::from(query.to_ipv4_mapped().expect("mapped address")) as u128, u32::from(network) as u128, 32)
+        }
+        (IpAddr::V4(query), IpAddr::V6(network)) if network.to_ipv4_mapped().is_some() => {
+            (u32::from(query) as u128, u32::from(network.to_ipv4_mapped().expect("mapped address")) as u128, 32)
+        }
+        (IpAddr::V6(query), IpAddr::V6(network)) if family == "ipv6" => {
+            (u128::from(query), u128::from(network), 128)
+        }
+        _ => return false,
+    };
+    let prefix = if bits == 32 && prefix > 32.0 {
+        // An IPv4-mapped IPv6 network (for example ::ffff:10.0.0.0/120)
+        // is compared in its embedded IPv4 space.
+        prefix - 96.0
+    } else {
+        prefix
+    } as usize;
+    if prefix > bits {
+        return false;
+    }
+    prefix == 0 || (query >> (bits - prefix)) == (network >> (bits - prefix))
 }

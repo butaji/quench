@@ -795,8 +795,10 @@ pub const SPEC_HTTP_RES_WRITE_HEAD: NodeSpec = NodeSpec::new("http:res:writeHead
 pub const SPEC_HTTP_RES_WRITE: NodeSpec = NodeSpec::new("http:res:write", 0x0F05);
 pub const SPEC_HTTP_RES_END: NodeSpec = NodeSpec::new("http:res:end", 0x0F06);
 pub const SPEC_HTTP_RES_WRITE_CONTINUE: NodeSpec = NodeSpec::new("http:res:writeContinue", 0x0F25);
-pub const SPEC_HTTP_RES_WRITE_INFORMATION: NodeSpec = NodeSpec::new("http:res:writeInformation", 0x0F60);
-pub const SPEC_HTTP_RES_WRITE_PROCESSING: NodeSpec = NodeSpec::new("http:res:writeProcessing", 0x0F61);
+pub const SPEC_HTTP_RES_WRITE_INFORMATION: NodeSpec =
+    NodeSpec::new("http:res:writeInformation", 0x0F60);
+pub const SPEC_HTTP_RES_WRITE_PROCESSING: NodeSpec =
+    NodeSpec::new("http:res:writeProcessing", 0x0F61);
 // http ClientRequest methods (dispatched with the req receiver).
 pub const SPEC_HTTP_REQ_WRITE: NodeSpec = NodeSpec::new("http:req:write", 0x0F09);
 pub const SPEC_HTTP_REQ_END: NodeSpec = NodeSpec::new("http:req:end", 0x0F0A);
@@ -1997,6 +1999,20 @@ pub const CAP_NET_BLOCK_LIST: CapId = SPEC_NET_BLOCK_LIST.cap;
 pub const CAP_NET_BLOCK_LIST_ADD_ADDRESS: CapId = SPEC_NET_BLOCK_LIST_ADD_ADDRESS.cap;
 pub const CAP_NET_BLOCK_LIST_ADD_SUBNET: CapId = SPEC_NET_BLOCK_LIST_ADD_SUBNET.cap;
 pub const CAP_NET_BLOCK_LIST_CHECK: CapId = SPEC_NET_BLOCK_LIST_CHECK.cap;
+pub const CAP_NET_BLOCK_LIST_ADD_RANGE: CapId = SPEC_NET_BLOCK_LIST_ADD_RANGE.cap;
+pub const CAP_NET_SOCKET_ADDRESS_CONSTRUCT: CapId = SPEC_NET_SOCKET_ADDRESS_CONSTRUCT.cap;
+pub const CAP_NET_BLOCK_LIST_CLEAR: CapId = SPEC_NET_BLOCK_LIST_CLEAR.cap;
+pub const CAP_NET_BLOCK_LIST_ADD_ADDRESSES: CapId = SPEC_NET_BLOCK_LIST_ADD_ADDRESSES.cap;
+pub const CAP_NET_BLOCK_LIST_ADD_CIDR: CapId = SPEC_NET_BLOCK_LIST_ADD_CIDR.cap;
+pub const CAP_NET_BLOCK_LIST_ADD_CIDRS: CapId = SPEC_NET_BLOCK_LIST_ADD_CIDRS.cap;
+pub const CAP_NET_BLOCK_LIST_REMOVE_ADDRESS: CapId = SPEC_NET_BLOCK_LIST_REMOVE_ADDRESS.cap;
+pub const CAP_NET_BLOCK_LIST_REMOVE_RANGE: CapId = SPEC_NET_BLOCK_LIST_REMOVE_RANGE.cap;
+pub const CAP_NET_BLOCK_LIST_REMOVE_SUBNET: CapId = SPEC_NET_BLOCK_LIST_REMOVE_SUBNET.cap;
+pub const CAP_NET_BLOCK_LIST_REMOVE_CIDR: CapId = SPEC_NET_BLOCK_LIST_REMOVE_CIDR.cap;
+pub const CAP_NET_BLOCK_LIST_TO_JSON: CapId = SPEC_NET_BLOCK_LIST_TO_JSON.cap;
+pub const CAP_NET_BLOCK_LIST_FROM_JSON: CapId = SPEC_NET_BLOCK_LIST_FROM_JSON.cap;
+pub const CAP_NET_BLOCK_LIST_IS: CapId = SPEC_NET_BLOCK_LIST_IS.cap;
+pub const CAP_NET_BLOCK_LIST_INSPECT: CapId = SPEC_NET_BLOCK_LIST_INSPECT.cap;
 pub const CAP_NET_CONNECT: CapId = SPEC_NET_CONNECT.cap;
 pub const CAP_NET_GET_ASF_TIMEOUT: CapId = SPEC_NET_GET_ASF_TIMEOUT.cap;
 pub const CAP_NET_ISIP: CapId = SPEC_NET_ISIP.cap;
@@ -2253,6 +2269,20 @@ node_api! {
     (SPEC_NET_BLOCK_LIST_ADD_SUBNET, "legacy:net:block:list:add:subnet", 2293),
     (SPEC_NET_BLOCK_LIST_ADD_ADDRESS, "legacy:net:block:list:add:address", 2294),
     (SPEC_NET_BLOCK_LIST_CHECK, "legacy:net:block:list:check", 2295),
+    (SPEC_NET_BLOCK_LIST_ADD_RANGE, "legacy:net:block:list:add:range", 0x7F90),
+    (SPEC_NET_SOCKET_ADDRESS_CONSTRUCT, "legacy:net:socket:address:construct", 0x7F91),
+    (SPEC_NET_BLOCK_LIST_CLEAR, "legacy:net:block:list:clear", 0x7F92),
+    (SPEC_NET_BLOCK_LIST_ADD_ADDRESSES, "legacy:net:block:list:add:addresses", 0x7F93),
+    (SPEC_NET_BLOCK_LIST_ADD_CIDR, "legacy:net:block:list:add:cidr", 0x7F94),
+    (SPEC_NET_BLOCK_LIST_ADD_CIDRS, "legacy:net:block:list:add:cidrs", 0x7F95),
+    (SPEC_NET_BLOCK_LIST_REMOVE_ADDRESS, "legacy:net:block:list:remove:address", 0x7F96),
+    (SPEC_NET_BLOCK_LIST_REMOVE_RANGE, "legacy:net:block:list:remove:range", 0x7F97),
+    (SPEC_NET_BLOCK_LIST_REMOVE_SUBNET, "legacy:net:block:list:remove:subnet", 0x7F98),
+    (SPEC_NET_BLOCK_LIST_REMOVE_CIDR, "legacy:net:block:list:remove:cidr", 0x7F99),
+    (SPEC_NET_BLOCK_LIST_TO_JSON, "legacy:net:block:list:toJSON", 0x7F9A),
+    (SPEC_NET_BLOCK_LIST_FROM_JSON, "legacy:net:block:list:fromJSON", 0x7F9B),
+    (SPEC_NET_BLOCK_LIST_IS, "legacy:net:block:list:isBlockList", 0x7F9C),
+    (SPEC_NET_BLOCK_LIST_INSPECT, "legacy:net:block:list:inspect", 0x7F9D),
     (SPEC_TEST_RUN, "legacy:test:run", 0x1b00),
 }
 
