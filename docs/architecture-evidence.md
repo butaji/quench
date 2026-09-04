@@ -300,6 +300,20 @@ non-terminating path. The remaining completion gaps are the RegExp error and
 Splay missing marker, which are correctness/harness findings rather than
 timeout-only unknowns.
 
+The Splay missing-marker failure was then reduced to a general cycle-collector
+rooting bug: during allocation-heavy nested calls, the Rust call driver held
+the caller environment outside the JavaScript graph, so trial deletion could
+clear a live closure continuation. A synthetic caller/continuation workload
+with 2,000 unreachable object cycles now passes with the caller environment
+registered as a temporary collector root; removing that one guard reproduced
+`TypeError: value is not callable`, validating the regression test rather than
+merely timing it. On the rebuilt ARM64 debug artifact, Splay now emits
+`RESULT:Splay:ok` and a finite tracked-runner score of 42.6 (21.46 s, 466.6 MiB
+RSS), while the cycle-audit probes remain bounded: closure capture peaked at
+21,725,184 bytes for N=50,000 (versus 419,495,936 bytes when collection was
+deferred wholesale). This is a general root-safety correction, not
+benchmark-specific behavior.
+
 Task 056 cycle audit confirms a real leak in the current pure-`Rc` object
 graph. The committed measurement probe `tools/cycle-audit.mjs` runs fresh
 processes and parses macOS peak RSS. Plain two-object cycles grew from
