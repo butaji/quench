@@ -300,6 +300,18 @@ non-terminating path. The remaining completion gaps are the RegExp error and
 Splay missing marker, which are correctness/harness findings rather than
 timeout-only unknowns.
 
+A fresh optimized-release run at the 300-second tier after the cycle-collector
+root fix (`target/v8v7-baseline-release-300s-rootfix.json`) completed seven of
+eight fixtures with verified output. Engine measurements were Richards 56.7
+(3.55 s, 15.6 MiB), DeltaBlue 48.3 (6.46 s, 88.3 MiB), Crypto 17.0
+(218.49 s, 34.2 MiB), RayTrace 167 (15.95 s, 18.4 MiB), EarleyBoyer 73.7
+(68.00 s, 152.2 MiB), Splay 375 (3.68 s, 433.6 MiB), and NavierStokes 210
+(24.04 s, 18.2 MiB); all seven have `output_equal:true`. RegExp completed
+in 2.36 s with 41.0 MiB RSS but emitted `RESULT:RegExp:error`, so its score is
+null and the full-suite aggregate is intentionally not claimed. The seven
+verified engine scores have geomean 89.25 versus Node's 86,051.17; this is a
+ground-truth completion row, not an optimization claim.
+
 The Splay missing-marker failure was then reduced to a general cycle-collector
 rooting bug: during allocation-heavy nested calls, the Rust call driver held
 the caller environment outside the JavaScript graph, so trial deletion could
