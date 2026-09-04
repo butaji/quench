@@ -342,6 +342,16 @@ pub(crate) fn is_short_units(units: &[u16]) -> bool {
 /// compact layouts must be derived from these values, never stored as a
 /// competing semantic buffer.
 pub(crate) fn from_units(units: Vec<u16>) -> Value {
+    // Large UTF-16 slices are already in the representation consumed by
+    // indexed string operations. Retain that flat storage instead of
+    // transcoding to UTF-8 and rebuilding the units vector on every
+    // `charCodeAt` call. This is a generic representation choice for large
+    // indexed values; observable string semantics remain unchanged.
+    if units.len() > 1024 {
+        return Value::StringUnits(std::rc::Rc::new(
+            crate::value::StringUnitsData::new(units),
+        ));
+    }
     match String::from_utf16(&units) {
         Ok(value) => Value::String(value),
         Err(_) => Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units))),
@@ -577,9 +587,19 @@ pub(crate) fn repeat(
             "Invalid string length",
         ));
     }
-    // Keep ordinary one-unit strings in their compact UTF-8 representation;
-    // this avoids a transient UTF-16 allocation for Node's documented maximum
-    // string-length boundary while preserving the same observable value.
+    // Keep large indexed values in the UTF-16 storage already assembled above:
+    // repeated `charCodeAt` calls can then address one unit without rebuilding
+    // the entire encoding on every call. Small ordinary strings retain their
+    // compact UTF-8 representation.
+    if total_units > 1024 {
+        let mut result = Vec::with_capacity(total_units);
+        for _ in 0..count {
+            result.extend_from_slice(&source);
+        }
+        return Ok(Value::StringUnits(std::rc::Rc::new(
+            crate::value::StringUnitsData::new(result),
+        )));
+    }
     if source.len() == value.encode_utf16().count() {
         return Ok(Value::String(value.repeat(count)));
     }
@@ -635,7 +655,6 @@ pub(crate) fn char_code_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let units = receiver_units(receiver)?;
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -643,8 +662,36 @@ pub(crate) fn char_code_at(
     if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
-    let unit = units.get(index as usize).copied();
+    let index = index as usize;
+    // Keep the indexed operation on the canonical owner. In particular, do
+    // not route `StringUnits` through the general receiver adapter: that
+    // adapter is intentionally allocation-free for most callers but still
+    // performs boxed-string/coercion checks that are unnecessary here.
+    let unit = match receiver {
+        Some(Value::StringUnits(units)) => units.get(index).copied(),
+        Some(Value::String(value)) => utf16_code_unit(value, index),
+        _ => None,
+    };
     Ok(unit.map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64)))
+}
+
+/// Numeric-index fast path used by the registered method executor. Returning
+/// `None` keeps boxed/non-string receivers on the ordinary coercion path.
+#[inline(always)]
+pub(crate) fn char_code_at_number(receiver: &Value, index: f64) -> Option<f64> {
+    if !matches!(receiver, Value::String(_) | Value::StringUnits(_)) {
+        return None;
+    }
+    if index.is_nan() || index < 0.0 {
+        return Some(f64::NAN);
+    }
+    let index = index.trunc() as usize;
+    let unit = match receiver {
+        Value::StringUnits(units) => units.get(index).copied(),
+        Value::String(value) => utf16_code_unit(value, index),
+        _ => unreachable!(),
+    };
+    Some(unit.map_or(f64::NAN, f64::from))
 }
 
 pub(crate) fn slice(
