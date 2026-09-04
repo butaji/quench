@@ -21,13 +21,13 @@
             "042: bounded multi-op sequential region executor, closed (commit ab738f909) -- docs/copy-and-patch-jit.md's design section now matches what's actually built. Unblocks 040 item 1."
         ],
         "remaining_slices": [
-            "040", "041"
+            "040", "041", "043", "044"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record, which itself found the closure gate not fully satisfied). Tasks 039 and 042 closed and verified -- AArch64 execution is real, and the sequential region executor closes the doc-vs-implementation gap task 040.1 found. Priority now: 040 items 1-5 in any order (arithmetic-glue widening now unblocked by 042; Call/CallN, GetProperty/SetN, array element access, ForI as new single-leaf regions -- Call is the single largest measured regression, 13-47x vs Node, and remains zero-coverage), then 041 (V8-informed JS-scenario survey), then revisit 034 (hot-cold splitting) now that 039 gives it something real to profile.",
-            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042"]
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record, which itself found the closure gate not fully satisfied). Tasks 039 and 042 closed and verified -- AArch64 execution is real, and the sequential region executor closes the doc-vs-implementation gap task 040.1 found. Priority now: 040 items 1-5 in any order (arithmetic-glue widening now unblocked by 042; Call/CallN, GetProperty/SetN, array element access, ForI as new single-leaf regions -- Call is the single largest measured regression, 13-47x vs Node, and remains zero-coverage), then 041 (V8-informed JS-scenario survey), then 043/044 (stencil-local tag register optimization -- rescoped from 031's dispatch-loop-only blocked finding; generated region-admission/CFG-soundness-test wiring, extracted from 040/041's new regions rather than guessed early). Optimizing-JIT/deoptimization is a closed 'will not build' decision, not deferred work -- see docs/deegen-alignment.md.",
+            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044"]
         }
     },
     "items": [
@@ -45,6 +45,8 @@
         {"id": "039", "file": "039.md", "title": "Native AArch64 stencil execution backend (this machine's actual architecture)", "theme": "deegen_full_jit", "depends_on": ["037"]},
         {"id": "040", "file": "040.md", "title": "Widen specialized stencil leaves by real hotness evidence (call, property, loop glue, array, ForI)", "theme": "deegen_full_jit", "depends_on": ["039"]},
         {"id": "041", "file": "041.md", "title": "V8-informed JS-scenario stencil coverage survey", "theme": "deegen_full_jit", "depends_on": ["040"]},
-        {"id": "042", "file": "042.md", "title": "Build genuine multi-op sequential stencil execution", "theme": "deegen_full_jit", "depends_on": ["039"]}
+        {"id": "042", "file": "042.md", "title": "Build genuine multi-op sequential stencil execution", "theme": "deegen_full_jit", "depends_on": ["039"]},
+        {"id": "043", "file": "043.md", "title": "Stencil-local tag register optimization", "theme": "deegen_full_jit", "depends_on": ["040", "041"]},
+        {"id": "044", "file": "044.md", "title": "Generate region-admission and CFG-soundness-test boilerplate", "theme": "deegen_full_jit", "depends_on": ["040", "041"]}
     ]
 }
