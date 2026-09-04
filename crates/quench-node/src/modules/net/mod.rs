@@ -252,6 +252,22 @@ fn new_net_object(
         object,
         vec![(NET_ID_PROP.to_string(), Value::Number(id as f64))],
     )?;
+    // `internal/async_hooks.symbols` exposes these private keys to Node's
+    // HTTP Agent tests; the socket's async identity is the same resource id
+    // used by the host lifecycle callbacks.
+    object = install_methods(
+        object,
+        vec![
+            (
+                "Symbol(async_id_symbol)\0quench".into(),
+                Value::Number(id as f64),
+            ),
+            (
+                "Symbol(trigger_async_id_symbol)\0quench".into(),
+                Value::Number(crate::modules::async_hooks::current_resource_id(state) as f64),
+            ),
+        ],
+    )?;
     state.borrow_mut().net.async_streams.insert(
         id,
         NetAsyncStream {
