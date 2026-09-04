@@ -224,22 +224,28 @@ access): it measured a 20.94x ratio and failed its <16x bound before the hook
 was reverted. This representative collection regression gate confirms the
 ratio is sensitive to a real complexity regression; no test-only hook remains
 in production code.
+The two cross-instance/history companions were also fault-injected: a
+per-instance scan failed at 23.86x and a per-history iteration scan failed at
+23.66x; both temporary hooks were reverted.
 
 Task 065 adds closure, recursion-frame, and argument-marshaling invariants.
 ARM64 debug ratios were 0.81x/0.75x for closure creation across 10 versus
 1,000 closures, 1.12x/1.17x for per-frame recursion cost at depths 10 versus
 100, and 0.74x/0.72x for marshaling across 10 versus 1,000 unrelated
 functions (untraced/traced). All 14 architecture tests pass in each
-configuration. Deliberate fault-injection validation for these new claims is
-still outstanding.
+configuration. Deliberate faults failed for all three claims before
+restoration: a history-scaled closure creation scan measured 20.82x, a
+depth-scaled frame loop measured 9.00x against a temporary <8x bound, and a
+function-catalog-scaled marshaling scan measured 30.36x.
 
 Task 066 adds raw allocation and release checks. With 200,000 timed
 allocations/drops (enough to amortize heap setup), ARM64 ratios were 1.51x
 and 1.39x for live heaps of 10 versus 10,000 without tracing, and 1.56x and
 1.52x with tracing. The two invariants pass alongside the preceding 16
-architecture tests in both configurations. No arena-specific invariant is
-claimed because task 059 is not implemented; deliberate allocation fault
-injection remains outstanding.
+architecture tests in both configurations. Deliberate live-heap scans failed
+the allocation and drop tests at 4,054x and 3,886x respectively before
+restoration. No arena-specific invariant is claimed because task 059 is not
+implemented.
 
 Task 067 adds bounded stencil-tier checks. Region lookup (10,000 versus
 100,000 repeated probes) measured a 1.01x per-probe ratio; a full 16-entry
@@ -363,8 +369,10 @@ ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
 tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
 and equal-length comparison ratios of 68.79x/68.65x for lengths 100 versus
 10,000. All remain within their documented near-linear bounds and pass in
-both feature configurations. As with task 063, deliberate fault-injection
-validation for each new subsystem claim remains outstanding.
+both feature configurations. Deliberate faults failed all three claims:
+quadratic append (69.23x), unrelated-string search (17.02x), and a temporary
+<110x comparison bound with an extra length-scaled scan (112.04x); all hooks
+and temporary bounds were reverted.
 
 The task-061 validation runs passed both runtime configurations (`592` tests
 without tracing and `602` with `execution-trace`). The optimized ARM64
