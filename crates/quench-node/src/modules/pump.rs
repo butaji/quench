@@ -330,20 +330,8 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 }
 
 fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
-    let async_stack_overflow = quench_runtime::vm::take_async_stack_overflow();
     for (promise, reason) in quench_runtime::take_unhandled_rejections() {
         if promise.rejection_handled() {
-            continue;
-        }
-        if async_stack_overflow {
-            // V8 reports a synchronous async-stack overflow diagnostic while
-            // `--unhandled-rejections=none` keeps the rejected promises from
-            // changing the process status. Preserve both observable edges.
-            crate::modules::process::stream_write(
-                state,
-                &[Value::String("RangeError: Maximum call stack size exceeded\n".into())],
-                true,
-            )?;
             continue;
         }
         let mode = state.borrow().process.unhandled_rejection_mode;
