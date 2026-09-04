@@ -189,6 +189,15 @@ regression produced a 10.31x ratio and failed its <8x bound before being
 reverted; equivalent subsystem-specific fault injection for the remaining
 four tests is still outstanding.
 
+Task 063 extends the module with three collection invariants. Fresh ARM64
+debug runs measured 1.53x (packed-array index-0 access at lengths 10 versus
+100,000), 0.92x (Map/Set access across 10 versus 1,000 unrelated instances),
+and 2.38x (Map/Set/Array iteration after 0 versus 2,000 add/delete cycles)
+without tracing; all are below the 16x scaling bound. The collection tests
+also pass under `execution-trace`. These are scaling checks only; deliberate
+subsystem fault-injection validation remains to be recorded before task 063
+is considered fully closed.
+
 The task-061 validation runs passed both runtime configurations (`592` tests
 without tracing and `602` with `execution-trace`). The optimized ARM64
 curriculum sweep completed 33/38 cases with exact observable matches; the five
