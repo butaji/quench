@@ -447,8 +447,9 @@ fn validate_object(
             actual_value
         };
         if !expected_property_matches(&expected_value, &actual_value)? {
-            if execute::has_own_property(expected, "message")
-                && execute::has_own_property(expected, "operator")
+            if (key == "message" && is_regexp(&expected_value))
+                || (execute::has_own_property(expected, "message")
+                    && execute::has_own_property(expected, "operator"))
             {
                 return Err(comparison_mismatch(error, expected, user_message));
             }
