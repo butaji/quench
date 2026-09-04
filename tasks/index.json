@@ -30,7 +30,7 @@
             "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization"
         ],
         "remaining_slices": [
-            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060"
+            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "062"
         ]
     },
     "themes": {
@@ -40,7 +40,7 @@
         },
         "vm_completeness": {
             "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. P0: fix a real Node-compat bug (050, console.log crashes when detached from `this`) and a real correctness bug (051, Splay output mismatch) that currently block running the suite at all. Then wire it into tracked verification (052), and survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Additionally: a direct code check found no cycle collector exists anywhere (Rc-only object model, Weak used only at specific known points) -- 056 audits whether this actually leaks on ordinary user-created reference cycles (DeltaBlue's constraint graph is a plausible real case), 057 implements a bounded cycle-collection pass only if 056 confirms a real leak.",
-            "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061"]
+            "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061", "062"]
         }
     },
     "items": [
@@ -77,6 +77,7 @@
         {"id": "058", "file": "058.md", "title": "Global shape hash-consing (structural deduplication)", "theme": "vm_completeness", "depends_on": []},
         {"id": "059", "file": "059.md", "title": "Bump-pointer arena allocation for provably-scoped short-lived values", "theme": "vm_completeness", "depends_on": []},
         {"id": "060", "file": "060.md", "title": "Host-level opt-in request-scoped arena (web-backend memory bound)", "theme": "vm_completeness", "depends_on": ["059"]},
-        {"id": "061", "file": "061.md", "title": "Investigate catastrophic DeltaBlue/Richards slowdown (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]}
+        {"id": "061", "file": "061.md", "title": "Investigate catastrophic DeltaBlue/Richards slowdown (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]},
+        {"id": "062", "file": "062.md", "title": "Architecture invariant test suite (algorithmic-complexity regression tests)", "theme": "vm_completeness", "depends_on": []}
     ]
 }
