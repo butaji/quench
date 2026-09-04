@@ -940,7 +940,10 @@ fn validate_key_use(
 ) -> Option<VmError> {
     let algorithm = algorithm?;
     let key = key?;
-    let requested = execute::to_js_string(&execute::get_property(algorithm, "name")).ok()?;
+    let requested = match algorithm {
+        Value::String(name) => name.clone(),
+        _ => execute::to_js_string(&execute::get_property(algorithm, "name")).ok()?,
+    };
     let key_algorithm = execute::to_js_string(&execute::get_property(
         &execute::get_property(key, "algorithm"),
         "name",
