@@ -777,6 +777,12 @@ pub const SPEC_HTTP_RES_CORK: NodeSpec = NodeSpec::new("http:res:cork", 0x0F43);
 pub const SPEC_HTTP_RES_UNCORK: NodeSpec = NodeSpec::new("http:res:uncork", 0x0F44);
 pub const SPEC_HTTP_RES_SET_HEADERS: NodeSpec = NodeSpec::new("http:res:setHeaders", 0x0F45);
 pub const SPEC_HTTP_RES_ADD_TRAILERS: NodeSpec = NodeSpec::new("http:res:addTrailers", 0x0F62);
+pub const SPEC_HTTP_RES_GET_HEADER: NodeSpec = NodeSpec::new("http:res:getHeader", 0x0F63);
+pub const SPEC_HTTP_RES_GET_HEADERS: NodeSpec = NodeSpec::new("http:res:getHeaders", 0x0F64);
+pub const SPEC_HTTP_RES_GET_HEADER_NAMES: NodeSpec =
+    NodeSpec::new("http:res:getHeaderNames", 0x0F65);
+pub const SPEC_HTTP_RES_WRITE_EARLY_HINTS: NodeSpec =
+    NodeSpec::new("http:res:writeEarlyHints", 0x0F66);
 pub const SPEC_HTTP_RES_WRITE_HEAD: NodeSpec = NodeSpec::new("http:res:writeHead", 0x0F04);
 pub const SPEC_HTTP_RES_WRITE: NodeSpec = NodeSpec::new("http:res:write", 0x0F05);
 pub const SPEC_HTTP_RES_END: NodeSpec = NodeSpec::new("http:res:end", 0x0F06);
