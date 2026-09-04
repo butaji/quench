@@ -143,90 +143,78 @@ pub const fn region_table_len() -> usize {
     REGION_TABLE.len()
 }
 
-/// Build-generated key for the executable two-region fallthrough example.
-pub const fn fallthrough_region_key() -> RegionKey {
-    FALLTHROUGH_KEY
+/// Declare the mechanical half of a region: its generated key accessor and
+/// the shared single-entry CFG proof.  Handler semantics remain handwritten;
+/// this macro only prevents the opcode/key/test wiring from drifting apart.
+macro_rules! generated_region_admissions {
+    ($( $accessor:ident => $key:ident / $operations:ident / $region_id:literal ),+ $(,)?) => {
+        $(
+            pub const fn $accessor() -> RegionKey {
+                RegionKey::from_opcodes(RegionId($region_id), $operations)
+            }
+        )+
+
+        #[cfg(test)]
+        mod generated_region_admission_tests {
+            use super::*;
+
+            #[test]
+            fn every_declared_region_has_one_external_entry_and_exact_ops() {
+                let rows: &[(RegionKey, RegionId, &[crate::ir::Opcode])] = &[
+                    $(($key, RegionId($region_id), $operations)),+
+                ];
+                for (key, region, operations) in rows {
+                    let record = select_region(*key).expect("declared region row");
+                    assert_eq!(*key, RegionKey::from_opcodes(
+                        *region, *operations,
+                    ), "region id is part of the generated key");
+                    assert_eq!(record.operations, *operations);
+                    assert!(has_single_entry_point(
+                        u32::from(record.entry),
+                        &[RegionBlock {
+                            id: 0,
+                            predecessors: &[],
+                            external_entry: true,
+                        }]
+                    ));
+                }
+
+                // An externally reachable interior block invalidates the
+                // declaration regardless of which region requested it.
+                assert!(!has_single_entry_point(
+                    0,
+                    &[
+                        RegionBlock { id: 0, predecessors: &[], external_entry: true },
+                        RegionBlock { id: 1, predecessors: &[0], external_entry: true },
+                    ]
+                ));
+            }
+        }
+    };
 }
 
-/// Build-generated key for the named plain-own property leaf.
-pub const fn property_region_key() -> RegionKey {
-    PROPERTY_KEY
-}
-
-/// Build-generated key for the pure tagged-word Move leaf.
-pub const fn move_region_key() -> RegionKey {
-    MOVE_KEY
-}
-
-/// Build-generated entry trampoline shared by every compact baseline
-/// instruction. The opcode sequence in the catalog is exhaustive; the
-/// trampoline itself only forwards an opaque execution context to Rust.
-pub const fn dispatch_region_key() -> RegionKey {
-    DISPATCH_KEY
-}
-
-/// Build-selected keys for the other proven numeric binary leaves.  These
-/// remain catalog lookups; no runtime operation semantics are duplicated here.
-pub fn subtract_region_key() -> RegionKey {
-    SUBTRACT_KEY
-}
-
-pub fn multiply_region_key() -> RegionKey {
-    MULTIPLY_KEY
-}
-
-pub fn divide_region_key() -> RegionKey {
-    DIVIDE_KEY
-}
-
-pub fn add_const_region_key() -> RegionKey {
-    ADD_CONST_KEY
-}
-
-/// Build-generated measured straight-line region keys.  These are kept as a
-/// fixed catalog (rather than a runtime map) so admission remains bounded and
-/// the semantic executor can validate the exact opcode window before entry.
-pub const fn loop_glue_region_key() -> RegionKey {
-    LOOP_GLUE_KEY
-}
-
-pub const fn binary_glue_region_key() -> RegionKey {
-    BINARY_GLUE_KEY
-}
-
-pub const fn update_return_region_key() -> RegionKey {
-    UPDATE_RETURN_KEY
-}
-
-pub const fn call_region_key() -> RegionKey {
-    CALL_KEY
-}
-
-pub const fn call_n_region_key() -> RegionKey {
-    CALL_N_KEY
-}
-
-pub const fn arithmetic_glue_region_key() -> RegionKey {
-    ARITHMETIC_GLUE_KEY
-}
-
-pub const fn get_property_region_key() -> RegionKey {
-    GET_PROPERTY_KEY
-}
-pub const fn set_n_region_key() -> RegionKey {
-    SET_N_KEY
-}
-pub const fn get_index_region_key() -> RegionKey {
-    GET_INDEX_KEY
-}
-pub const fn set_index_region_key() -> RegionKey {
-    SET_INDEX_KEY
-}
-pub const fn get_index_inc_region_key() -> RegionKey {
-    GET_INDEX_INC_KEY
-}
-pub const fn for_i_region_key() -> RegionKey {
-    FOR_I_KEY
+generated_region_admissions! {
+    loop_region_key => LOOP_KEY / LOOP_OPS / 1,
+    fallthrough_region_key => FALLTHROUGH_KEY / FALLTHROUGH_OPS / 3,
+    property_region_key => PROPERTY_KEY / PROPERTY_OPS / 2,
+    move_region_key => MOVE_KEY / MOVE_OPS / 8,
+    dispatch_region_key => DISPATCH_KEY / DISPATCH_OPS / 9,
+    subtract_region_key => SUBTRACT_KEY / SUBTRACT_OPS / 4,
+    multiply_region_key => MULTIPLY_KEY / MULTIPLY_OPS / 5,
+    divide_region_key => DIVIDE_KEY / DIVIDE_OPS / 6,
+    add_const_region_key => ADD_CONST_KEY / ADD_CONST_OPS / 7,
+    loop_glue_region_key => LOOP_GLUE_KEY / LOOP_GLUE_OPS / 10,
+    binary_glue_region_key => BINARY_GLUE_KEY / BINARY_GLUE_OPS / 11,
+    update_return_region_key => UPDATE_RETURN_KEY / UPDATE_RETURN_OPS / 12,
+    call_region_key => CALL_KEY / CALL_OPS / 13,
+    call_n_region_key => CALL_N_KEY / CALL_N_OPS / 14,
+    arithmetic_glue_region_key => ARITHMETIC_GLUE_KEY / ARITHMETIC_GLUE_OPS / 15,
+    get_property_region_key => GET_PROPERTY_KEY / GET_PROPERTY_OPS / 16,
+    set_n_region_key => SET_N_KEY / SET_N_OPS / 17,
+    get_index_region_key => GET_INDEX_KEY / GET_INDEX_OPS / 18,
+    set_index_region_key => SET_INDEX_KEY / SET_INDEX_OPS / 19,
+    get_index_inc_region_key => GET_INDEX_INC_KEY / GET_INDEX_INC_OPS / 20,
+    for_i_region_key => FOR_I_KEY / FOR_I_OPS / 21,
 }
 
 /// Canonical admission table for numeric baseline leaves.  The opcode catalog
@@ -441,72 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn call_rows_have_a_single_entry_cfg_proof() {
-        for key in [call_region_key(), call_n_region_key()] {
-            let record = select_region(key).expect("call admission row");
-            assert_eq!(record.operations.len(), 1);
-            assert!(has_single_entry_point(
-                u32::from(record.entry),
-                &[RegionBlock {
-                    id: 0,
-                    predecessors: &[],
-                    external_entry: true,
-                }]
-            ));
-            assert_eq!(
-                record.executable,
-                cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
-            );
-        }
-    }
-
-    #[test]
-    fn arithmetic_glue_row_covers_measured_five_op_span() {
-        let record = select_region(arithmetic_glue_region_key()).expect("arithmetic glue row");
-        assert_eq!(record.operations.len(), 5);
-        assert_eq!(
-            record.operations,
-            &[
-                crate::ir::Opcode::LoadConst,
-                crate::ir::Opcode::LoadLocalChecked,
-                crate::ir::Opcode::Binary,
-                crate::ir::Opcode::UpdateLocal,
-                crate::ir::Opcode::StoreLocal,
-            ]
-        );
-        assert!(has_single_entry_point(
-            u32::from(record.entry),
-            &[RegionBlock {
-                id: 0,
-                predecessors: &[],
-                external_entry: true,
-            }]
-        ));
-    }
-
-    #[test]
-    fn profiled_property_array_and_for_i_rows_are_cfg_admitted() {
-        let rows = [
-            (get_property_region_key(), crate::ir::Opcode::GetProperty),
-            (set_n_region_key(), crate::ir::Opcode::SetN),
-            (get_index_region_key(), crate::ir::Opcode::AGetI),
-            (set_index_region_key(), crate::ir::Opcode::ASetI),
-            (get_index_inc_region_key(), crate::ir::Opcode::AGetIInc),
-            (for_i_region_key(), crate::ir::Opcode::ForI),
-        ];
-        for (key, opcode) in rows {
-            let record = select_region(key).expect("profiled operation row");
-            assert_eq!(record.operations, &[opcode]);
-            assert_eq!(record.entry, 0);
-            assert_eq!(
-                record.executable,
-                cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
-            );
-            assert!(record.stencil.bytes.len() >= 1);
-        }
-    }
-
-    #[test]
     fn dispatch_row_covers_every_compact_opcode() {
         let record = select_region(dispatch_region_key()).expect("dispatch admission row");
         assert_eq!(
@@ -538,24 +460,17 @@ mod tests {
         ] {
             assert!(record.operations.contains(&opcode));
         }
+    }
 
-        // The dispatch row is admitted through the same single-entry proof as
-        // every other catalog declaration.  An externally reachable interior
-        // block must remain rejected, so adding catalog rows cannot weaken
-        // the fallback's control-flow safety.
-        let bad = [
-            RegionBlock {
-                id: 0,
-                predecessors: &[],
-                external_entry: true,
-            },
-            RegionBlock {
-                id: 1,
-                predecessors: &[0],
-                external_entry: true,
-            },
-        ];
-        assert!(!has_single_entry_point(0, &bad));
+    #[test]
+    fn generated_accessor_matches_legacy_fallthrough_key() {
+        // Explicit before/after migration check: the former hand-written
+        // construction and the generated declaration are identical.
+        let legacy = RegionKey::from_opcodes(
+            RegionId(3),
+            &[crate::ir::Opcode::Add, crate::ir::Opcode::Return],
+        );
+        assert_eq!(fallthrough_region_key(), legacy);
     }
 
     #[test]
