@@ -25,13 +25,13 @@
             "043: stencil-local tag-register survey closed with a no-eligible-region finding; current 040/041 regions do not materialize TAG_PREFIX/TAG_SHIFT/TAG_MASK more than once (commit pending)."
         ],
         "remaining_slices": [
-            "044"
+            "044", "045", "046", "047"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record, which itself found the closure gate not fully satisfied). Tasks 039 and 042 closed and verified -- AArch64 execution is real, and the sequential region executor closes the doc-vs-implementation gap task 040.1 found. Priority now: 040 items 1-5 in any order (arithmetic-glue widening now unblocked by 042; Call/CallN, GetProperty/SetN, array element access, ForI as new single-leaf regions -- Call is the single largest measured regression, 13-47x vs Node, and remains zero-coverage), then 041 (V8-informed JS-scenario survey), then 043/044 (stencil-local tag register optimization -- rescoped from 031's dispatch-loop-only blocked finding; generated region-admission/CFG-soundness-test wiring, extracted from 040/041's new regions rather than guessed early). Optimizing-JIT/deoptimization is a closed 'will not build' decision, not deferred work -- see docs/deegen-alignment.md.",
-            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044"]
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037, 039-043 closed (034 closed with an applicability finding: no cold block exists to split yet; 043 closed with a no-eligible-region finding). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md) -- so remaining work targets non-speculative, still-real levers instead of more coverage chasing the recursion/megamorphic gap directly: 044 (generated region-admission wiring), 045 (V8-style shared global megamorphic cache, profile-gated), 046 (string rope representation, profile-gated, independent of the stencil tier), 047 (call-frame allocation cost within already-admitted Call/CallN regions, profile-gated). All three new tasks (045-047) require a measured go/no-go profiling step before implementation -- do not build any of them speculatively.",
+            "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047"]
         }
     },
     "items": [
@@ -51,6 +51,9 @@
         {"id": "041", "file": "041.md", "title": "V8-informed JS-scenario stencil coverage survey", "theme": "deegen_full_jit", "depends_on": ["040"]},
         {"id": "042", "file": "042.md", "title": "Build genuine multi-op sequential stencil execution", "theme": "deegen_full_jit", "depends_on": ["039"]},
         {"id": "043", "file": "043.md", "title": "Stencil-local tag register optimization", "theme": "deegen_full_jit", "depends_on": ["040", "041"]},
-        {"id": "044", "file": "044.md", "title": "Generate region-admission and CFG-soundness-test boilerplate", "theme": "deegen_full_jit", "depends_on": ["040", "041"]}
+        {"id": "044", "file": "044.md", "title": "Generate region-admission and CFG-soundness-test boilerplate", "theme": "deegen_full_jit", "depends_on": ["040", "041"]},
+        {"id": "045", "file": "045.md", "title": "Shared global megamorphic property/call cache (V8-style stub cache)", "theme": "deegen_full_jit", "depends_on": ["041"]},
+        {"id": "046", "file": "046.md", "title": "String concatenation representation (rope/cons-string)", "theme": "deegen_full_jit", "depends_on": []},
+        {"id": "047", "file": "047.md", "title": "Reduce call-frame allocation overhead for the Call/CallN region", "theme": "deegen_full_jit", "depends_on": ["040"]}
     ]
 }
