@@ -398,6 +398,26 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "arithmetic_glue",
+        // Measured neutral arithmetic-loop glue.  This is admitted only as a
+        // complete bounded span; each operation still runs its canonical
+        // handler through the task-042 sequential bridge.
+        operations: &[
+            "LoadConst",
+            "LoadLocalChecked",
+            "Binary",
+            "UpdateLocal",
+            "StoreLocal",
+        ],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
@@ -549,6 +569,7 @@ __BINARY_GLUE_BYTES__
 __UPDATE_RETURN_BYTES__
 __CALL_BYTES__
 __CALL_N_BYTES__
+__ARITHMETIC_GLUE_BYTES__
 const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
 // The catalog remains present on every target for deterministic admission,
 // but only the ISA whose bytes are actually defined may cross the executable
@@ -572,6 +593,7 @@ __BINARY_GLUE_HOLES__
 __UPDATE_RETURN_HOLES__
 __CALL_HOLES__
 __CALL_N_HOLES__
+__ARITHMETIC_GLUE_HOLES__
 const FALLTHROUGH_TAIL_HOLES: &[crate::stencil_fact::Hole] = &[];
 const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {
     bytes: FALLTHROUGH_TAIL_BYTES,
@@ -592,6 +614,7 @@ const BINARY_GLUE_OPS: &[crate::ir::Opcode] = &[__BINARY_GLUE_OPS__];
 const UPDATE_RETURN_OPS: &[crate::ir::Opcode] = &[__UPDATE_RETURN_OPS__];
 const CALL_OPS: &[crate::ir::Opcode] = &[__CALL_OPS__];
 const CALL_N_OPS: &[crate::ir::Opcode] = &[__CALL_N_OPS__];
+const ARITHMETIC_GLUE_OPS: &[crate::ir::Opcode] = &[__ARITHMETIC_GLUE_OPS__];
 const LOOP_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(1), LOOP_OPS,
 );
@@ -632,6 +655,9 @@ const CALL_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey:
 );
 const CALL_N_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(14), CALL_N_OPS,
+);
+const ARITHMETIC_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(15), ARITHMETIC_GLUE_OPS,
 );
 static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
     (crate::ir::Opcode::Add, FALLTHROUGH_KEY),
@@ -753,6 +779,14 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         fallthrough: None,
         executable: EXECUTABLE,
     }),
+    (crate::stencil_select::RegionRecord {
+        key: ARITHMETIC_GLUE_KEY,
+        stencil: crate::stencil_fact::Stencil { bytes: ARITHMETIC_GLUE_BYTES, holes: ARITHMETIC_GLUE_HOLES },
+        operations: ARITHMETIC_GLUE_OPS,
+        entry: 0,
+        fallthrough: None,
+        executable: EXECUTABLE,
+    }),
 ];
 "#
     .replace("__LOOP_BYTES__", &byte_decl("LOOP", &REGION_DECLARATIONS[0]))
@@ -775,6 +809,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__UPDATE_RETURN_BYTES__", &byte_decl("UPDATE_RETURN", &REGION_DECLARATIONS[11]))
     .replace("__CALL_BYTES__", &byte_decl("CALL", &REGION_DECLARATIONS[12]))
     .replace("__CALL_N_BYTES__", &byte_decl("CALL_N", &REGION_DECLARATIONS[13]))
+    .replace("__ARITHMETIC_GLUE_BYTES__", &byte_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[14]))
     .replace("__LOOP_HOLES__", &hole_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_HOLES__", &hole_decl("PROPERTY", &REGION_DECLARATIONS[1]))
     .replace("__MOVE_HOLES__", &hole_decl("MOVE", &REGION_DECLARATIONS[2]))
@@ -795,6 +830,7 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__UPDATE_RETURN_HOLES__", &hole_decl("UPDATE_RETURN", &REGION_DECLARATIONS[11]))
     .replace("__CALL_HOLES__", &hole_decl("CALL", &REGION_DECLARATIONS[12]))
     .replace("__CALL_N_HOLES__", &hole_decl("CALL_N", &REGION_DECLARATIONS[13]))
+    .replace("__ARITHMETIC_GLUE_HOLES__", &hole_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[14]))
     .replace("__LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[0].operations))
     .replace("__PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[1].operations))
     .replace("__MOVE_OPS__", &opcode_expr(REGION_DECLARATIONS[2].operations))
@@ -807,7 +843,8 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__BINARY_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[10].operations))
     .replace("__UPDATE_RETURN_OPS__", &opcode_expr(REGION_DECLARATIONS[11].operations))
     .replace("__CALL_OPS__", &opcode_expr(REGION_DECLARATIONS[12].operations))
-    .replace("__CALL_N_OPS__", &opcode_expr(REGION_DECLARATIONS[13].operations));
+    .replace("__CALL_N_OPS__", &opcode_expr(REGION_DECLARATIONS[13].operations))
+    .replace("__ARITHMETIC_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[14].operations));
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");

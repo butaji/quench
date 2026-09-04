@@ -20,7 +20,8 @@ machine-code leaf. The other entries intentionally use the complete dispatch
 fallback until a profiled, proven leaf is available.
 
 Task 042 adds three bounded sequential region rows (`LOOP_GLUE`,
-`BINARY_GLUE`, and `UPDATE_RETURN`). These rows reuse the canonical handlers
+`BINARY_GLUE`, and `UPDATE_RETURN`), and task 040.1 adds the measured
+five-operation `ARITHMETIC_GLUE` span. These rows reuse the canonical handlers
 for every operation in their generated operation slice; they are not counted
 as additional specialized machine-code leaves. Full-window opcode validation
 and whole-span fallback keep an Unknown or stale quickened fact from executing
@@ -28,14 +29,14 @@ a prefix of a region.
 
 | Opcode | Covered region/stencil | Specialized leaf |
 | --- | --- | --- |
-| `LoadConst` | `DISPATCH` | No |
+| `LoadConst` | `ARITHMETIC_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |
 | `Move` | `MOVE` (also `DISPATCH`) | Yes |
 | `Add` | `LOOP` / `FALLTHROUGH` (also `DISPATCH`) | Yes |
 | `AddConst` | `ADD_CONST` (also `DISPATCH`) | Yes |
 | `JumpIfFalse` | `DISPATCH` | No |
 | `Return` | `LOOP`, `FALLTHROUGH`, arithmetic leaves (also `DISPATCH`) | Yes |
 | `Slow` | `DISPATCH` | No |
-| `LoadLocal` | `DISPATCH` | No |
+| `LoadLocal` | `BINARY_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |
 | `Sub` | `SUBTRACT` (also `DISPATCH`) | Yes |
 | `Mul` | `MULTIPLY` (also `DISPATCH`) | Yes |
 | `Div` | `DIVIDE` (also `DISPATCH`) | Yes |
@@ -50,12 +51,12 @@ a prefix of a region.
 | `GetN` | `PROPERTY` (also `DISPATCH`) | Yes |
 | `SetN` | `DISPATCH` | No |
 | `CallN` | `CALL_N` (also `DISPATCH`) | No (canonical named-call bridge) |
-| `UpdateLocal` | `DISPATCH` | No |
-| `LoadLocalChecked` | `DISPATCH` | No |
-| `Binary` | `DISPATCH` | No |
+| `UpdateLocal` | `ARITHMETIC_GLUE`, `UPDATE_RETURN` (also `DISPATCH`) | No (canonical handler in bounded span) |
+| `LoadLocalChecked` | `ARITHMETIC_GLUE`, `LOOP_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |
+| `Binary` | `ARITHMETIC_GLUE`, `BINARY_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |
 | `StoreLocalChecked` | `DISPATCH` | No |
 | `InitLocal` | `DISPATCH` | No |
-| `StoreLocal` | `DISPATCH` | No |
+| `StoreLocal` | `ARITHMETIC_GLUE`, `LOOP_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |
 | `GetPropertyQuickened` | `DISPATCH` | No |
 | `GetNQuickened` | `DISPATCH` | No |
 | `AGetIQuickened` | `DISPATCH` | No |
