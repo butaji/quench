@@ -401,6 +401,20 @@ const CAP_NET_BLOCK_LIST: u16 = 2292;
 const CAP_NET_BLOCK_LIST_ADD_SUBNET: u16 = 2293;
 const CAP_NET_BLOCK_LIST_ADD_ADDRESS: u16 = 2294;
 const CAP_NET_BLOCK_LIST_CHECK: u16 = 2295;
+const CAP_NET_BLOCK_LIST_ADD_RANGE: u16 = 0x7F90;
+const CAP_NET_SOCKET_ADDRESS_CONSTRUCT: u16 = 0x7F91;
+const CAP_NET_BLOCK_LIST_CLEAR: u16 = 0x7F92;
+const CAP_NET_BLOCK_LIST_ADD_ADDRESSES: u16 = 0x7F93;
+const CAP_NET_BLOCK_LIST_ADD_CIDR: u16 = 0x7F94;
+const CAP_NET_BLOCK_LIST_ADD_CIDRS: u16 = 0x7F95;
+const CAP_NET_BLOCK_LIST_REMOVE_ADDRESS: u16 = 0x7F96;
+const CAP_NET_BLOCK_LIST_REMOVE_RANGE: u16 = 0x7F97;
+const CAP_NET_BLOCK_LIST_REMOVE_SUBNET: u16 = 0x7F98;
+const CAP_NET_BLOCK_LIST_REMOVE_CIDR: u16 = 0x7F99;
+const CAP_NET_BLOCK_LIST_TO_JSON: u16 = 0x7F9A;
+const CAP_NET_BLOCK_LIST_FROM_JSON: u16 = 0x7F9B;
+const CAP_NET_BLOCK_LIST_IS: u16 = 0x7F9C;
+const CAP_NET_BLOCK_LIST_INSPECT: u16 = 0x7F9D;
 const CAP_NET_SOCKET_ADDRESS: u16 = 0x100D;
 const CAP_NET_SOCKET_SET_NO_DELAY: u16 = 0x100E;
 const CAP_NET_SOCKET_SET_TOS: u16 = 0x102D;
@@ -640,8 +654,12 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_WORKER_COMPLETE => crate::modules::worker_threads::worker_complete_handler,
         CAP_WORKER_BOOT_MESSAGE => crate::modules::worker_threads::worker_boot_message_handler,
         CAP_BROADCAST_CHANNEL => crate::modules::worker_threads::broadcast_channel_handler,
-        CAP_BROADCAST_CHANNEL_CLOSE => crate::modules::worker_threads::broadcast_channel_close_handler,
-        CAP_BROADCAST_CHANNEL_INSPECT => crate::modules::worker_threads::broadcast_channel_inspect_handler,
+        CAP_BROADCAST_CHANNEL_CLOSE => {
+            crate::modules::worker_threads::broadcast_channel_close_handler
+        }
+        CAP_BROADCAST_CHANNEL_INSPECT => {
+            crate::modules::worker_threads::broadcast_channel_inspect_handler
+        }
         CAP_STREAM_IS_READABLE => crate::modules::stream::is_readable,
         CAP_STREAM_IS_WRITABLE => crate::modules::stream::is_writable,
         CAP_STREAM_IS_ERRORED => crate::modules::stream::is_errored,
@@ -1444,6 +1462,19 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_BLOCK_LIST_ADD_SUBNET => crate::modules::net::block_list_add_subnet,
         CAP_NET_BLOCK_LIST_ADD_ADDRESS => crate::modules::net::block_list_add_address,
         CAP_NET_BLOCK_LIST_CHECK => crate::modules::net::block_list_check,
+        CAP_NET_BLOCK_LIST_ADD_RANGE => crate::modules::net::block_list_add_range,
+        CAP_NET_BLOCK_LIST_CLEAR => crate::modules::net::block_list_clear,
+        CAP_NET_BLOCK_LIST_ADD_ADDRESSES => crate::modules::net::block_list_add_addresses,
+        CAP_NET_BLOCK_LIST_ADD_CIDR => crate::modules::net::block_list_add_cidr,
+        CAP_NET_BLOCK_LIST_ADD_CIDRS => crate::modules::net::block_list_add_cidrs,
+        CAP_NET_BLOCK_LIST_REMOVE_ADDRESS => crate::modules::net::block_list_remove_address,
+        CAP_NET_BLOCK_LIST_REMOVE_RANGE => crate::modules::net::block_list_remove_range,
+        CAP_NET_BLOCK_LIST_REMOVE_SUBNET => crate::modules::net::block_list_remove_subnet,
+        CAP_NET_BLOCK_LIST_REMOVE_CIDR => crate::modules::net::block_list_remove_cidr,
+        CAP_NET_BLOCK_LIST_TO_JSON => crate::modules::net::block_list_to_json,
+        CAP_NET_BLOCK_LIST_FROM_JSON => crate::modules::net::block_list_from_json,
+        CAP_NET_BLOCK_LIST_IS => crate::modules::net::block_list_is,
+        CAP_NET_BLOCK_LIST_INSPECT => crate::modules::net::block_list_inspect,
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
         CAP_NET_SOCKET_SET_TOS => crate::modules::net::socket_set_type_of_service,
@@ -1673,7 +1704,9 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_NODE_EVENT_TARGET_NEW => crate::modules::event_target::new_node_target,
         CAP_MESSAGE_CHANNEL => crate::dispatch_handlers::message_channel_construct,
         CAP_WORKER_CONSTRUCT => crate::modules::worker_threads::worker_construct_handler,
-        CAP_BROADCAST_CHANNEL => crate::modules::worker_threads::broadcast_channel_construct_handler,
+        CAP_BROADCAST_CHANNEL => {
+            crate::modules::worker_threads::broadcast_channel_construct_handler
+        }
         CAP_MESSAGE_PORT_CONSTRUCT => {
             crate::modules::worker_threads::message_port_construct_handler
         }
@@ -1697,6 +1730,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_NET_BOUND_SOCKET => crate::modules::net::bound_socket_construct,
         CAP_NET_TCP => crate::modules::net::tcp_construct,
         CAP_NET_BLOCK_LIST => crate::modules::net::block_list_construct,
+        CAP_NET_SOCKET_ADDRESS_CONSTRUCT => crate::modules::net::socket_address_construct,
         CAP_HTTP_SERVER => http_create_server_construct,
         CAP_HTTPS_CREATE_SERVER => https_create_server_construct,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
