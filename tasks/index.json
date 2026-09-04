@@ -29,10 +29,12 @@
             "045: profile-gated shared megamorphic cache closed with no-go finding; degraded-site trace measured 0/399 reusable re-encounters, so no cache was implemented",
             "046: profile-gated rope representation closed with no-go finding; case-032 isolation was split/regex dominated, so no representation change was implemented",
             "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented",
+            "050: detached console methods fixed and audited across logging/diagnostic methods (commits bdb396785, 8a64db057)",
+            "051: closed with finding; the reported Splay mismatch was a stale harness comparison of timing-derived Score output, not a VM semantic divergence. The tracked runner verifies Splay completion/teardown markers against Node; no tree-semantics fix was applicable (204f0ea2b, 8e727ab8e, e48ba210a)",
             "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization"
         ],
         "remaining_slices": [
-            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "062"
+            "048", "049", "052", "053", "054", "055", "056", "057", "058", "059", "060", "062", "063", "064", "065", "066", "067"
         ]
     },
     "themes": {
@@ -41,8 +43,12 @@
             "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049"]
         },
         "vm_completeness": {
-            "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. P0: fix a real Node-compat bug (050, console.log crashes when detached from `this`) and a real correctness bug (051, Splay output mismatch) that currently block running the suite at all. Then wire it into tracked verification (052), and survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Additionally: a direct code check found no cycle collector exists anywhere (Rc-only object model, Weak used only at specific known points) -- 056 audits whether this actually leaks on ordinary user-created reference cycles (DeltaBlue's constraint graph is a plausible real case), 057 implements a bounded cycle-collection pass only if 056 confirms a real leak.",
-            "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061", "062"]
+            "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. Task 050 is fixed and task 051 is closed with a finding: the reported Splay mismatch was a stale timing-score harness comparison, not a VM tree-semantics divergence. Task 052's tracked runner is landed, but full eight-fixture completion/output verification remains pending. Then survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Additionally: a direct code check found no cycle collector exists anywhere (Rc-only object model, Weak used only at specific known points) -- 056 audits whether this actually leaks on ordinary user-created reference cycles (DeltaBlue's constraint graph is a plausible real case), 057 implements a periodic full-pass cycle-collection pass only if 056 confirms a real leak.",
+            "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061"]
+        },
+        "architecture_invariants": {
+            "goal": "Prove the VM's foundational complexity claims hold via permanent cargo-test invariants (scaling behavior, never absolute wall-clock thresholds), subsystem by subsystem, BEFORE further tuning work proceeds in that subsystem -- flip the order from 'tune, then accidentally discover an architecture bug' (how the for-in quadratic scan, the property-write quadratic bug, and task 061's DeltaBlue finding all actually happened) to 'prove the foundation first, then tune with confidence.' 062 covers object/shape/property/call-dispatch/bytecode-dispatch (already in progress, invariant #1 passed). 063-067 extend the same technique to array/Map/Set, strings, closures/call-frames, raw allocation, and the JIT/stencil tier respectively. Tuning tasks in the other themes are wired to depend on their subsystem's invariant suite: 054 (TypedArray) on 063, 058 (shape hash-consing) on 062, 059 (arena) on 066, 048/049 (region growth) on 067. Every invariant must be validated to actually fail against a deliberately-introduced regression before being trusted to pass against the real implementation -- a loose bound defeats the purpose.",
+            "plan": ["062", "063", "064", "065", "066", "067"]
         }
     },
     "items": [
@@ -66,20 +72,25 @@
         {"id": "045", "file": "045.md", "title": "Shared global megamorphic property/call cache (V8-style stub cache)", "theme": "deegen_full_jit", "depends_on": ["041"]},
         {"id": "046", "file": "046.md", "title": "String concatenation representation (rope/cons-string)", "theme": "deegen_full_jit", "depends_on": []},
         {"id": "047", "file": "047.md", "title": "Reduce call-frame allocation overhead for the Call/CallN region", "theme": "deegen_full_jit", "depends_on": ["040"]},
-        {"id": "048", "file": "048.md", "title": "Grow region scope from hot glue sequence to whole loop body / small function", "theme": "deegen_full_jit", "depends_on": ["042"]},
+        {"id": "048", "file": "048.md", "title": "Grow region scope from hot glue sequence to whole loop body / small function", "theme": "deegen_full_jit", "depends_on": ["042", "067"]},
         {"id": "049", "file": "049.md", "title": "Pre-render multiple specialized variants per hot pattern (build-time-enumerated, not speculative)", "theme": "deegen_full_jit", "depends_on": ["048"]},
         {"id": "050", "file": "050.md", "title": "Fix console.log crash when detached from `this` (P0 Node-compat bug)", "theme": "vm_completeness", "depends_on": []},
         {"id": "051", "file": "051.md", "title": "Fix Splay benchmark output correctness (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]},
         {"id": "052", "file": "052.md", "title": "Wire the v8-v7 benchmark suite into the tracked verification loop", "theme": "vm_completeness", "depends_on": ["050", "051"]},
         {"id": "053", "file": "053.md", "title": "Regex engine performance survey (Irregexp-informed)", "theme": "vm_completeness", "depends_on": ["052"]},
-        {"id": "054", "file": "054.md", "title": "TypedArray fast-path coverage (NavierStokes-class workloads)", "theme": "vm_completeness", "depends_on": ["052"]},
+        {"id": "054", "file": "054.md", "title": "TypedArray fast-path coverage (NavierStokes-class workloads)", "theme": "vm_completeness", "depends_on": ["052", "063"]},
         {"id": "055", "file": "055.md", "title": "Allocation-throughput survey for allocation-heavy workloads (Splay, RayTrace, EarleyBoyer)", "theme": "vm_completeness", "depends_on": ["052"]},
         {"id": "056", "file": "056.md", "title": "Audit for reference-cycle memory leaks (no cycle collector exists)", "theme": "vm_completeness", "depends_on": []},
         {"id": "057", "file": "057.md", "title": "Periodic full-pass cycle collector (only if task 056 confirms a real leak)", "theme": "vm_completeness", "depends_on": ["056"]},
-        {"id": "058", "file": "058.md", "title": "Global shape hash-consing (structural deduplication)", "theme": "vm_completeness", "depends_on": []},
-        {"id": "059", "file": "059.md", "title": "Bump-pointer arena allocation for provably-scoped short-lived values", "theme": "vm_completeness", "depends_on": []},
+        {"id": "058", "file": "058.md", "title": "Global shape hash-consing (structural deduplication)", "theme": "vm_completeness", "depends_on": ["062"]},
+        {"id": "059", "file": "059.md", "title": "Bump-pointer arena allocation for provably-scoped short-lived values", "theme": "vm_completeness", "depends_on": ["066"]},
         {"id": "060", "file": "060.md", "title": "Host-level opt-in request-scoped arena (web-backend memory bound)", "theme": "vm_completeness", "depends_on": ["059"]},
         {"id": "061", "file": "061.md", "title": "Investigate catastrophic DeltaBlue/Richards slowdown (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]},
-        {"id": "062", "file": "062.md", "title": "Architecture invariant test suite (algorithmic-complexity regression tests)", "theme": "vm_completeness", "depends_on": []}
+        {"id": "062", "file": "062.md", "title": "Architecture invariant test suite (algorithmic-complexity regression tests)", "theme": "architecture_invariants", "depends_on": []},
+        {"id": "063", "file": "063.md", "title": "Array/collection algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
+        {"id": "064", "file": "064.md", "title": "String operation algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
+        {"id": "065", "file": "065.md", "title": "Closure/call-frame algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
+        {"id": "066", "file": "066.md", "title": "Allocation/memory algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []},
+        {"id": "067", "file": "067.md", "title": "JIT/stencil-tier algorithmic-complexity invariants", "theme": "architecture_invariants", "depends_on": []}
     ]
 }
