@@ -17,6 +17,13 @@ test.  The specialized-leaf ratio is **8/31 (25.8%)**; the other entries
 intentionally use the complete dispatch fallback until a profiled, proven
 leaf is available.
 
+Task 042 adds three bounded sequential region rows (`LOOP_GLUE`,
+`BINARY_GLUE`, and `UPDATE_RETURN`). These rows reuse the canonical handlers
+for every operation in their generated operation slice; they are not counted
+as additional specialized machine-code leaves. Full-window opcode validation
+and whole-span fallback keep an Unknown or stale quickened fact from executing
+a prefix of a region.
+
 | Opcode | Covered region/stencil | Specialized leaf |
 | --- | --- | --- |
 | `LoadConst` | `DISPATCH` | No |

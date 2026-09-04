@@ -59,6 +59,64 @@ impl<'a> NativeDispatchContext<'a> {
     }
 }
 
+/// Synchronous context for a generated fused-region entry. The region is
+/// bounded by the build-time operation list; no runtime table can grow and the
+/// bridge never executes an operation not present in that list.
+#[repr(C)]
+pub(crate) struct NativeRegionContext<'a> {
+    code: crate::machine::CodeView<'a>,
+    pc: usize,
+    operations: &'static [crate::ir::Opcode],
+    registers: *mut crate::register_file::RegisterFile,
+    context: *const VmContext,
+    result: Option<DispatchTransition>,
+    error: Option<VmError>,
+}
+
+impl<'a> NativeRegionContext<'a> {
+    pub(crate) fn new(
+        code: crate::machine::CodeView<'a>,
+        pc: usize,
+        operations: &'static [crate::ir::Opcode],
+        registers: &mut crate::register_file::RegisterFile,
+        context: &VmContext,
+    ) -> Self {
+        Self {
+            code,
+            pc,
+            operations,
+            registers,
+            context,
+            result: None,
+            error: None,
+        }
+    }
+
+    pub(crate) fn finish(
+        self,
+        status: u64,
+    ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
+        match status {
+            NATIVE_DISPATCH_OK => self.result.ok_or_else(|| {
+                crate::machine::NativeDispatchError::Physical(
+                    "native region bridge returned without a transition".into(),
+                )
+            }),
+            NATIVE_DISPATCH_SEMANTIC_ERROR => self.error.map_or_else(
+                || {
+                    Err(crate::machine::NativeDispatchError::Physical(
+                        "native region bridge returned an empty semantic error".into(),
+                    ))
+                },
+                |error| Err(crate::machine::NativeDispatchError::Semantic(error)),
+            ),
+            _ => Err(crate::machine::NativeDispatchError::Physical(
+                "native region bridge returned an invalid status".into(),
+            )),
+        }
+    }
+}
+
 const NATIVE_DISPATCH_OK: u64 = 1;
 const NATIVE_DISPATCH_SEMANTIC_ERROR: u64 = 2;
 
@@ -96,6 +154,85 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
             NATIVE_DISPATCH_SEMANTIC_ERROR
         }
     }
+}
+
+/// Execute a build-admitted straight-line region through the same canonical
+/// handlers used by the ordinary baseline path. Every instruction and
+/// transition is checked before it is accepted; a changed quickened opcode,
+/// branch, completion, or malformed window returns the physical-failure code
+/// so the caller retries the complete ordinary path exactly once.
+pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64 {
+    if raw.is_null() {
+        return 0;
+    }
+    let region = unsafe { &mut *(raw.cast::<NativeRegionContext<'static>>()) };
+    // Validate the complete window before invoking even the first canonical
+    // handler.  This is what makes an Unknown/quickened mismatch an atomic
+    // fallback: the caller can retry the whole span without replaying a
+    // prefix that may already have mutated registers or heap state.
+    for (offset, expected) in region.operations.iter().copied().enumerate() {
+        let pc = match region.pc.checked_add(offset) {
+            Some(pc) => pc,
+            None => return 0,
+        };
+        let Some(instruction) = region.code.instruction(pc) else {
+            return 0;
+        };
+        if instruction.opcode != expected {
+            return 0;
+        }
+    }
+
+    let mut last = None;
+    for (offset, expected) in region.operations.iter().copied().enumerate() {
+        let pc = match region.pc.checked_add(offset) {
+            Some(pc) => pc,
+            None => return 0,
+        };
+        let Some(instruction) = region.code.instruction(pc) else {
+            return 0;
+        };
+        if instruction.opcode != expected {
+            return 0;
+        }
+        let entry = crate::machine::BaselineEntry {
+            instruction,
+            handler: instruction.opcode.handler(),
+            control: instruction.opcode.control_operands(instruction),
+        };
+        let transition = unsafe {
+            run_baseline_instruction(
+                region.code,
+                pc,
+                entry,
+                &mut *region.registers,
+                &*region.context,
+            )
+        };
+        let transition = match transition {
+            Ok(transition) => transition,
+            Err(error) => {
+                region.error = Some(error);
+                return NATIVE_DISPATCH_SEMANTIC_ERROR;
+            }
+        };
+        let final_op = offset + 1 == region.operations.len();
+        let expected_next = pc + 1;
+        if !final_op
+            && (transition.target != DispatchTarget::Callee(expected_next)
+                || transition
+                    .completion
+                    .as_ref()
+                    .is_some_and(|completion| {
+                        !matches!(completion, crate::completion::Completion::Normal)
+                    }))
+        {
+            return 0;
+        }
+        last = Some(transition);
+    }
+    region.result = last;
+    NATIVE_DISPATCH_OK
 }
 
 fn run_ops(
@@ -305,6 +442,35 @@ pub(crate) fn execute_optimized_code_step_from(
     let Some(entry) = plan.entry(start) else {
         return Ok((crate::completion::Completion::Normal, code.len()));
     };
+    // A fused region owns a complete, contiguous operation window.  Its
+    // bridge validates the whole window before executing; a mismatch is a
+    // physical miss and falls through to the ordinary per-instruction path,
+    // never to a partially executed region.
+    if let Some(native) = entry.native_region.as_ref() {
+        match native
+            .borrow_mut()
+            .execute(code, start, registers, context)
+        {
+            Ok(transition) => {
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                let next = match transition.target {
+                    DispatchTarget::Callee(next) => next,
+                    DispatchTarget::Exit => transition.next_pc,
+                };
+                let completion = transition
+                    .completion
+                    .unwrap_or(crate::completion::Completion::Normal);
+                return Ok((completion, next));
+            }
+            Err(crate::machine::NativeDispatchError::Semantic(error)) => {
+                return completion_step_after_error(registers, error, start + 1)
+                    .map(|step| (step.completion, step.next));
+            }
+            Err(crate::machine::NativeDispatchError::Physical(_)) => {
+                crate::execution_trace::leaf_rejection("optimizing_native_region");
+            }
+        }
+    }
     let instruction = entry.baseline.instruction;
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::compact_site(code, start);
@@ -2656,6 +2822,206 @@ mod compact_handler_tests {
             completion,
             crate::completion::Completion::Return(Value::String("ab".into()))
         );
+    }
+
+    fn execute_one_at_a_time(
+        code: crate::machine::CodeView<'_>,
+        registers: &mut crate::register_file::RegisterFile,
+        context: &crate::vm::VmContext,
+    ) -> crate::vm::DispatchTransition {
+        let mut last = None;
+        for pc in 0..code.len() {
+            let instruction = code.instruction(pc).expect("ordinary instruction");
+            let transition = run_instruction(code, pc, instruction, registers, context)
+                .expect("ordinary handler");
+            let done = transition.completion.is_some();
+            last = Some(transition);
+            if done {
+                break;
+            }
+        }
+        last.expect("non-empty sequence")
+    }
+
+    fn assert_transition_equal(
+        actual: &crate::vm::DispatchTransition,
+        expected: &crate::vm::DispatchTransition,
+    ) {
+        assert_eq!(actual.next_pc, expected.next_pc);
+        assert_eq!(actual.target, expected.target);
+        match (&actual.completion, &expected.completion) {
+            (
+                Some(crate::completion::Completion::Return(Value::Number(left))),
+                Some(crate::completion::Completion::Return(Value::Number(right))),
+            ) => assert_eq!(left.to_bits(), right.to_bits()),
+            _ => assert_eq!(actual.completion, expected.completion),
+        }
+    }
+
+    #[test]
+    fn fused_multi_op_regions_match_one_at_a_time_execution() {
+        let cases = [
+            (
+                crate::stencil_select::binary_glue_region_key(),
+                vec![
+                    Op::LoadLocal { dst: 1, slot: 1 },
+                    Op::Const {
+                        dst: 2,
+                        value: crate::ops::Constant::Number(3.0),
+                    },
+                    Op::Binary {
+                        dst: 0,
+                        operator: crate::ops::BinaryOp::NumericAdd,
+                        lhs: 1,
+                        rhs: 2,
+                    },
+                    Op::Return { src: 0 },
+                ],
+                vec![Value::Undefined, Value::Number(2.0)],
+            ),
+            (
+                crate::stencil_select::update_return_region_key(),
+                vec![
+                    Op::LoadLocal {
+                        dst: 2,
+                        slot: 1,
+                    },
+                    Op::Const {
+                        dst: 3,
+                        value: crate::ops::Constant::Number(1.0),
+                    },
+                    Op::Binary {
+                        dst: 4,
+                        operator: crate::ops::BinaryOp::NumericAdd,
+                        lhs: 2,
+                        rhs: 3,
+                    },
+                    Op::CheckInitialized {
+                        slot: 1,
+                        name: "x".into(),
+                    },
+                    Op::StoreLocal { slot: 1, src: 4 },
+                    Op::Return { src: 1 },
+                ],
+                vec![Value::Undefined, Value::Number(9.0)],
+            ),
+        ];
+        let context = crate::vm::current_context_or_default();
+        for (key, ops, values) in cases {
+            let executable = crate::machine::ExecutableCode::from_ops(ops);
+            let code = executable.code();
+            let record = crate::stencil_select::select_region(key).expect("region record");
+            assert_eq!(
+                code.len(),
+                record.operations.len(),
+                "test sequence must lower to the admitted span"
+            );
+            for (instruction, expected) in (0..code.len())
+                .map(|pc| code.instruction(pc).expect("lowered instruction"))
+                .zip(record.operations.iter().copied())
+            {
+                assert_eq!(instruction.opcode, expected);
+            }
+
+            let mut ordinary = crate::register_file::RegisterFile::from_values(values.clone());
+            let expected_transition = {
+                let environment = crate::environment::Environment::new();
+                environment.set(1, values[1].clone());
+                let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+                execute_one_at_a_time(code, &mut ordinary, &context)
+            };
+            let expected_registers = ordinary.clone();
+            let mut fused = crate::register_file::RegisterFile::from_values(values);
+            let actual_transition = {
+                let environment = crate::environment::Environment::new();
+                environment.set(1, expected_registers.read(1).unwrap_or(Value::Undefined));
+                let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+                let mut region = crate::machine::NativeRegionPlan::new_for_test(key)
+                    .expect("fused region test plan");
+                region
+                    .execute(code, 0, &mut fused, &context)
+                    .expect("fused region execution")
+            };
+            assert_transition_equal(&actual_transition, &expected_transition);
+            assert_eq!(fused, expected_registers);
+        }
+    }
+
+    #[test]
+    fn fused_region_unknown_interior_falls_back_atomically() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![
+            Op::LoadLocal { dst: 1, slot: 1 },
+            Op::Const {
+                dst: 2,
+                value: crate::ops::Constant::Number(3.0),
+            },
+            Op::Binary {
+                dst: 0,
+                operator: crate::ops::BinaryOp::NumericAdd,
+                lhs: 1,
+                rhs: 2,
+            },
+            Op::Return { src: 0 },
+        ]);
+        let code = executable.code();
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        environment.set(1, Value::Number(2.0));
+        let _environment_guard = crate::locals::EnvironmentGuard::install(environment.clone());
+        let mut region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::binary_glue_region_key(),
+        )
+        .expect("fused region test plan");
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Number(2.0),
+        ]);
+        let before = registers.clone();
+        // Simulate a mid-span Unknown/quickened fact.  The bridge must inspect
+        // the whole window before invoking the first handler.
+        code.quicken_instruction(1, crate::ir::Opcode::Slow, 0, 0, 0);
+        assert!(matches!(
+            region.execute(code, 0, &mut registers, &context),
+            Err(crate::machine::NativeDispatchError::Physical(_))
+        ));
+        assert_eq!(registers, before, "partial match executed a prefix");
+
+        // The caller's ordinary path remains complete and can execute the
+        // canonical plan from the beginning after the fused admission fails.
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::LoadLocal { dst: 1, slot: 1 },
+            Op::Const {
+                dst: 2,
+                value: crate::ops::Constant::Number(3.0),
+            },
+            Op::Binary {
+                dst: 0,
+                operator: crate::ops::BinaryOp::NumericAdd,
+                lhs: 1,
+                rhs: 2,
+            },
+            Op::Return { src: 0 },
+        ]);
+        function.set_tier_threshold_for_test(1);
+        function.retire(1);
+        assert_eq!(
+            function.enter_invocation(),
+            crate::machine::TierTransition::CompileBaseline
+        );
+        let baseline = function.baseline_plan().expect("baseline plan");
+        let canonical = function.code().expect("canonical code");
+        let mut fallback_registers = before;
+        let (completion, next) = crate::vm::execute_baseline_code_from(
+            canonical,
+            &baseline,
+            0,
+            &mut fallback_registers,
+            &context,
+            environment,
+        )
+        .expect("ordinary whole-span fallback");
+        assert_eq!(completion, crate::completion::Completion::Return(Value::Number(3.0)));
+        assert_eq!(next, canonical.len());
     }
 
     #[test]

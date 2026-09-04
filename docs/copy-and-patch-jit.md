@@ -47,7 +47,11 @@ stencil catalog rather than a runtime code generator.
   paper. A fused region is only admitted after a build-time proof that its
   interior has no externally-reachable entry point besides its declared one,
   so hot-cold splitting and jump-to-fallthrough stay sound across the fused
-  boundary.
+  boundary. The current multi-op executor renders one bounded bridge stencil
+  per admitted region; its generated operation slice is validated in full
+  before the bridge invokes each canonical handler in order. It is therefore
+  a sequential region executor, not a claim that one numeric leaf implements
+  every operation in the region.
 - **Type-check elimination as one named algorithm.** Mirrors the paper's
   algorithm 𝒜 (§5.1): one reusable build-time pass over a region's semantic
   function and a fact predicate, not per-operation ad hoc logic.
@@ -95,9 +99,12 @@ closing any remaining named-technique gaps is tracked in `tasks/index.json`
 ## Current implementation evidence
 
 The build script emits a fused Number Add+Return x86-64 fragment, a guarded
-property region with a typed `Ptr64` hole, and a two-region `Rel32`
-fallthrough variant. Each generated key is derived from that region's
-generated opcode slice, so the eligibility facts have one source.
+property region with a typed `Ptr64` hole, a two-region `Rel32` fallthrough
+variant, and bounded sequential bridge stencils for the measured arithmetic
+glue spans. Each generated key is derived from that region's generated opcode
+slice, so the eligibility facts have one source. Before execution, the bridge
+checks the entire span against the live instruction view; a mismatch or patch
+failure falls back before any operation in the span runs.
 Runtime selection is a single `RegionKey` lookup; rendering uses the bounded RW
 arena, copies and patches before the one-way RX transition, and invokes the
 installed Add fragment through the arena-owned ABI entry. Invalid keys, stale
