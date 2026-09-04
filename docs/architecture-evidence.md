@@ -234,6 +234,17 @@ therefore Partial rather than a new implementation claim: extending the key
 would require a representation/IC audit, and no semantics-changing change is
 justified without that evidence.
 
+Fresh v8-v7 tracked-runner baseline (ARM64, optimized artifact,
+`--runs 1 --timeout-ms 10000`) records both execution score and peak RSS:
+Richards 52.1 / 18.2 MiB (output equal), DeltaBlue 46.9 / 82.7 MiB (output
+equal), and Splay 326 / 430.7 MiB (output equal). Crypto, RayTrace,
+Earley-Boyer, RegExp, and Navier-Stokes exceeded the 10-second engine timeout
+and therefore have no score/RSS value; their Node oracle markers completed.
+The aggregate over completed engine scores is 92.70 versus Node's 83,617.48
+(0.001109x), but it is not a whole-suite score because five fixtures are
+incomplete. This snapshot is measurement-only and does not claim an
+optimization gain.
+
 Task 064 adds three string invariants. ARM64 debug runs measured append
 ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
 tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
