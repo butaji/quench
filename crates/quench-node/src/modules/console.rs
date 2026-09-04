@@ -172,13 +172,19 @@ pub fn log_named(
     is_error: bool,
     channel_name: &str,
 ) -> Result<Value, quench_runtime::execute::VmError> {
-    let channel = crate::modules::diagnostics_channel::channel(
-        state,
-        None,
-        &[Value::String(channel_name.into())],
-    )?;
-    let message = quench_runtime::host_api::array(args.to_vec());
-    crate::modules::diagnostics_channel::publish(state, Some(&channel), &[message])?;
+    // Console callbacks can be invoked from inside an EventEmitter dispatch
+    // that still owns a HostState borrow. Diagnostics publication is
+    // best-effort in that re-entrant window; defer it rather than panicking
+    // before the console's primary output side effect.
+    if state.try_borrow_mut().is_ok() {
+        let channel = crate::modules::diagnostics_channel::channel(
+            state,
+            None,
+            &[Value::String(channel_name.into())],
+        )?;
+        let message = quench_runtime::host_api::array(args.to_vec());
+        crate::modules::diagnostics_channel::publish(state, Some(&channel), &[message])?;
+    }
     let line = format_args(args);
     let process = state
         .borrow()
