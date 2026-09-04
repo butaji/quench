@@ -671,12 +671,25 @@ historical measurements.
 | `b2da584d6` release root-fix baseline (300 s) | 7 / 8 | 89.25* | 0.7882* | 109.665 (100/100) | 40.0 speed, 233.5 memory (29/38 under ceilings) |
 | `2fff2aa70` release root-safety completion (300 s) | 8 / 8 | 71.84 | 2.416 | 285.028 (100/100) | 178.6 speed, 377.2 memory (33/38 instrumentation; 38/38 output) |
 | `f76c6ff7a` post-048/049/054/059 findings (300 s) | 8 / 8 | 67.91 | 2.504 | 285.389 (100/100) | 178.1 speed, 377.3 memory (33/38 instrumentation; 38/38 output) |
+| `625abe21e` production no-trace rebaseline (300 s) | 8 / 8 | 70.23 | 2.160 | 295.381 (100/100) | 182.6 speed, 377.3 memory (34/38 instrumentation; 38/38 output) |
 
 \* The RegExp fixture is excluded because it emits an error; this is not a
 whole-suite score. The row is a paired measurement record, not an optimization
 claim. The required anti-cheat scan was run for this snapshot; its 1,382 text
 matches are semantic API/module names (for example `RegExp`), with no fixture
 identity detection in production code.
+
+The `625abe21e` row uses the optimized artifact built without the optional
+`execution-trace` feature for the v8-v7 and neutral measurements, so production
+Score is not paying for instrumentation-only branches. All eight v8-v7 fixtures
+completed with `output_equal:true`: engine scores were Richards 56.0, DeltaBlue
+48.8, Crypto 16.8, RayTrace 163, EarleyBoyer 73.9, RegExp 13.6, Splay 373,
+and NavierStokes 211. Summed peak RSS was 2,339,880,960 bytes versus Node's
+1,083,408,384 bytes (2.160x). The paired curriculum check used a separate
+optimized `execution-trace` artifact and remained output-correct for all 38
+cases (34/38 optional checks), with speed 182.6 and memory 377.3. This is a
+build-configuration rebaseline, not a semantic optimization claim; the v8-v7
+target remains open.
 
 ## Task 069 Crypto completion/profile finding
 
