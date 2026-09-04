@@ -84,14 +84,17 @@ mod tests {
                     objects[n] = object;
                 }}
                 var total = 0;
-                for (var n = 0; n < {repetitions}; n++) {{
-                    objects[n].last = n;
-                    total += objects[n].last;
+                for (var round = 0; round < 20; round++) {{
+                    for (var n = 0; n < {repetitions}; n++) {{
+                        objects[n].last = n + round;
+                        total += objects[n].last;
+                        delete objects[n].last;
+                    }}
                 }}
                 total;
             "#
         );
-        run_source_ms(&source) / repetitions as f64
+        run_source_ms(&source) / (repetitions * 20) as f64
     }
 
     /// Call dispatch is O(1) in the number of distinct callees previously
@@ -412,5 +415,99 @@ mod tests {
             "#
         );
         run_source_ms(&source) / repetitions as f64
+    }
+
+    /// Closure creation is proportional to captured state, not to the total
+    /// number of closures previously created. Equal per-closure use keeps
+    /// setup amortized while the 16x bound catches a global closure-list scan.
+    #[test]
+    fn closure_creation_does_not_scale_with_closure_history() {
+        let small = measure_closure_creation(10, 20_000);
+        let large = measure_closure_creation(1_000, 200);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #065.1: closures=10 {small:.6} ms/closure, closures=1000 {large:.6} ms/closure, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "closure creation scaled with closure history: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_closure_creation(closure_count: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var closures = [];
+                for (var i = 0; i < {closure_count}; i++) {{
+                    (function(value) {{ closures[i] = function() {{ return value; }}; }})(i);
+                }}
+                var total = 0;
+                for (var round = 0; round < {repetitions}; round++) {{
+                    for (var i = 0; i < {closure_count}; i++) total += closures[i]();
+                }}
+                total;
+            "#
+        );
+        run_source_ms(&source) / (closure_count * repetitions) as f64
+    }
+
+    /// Recursive frame setup/teardown is O(1) per frame. The ratio compares
+    /// marginal frame cost at depth 10 and 100, rather than total stack space.
+    #[test]
+    fn recursive_frame_cost_is_constant_per_frame() {
+        let shallow = measure_recursive_frames(10, 2_000);
+        let deep = measure_recursive_frames(100, 200);
+        let ratio = deep / shallow.max(1e-9);
+        eprintln!(
+            "architecture invariant #065.2: depth=10 {shallow:.6} ms/frame, depth=100 {deep:.6} ms/frame, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "recursive frame cost grew with depth: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_recursive_frames(depth: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                function descend(n) {{ if (n === 0) return 1; return 1 + descend(n - 1); }}
+                var total = 0;
+                for (var i = 0; i < {repetitions}; i++) total += descend({depth});
+                total;
+            "#
+        );
+        run_source_ms(&source) / (depth * repetitions) as f64
+    }
+
+    /// Argument marshaling is proportional to argument count, not to the
+    /// number of unrelated functions defined in the program. Equal call
+    /// counts and a 16x bound catch a global function-table scan.
+    #[test]
+    fn argument_marshaling_does_not_scale_with_function_catalog() {
+        let small = measure_argument_marshaling(10, 20_000);
+        let large = measure_argument_marshaling(1_000, 200);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #065.3: functions=10 {small:.6} ms/call, functions=1000 {large:.6} ms/call, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "argument marshaling scaled with function catalog: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_argument_marshaling(function_count: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var functions = [];
+                for (var i = 0; i < {function_count}; i++) functions[i] = function(a, b, c) {{ return a + b + c; }};
+                var total = 0;
+                for (var round = 0; round < {repetitions}; round++) {{
+                    for (var i = 0; i < {function_count}; i++) total += functions[i](i, i + 1, i + 2);
+                }}
+                total;
+            "#
+        );
+        run_source_ms(&source) / (function_count * repetitions) as f64
     }
 }
