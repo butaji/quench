@@ -237,6 +237,22 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         return result;
     }
     match target {
+        Value::Object(properties)
+            if properties.iter().any(|(name, value)| {
+                name == "\0quench:async_hooks:mutable"
+                    && matches!(value, Value::Boolean(true))
+            }) =>
+        {
+            // Async-hook resources are host-owned identity objects. Their
+            // init callback is allowed to attach arbitrary user properties;
+            // publish those writes in place so the host's canonical resource
+            // observes the same object the VM callback received.
+            unsafe {
+                (&mut *(Rc::as_ptr(&properties) as *mut ObjectData))
+                    .set_property_in_place(key, value);
+            }
+            Value::Object(properties)
+        }
         Value::Object(properties) if boxed_string_immutable_key(&properties, key) => {
             Value::Object(properties)
         }
@@ -245,7 +261,9 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         {
             Value::Object(properties)
         }
-        Value::Object(properties) => builtins_cells::set_object_property(properties, key, value),
+        Value::Object(properties) => {
+            builtins_cells::set_object_property(properties, key, value)
+        }
         Value::ObjectAlias(alias) => set_object_alias_property(alias, key, value),
         Value::Array(values) if array_descriptor_flag(&values, key, "writable") == Some(false) => {
             Value::Array(values)
