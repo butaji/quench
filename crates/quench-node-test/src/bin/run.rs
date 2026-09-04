@@ -115,8 +115,22 @@ fn main() -> ExitCode {
         quench_node_test::NodeOutcome::Fail { reason } => {
             if child_mode {
                 let message = reason.strip_prefix("runtime: ").unwrap_or(&reason);
+                // The fixture runner prefixes a rendered uncaught error with
+                // its status for classification.  A real child process only
+                // writes the rendered exception to stderr, so remove that
+                // transport metadata before forwarding bytes to the parent.
+                let (message, exit_code) = match message.strip_prefix("exit code ") {
+                    Some(value) => {
+                        let (code_text, detail) = value
+                            .split_once(": ")
+                            .map_or((value, ""), |(code, detail)| (code, detail));
+                        let code = code_text.parse::<u8>().ok();
+                        (if detail.is_empty() { value } else { detail }, code)
+                    }
+                    None => (message, None),
+                };
                 eprintln!("{message}");
-                return ExitCode::from(1);
+                return ExitCode::from(exit_code.unwrap_or(1));
             }
             if reason.starts_with("read ") {
                 eprintln!("Cannot find module '{}'", path.display());
