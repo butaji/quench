@@ -72,6 +72,9 @@ fn run_code_completion_step_from(
 ) -> Result<CompletionStep, VmError> {
     let mut pc = start;
     while let Some(instruction) = code.instruction(pc) {
+        let _source_offset = crate::vm::source_offset(
+            code.metadata_at(pc).and_then(|metadata| metadata.source),
+        );
         if !context.consume_execution_budget() {
             return Err(VmError::Interrupted);
         }
@@ -565,6 +568,13 @@ fn run_instruction(
         Opcode::ASetI => {
             let index = registers.read_array_index(usize::from(instruction.b));
             let number = registers.read_number(usize::from(instruction.c));
+            if let (Some(index), Some(number)) = (index, number) {
+                if let Some(target) = registers.read_typed_array(usize::from(instruction.a)) {
+                    crate::typed_array_ops::set_numeric_index(target, index, number);
+                    crate::execution_trace::event(crate::execution_trace::Event::PackedArraySet);
+                    return Ok(None);
+                }
+            }
             let stored = index.zip(number).is_some_and(|(index, number)| {
                 registers
                     .read_array(usize::from(instruction.a))

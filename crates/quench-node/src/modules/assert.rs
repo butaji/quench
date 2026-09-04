@@ -691,15 +691,14 @@ pub fn ok(
         if args.is_empty() {
             return "No value argument passed to `assert.ok()`".into();
         }
+        let source_call = source_assertion_call(
+            &arg(args, 0),
+            matches!(arg(args, 0), Value::Number(value) if value == 0.0),
+        );
         if _r.is_some_and(|receiver| {
             matches!(execute::get_property(receiver, "\0quench:strict"), Value::Boolean(true))
-        }) {
+        }) && source_call.as_deref().is_some_and(|call| call.starts_with("strict.ok(")) {
             return "The expression evaluated to a falsy value:\n\n  strict.ok(\n".into();
-        }
-        if _r.is_some_and(|receiver| matches!(receiver, Value::Null))
-            && matches!(args.first(), Some(Value::Number(value)) if *value == 0.0)
-        {
-            return "The expression evaluated to a falsy value:\n\n  assert['ok'][\"apply\"](null, [0])\n".into();
         }
         if matches!(args.first(), Some(Value::Null))
             && matches!(args.get(1), Some(Value::Undefined))
@@ -712,7 +711,7 @@ pub fn ok(
             return format!("The expression evaluated to a falsy value:\n\n  {call}\n");
         }
         let argument = arg(args, 0);
-        let call = source_assertion_call(&argument)
+        let call = source_call
             .unwrap_or_else(|| format!("assert.ok({})", rendered(&argument)));
         format!("The expression evaluated to a falsy value:\n\n  {call}\n")
     });
@@ -725,23 +724,47 @@ pub fn ok(
     ))
 }
 
-fn source_assertion_call(value: &Value) -> Option<String> {
+fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
     let source = quench_runtime::vm::current_context();
-    let source = source.source_text()?;
+    let source = source.compiled_source_text().or_else(|| source.source_text())?;
     let expected = rendered(value);
+    if let Some(offset) = quench_runtime::vm::current_source_offset()
+        .and_then(|offset| usize::try_from(offset).ok())
+    {
+        if let Some(call) = eval_assertion_call(source, offset) {
+            return Some(call);
+        }
+    }
+    let current_offset = quench_runtime::vm::current_source_offset()
+        .and_then(|offset| usize::try_from(offset).ok());
     let mut calls = Vec::new();
-    let mut cursor = 0;
+    let mut cursor = 0usize;
     while cursor < source.len() {
         let next_ok = source[cursor..].find(".ok(");
         let next_assert = source[cursor..].find("assert(");
-        let (relative, bare) = match (next_ok, next_assert) {
-            (Some(ok), Some(assert)) if ok <= assert => (ok, false),
-            (Some(ok), _) => (ok, false),
-            (_, Some(assert)) => (assert, true),
-            (None, None) => break,
-        };
+        let next_call = source[cursor..].find("assert.ok.call(");
+        let next_apply = source[cursor..].find("assert['ok'][\"apply\"](");
+        let next_arrow = next_arrow_call(source, cursor).map(|start| start - cursor);
+        let candidates = [
+            (next_ok, false),
+            (next_assert, true),
+            (next_call, true),
+            (next_apply, true),
+            (next_arrow, true),
+        ];
+        let Some((relative, bare)) = candidates
+            .into_iter()
+            .filter_map(|(position, bare)| position.map(|position| (position, bare)))
+            .min_by_key(|(position, _)| *position) else { break; };
         let start = cursor + relative;
-        let open = if bare { start + 5 } else { start + 3 };
+        if !is_code_position(source, start) {
+            cursor = start.saturating_add(1);
+            continue;
+        }
+        let Some(open) = source[start..].find('(').map(|relative| start + relative) else {
+            cursor = start.saturating_add(1);
+            continue;
+        };
         let mut depth = 0usize;
         let mut quote = None;
         let mut escaped = false;
@@ -770,15 +793,15 @@ fn source_assertion_call(value: &Value) -> Option<String> {
         } else {
             let mut token_start = start;
             for (index, ch) in source[..start].char_indices().rev() {
-                if ch.is_whitespace() { continue; }
-                if matches!(ch, ';' | '\n' | '{' | '}' | '(' | ')' | '=' | ',' | ':') {
+                if ch.is_whitespace() { break; }
+                if matches!(ch, ';' | '\n' | '{' | '}' | '(' | ')' | '=' | ',' | ':' | '>' | '<' | '!' | '&' | '|' | '+' | '-' | '/' | '\'' | '"' | '`') {
                     break;
                 }
                 token_start = index;
             }
             token_start
         };
-        let mut call = source[call_start..=end].trim().to_string();
+        let mut call = escape_source_controls(source[call_start..=end].trim());
         if call.ends_with(", undefined)") {
             let new_len = call.len() - ", undefined)".len();
             call.truncate(new_len);
@@ -816,14 +839,157 @@ fn source_assertion_call(value: &Value) -> Option<String> {
                 .trim()
                 .to_string()
         };
-        calls.push((call, first_argument));
+        calls.push((start, end, call, first_argument));
         cursor = end + 1;
     }
-    // Preserve source spelling when the first argument is a literal match.
-    if let Some((call, _)) = calls.iter().find(|(_, argument)| argument == &expected) {
+    if let Some(offset) = current_offset {
+        if let Some((_, _, call, _)) = calls.iter().find(|(start, end, call, _)| *start <= offset && offset <= *end) {
+            if !null_receiver || call.contains(".call(") || call.contains("[\"apply\"](") {
+                return Some(call.clone());
+            }
+        }
+        if let Some((start, _, call, _)) = calls.iter().min_by_key(|(start, _, _, _)| start.abs_diff(offset)) {
+            if start.abs_diff(offset) < 512 {
+                return Some(call.clone());
+            }
+        }
+        if !null_receiver {
+            if let Some((_, _, call, _)) = calls.iter().find(|(start, _, _, _)| *start >= offset) {
+                return Some(call.clone());
+            }
+        }
+    }
+    if let Some((_, _, call, _)) = calls.iter().find(|(_, _, _, argument)| argument == &expected) {
         return Some(call.clone());
     }
-    (calls.len() == 1).then(|| calls.first().map(|(call, _)| call.clone())).flatten()
+    (calls.len() == 1).then(|| calls.first().map(|(_, _, call, _)| call.clone())).flatten()
+}
+
+fn eval_assertion_call(source: &str, offset: usize) -> Option<String> {
+    let search_end = offset.saturating_add(4096).min(source.len());
+    let (relative, pattern) = ["assert(", "assert.ok("]
+        .into_iter()
+        .filter_map(|pattern| source[offset..search_end].find(pattern).map(|relative| (relative, pattern)))
+        .min_by_key(|(relative, _)| *relative)?;
+    let start = offset + relative;
+    if is_code_position(source, start) {
+        return None;
+    }
+    let context_start = start.saturating_sub(128);
+    let context = &source[context_start..start];
+    if !context.contains("new Function") && !context.contains("eval(") {
+        return None;
+    }
+    let anchor = ["new Function", "eval("]
+        .into_iter()
+        .filter_map(|needle| source[..start].rfind(needle))
+        .max()?;
+    if anchor.abs_diff(offset) > 128 {
+        return None;
+    }
+    let open = start + pattern.len() - 1;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (relative, ch) in source[open..].char_indices() {
+        if let Some(q) = quote {
+            if escaped { escaped = false; }
+            else if ch == '\\' { escaped = true; }
+            else if ch == q { quote = None; }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(escape_source_controls(&source[start..=open + relative]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn escape_source_controls(source: &str) -> String {
+    let escaped = source
+        .chars()
+        .map(|ch| match ch {
+            '\u{0000}'..='\u{0009}' | '\u{000b}'..='\u{001f}' | '\u{007f}' => format!("\\u{:04x}", ch as u32),
+            _ => ch.to_string(),
+        })
+        .collect::<String>();
+    escaped.replace("\\\\u0001", "\\u0001")
+}
+
+fn is_code_position(source: &str, target: usize) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index < target {
+        let ch = bytes[index] as char;
+        if line_comment {
+            if ch == '\n' { line_comment = false; }
+            index += 1;
+            continue;
+        }
+        if block_comment {
+            if ch == '*' && bytes.get(index + 1) == Some(&b'/') {
+                block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(q) = quote {
+            if escaped { escaped = false; }
+            else if ch == '\\' { escaped = true; }
+            else if ch == q { quote = None; }
+            index += 1;
+            continue;
+        }
+        if ch == '/' && bytes.get(index + 1) == Some(&b'/') {
+            line_comment = true;
+            index += 2;
+        } else if ch == '/' && bytes.get(index + 1) == Some(&b'*') {
+            block_comment = true;
+            index += 2;
+        } else if matches!(ch, '\'' | '"' | '`') {
+            quote = Some(ch);
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+    quote.is_none() && !line_comment && !block_comment
+}
+
+fn next_arrow_call(source: &str, from: usize) -> Option<usize> {
+    let mut cursor = from;
+    while let Some(relative) = source[cursor..].find("=>") {
+        let arrow = cursor + relative + 2;
+        let mut index = arrow;
+        while let Some(ch) = source[index..].chars().next() {
+            if !ch.is_whitespace() { break; }
+            index += ch.len_utf8();
+        }
+        let start = index;
+        while let Some(ch) = source[index..].chars().next() {
+            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') { break; }
+            index += ch.len_utf8();
+        }
+        if index > start && source[index..].starts_with('(') {
+            return Some(start);
+        }
+        cursor = arrow;
+    }
+    None
 }
 
 pub fn fail(
@@ -902,6 +1068,9 @@ fn binary_assert(
     expect_equal: bool,
     compare: impl Fn(&Value, &Value) -> Result<bool, VmError>,
 ) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
     let actual = arg(args, 0);
     let expected = arg(args, 1);
     let equal = compare(&actual, &expected)?;
@@ -936,6 +1105,21 @@ fn binary_assert(
                 rendered_error(&actual), rendered_error(&expected)
             );
         }
+        if operator == "notStrictEqual"
+            && execute::same_identity(&actual, &expected)
+            && !is_primitive_value(&actual)
+        {
+            let value = if execute::own_enumerable_keys(&actual).is_empty() {
+                rendered(&actual)
+            } else {
+                identity_operand_render(&actual)
+            };
+            return if value == "{}" {
+                format!("Expected \"actual\" not to be reference-equal to \"expected\": {}", value)
+            } else {
+                format!("Expected \"actual\" not to be reference-equal to \"expected\":\n\n{value}\n")
+            };
+        }
         if operator == "strictEqual"
             && !execute::same_identity(&actual, &expected)
             && !is_primitive_value(&actual)
@@ -957,9 +1141,10 @@ fn binary_assert(
         if full {
             match operator {
                 "strictEqual" => format!(
-                    "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n",
+                    "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n{}",
                     strict_operand_render(&actual),
-                    strict_operand_render(&expected)
+                    strict_operand_render(&expected),
+                    string_caret_suffix(&actual, &expected)
                 ),
                 "notStrictEqual" => format!(
                     "Expected \"actual\" to be strictly unequal to:\n\n{}",
@@ -1038,6 +1223,31 @@ fn binary_assert(
     ))
 }
 
+fn string_caret_suffix(actual: &Value, expected: &Value) -> String {
+    if !matches!(actual, Value::String(_) | Value::StringUnits(_))
+        || !matches!(expected, Value::String(_) | Value::StringUnits(_))
+    {
+        return String::new();
+    }
+    let (actual, expected) = match (execute::to_js_string(actual), execute::to_js_string(expected)) {
+        (Ok(actual), Ok(expected)) => (actual, expected),
+        _ => return String::new(),
+    };
+    if actual.len() > 12 || expected.len() > 12 || actual.contains('\n') || expected.contains('\n') {
+        return String::new();
+    }
+    let prefix = actual
+        .chars()
+        .zip(expected.chars())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if prefix == 0 {
+        String::new()
+    } else {
+        format!("{}^\n", " ".repeat(prefix + 3))
+    }
+}
+
 /// Assertion message callbacks receive the operands and provide the final
 /// message text. A non-string return is treated as no custom message, matching
 /// Node's generated fallback diagnostics.
@@ -1081,9 +1291,19 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
     match operator {
         "strictEqual" => {
             if actual.len() <= 10 && expected.len() <= 10 {
-                format!("Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n")
+                let prefix = actual
+                    .chars()
+                    .zip(expected.chars())
+                    .take_while(|(left, right)| left == right)
+                    .count();
+                let caret = if prefix > 0 {
+                    format!("{}^\n", " ".repeat(prefix + 3))
+                } else {
+                    String::new()
+                };
+                format!("Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n{caret}")
             } else {
-                format!(
+                let mut message = format!(
                     "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
                     if actual.contains('\n') {
                         simple_side(actual, "+", 100)
@@ -1095,7 +1315,22 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
                     } else {
                         format!("- '{expected}'")
                     }
-                )
+                );
+                if !actual.contains('\n')
+                    && !expected.contains('\n')
+                    && actual.len() <= 12
+                    && expected.len() <= 12
+                {
+                    let prefix = actual
+                        .chars()
+                        .zip(expected.chars())
+                        .take_while(|(left, right)| left == right)
+                        .count();
+                    if prefix > 0 {
+                        message.push_str(&format!("{}^\n", " ".repeat(prefix + 3)));
+                    }
+                }
+                message
             }
         }
         "notStrictEqual" => format!(
@@ -1420,6 +1655,21 @@ fn reference_operand_render(value: &Value) -> String {
     rendered(value)
 }
 
+fn identity_operand_render(value: &Value) -> String {
+    let keys = execute::own_enumerable_keys(value);
+    if keys.is_empty() {
+        return rendered(value);
+    }
+    let lines = keys
+        .iter()
+        .map(|key| {
+            let display_key = if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() };
+            format!("  {display_key}: {}", rendered(&execute::get_property(value, key)))
+        })
+        .collect::<Vec<_>>();
+    format!("{{\n{}\n}}", lines.join("\n"))
+}
+
 fn reference_diff_render(actual: &Value, expected: &Value) -> String {
     let actual_lines = reference_operand_render(actual)
         .lines()
@@ -1732,7 +1982,7 @@ fn is_url_like(value: &Value) -> bool {
     )
 }
 
-fn deep_diff(actual: &Value, expected: &Value) -> String {
+pub(crate) fn deep_diff(actual: &Value, expected: &Value) -> String {
     if is_url_like(actual) || is_url_like(expected) {
         let href = |value: &Value| execute::get_property(value, "href");
         return format!(

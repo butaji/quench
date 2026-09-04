@@ -631,6 +631,9 @@ fn run_leaf_op(
     locals: &mut impl LeafLocalFile,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     use crate::ir::Opcode::*;
+    let _source_offset = crate::vm::source_offset(
+        code.metadata_at(pc).and_then(|metadata| metadata.source),
+    );
     let _decode_guard = crate::execution_trace::leaf_compact(op.opcode);
     let value = match op.opcode {
         LoadConst => code.constant_at(pc).map(|(_, value)| value.into()),
