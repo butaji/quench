@@ -995,7 +995,11 @@ fn binary_assert(
                 ),
                 _ if operator == "notDeepStrictEqual" => format!(
                     "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
-                    rendered_not_deep(&actual)
+                    if is_date_operand(&actual) {
+                        rendered_not_deep(&actual)
+                    } else {
+                        format!("{}\n", rendered_not_deep(&actual))
+                    }
                 ),
                 _ if operator == "notStrictEqual"
                     && !matches!(actual, Value::String(_)) => format!(
@@ -1314,6 +1318,11 @@ fn is_primitive_value(value: &Value) -> bool {
             | Value::Null
             | Value::Undefined
     )
+}
+
+fn is_date_operand(value: &Value) -> bool {
+    execute::has_own_property(value, "timeValue")
+        && matches!(execute::get_prototype_of(value), Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)))
 }
 
 fn needs_structural_diff(value: &Value) -> bool {
