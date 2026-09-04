@@ -2107,8 +2107,25 @@ pub fn util_promisified_callback(
         return Err(VmError::NotCallable);
     };
     let custom_args = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let error = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let mut error = args.get(2).cloned().unwrap_or(Value::Undefined);
     if !matches!(error, Value::Undefined | Value::Null) {
+        // Node's child-process custom promisifier copies the named callback
+        // results onto a rejected error (`err.stdout`/`err.stderr`) before
+        // settling the promise. Keep that projection on the original error
+        // identity so callers can inspect both status and captured streams.
+        if let Value::Array(names) = &custom_args {
+            let values = args.get(3..).unwrap_or_default();
+            for index in 0..names.logical_len() {
+                let key = execute::get_property_result(
+                    &Value::Array(names.clone()),
+                    &index.to_string(),
+                );
+                if let Ok(Value::String(key)) = key {
+                    let value = values.get(index).cloned().unwrap_or(Value::Undefined);
+                    execute::set_property_in_place(&mut error, &key, value);
+                }
+            }
+        }
         quench_runtime::reject_promise(&promise, error);
     } else {
         let values = args.get(3..).unwrap_or_default();
