@@ -13,9 +13,11 @@ dispatch row used `Opcode::ALL`: catalog admission was therefore **31/31
 operations.  Task 035 reconciles that declaration with the generated catalog;
 the post-task admission ratio remains **31/31 (100%)**, now backed by both the
 declaration and the generated `dispatch_row_covers_every_compact_opcode`
-test.  The specialized-leaf ratio is **8/31 (25.8%)**; the other entries
-intentionally use the complete dispatch fallback until a profiled, proven
-leaf is available.
+test.  The specialized-leaf ratio remains **8/31 (25.8%)**; task 040 item 2
+adds bounded `CALL` and `CALL_N` bridge regions, but these intentionally reuse
+the canonical call handlers rather than claiming a new callable-identity
+machine-code leaf. The other entries intentionally use the complete dispatch
+fallback until a profiled, proven leaf is available.
 
 Task 042 adds three bounded sequential region rows (`LOOP_GLUE`,
 `BINARY_GLUE`, and `UPDATE_RETURN`). These rows reuse the canonical handlers
@@ -38,7 +40,7 @@ a prefix of a region.
 | `Mul` | `MULTIPLY` (also `DISPATCH`) | Yes |
 | `Div` | `DIVIDE` (also `DISPATCH`) | Yes |
 | `GetProperty` | `DISPATCH` | No |
-| `Call` | `DISPATCH` | No |
+| `Call` | `CALL` (also `DISPATCH`) | No (canonical call-IC bridge) |
 | `Jump` | `DISPATCH` | No |
 | `IncI` | `DISPATCH` | No |
 | `ForI` | `DISPATCH` | No |
@@ -47,7 +49,7 @@ a prefix of a region.
 | `AGetIInc` | `DISPATCH` | No |
 | `GetN` | `PROPERTY` (also `DISPATCH`) | Yes |
 | `SetN` | `DISPATCH` | No |
-| `CallN` | `DISPATCH` | No |
+| `CallN` | `CALL_N` (also `DISPATCH`) | No (canonical named-call bridge) |
 | `UpdateLocal` | `DISPATCH` | No |
 | `LoadLocalChecked` | `DISPATCH` | No |
 | `Binary` | `DISPATCH` | No |

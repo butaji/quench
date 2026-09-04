@@ -2771,6 +2771,89 @@ mod compact_handler_tests {
     }
 
     #[test]
+    fn call_region_matches_canonical_handler_and_rejects_hostile_opcode() {
+        let callee = Value::Function(Rc::new(crate::value::FunctionValue {
+                code: crate::machine::FunctionCode::from_ops(vec![
+                    Op::Const {
+                        dst: 0,
+                        value: crate::ops::Constant::Number(41.0),
+                    },
+                    Op::Return { src: 0 },
+                ]),
+                params: 0,
+                captures: crate::environment::Environment::new(),
+                with_captures: Vec::new(),
+                properties: Rc::new(std::cell::RefCell::new(Vec::new())),
+                private_slots: Rc::new(std::cell::RefCell::new(Vec::new())),
+                private_environment: crate::private_environment::PrivateEnvironment::default(),
+                instance_fields: Rc::new(std::cell::RefCell::new(Vec::new())),
+                kind: crate::ops::FunctionKind::Ordinary,
+                strictness: crate::ops::FunctionStrictness::Sloppy,
+                is_async: false,
+                mapped_arguments: false,
+            }));
+        let executable = crate::machine::ExecutableCode::from_ops(vec![Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            args: Vec::new(),
+            spreads: Vec::new(),
+        }]);
+        let code = executable.code();
+        let context = crate::vm::current_context_or_default();
+        let mut ordinary = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            callee.clone(),
+        ]);
+        let expected = run_compact_call(
+            code,
+            0,
+            code.instruction(0).expect("call instruction"),
+            &mut ordinary,
+            &context,
+        )
+        .expect("canonical call handler");
+
+        let mut fused = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            callee.clone(),
+        ]);
+        let mut region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::call_region_key(),
+        )
+        .expect("call region admission");
+        let actual = region
+            .execute(code, 0, &mut fused, &context)
+            .expect("call region execution");
+        assert_transition_equal(&actual, &expected);
+        assert_eq!(fused, ordinary);
+
+        let hostile = crate::machine::ExecutableCode::from_ops(vec![Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            args: Vec::new(),
+            spreads: Vec::new(),
+        }]);
+        let hostile_code = hostile.code();
+        hostile_code.quicken_instruction(0, crate::ir::Opcode::Slow, 0, 0, 0);
+        let mut hostile_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            callee,
+        ]);
+        let before = hostile_registers.clone();
+        let mut hostile_region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::call_region_key(),
+        )
+        .expect("call region admission");
+        assert!(matches!(
+            hostile_region.execute(hostile_code, 0, &mut hostile_registers, &context),
+            Err(crate::machine::NativeDispatchError::Physical(_))
+        ));
+        assert_eq!(hostile_registers, before);
+    }
+
+    #[test]
     fn baseline_number_leaf_executes_stencil_and_non_number_falls_back() {
         let function = crate::machine::FunctionCode::from_ops(vec![
             Op::Binary {
