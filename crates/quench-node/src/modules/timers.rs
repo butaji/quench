@@ -177,20 +177,20 @@ fn schedule(
             legacy_stores.clone(),
         );
     }
-    let async_resource = if matches!(stores, Value::Undefined) {
-        async_resource
-    } else {
-        quench_runtime::execute::set_property(async_resource, "__nodeAsyncStores", stores)
-    };
-    let async_resource = if matches!(legacy_stores, Value::Undefined) {
-        async_resource
-    } else {
-        quench_runtime::execute::set_property(
-            async_resource,
+    if !matches!(stores, Value::Undefined) {
+        let _ = quench_runtime::execute::set_property_in_place(
+            &async_resource,
+            "__nodeAsyncStores",
+            stores,
+        );
+    }
+    if !matches!(legacy_stores, Value::Undefined) {
+        let _ = quench_runtime::execute::set_property_in_place(
+            &async_resource,
             "__nodeAsyncStoresLegacy",
             legacy_stores,
-        )
-    };
+        );
+    }
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
