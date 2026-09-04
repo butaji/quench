@@ -198,6 +198,14 @@ also pass under `execution-trace`. These are scaling checks only; deliberate
 subsystem fault-injection validation remains to be recorded before task 063
 is considered fully closed.
 
+Task 064 adds three string invariants. ARM64 debug runs measured append
+ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
+tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
+and equal-length comparison ratios of 68.79x/68.65x for lengths 100 versus
+10,000. All remain within their documented near-linear bounds and pass in
+both feature configurations. As with task 063, deliberate fault-injection
+validation for each new subsystem claim remains outstanding.
+
 The task-061 validation runs passed both runtime configurations (`592` tests
 without tracing and `602` with `execution-trace`). The optimized ARM64
 curriculum sweep completed 33/38 cases with exact observable matches; the five

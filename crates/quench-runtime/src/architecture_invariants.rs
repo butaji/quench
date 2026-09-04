@@ -315,4 +315,102 @@ mod tests {
         );
         run_source_ms(&source) / repetitions as f64
     }
+
+    /// Repeated append is near-linear in the total bytes produced, not
+    /// quadratic from repeatedly rescanning the accumulated string. The
+    /// expected work grows 10x between these sizes, so a 30x bound catches a
+    /// naive O(n²) implementation while tolerating runtime noise.
+    #[test]
+    fn string_append_is_not_quadratic() {
+        let small = measure_string_append(500);
+        let large = measure_string_append(5_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #064.1: append length=500 {small:.3} ms, length=5000 {large:.3} ms, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 30.0,
+            "string append grew superlinearly: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_string_append(length: usize) -> f64 {
+        let source = format!(
+            r#"
+                var value = "";
+                for (var i = 0; i < {length}; i++) value += "x";
+                value.length;
+            "#
+        );
+        run_source_ms(&source)
+    }
+
+    /// split/indexOf/includes are proportional to the searched input, not to
+    /// unrelated strings created elsewhere in the runtime. Equal operation
+    /// counts and a 16x unrelated-string range make this a cross-state ratio.
+    #[test]
+    fn string_search_does_not_scale_with_unrelated_string_count() {
+        let small = measure_string_search(10, 20_000);
+        let large = measure_string_search(1_000, 2_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #064.2: unrelated=10 {small:.6} ms/search, unrelated=1000 {large:.6} ms/search, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "string search scaled with unrelated strings: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_string_search(unrelated: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var noise = [];
+                for (var i = 0; i < {unrelated}; i++) noise[i] = "noise" + i;
+                var value = "alpha beta gamma delta";
+                var total = 0;
+                for (var i = 0; i < {repetitions}; i++) {{
+                    total += value.split(" ").length;
+                    total += value.indexOf("gamma");
+                    if (value.includes("delta")) total++;
+                }}
+                total + noise.length;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
+
+    /// Equal-length string comparison is proportional to the compared length,
+    /// not to an unrelated state dimension. The 100x input-length range gets
+    /// a 300x bound to distinguish linear comparison from a hidden quadratic
+    /// scan without asserting an absolute time.
+    #[test]
+    fn string_comparison_scales_with_compared_length_only() {
+        let small = measure_string_comparison(100, 10_000);
+        let large = measure_string_comparison(10_000, 100);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #064.3: length=100 {small:.6} ms/compare, length=10000 {large:.6} ms/compare, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 300.0,
+            "string comparison grew beyond linear: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_string_comparison(length: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var left = "", right = "";
+                for (var i = 0; i < {length}; i++) {{ left += "a"; right += "a"; }}
+                var total = 0;
+                for (var i = 0; i < {repetitions}; i++) {{
+                    if (left === right) total++;
+                    if (!(left < right)) total++;
+                }}
+                total;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
 }
