@@ -31,10 +31,11 @@
             "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented",
             "050: detached console methods fixed and audited across logging/diagnostic methods (commits bdb396785, 8a64db057)",
             "051: closed with finding; the reported Splay mismatch was a stale harness comparison of timing-derived Score output, not a VM semantic divergence. The tracked runner verifies Splay completion/teardown markers against Node; no tree-semantics fix was applicable (204f0ea2b, 8e727ab8e, e48ba210a)",
+            "056: cycle audit confirmed real pure-Rc reference-cycle retention with quantified RSS scaling for plain objects, closure captures, and a DeltaBlue-shaped graph; committed probe tools/cycle-audit.mjs justifies 057 (commit efe5a19fa)",
             "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization"
         ],
         "remaining_slices": [
-            "048", "049", "052", "053", "054", "055", "056", "057", "058", "059", "060", "062", "063", "064", "065", "066", "067"
+            "048", "049", "052", "053", "054", "055", "057", "058", "059", "060", "062", "063", "064", "065", "066", "067"
         ]
     },
     "themes": {
@@ -43,7 +44,7 @@
             "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049"]
         },
         "vm_completeness": {
-            "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. Task 050 is fixed and task 051 is closed with a finding: the reported Splay mismatch was a stale timing-score harness comparison, not a VM tree-semantics divergence. Task 052's tracked runner is landed, but full eight-fixture completion/output verification remains pending. Then survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Additionally: a direct code check found no cycle collector exists anywhere (Rc-only object model, Weak used only at specific known points) -- 056 audits whether this actually leaks on ordinary user-created reference cycles (DeltaBlue's constraint graph is a plausible real case), 057 implements a periodic full-pass cycle-collection pass only if 056 confirms a real leak.",
+            "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. Task 050 is fixed and task 051 is closed with a finding: the reported Splay mismatch was a stale timing-score harness comparison, not a VM tree-semantics divergence. Task 052's tracked runner is landed, but full eight-fixture completion/output verification remains pending. Then survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Task 056 now has measured evidence of pure-Rc cycle retention in plain-object, closure, and DeltaBlue-shaped graphs; task 057 is therefore justified for the periodic full-pass cycle-collection implementation.",
             "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061"]
         },
         "architecture_invariants": {
