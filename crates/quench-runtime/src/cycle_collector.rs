@@ -165,6 +165,13 @@ pub(crate) fn checkpoint() {
 /// Run one complete trial-deletion pass.  This is also exposed to tests and
 /// host integration as a deterministic checkpoint.
 pub(crate) fn collect_cycles() {
+    // Ensure the active global is represented as a graph node before taking
+    // the registry snapshot.  Its outgoing properties are then handled by
+    // the normal graph walk, avoiding a recursive root traversal on every
+    // allocation checkpoint.
+    if let Value::Object(global) = crate::vm::current_global_object() {
+        track_object(&global);
+    }
     let (objects, functions) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.collecting {
@@ -295,6 +302,17 @@ pub(crate) fn collect_cycles() {
             }
         }
     });
+    // The global object is a host/runtime root even when no VM call frame is
+    // active (for example, between repeated benchmark runs). Marking its
+    // registry node lets the normal graph walk preserve globally reachable
+    // closures and their captured values. The global itself was not always in
+    // the weak registry, hence the explicit admission above.
+    mark_direct_root_value(&crate::vm::current_global_object(), &ids, &mut external);
+    if let Some(global_lexical) = crate::locals::global_lexical() {
+        for value in global_lexical.cycle_values() {
+            mark_direct_root_value(&value, &ids, &mut external);
+        }
+    }
     let mut reachable = external.clone();
     let mut work = external
         .iter()
@@ -377,6 +395,73 @@ fn append_edges(value: &Value, ids: &HashMap<usize, usize>, output: &mut Vec<usi
         }
         _ => {}
     }
+}
+
+fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: &mut [bool]) {
+    fn visit(
+        value: &Value,
+        ids: &HashMap<usize, usize>,
+        external: &mut [bool],
+        seen: &mut HashSet<usize>,
+    ) {
+        match value {
+            Value::Object(object) => {
+                let key = Rc::as_ptr(object) as usize;
+                if !seen.insert(key) {
+                    return;
+                }
+                if let Some(&id) = ids.get(&key) {
+                    external[id] = true;
+                }
+                // Outgoing edges are traversed by the ordinary reachability
+                // walk once this root node is marked.
+            }
+            Value::Function(function) => {
+                let key = Rc::as_ptr(function) as usize;
+                if !seen.insert(key) {
+                    return;
+                }
+                if let Some(&id) = ids.get(&key) {
+                    external[id] = true;
+                }
+                // As above, the graph walk handles the function's edges.
+            }
+            Value::BindingCell(_)
+            | Value::ObjectAlias(_)
+            | Value::Proxy(_)
+            | Value::BoundFunction(_) => {}
+            Value::WeakFunction(_)
+            | Value::HostCapability(_)
+            | Value::Builtin(_)
+            | Value::String(_)
+            | Value::StringUnits(_)
+            | Value::BigInt(_)
+            | Value::Array(_)
+            | Value::ArrayBuffer(_)
+            | Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::Uint32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::DataView(_)
+            | Value::Promise(_)
+            | Value::Map(_)
+            | Value::Set(_)
+            | Value::Iterator(_)
+            | Value::Generator(_)
+            | Value::Number(_)
+            | Value::Boolean(_)
+            | Value::Null
+            | Value::Undefined => {}
+        }
+    }
+    visit(value, ids, external, &mut HashSet::new());
 }
 
 pub(crate) fn value_points_to_doomed(
