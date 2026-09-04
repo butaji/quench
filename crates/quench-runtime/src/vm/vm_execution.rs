@@ -906,6 +906,37 @@ mod tests {
         assert_eq!(result, Value::Undefined);
     }
 
+    /// The cycle collector may run while a nested call is active. The caller
+    /// environment is then held by the Rust call driver rather than by a JS
+    /// object edge; it must remain a root so closures that resume after the
+    /// call are not cleared as unreachable cycles.
+    #[test]
+    fn cycle_collection_preserves_caller_continuation_after_allocation_churn() {
+        let source = r#"
+            function churn(count) {
+                for (var i = 0; i < count; i++) {
+                    var left = {}, right = {};
+                    left.peer = right;
+                    right.peer = left;
+                }
+            }
+            function caller() {
+                var marker = 41;
+                function continuation() { return marker + 1; }
+                churn(2000);
+                return continuation();
+            }
+            if (caller() !== 42) throw "caller continuation was reclaimed";
+        "#;
+        let program = crate::reduce::reduce_source(source).expect("source reduces");
+        let result = crate::vm::execute_code_with_context(
+            program.code(),
+            &crate::vm::VmContext::default(),
+        )
+        .expect("allocation churn preserves continuation");
+        assert_eq!(result, Value::Undefined);
+    }
+
     #[test]
     fn tail_calls_are_driven_by_machine_loop() {
         let mut machine = crate::machine::Machine::new(

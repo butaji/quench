@@ -21,6 +21,64 @@ const INITIAL_THRESHOLD: usize = 512 * 1024;
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
+    static ROOTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static ENV_ROOTS: RefCell<Vec<Rc<crate::environment::Environment>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Keep a call continuation's Rust-owned values visible to trial deletion.
+/// Continuations are temporary host-side roots while a callee executes; they
+/// are not necessarily reachable from the callee's lexical object graph.
+pub(crate) struct RootGuard {
+    value_length: usize,
+    environment_length: usize,
+}
+
+pub(crate) fn protect_call(continuation: &crate::completion::CallContinuation) -> RootGuard {
+    ROOTS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        let value_length = roots.len();
+        roots.push(continuation.callee.clone());
+        roots.push(continuation.receiver.clone());
+        roots.extend(continuation.arguments.iter().cloned());
+        roots.extend(continuation.caller_registers.to_values());
+        let environment_length = ENV_ROOTS.with(|environments| environments.borrow().len());
+        RootGuard {
+            value_length,
+            environment_length,
+        }
+    })
+}
+
+/// Retain a nested active callee in the same root set. The packed call-frame
+/// driver advances nested calls iteratively, so their `FunctionValue`s live in
+/// Rust-owned `ActiveCall` records rather than in the JS graph.
+pub(crate) fn retain_active_function(value: &Value) {
+    ROOTS.with(|roots| roots.borrow_mut().push(value.clone()));
+}
+
+pub(crate) fn retain_active_environment(environment: &Rc<crate::environment::Environment>) {
+    ENV_ROOTS.with(|roots| roots.borrow_mut().push(Rc::clone(environment)));
+}
+
+pub(crate) fn protect_environment(environment: &Rc<crate::environment::Environment>) -> RootGuard {
+    let value_length = ROOTS.with(|roots| roots.borrow().len());
+    let environment_length = ENV_ROOTS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        let length = roots.len();
+        roots.push(Rc::clone(environment));
+        length
+    });
+    RootGuard {
+        value_length,
+        environment_length,
+    }
+}
+
+impl Drop for RootGuard {
+    fn drop(&mut self) {
+        ROOTS.with(|roots| roots.borrow_mut().truncate(self.value_length));
+        ENV_ROOTS.with(|roots| roots.borrow_mut().truncate(self.environment_length));
+    }
 }
 
 #[derive(Default)]
@@ -172,6 +230,71 @@ pub(crate) fn collect_cycles() {
         // `nodes` owns one temporary reference to every candidate.
         external[index] = strong.saturating_sub(1) > incoming[index];
     }
+    // Include temporary Rust-side roots retained by the VM call driver. Mark
+    // the corresponding graph nodes external, then the normal reachability
+    // walk below preserves everything they reference.
+    ROOTS.with(|roots| {
+        for value in roots.borrow().iter() {
+            match value {
+                Value::Object(object) => {
+                    if let Some(&id) = ids.get(&(Rc::as_ptr(object) as usize)) {
+                        external[id] = true;
+                    }
+                }
+                Value::Function(function) => {
+                    if let Some(&id) = ids.get(&(Rc::as_ptr(function) as usize)) {
+                        external[id] = true;
+                    }
+                }
+                Value::BindingCell(cell) => match cell.load() {
+                    Value::Object(object) => {
+                        if let Some(&id) = ids.get(&(Rc::as_ptr(&object) as usize)) {
+                            external[id] = true;
+                        }
+                    }
+                    Value::Function(function) => {
+                        if let Some(&id) = ids.get(&(Rc::as_ptr(&function) as usize)) {
+                            external[id] = true;
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    });
+    ENV_ROOTS.with(|environments| {
+        for environment in environments.borrow().iter() {
+            for value in environment.cycle_values() {
+                match value {
+                    Value::Object(object) => {
+                        if let Some(&id) = ids.get(&(Rc::as_ptr(&object) as usize)) {
+                            external[id] = true;
+                        }
+                    }
+                    Value::Function(function) => {
+                        if let Some(&id) = ids.get(&(Rc::as_ptr(&function) as usize)) {
+                            external[id] = true;
+                        }
+                    }
+                    Value::BindingCell(cell) => match cell.load() {
+                        Value::Object(object) => {
+                            if let Some(&id) = ids.get(&(Rc::as_ptr(&object) as usize)) {
+                                external[id] = true;
+                            }
+                        }
+                        Value::Function(function) => {
+                            if let Some(&id) = ids.get(&(Rc::as_ptr(&function) as usize)) {
+                                external[id] = true;
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+    });
     let mut reachable = external.clone();
     let mut work = external
         .iter()
