@@ -553,6 +553,7 @@ const CAP_STREAM_WEB_PIPELINE_ERROR: u16 = SPEC_STREAM_WEB_PIPELINE_ERROR.cap;
 const CAP_STREAM_PROMISES_PIPELINE: u16 = SPEC_STREAM_PROMISES_PIPELINE.cap;
 const CAP_STREAM_PROMISES_FINISHED: u16 = SPEC_STREAM_PROMISES_FINISHED.cap;
 const CAP_STREAM_PROMISES_CALLBACK: u16 = SPEC_STREAM_PROMISES_CALLBACK.cap;
+const CAP_ASYNC_WRAP_QUEUE_DESTROY: u16 = SPEC_ASYNC_WRAP_QUEUE_DESTROY.cap;
 const CAP_V8_SERIALIZER_HEADER: u16 = SPEC_V8_SERIALIZER_HEADER.cap;
 const CAP_V8_DESERIALIZER_HEADER: u16 = SPEC_V8_DESERIALIZER_HEADER.cap;
 const CAP_V8_SERIALIZER_UINT32: u16 = SPEC_V8_SERIALIZER_UINT32.cap;
@@ -1582,6 +1583,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASYNC_LOCAL_SNAPSHOT => crate::modules::async_hooks::local_snapshot,
         CAP_ASYNC_LOCAL_SNAPSHOT_CALL => crate::modules::async_hooks::local_snapshot_call,
         CAP_ASYNC_WORKER_RESOURCE => crate::modules::async_hooks::worker_resource,
+        CAP_ASYNC_WRAP_QUEUE_DESTROY => crate::modules::async_hooks::queue_destroy_async_id,
         CAP_INSPECTOR_CONNECT => crate::modules::inspector::connect,
         CAP_INSPECTOR_CONNECT_MAIN => crate::modules::inspector::connect,
         CAP_INSPECTOR_DISCONNECT => crate::modules::inspector::disconnect,

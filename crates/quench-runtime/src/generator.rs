@@ -12,6 +12,47 @@ use std::{
 
 thread_local! {
     static CURRENT_GENERATOR_ID: Cell<usize> = const { Cell::new(0) };
+    // Async/generator bodies are resumed synchronously until their first
+    // suspension.  Bound this host-side recursion so deliberately recursive
+    // async functions produce the ordinary catchable JS RangeError instead
+    // of exhausting the Rust thread stack.
+    static RESUME_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static ASYNC_CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static ASYNC_STACK_OVERFLOW: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn take_async_stack_overflow() -> bool {
+    ASYNC_STACK_OVERFLOW.with(|overflow| overflow.replace(false))
+}
+
+pub(crate) struct AsyncCallGuard;
+
+impl AsyncCallGuard {
+    pub(crate) fn enter() -> Result<Self, VmError> {
+        const MAX_ASYNC_CALL_DEPTH: usize = 512;
+        let overflow = ASYNC_CALL_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= MAX_ASYNC_CALL_DEPTH {
+                true
+            } else {
+                depth.set(current + 1);
+                false
+            }
+        });
+        if overflow {
+            ASYNC_STACK_OVERFLOW.with(|flag| flag.set(true));
+            return Err(crate::value::error::throw_range_error(
+                "Maximum call stack size exceeded",
+            ));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for AsyncCallGuard {
+    fn drop(&mut self) {
+        ASYNC_CALL_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
 }
 
 pub(crate) fn current_generator_id() -> usize {
@@ -296,6 +337,29 @@ pub(crate) enum Resume {
 }
 
 pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
+    const MAX_RESUME_DEPTH: usize = 512;
+    let overflow = RESUME_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current >= MAX_RESUME_DEPTH {
+            true
+        } else {
+            depth.set(current + 1);
+            false
+        }
+    });
+    if overflow {
+        ASYNC_STACK_OVERFLOW.with(|flag| flag.set(true));
+        return Err(crate::value::error::throw_range_error(
+            "Maximum call stack size exceeded",
+        ));
+    }
+    struct ResumeDepthGuard;
+    impl Drop for ResumeDepthGuard {
+        fn drop(&mut self) {
+            RESUME_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+        }
+    }
+    let _depth_guard = ResumeDepthGuard;
     if *generator.running.borrow() {
         *generator.done.borrow_mut() = true;
         return Err(crate::value::error::throw_type_error(
