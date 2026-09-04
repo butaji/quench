@@ -105,10 +105,21 @@ const __quenchReadableRead = (stream, view) => {
     try {
       Promise.resolve(stream._pull(stream._controller))
         .catch((error) => stream._errorStream(error))
-        .finally(() => { stream._pulling = false; });
+        .finally(() => { stream._pulling = false; })
+        .catch(() => undefined);
     } catch (error) {
       stream._pulling = false;
-      stream._errorStream(error);
+      // A synchronous pull failure has no underlying read operation to keep
+      // pending. Remove the waiter and return the rejection directly so the
+      // caller's await/for-await chain owns the error promise.
+      stream._readWaiters.pop();
+      stream._error = error;
+      stream._closed = true;
+      stream[__quenchWebStreamsState].state = "errored";
+      stream[__quenchWebStreamsState].storedError = error;
+      const rejection = Promise.reject(error);
+      rejection.catch(() => undefined);
+      return rejection;
     }
   }
   return pending;
@@ -244,13 +255,15 @@ class __quenchReadableStream {
     );
     return branches;
   }
-  async *[Symbol.asyncIterator]() {
+  [Symbol.asyncIterator]() {
     const reader = this.getReader();
-    for (;;) {
-      const item = await reader.read();
-      if (item.done) return;
-      yield item.value;
-    }
+    return {
+      next: () => reader.read(),
+      return: () => {
+        reader.releaseLock();
+        return Promise.resolve({ value: undefined, done: true });
+      },
+    };
   }
 }
 class __quenchWritableStream {
