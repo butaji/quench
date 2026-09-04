@@ -140,6 +140,10 @@ impl NodeRunner {
                 .collect(),
         );
         let _ = quench_runtime::execute::set_property_in_place(&process, "execArgv", exec_argv);
+        quench_node::modules::process::set_abort_on_uncaught_exception(
+            &self.host.state(),
+            &fixture.exec_argv,
+        );
         if fixture
             .exec_argv
             .iter()
@@ -420,7 +424,14 @@ impl NodeRunner {
                         .drive("__quench_uncaught__();")
                         .and_then(|_| self.drive("__quench_run_loop__();"))
                         .map(|_| ()),
-                    Err(error) => Err(error),
+                    Err(error) => {
+                        if quench_node::modules::process::abort_on_uncaught_exception(
+                            &self.host.state(),
+                        ) {
+                            std::process::abort();
+                        }
+                        Err(error)
+                    }
                 }
             }
             ok => ok.map(|_| ()),

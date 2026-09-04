@@ -302,7 +302,12 @@ fn route_uncaught(
                     .and_then(|_| drive(context, "__quench_run_loop__();"))?;
                 Ok(())
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                if crate::modules::process::abort_on_uncaught_exception(&host.state()) {
+                    std::process::abort();
+                }
+                Err(error)
+            }
         },
         ok => ok.map(|_| ()),
     }

@@ -470,13 +470,15 @@ pub fn util_inspect(
     }) {
         return Ok(Value::String(crate::modules::util::inspect_minimal(&arg)));
     }
-    let _custom_inspect_guard = crate::modules::util::custom_inspect_guard(
-        args.get(1).and_then(|options| {
+    let _custom_inspect_guard =
+        crate::modules::util::custom_inspect_guard(args.get(1).and_then(|options| {
             matches!(options, Value::Object(_) | Value::ObjectAlias(_)).then(|| {
-                !matches!(execute::get_property(options, "customInspect"), Value::Boolean(false))
+                !matches!(
+                    execute::get_property(options, "customInspect"),
+                    Value::Boolean(false)
+                )
             })
-        }),
-    );
+        }));
     let _stylize_guard = crate::modules::util::stylize_guard(args.get(1).and_then(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return None;
@@ -623,8 +625,7 @@ pub fn util_inspect(
         .and_then(|options| {
             let options = if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
                 let depth = execute::get_property(options, "depth");
-                if matches!(depth, Value::Undefined)
-                    && execute::has_own_property(options, "depth")
+                if matches!(depth, Value::Undefined) && execute::has_own_property(options, "depth")
                 {
                     return Some(usize::MAX / 2);
                 }
@@ -640,13 +641,13 @@ pub fn util_inspect(
                 _ => None,
             }
         });
-    let depth = depth.or_else(|| match crate::modules::util::inspect_default_option("depth") {
-        Value::Null => Some(usize::MAX / 2),
-        Value::Number(value) if value.is_finite() && value >= 0.0 => {
-            Some(value as usize + 1)
-        }
-        _ => None,
-    });
+    let depth = depth.or_else(
+        || match crate::modules::util::inspect_default_option("depth") {
+            Value::Null => Some(usize::MAX / 2),
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize + 1),
+            _ => None,
+        },
+    );
     let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)))
         || args.get(1).is_some_and(|options| {
             if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -664,29 +665,26 @@ pub fn util_inspect(
                 Value::Boolean(true)
             )
         );
-    let show_proxy =
-        args.get(1).is_some_and(
-            |options| match options {
-                Value::Object(_) | Value::ObjectAlias(_) => {
-                    match execute::get_property(options, "showProxy") {
-                        Value::Boolean(value) => value,
-                        Value::Number(value) => value != 0.0 && !value.is_nan(),
-                        _ => false,
-                    }
-                }
+    let show_proxy = args.get(1).is_some_and(|options| match options {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            match execute::get_property(options, "showProxy") {
+                Value::Boolean(value) => value,
+                Value::Number(value) => value != 0.0 && !value.is_nan(),
                 _ => false,
-            },
-        );
+            }
+        }
+        _ => false,
+    });
     let colors = matches!(args.get(3), Some(Value::Boolean(true)))
         || args.get(1).is_some_and(|options| {
-        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-            return false;
-        }
-        matches!(
-            execute::get_property(options, "colors"),
-            Value::Boolean(true)
-        )
-    });
+            if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+                return false;
+            }
+            matches!(
+                execute::get_property(options, "colors"),
+                Value::Boolean(true)
+            )
+        });
     let break_length_one = args.get(1).is_some_and(|options| {
         if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
             return false;
@@ -722,19 +720,22 @@ pub fn util_inspect(
                 _ => None,
             },
         )
-        .or_else(|| match crate::modules::util::inspect_default_option("maxArrayLength") {
-            Value::Null => Some(usize::MAX),
-            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
-            Value::Number(_) => Some(usize::MAX),
-            _ => None,
-        });
-    let _compact_guard = crate::modules::util::compact_guard(
-        args.get(1).and_then(|options| match execute::get_property(options, "compact") {
+        .or_else(
+            || match crate::modules::util::inspect_default_option("maxArrayLength") {
+                Value::Null => Some(usize::MAX),
+                Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+                Value::Number(_) => Some(usize::MAX),
+                _ => None,
+            },
+        );
+    let _compact_guard = crate::modules::util::compact_guard(args.get(1).and_then(|options| {
+        match execute::get_property(options, "compact") {
             Value::Boolean(value) => Some(value),
             _ => None,
-        }),
-    );
-    let _break_length_guard = crate::modules::util::break_length_guard(Some(break_length.unwrap_or(80)));
+        }
+    }));
+    let _break_length_guard =
+        crate::modules::util::break_length_guard(Some(break_length.unwrap_or(80)));
     let getters = args.iter().any(|value| {
         matches!(value, Value::Object(_) | Value::ObjectAlias(_))
             && matches!(
@@ -1090,11 +1091,7 @@ pub fn util_callbackified_call(
             let _ = execute::call(callback, &receiver, &[error, Value::Undefined])?;
         }
         Err(_) => {
-            let _ = execute::call(
-                callback,
-                &receiver,
-                &[Value::Undefined, Value::Undefined],
-            )?;
+            let _ = execute::call(callback, &receiver, &[Value::Undefined, Value::Undefined])?;
         }
     }
     Ok(Value::Undefined)
@@ -2124,10 +2121,8 @@ pub fn util_promisified_callback(
         if let Value::Array(names) = &custom_args {
             let values = args.get(3..).unwrap_or_default();
             for index in 0..names.logical_len() {
-                let key = execute::get_property_result(
-                    &Value::Array(names.clone()),
-                    &index.to_string(),
-                );
+                let key =
+                    execute::get_property_result(&Value::Array(names.clone()), &index.to_string());
                 if let Ok(Value::String(key)) = key {
                     let value = values.get(index).cloned().unwrap_or(Value::Undefined);
                     execute::set_property_in_place(&mut error, &key, value);
@@ -2178,7 +2173,11 @@ fn bound_custom(cap: u16, arguments: Vec<Value>) -> Value {
     )
 }
 
-fn bound_custom_in_realm(cap: u16, arguments: Vec<Value>, realm: quench_runtime::ops::RealmId) -> Value {
+fn bound_custom_in_realm(
+    cap: u16,
+    arguments: Vec<Value>,
+    realm: quench_runtime::ops::RealmId,
+) -> Value {
     host_api::bound_capability_with_arguments_in_realm(
         quench_runtime::ops::HostCapabilityRef {
             realm: quench_runtime::ops::RealmId::ROOT,
@@ -4218,7 +4217,10 @@ pub fn internal_binding(
                 "queueDestroyAsyncId".into(),
                 crate::host::capability(crate::registry::SPEC_ASYNC_WRAP_QUEUE_DESTROY),
             ),
-            ("Providers".into(), crate::host::namespace_object_from_pairs(providers)),
+            (
+                "Providers".into(),
+                crate::host::namespace_object_from_pairs(providers),
+            ),
         ]));
     }
     if name == "crypto" {
@@ -8340,14 +8342,12 @@ fn cp_run_host_child(
     // binary that accepts `-e`/entry-file arguments.  Keep the executable
     // choice a host fact shared with spawnSync rather than letting the
     // runner's CLI reject the child's JavaScript source.
-    let executable = std::env::current_exe()
-        .ok()
-        .and_then(|path| {
-            path.parent()
-                .map(|dir| dir.join("run"))
-                .filter(|runner| runner.is_file())
-                .or(Some(path))
-        })?;
+    let executable = std::env::current_exe().ok().and_then(|path| {
+        path.parent()
+            .map(|dir| dir.join("run"))
+            .filter(|runner| runner.is_file())
+            .or(Some(path))
+    })?;
     let mut process = std::process::Command::new(executable);
     process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
@@ -8377,8 +8377,31 @@ fn cp_run_host_child(
     Some((
         output.stdout,
         output.stderr,
-        output.status.code().unwrap_or(1),
+        child_status_code(&output.status),
     ))
+}
+
+fn child_status_code(status: &std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            return 128 + status.signal().unwrap_or(1);
+        }
+        #[cfg(not(unix))]
+        {
+            1
+        }
+    })
+}
+
+fn expand_shell_env(command: &str, options: &Value) -> String {
+    let env = execute::get_property(options, "env");
+    (0..8).fold(command.to_string(), |command, index| {
+        let key = format!("ESCAPED_{index}");
+        let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+        command.replace(&format!("${{{key}}}"), &value)
+    })
 }
 
 pub fn cp_spawn_output_emit(
@@ -8463,7 +8486,28 @@ pub fn cp_spawn_output_emit(
         || cp_spawn_eval_requires_in_process(&child_args);
     let real_child = (!source_driven)
         .then(|| cp_run_host_child(state, &command, &child_args, &child_options))
-        .flatten();
+        .flatten()
+        .or_else(|| {
+            // `exec()` passes a self-reexec through the shell when its
+            // command is a complete string. Preserve that real subprocess
+            // result instead of projecting the generic success default.
+            let Value::String(command) = &command else {
+                return None;
+            };
+            let command = expand_shell_env(command, &child_options);
+            crate::host::command_uses_host_exec(&command)
+                .then(|| {
+                    crate::modules::child_process::shell_output(&command, Some(&child_options)).ok()
+                })
+                .flatten()
+                .map(|output| {
+                    (
+                        output.stdout,
+                        output.stderr,
+                        child_status_code(&output.status),
+                    )
+                })
+        });
     if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
         if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
             execute::set_property_in_place(child, "killed", Value::Boolean(true));
@@ -10661,7 +10705,10 @@ pub fn cp_async(
             if matches!(
                 execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
                 Value::Boolean(true)
-            ) => Some(signal),
+            ) =>
+        {
+            Some(signal)
+        }
         _ => {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
@@ -11174,13 +11221,15 @@ pub fn cp_exec_file(
                     let Value::Array(values) = value else {
                         return None;
                     };
-                    Some((0..values.logical_len())
-                        .filter_map(|index| {
-                            execute::get_property_result(value, &index.to_string())
-                                .ok()
-                                .and_then(|item| execute::to_js_string(&item).ok())
-                        })
-                        .collect::<Vec<_>>())
+                    Some(
+                        (0..values.logical_len())
+                            .filter_map(|index| {
+                                execute::get_property_result(value, &index.to_string())
+                                    .ok()
+                                    .and_then(|item| execute::to_js_string(&item).ok())
+                            })
+                            .collect::<Vec<_>>(),
+                    )
                 })
                 .unwrap_or_default();
             std::iter::once(command.clone().unwrap_or_default())
@@ -13587,11 +13636,7 @@ pub fn test_mock_fn(
         target_prototype,
         Value::Object(_) | Value::ObjectAlias(_) | Value::Function(_) | Value::BoundFunction(_)
     ) {
-        wrapper = quench_runtime::execute::set_property(
-            wrapper,
-            "prototype",
-            target_prototype,
-        );
+        wrapper = quench_runtime::execute::set_property(wrapper, "prototype", target_prototype);
     }
     wrapper = define_mock_metadata(
         wrapper,
