@@ -385,6 +385,14 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
     let Value::Object(object) = value else {
         return None;
     };
+    if key == "stack"
+        && matches!(
+            crate::execute::get_property(value, crate::builtins::ERROR_SLOT),
+            Value::Boolean(true)
+        )
+    {
+        return None;
+    }
     if crate::vm::is_global_object(value) {
         return None;
     }
@@ -415,6 +423,14 @@ fn cacheable_own_slot_with_placeholder(value: &Value, key: &str) -> Option<u32> 
     let Value::Object(object) = value else {
         return None;
     };
+    if key == "stack"
+        && matches!(
+            crate::execute::get_property(value, crate::builtins::ERROR_SLOT),
+            Value::Boolean(true)
+        )
+    {
+        return None;
+    }
     if object
         .physical_slot_for_name(&crate::builtins::deleted_key(key))
         .is_some()
@@ -455,6 +471,26 @@ pub(crate) fn get_property_with_receiver(
     // walking inherited properties so ordinary objects (including generator
     // prototypes) observe the current descriptor rather than the stale view.
     let mut value = crate::locals::resolved_replacement(value.clone());
+    if let Value::Object(properties) = &value {
+        let is_module_namespace = properties
+            .iter()
+            .any(|(name, value)| name == "\0module_namespace" && matches!(value, Value::Boolean(true)));
+        if is_module_namespace && !key.starts_with('\0') {
+            if let Some((_, Value::Object(uninitialized))) =
+                properties.iter().rev().find(|(name, _)| name == "\0module_uninitialized")
+            {
+                if matches!(
+                    uninitialized.iter().find(|(name, _)| name == key),
+                    Some((_, Value::Boolean(true)))
+                ) {
+                    return Err(VmError::Thrown(crate::builtins::error(
+                        crate::ops::Builtin::ReferenceError,
+                        &[Value::String(format!("Cannot access '{key}' before initialization"))],
+                    )));
+                }
+            }
+        }
+    }
     crate::module_bindings::exports(&value, key)?;
     // A script's `this` is a derived global view. Global declaration batches
     // replace the canonical owner with a copy-on-write object; resolve the
@@ -488,6 +524,32 @@ pub(crate) fn get_property_with_receiver(
                 }
             }
         }
+    }
+    // Error constructors keep the stack header as an own data slot until it
+    // is first observed. Re-run the canonical stack accessor for that
+    // unmaterialized form so message/name mutations are reflected; once a
+    // newline is present (or decoration marked it), preserve the user-visible
+    // snapshot exactly.
+    if key == "stack"
+        && matches!(
+            crate::execute::get_property(&value, crate::builtins::ERROR_SLOT),
+            Value::Boolean(true)
+        )
+        && !matches!(
+            crate::execute::get_property(&value, "\0quench:stack_decorated"),
+            Value::Boolean(true)
+        )
+        && !crate::execute::has_own_property(&value, "code")
+        && matches!(
+            proven_own_data(&value, key),
+            Some(Value::String(ref stack)) if !stack.is_empty() && !stack.contains('\n')
+        )
+    {
+        return crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ErrorPrototypeStackGetter,
+            &[],
+            Some(receiver),
+        );
     }
     if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
@@ -688,8 +750,8 @@ fn function_inherited_property_result(
         return None;
     };
     let properties = function.properties.borrow();
-    if properties.iter().any(|(name, _)| name == key) {
-        return None;
+    if let Some((_, own)) = properties.iter().rev().find(|(name, _)| name == key) {
+        return Some(Ok(own.clone()));
     }
     if matches!(key, "apply" | "call" | "bind") {
         let builtin = match key {
@@ -883,6 +945,18 @@ fn array_property_result(
     key: &str,
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
+    // The packed-ordinary proof excludes own accessors, descriptors, holes,
+    // side properties, and prototype overrides.  Resolve intrinsic methods
+    // before probing generic accessor metadata; the latter otherwise builds
+    // descriptor objects on every `array.push(...)` in a hot loop.
+    if let Value::Array(values) = value {
+        if values.is_packed_ordinary() {
+            let method = crate::arrays::property(values, key);
+            if matches!(method, Value::Builtin(_)) {
+                return Some(Ok(method));
+            }
+        }
+    }
     if let Some(getter) = array_accessor(value, key, "get") {
         return Some(match getter {
             Value::Undefined => Ok(Value::Undefined),
