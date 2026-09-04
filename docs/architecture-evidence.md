@@ -257,6 +257,13 @@ completion marker and peaked at 439.8 MiB; its output remains unverified by the
 tracked runner. The aggregate over the two verified fixtures is 4.92 versus
 Node 72,590; this is a measurement snapshot and not a whole-suite score.
 
+An optimized-build spot check after task 057 (`target/release/quench-node`,
+120-second timeout) completed Richards at Score 56.3 / 15.6 MiB RSS and
+DeltaBlue at Score 49.2 / 80.5 MiB RSS, both output-equal. Their combined
+geomean is 52.63 versus Node 119,607; this is not comparable to the debug
+artifact's 4.92 geomean and is recorded only as the post-collector release
+sanity check.
+
 Task 056 cycle audit confirms a real leak in the current pure-`Rc` object
 graph. The committed measurement probe `tools/cycle-audit.mjs` runs fresh
 processes and parses macOS peak RSS. Plain two-object cycles grew from
