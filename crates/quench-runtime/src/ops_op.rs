@@ -40,7 +40,6 @@ pub struct AppendInstanceFieldOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
-    #[cfg(feature = "execution-trace")]
     TraceSite {
         source: u32,
     },

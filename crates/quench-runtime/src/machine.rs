@@ -511,7 +511,8 @@ impl CodeArena {
         let jump = self.instructions.len();
         self.instructions.push(crate::ir::Instruction::jump(0));
         metadata.push(InstructionMeta::empty());
-        let else_pc = u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+        let else_pc =
+            u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
         self.instructions[jif].b = else_pc;
         self.encode_linear(
             else_ops,
@@ -522,7 +523,8 @@ impl CodeArena {
             source,
             dst,
         );
-        let end_pc = u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+        let end_pc =
+            u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
         self.instructions[jump].a = end_pc;
     }
 
@@ -981,18 +983,11 @@ impl CodeArena {
     }
 }
 
-#[cfg(feature = "execution-trace")]
 fn trace_source(op: &Op) -> Option<u32> {
     match op {
         Op::TraceSite { source } => Some(*source),
         _ => None,
     }
-}
-
-#[cfg(not(feature = "execution-trace"))]
-#[inline(always)]
-fn trace_source(_: &Op) -> Option<u32> {
-    None
 }
 
 fn lower_checked_local_load(ops: &[Op]) -> Option<crate::ir::Instruction> {

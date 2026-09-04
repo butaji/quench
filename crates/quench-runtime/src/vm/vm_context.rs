@@ -60,7 +60,9 @@ pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
     realm::token(realm).map(Value::HostCapability)
 }
 
-pub(crate) fn realm_global_value(realm: RealmId) -> Option<Value> {
+/// Return the canonical global object for a realm so hosts can project
+/// sandbox mutations without consulting an ambient caller realm.
+pub fn realm_global_value(realm: RealmId) -> Option<Value> {
     realm::global(realm)
 }
 
@@ -122,6 +124,8 @@ pub struct VmContext {
     persistent_host_values: Vec<String>,
     can_block: bool,
     source_text: Option<Rc<str>>,
+    compiled_source_text: Option<Rc<str>>,
+    source_name: Option<Rc<str>>,
     /// Optional cooperative execution budget for host re-entry. The normal
     /// VM has no budget; shared-realm hosts can bound one logical process and
     /// return control to their state machine instead of blocking forever.
@@ -139,6 +143,8 @@ impl Default for VmContext {
             persistent_host_values: Vec::new(),
             can_block: false,
             source_text: None,
+            compiled_source_text: None,
+            source_name: None,
             execution_budget: None,
         }
     }
@@ -211,6 +217,19 @@ impl VmContext {
         self
     }
 
+    pub fn with_compiled_source_text(mut self, source: impl Into<Rc<str>>) -> Self {
+        self.compiled_source_text = Some(source.into());
+        self
+    }
+
+    /// Attach the host-visible filename used when materializing a top-level
+    /// JavaScript error stack.  Syntax errors may still include source text;
+    /// ordinary runtime errors use this name for their first frame.
+    pub fn with_source_name(mut self, name: impl Into<Rc<str>>) -> Self {
+        self.source_name = Some(name.into());
+        self
+    }
+
     /// Bound one top-level execution without changing ordinary VM semantics.
     /// The counter is shared by cloned contexts so nested calls consume the
     /// same residual budget.
@@ -233,6 +252,14 @@ impl VmContext {
 
     pub fn source_text(&self) -> Option<&str> {
         self.source_text.as_deref()
+    }
+
+    pub fn compiled_source_text(&self) -> Option<&str> {
+        self.compiled_source_text.as_deref()
+    }
+
+    pub fn source_name(&self) -> Option<&str> {
+        self.source_name.as_deref()
     }
 
     pub(crate) fn can_block(&self) -> bool {
@@ -328,6 +355,14 @@ impl VmContext {
     /// giving intrinsic constructors their own identity.
     pub fn child_realm(&self) -> Self {
         let realm = realm::create(self);
+        realm::context(realm).unwrap_or_else(|| self.clone())
+    }
+
+    /// Create a child realm with selected host globals withheld.  `vm`
+    /// contexts receive ECMAScript intrinsics, but Node host objects such as
+    /// `process` and `Buffer` must remain opt-in through the sandbox.
+    pub fn child_realm_without_host_values(&self, hidden: &[&str]) -> Self {
+        let realm = realm::create_without_host_values(self, hidden);
         realm::context(realm).unwrap_or_else(|| self.clone())
     }
 

@@ -429,14 +429,9 @@ pub fn reduce_statement(
     Ok(last)
 }
 
-#[cfg(feature = "execution-trace")]
 fn trace_statement_site(ops: &mut Vec<Op>, source: u32) {
     ops.push(Op::TraceSite { source });
 }
-
-#[cfg(not(feature = "execution-trace"))]
-#[inline(always)]
-fn trace_statement_site(_: &mut Vec<Op>, _: u32) {}
 
 fn reduce_plain_statement(
     statement: &Statement<'_>,

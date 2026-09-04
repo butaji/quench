@@ -159,7 +159,7 @@ impl NodeRunner {
                 .collect(),
         );
         context = context.with_host_value("__quench_exec_argv", exec_argv_value);
-        self.context = context;
+        self.context = context.clone();
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
@@ -295,6 +295,8 @@ impl NodeRunner {
         } else {
             format!("{bootstrap}\n{fixture_program}")
         };
+        context = context.with_compiled_source_text(source.clone());
+        self.context = context;
         self.host
             .state()
             .borrow_mut()
