@@ -73,7 +73,12 @@ pub fn build_value() -> Value {
     module
 }
 
-const CONSOLE_CLASS: &str = r#"(class Console {
+const CONSOLE_CLASS: &str = r#"(const __quenchConsoleReceiver = (receiver) =>
+  receiver !== null &&
+  (typeof receiver === "object" || typeof receiver === "function")
+    ? receiver
+    : globalThis.console;
+class Console {
   constructor(stdout, stderr) {
     const options = stdout && typeof stdout === "object" &&
       (stdout.stdout || stdout.stderr) ? stdout : null;
@@ -83,34 +88,36 @@ const CONSOLE_CLASS: &str = r#"(class Console {
     if (!this._stderr) this._stderr = globalThis?.process?.stderr;
   }
   log(...args) {
-    const output = this._stdout || process?.stdout;
+    const receiver = __quenchConsoleReceiver(this);
+    const output = receiver?._stdout || globalThis.process?.stdout;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
-    if (!this._tickPending) {
-      this._tickPending = true;
+    if (!receiver._tickPending) {
+      receiver._tickPending = true;
       const tick = globalThis?.process?.nextTick;
-      if (typeof tick === "function") tick(() => { this._tickPending = false; });
+      if (typeof tick === "function") tick(() => { receiver._tickPending = false; });
     }
   }
-  info(...args) { this.log(...args); }
-  dir(...args) { this.log(...args); }
-  time(label = "default") { this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
-  timeEnd(label = "default") { this._times?.delete(label); }
-  timeLog(label = "default", ...args) { this.log(...args); }
+  info(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
+  dir(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
+  time(label = "default") { const receiver = __quenchConsoleReceiver(this); receiver._times ||= new Map(); if (!receiver._times.has(label)) receiver._times.set(label, Date.now()); }
+  timeEnd(label = "default") { __quenchConsoleReceiver(this)._times?.delete(label); }
+  timeLog(label = "default", ...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
   warn(...args) {
-    const output = this._stderr || process?.stderr;
+    const receiver = __quenchConsoleReceiver(this);
+    const output = receiver?._stderr || globalThis.process?.stderr;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
   }
-  error(...args) { this.warn(...args); }
-  trace(...args) { this.error(...args); }
-  assert(condition, ...args) { if (!condition) this.error(...args); }
+  error(...args) { return Console.prototype.warn.call(__quenchConsoleReceiver(this), ...args); }
+  trace(...args) { return Console.prototype.warn.call(__quenchConsoleReceiver(this), ...args); }
+  assert(condition, ...args) { if (!condition) Console.prototype.warn.call(__quenchConsoleReceiver(this), ...args); }
   clear() {}
-  count(label = "default") { this._counts ||= new Map(); this._counts.set(label, (this._counts.get(label) || 0) + 1); }
-  countReset(label = "default") { this._counts?.delete(label); }
+  count(label = "default") { const receiver = __quenchConsoleReceiver(this); receiver._counts ||= new Map(); receiver._counts.set(label, (receiver._counts.get(label) || 0) + 1); }
+  countReset(label = "default") { __quenchConsoleReceiver(this)._counts?.delete(label); }
   group() {}
   groupEnd() {}
-  table(...args) { this.log(...args); }
-  debug(...args) { this.log(...args); }
-  dirxml(...args) { this.log(...args); }
+  table(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
+  debug(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
+  dirxml(...args) { return Console.prototype.log.call(__quenchConsoleReceiver(this), ...args); }
   groupCollapsed() {}
 })"#;
 

@@ -187,3 +187,43 @@ fn normalize_script_completion(
 fn reduce(source: &str) -> Result<quench_runtime::reduce::ResidualProgram, String> {
     quench_runtime::reduce::reduce_source(source).map_err(|errors| errors.join("; "))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::eval_script;
+    use quench_runtime::vm::OutputSink;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn detached_console_methods_do_not_require_a_receiver() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          const methods = [
+            "log", "info", "warn", "error", "debug", "trace", "dir",
+            "table", "group", "groupCollapsed", "groupEnd", "clear", "assert",
+            "count", "countReset", "time", "timeLog", "timeEnd",
+          ];
+          for (const name of methods) {
+            const method = console[name];
+            if (typeof method !== "function") continue;
+            const detached = method;
+            if (name === "assert") detached(false, "detached");
+            else if (name === "time" || name === "timeLog" || name === "timeEnd") detached("detached");
+            else detached("detached");
+          }
+          const log = console.log;
+          log("detached-log");
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(
+            outcome.error.is_none(),
+            "detached console call failed: {:?}",
+            outcome.error
+        );
+        assert!(output.lock().unwrap().contains("detached-log"));
+    }
+}
