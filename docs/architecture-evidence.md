@@ -757,3 +757,31 @@ rendered code cost. Task 049 therefore closes as an evidence-backed **no-go**:
 retain the bounded IC chain and complete fallback, and do not add build-time
 polymorphic variants until instrumentation proves a reusable finite fact
 combination with a measured benefit.
+
+## Task 054: TypedArray fast-path survey
+
+The existing `AGetI`/`ASetI` region rows are opcode-level bridges, not a
+plain-array-only admission rule. With `QUENCH_ENABLE_AARCH64_STENCILS=1`, a
+typed-memory probe (`Uint8Array`, 480 indexed writes and reads) entered the
+same native region bridge (`leaf_hit = 956`); the bridge then revalidated the
+whole instruction window and called the canonical handlers. Thus typed-array
+access is already admitted to the bounded region mechanism, with complete
+fallback, rather than being silently treated as a new specialized semantic.
+
+The handler-level trace makes the remaining distinction explicit: the probe
+recorded `AGetI = 480`, `ASetI = 480`, `packed_array_get = 0`, and
+`packed_array_miss = 960`, plus 480 `RequireObjectCoercible` slow events. The
+packed-number fast path intentionally accepts only `ArrayKind` ordinary
+arrays; typed-array storage is handled by the generic typed-array/property
+gateway. Extending that gateway into a new stencil would therefore be a new
+value-representation/element-kind mechanism, not an admission correction, and
+there is no evidence in this task that it is safe for every supported element
+kind (`Int8` through `Float64`, plus bigint views).
+
+The required v8-v7 NavierStokes cross-check completed correctly on the ARM64
+release artifact: `output_equal:true`, 26.27 s wall time, score 192, and
+19.0 MiB peak RSS (Node 2.03 s, 58.1 MiB). Since task 054 changes no code and
+the existing bridge already covers typed-array opcodes with the canonical
+fallback, there is no before/after optimization claim. Task 054 closes with
+this evidence-backed finding; any future typed-array specialization needs a
+separate representation-level task and per-kind differential coverage.

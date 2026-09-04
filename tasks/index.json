@@ -52,9 +52,10 @@
             ,"067: generated direct RegionKey dispatch, fixed-capacity render-cache checks, and arena scaling invariants pass in both feature configurations; native ARM64 Add execution is exercised under the opt-in gate and the arena test rejected a deliberate cursor-scan regression"
             ,"048: profiled seven-op LOOP_BODY region added with bounded sequential execution and atomic complete fallback; CFG/interpreter differential tests, both runtime feature gates, neutral 100/100 corpus, curriculum 017-019, and the 300-second all-eight-fixture v8-v7 cross-check passed. Neutral/curriculum movement was within run noise; ARM native execution remains opt-in pending task 068 (coverage expansion, not a score claim)."
             ,"049: profile-gated bounded polymorphic variant survey closed as a no-go; curriculum 013 (three stable property shapes) and hostile 021 (shape churn) are correctly handled by the existing bounded generic IC, but no finite reusable RegionKey fact-set was observable to justify N-times rendered variants. Complete fallback and bounded code-size discipline are preserved."
+            ,"054: TypedArray survey closed with an evidence-backed finding; AGetI/ASetI opcode bridges already admit typed-array operations when native regions are enabled, while packed-array counters correctly remain zero and canonical typed-array/property handling supplies the fallback. NavierStokes completed output-correct at 192 score/26.27s/19.0MiB; no new representation mechanism was justified."
         ],
         "remaining_slices": [
-            "054", "059", "060", "073"
+            "059", "060", "073"
         ]
     },
     "themes": {
