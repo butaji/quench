@@ -26,6 +26,7 @@ const SCOPE_RESOURCE: &str = "\0quench:async_hooks:scope:resource";
 const SCOPE_PREVIOUS: &str = "\0quench:async_hooks:scope:previous";
 const SCOPE_HAD_PREVIOUS: &str = "\0quench:async_hooks:scope:had_previous";
 const SCOPE_ACTIVE: &str = "\0quench:async_hooks:scope:active";
+const TRACE_PROMISE_CLEAR_STORE: &str = "\0quench:diagnostics:trace-promise-clear-store";
 
 #[derive(Clone, Debug)]
 struct Hook {
@@ -1230,6 +1231,26 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
     if event == "init" {
         let trigger = args.get(2).cloned().unwrap_or(Value::Undefined);
         let resource = new_resource(state, &[trigger, Value::String("PROMISE".into())])?;
+        let traced_trigger = matches!(
+            args.get(2),
+            Some(Value::Promise(trigger))
+                if matches!(
+                    execute::get_property(
+                        &Value::Promise(trigger.clone()),
+                        TRACE_PROMISE_CLEAR_STORE,
+                    ),
+                    Value::Object(_)
+                )
+        );
+        if traced_trigger {
+            if let Some(resource_id) = id_property(&resource, ASYNC_ID).and_then(number) {
+                state
+                    .borrow_mut()
+                    .async_hooks
+                    .local_stores
+                    .retain(|(owner, _), _| *owner != resource_id);
+            }
+        }
         state
             .borrow_mut()
             .async_hooks
@@ -1285,6 +1306,27 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             let id = id_property(&resource, ASYNC_ID).unwrap_or(Value::Number(0.0));
             for (callback, receiver) in callbacks {
                 call_hook(state, &callback, &receiver, &[id.clone()]);
+            }
+            let promise_value = Value::Promise(promise.clone());
+            let marker = execute::get_property(&promise_value, TRACE_PROMISE_CLEAR_STORE);
+            if let Value::Object(marker) = marker.clone() {
+                let channel = execute::get_property(&Value::Object(marker.clone()), "channel");
+                let context = execute::get_property(&Value::Object(marker), "context");
+                let _ = super::diagnostics_channel::tracing_promise_settle(
+                    state,
+                    &channel,
+                    &context,
+                    promise,
+                );
+            }
+            if !matches!(marker, Value::Undefined) {
+                if let Some(resource_id) = number(id) {
+                    state
+                        .borrow_mut()
+                        .async_hooks
+                        .local_stores
+                        .retain(|(owner, _), _| *owner != resource_id);
+                }
             }
         }
     }
