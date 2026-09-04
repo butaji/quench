@@ -157,8 +157,11 @@ mod tests {
     /// absent.
     #[test]
     fn enumeration_scales_linearly_with_live_key_count() {
-        let small = measure_live_enumeration(20, 1_000);
-        let large = measure_live_enumeration(200, 1_000);
+        // Keep the timed phase short enough that allocation checkpoints do not
+        // dominate the comparison.  The 10x live-key range still distinguishes
+        // linear enumeration from a per-key O(N) rebuild.
+        let small = measure_live_enumeration(20, 100);
+        let large = measure_live_enumeration(200, 100);
         let ratio = large / small.max(1e-9);
         eprintln!(
             "architecture invariant #4b: live=20 {small:.6} ms/enum, live=200 {large:.6} ms/enum, ratio {ratio:.3}"
