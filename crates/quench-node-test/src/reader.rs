@@ -448,9 +448,26 @@ impl NodeRunner {
                 reason: format!("exit code {code}"),
             },
             (Err(_), Some(0)) => NodeOutcome::Pass,
-            (Err(error), Some(code)) => NodeOutcome::Fail {
-                reason: format!("exit code {code}: {}", render_uncaught(&error)),
-            },
+            (Err(error), Some(code)) => {
+                // `process.exit(code)` uses a private thrown completion to
+                // unwind the VM.  It is a normal CLI termination, not an
+                // uncaught exception, so preserve the status without
+                // manufacturing stderr output in child mode.
+                let explicit_exit = matches!(
+                    &error,
+                    quench_runtime::vm::VmError::Thrown(Value::String(text))
+                        if text.starts_with("process.exit(")
+                );
+                if explicit_exit {
+                    NodeOutcome::Fail {
+                        reason: format!("exit code {code}"),
+                    }
+                } else {
+                    NodeOutcome::Fail {
+                        reason: format!("exit code {code}: {}", render_uncaught(&error)),
+                    }
+                }
+            }
             (Err(error), None) => NodeOutcome::Fail {
                 reason: format!("runtime: {}", render_uncaught(&error)),
             },

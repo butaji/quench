@@ -125,11 +125,13 @@ fn main() -> ExitCode {
                             .split_once(": ")
                             .map_or((value, ""), |(code, detail)| (code, detail));
                         let code = code_text.parse::<u8>().ok();
-                        (if detail.is_empty() { value } else { detail }, code)
+                        (detail, code)
                     }
                     None => (message, None),
                 };
-                eprintln!("{message}");
+                if !message.is_empty() {
+                    eprintln!("{message}");
+                }
                 return ExitCode::from(exit_code.unwrap_or(1));
             }
             if reason.starts_with("read ") {
