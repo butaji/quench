@@ -311,6 +311,7 @@ node_api! {
     (SPEC_CLUSTER_SETUP_MASTER, "cluster:setupMaster", 0x1F6B),
     (SPEC_CLUSTER_SETUP_EVENT, "cluster:setup:event", 0x1F6C),
     (SPEC_CLUSTER_CLOSE_WORKER_NET, "cluster:Worker:closeNet", 0x1F6D),
+    (SPEC_CLUSTER_WORKER_CONSTRUCTOR, "cluster:Worker", 0x1F6E),
     (SPEC_DIAGNOSTICS_TRACING_CHANNEL, "diagnostics_channel:tracingChannel", 0x1F0A),
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),

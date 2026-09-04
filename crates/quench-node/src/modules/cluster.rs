@@ -1,12 +1,11 @@
 //! Single-process `cluster` contract. Worker processes are deliberately absent.
 use crate::host::HostState;
 use crate::registry::{
-    SPEC_CLUSTER_DISCONNECT, SPEC_CLUSTER_FORK, SPEC_CLUSTER_WORKER_DISCONNECT,
+    SPEC_CLUSTER_DISCONNECT, SPEC_CLUSTER_FORK, SPEC_CLUSTER_SETUP_EVENT,
+    SPEC_CLUSTER_SETUP_MASTER, SPEC_CLUSTER_SETUP_PRIMARY, SPEC_CLUSTER_WORKER_DISCONNECT,
     SPEC_CLUSTER_WORKER_EMIT, SPEC_CLUSTER_WORKER_IS_CONNECTED, SPEC_CLUSTER_WORKER_IS_DEAD,
-    SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON, SPEC_CLUSTER_WORKER_PROCESS_SEND,
-    SPEC_CLUSTER_WORKER_SEND, SPEC_CLUSTER_SETUP_EVENT, SPEC_CLUSTER_SETUP_MASTER,
-    SPEC_CLUSTER_SETUP_PRIMARY,
-    SPEC_EVENTS_EMIT,
+    SPEC_CLUSTER_WORKER_CONSTRUCTOR, SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON,
+    SPEC_CLUSTER_WORKER_PROCESS_SEND, SPEC_CLUSTER_WORKER_SEND, SPEC_EVENTS_EMIT,
 };
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
@@ -218,6 +217,65 @@ pub fn setup_event(
     Ok(Value::Undefined)
 }
 
+fn worker_value(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Value {
+    let options = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
+    let id = match execute::get_property(&options, "id") {
+        Value::Number(value) => Value::Number(value),
+        _ => Value::Number(0.0),
+    };
+    let worker_state = match execute::get_property(&options, "state") {
+        Value::String(value) => Value::String(value),
+        _ => Value::String("none".into()),
+    };
+    let mut worker = host_api::object(vec![
+        (ID.into(), id.clone()),
+        ("id".into(), id),
+        ("state".into(), worker_state),
+        ("process".into(), execute::get_property(&options, "process")),
+        ("exitedAfterDisconnect".into(), Value::Undefined),
+        (
+            "isDead".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_IS_DEAD),
+        ),
+        (
+            "isConnected".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_IS_CONNECTED),
+        ),
+        ("on".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
+        ("once".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
+        ("emit".into(), crate::host::capability(SPEC_CLUSTER_WORKER_EMIT)),
+        (
+            "disconnect".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_DISCONNECT),
+        ),
+        ("kill".into(), crate::host::capability(SPEC_CLUSTER_WORKER_KILL)),
+        ("send".into(), crate::host::capability(SPEC_CLUSTER_WORKER_SEND)),
+    ]);
+    if let Some(prototype) = state.borrow().cluster.worker_prototype.clone() {
+        worker = execute::set_prototype_of(&worker, &prototype).unwrap_or(worker);
+    }
+    worker
+}
+
+pub fn worker_construct(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(worker_value(state, args))
+}
+
+pub fn worker_construct_handler(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(worker_value(state, args))
+}
+
 fn stdio_channel(state: &Rc<RefCell<HostState>>) -> Option<Value> {
     let configured = state.borrow().cluster.stdio.clone()?;
     let Value::Array(slots) = configured else {
@@ -268,8 +326,12 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let workers = host_api::object(Vec::new());
     let module = crate::modules::events::new_emitter_object(state)
         .unwrap_or_else(|_| host_api::object(Vec::new()));
-    let worker_constructor = Value::Builtin(quench_runtime::ops::Builtin::Error);
-    let worker_prototype = Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype);
+    let worker_prototype = host_api::object(Vec::new());
+    let worker_constructor = execute::set_property(
+        crate::host::capability(SPEC_CLUSTER_WORKER_CONSTRUCTOR),
+        "prototype",
+        worker_prototype.clone(),
+    );
     state.borrow_mut().cluster.worker_prototype = Some(worker_prototype.clone());
     for (key, value) in vec![
         ("isPrimary", Value::Boolean(true)),
