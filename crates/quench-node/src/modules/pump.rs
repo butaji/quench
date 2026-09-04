@@ -334,6 +334,14 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
         if promise.rejection_handled() {
             continue;
         }
+        let promise_value = Value::Promise(promise.clone());
+        if let Some((domain, handler)) = crate::modules::domain::promise_domain(
+            state,
+            &promise_value,
+        ) {
+            crate::modules::domain::call_error_handler(state, &domain, &handler, &reason)?;
+            continue;
+        }
         let mode = state.borrow().process.unhandled_rejection_mode;
         let has_handlers = !state
             .borrow()
