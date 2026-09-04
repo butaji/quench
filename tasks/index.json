@@ -29,7 +29,7 @@
             "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented"
         ],
         "remaining_slices": [
-            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057"
+            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060"
         ]
     },
     "themes": {
@@ -39,7 +39,7 @@
         },
         "vm_completeness": {
             "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. P0: fix a real Node-compat bug (050, console.log crashes when detached from `this`) and a real correctness bug (051, Splay output mismatch) that currently block running the suite at all. Then wire it into tracked verification (052), and survey three genuinely uncovered areas by any prior task: regex engine performance (053), TypedArray fast-path coverage (054), and allocation-throughput for allocation-heavy workloads (055) -- all profile-gated, same discipline as 045-047. Additionally: a direct code check found no cycle collector exists anywhere (Rc-only object model, Weak used only at specific known points) -- 056 audits whether this actually leaks on ordinary user-created reference cycles (DeltaBlue's constraint graph is a plausible real case), 057 implements a bounded cycle-collection pass only if 056 confirms a real leak.",
-            "plan": ["050", "051", "052", "053", "054", "055", "056", "057"]
+            "plan": ["050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060"]
         }
     },
     "items": [
@@ -72,6 +72,9 @@
         {"id": "054", "file": "054.md", "title": "TypedArray fast-path coverage (NavierStokes-class workloads)", "theme": "vm_completeness", "depends_on": ["052"]},
         {"id": "055", "file": "055.md", "title": "Allocation-throughput survey for allocation-heavy workloads (Splay, RayTrace, EarleyBoyer)", "theme": "vm_completeness", "depends_on": ["052"]},
         {"id": "056", "file": "056.md", "title": "Audit for reference-cycle memory leaks (no cycle collector exists)", "theme": "vm_completeness", "depends_on": []},
-        {"id": "057", "file": "057.md", "title": "Bounded cycle-collection pass (only if task 056 confirms a real leak)", "theme": "vm_completeness", "depends_on": ["056"]}
+        {"id": "057", "file": "057.md", "title": "Periodic full-pass cycle collector (only if task 056 confirms a real leak)", "theme": "vm_completeness", "depends_on": ["056"]},
+        {"id": "058", "file": "058.md", "title": "Global shape hash-consing (structural deduplication)", "theme": "vm_completeness", "depends_on": []},
+        {"id": "059", "file": "059.md", "title": "Bump-pointer arena allocation for provably-scoped short-lived values", "theme": "vm_completeness", "depends_on": []},
+        {"id": "060", "file": "060.md", "title": "Host-level opt-in request-scoped arena (web-backend memory bound)", "theme": "vm_completeness", "depends_on": ["059"]}
     ]
 }
