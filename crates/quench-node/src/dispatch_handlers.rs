@@ -8131,7 +8131,35 @@ pub fn cp_spawn(
         candidate as u64
     };
     execute::set_property_in_place(&child, "pid", Value::Number(simulated_pid as f64));
-    if command == "foo123"
+    let direct_eacces = !matches!(
+        execute::get_property(&options, "shell"),
+        Value::Boolean(true)
+    ) && cp_spawn_path_is_non_executable(&command, &options);
+    if direct_eacces {
+        execute::set_property_in_place(&child, "pid", Value::Undefined);
+        let error = host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            (
+                "message".into(),
+                Value::String(format!("spawn {command} EACCES")),
+            ),
+            ("code".into(), Value::String("EACCES".into())),
+            ("errno".into(), Value::Number(-13.0)),
+            ("syscall".into(), Value::String(format!("spawn {command}"))),
+            ("path".into(), Value::String(command.clone())),
+            ("spawnargs".into(), spawnargs.clone()),
+        ]);
+        if !matches!(
+            execute::get_property(&options, "\0quench:suppressSpawnError"),
+            Value::Boolean(true)
+        ) {
+            let callback = bound_custom(
+                crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+                vec![child.clone(), error],
+            );
+            state.borrow().event_loop.queue_immediate(callback, vec![]);
+        }
+    } else if command == "foo123"
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
     {
@@ -11696,6 +11724,31 @@ fn cp_script_output_with_repeat_arg(source: &str, args: &Value) -> Option<(&'sta
     }?;
     let value = decode_script_literal(literal.trim().trim_matches(['\'', '"']));
     Some(("stdout", format_output(&value.repeat(count), false)))
+}
+
+fn cp_spawn_path_is_non_executable(command: &str, options: &Value) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::path::Path::new(command);
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else if let Value::String(cwd) = execute::get_property(options, "cwd") {
+            std::path::PathBuf::from(cwd).join(path)
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        return std::fs::metadata(path)
+            .ok()
+            .is_some_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 == 0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (command, options);
+        false
+    }
 }
 
 fn cp_spawn_script_stdout(args: &Value) -> Option<String> {

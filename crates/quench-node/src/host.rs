@@ -127,6 +127,15 @@ pub struct PendingModule {
 
 impl NodeHost {
     pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
+        // The Node test common/tmpdir helper exposes a per-process host path.
+        // Materialize that parent at host construction so fixtures can create
+        // files there even when the helper's JS-side refresh hook is absent
+        // from a reduced bootstrap realm.
+        let tmp = std::path::PathBuf::from(format!(
+            "/tmp/quench-node-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(tmp);
         let state = HostState {
             async_hooks: crate::modules::async_hooks::AsyncHooksState::new(),
             timers: crate::modules::timers::TimerRegistry::new(),
