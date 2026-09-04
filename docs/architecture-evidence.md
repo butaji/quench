@@ -889,3 +889,26 @@ and memory 376.0. The regression is therefore not explained by missing region
 coverage; the current native call boundary and per-entry executable transfer
 still cost more than the canonical Rust path. The ARM64 default remains off,
 and no unsafe ABI shim was introduced.
+
+## Task 068 ARM64 address-contract correction
+
+DWARF/symbol sampling of the opt-in ARM64 path isolated a concrete lifecycle
+bug rather than an ABI problem: `StencilArena::render_or_get` returns an
+absolute address, while the Move and property leaves treated that value as an
+arena offset and called `address` a second time. Every such execution returned
+`Exhausted`, discarded the mapping, and paid a fresh mmap/mprotect/munmap cycle.
+The leaves now pass the rendered address directly; targeted Move and property
+tests verify execution and cache reuse without remapping. The complete
+interpreter fallback remains unchanged on every physical or semantic miss.
+
+On the current ARM64 host, the corrected trace-enabled neutral corpus was
+100/100: fallback Score 282.143 (speed 220.936, memory 343.350) versus
+opt-in native Score 284.858 (speed 224.968, memory 344.748). The paired
+38-case curriculum remained 34/38 instrumentation/performance passes in both
+configurations: fallback speed 184.5/memory 378.5, native speed
+184.1/memory 375.6; cases 017/019 were 0.34x/0.47x wall versus Node on
+fallback and 0.37x/0.43x with native leaves. Thus the fix removes the
+pathological remapping cost and improves the neutral trace run, but the
+curriculum speed is still marginally lower and memory is not better. The
+`QUENCH_ENABLE_AARCH64_STENCILS` opt-in therefore remains off by default; no
+default-on claim is made until both gates are net-positive.

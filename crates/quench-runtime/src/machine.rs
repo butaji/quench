@@ -1517,11 +1517,8 @@ impl NativeMovePlan {
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
             let record = crate::stencil_select::select_region(key)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let offset = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
+            let address = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
             arena.make_executable()?;
-            let address = arena
-                .address(offset)
-                .ok_or(crate::stencil_arena::ArenaError::Exhausted)?;
             arena.execute_tagged_word(address, source)
         })();
         if result.is_err() {
@@ -1603,11 +1600,8 @@ impl NativePropertyPlan {
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
             let record = crate::stencil_select::select_region(key)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let offset = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
+            let address = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
             arena.make_executable()?;
-            let address = arena
-                .address(offset)
-                .ok_or(crate::stencil_arena::ArenaError::Exhausted)?;
             arena.execute_word(address, slot)
         })();
         if result.is_err() {

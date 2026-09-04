@@ -344,6 +344,42 @@ fn non_x86_native_execution_rejects_before_mapping() {
     assert!(plan.arena.is_none());
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_move_uses_rendered_address_without_remapping() {
+    let mut plan = super::NativeMovePlan {
+        arena: None,
+        cache: crate::stencil_select::RenderedRegionCache::new(),
+        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
+        opcode: crate::ir::Opcode::Move,
+    };
+    let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
+    let used = plan.arena.as_ref().expect("rendered arena").used();
+    assert!(used > 0);
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
+    assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_property_uses_rendered_address_without_remapping() {
+    let mut plan = super::NativePropertyPlan {
+        arena: None,
+        cache: crate::stencil_select::RenderedRegionCache::new(),
+        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        opcode: crate::ir::Opcode::GetN,
+    };
+    let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
+    let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
+    assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    let used = plan.arena.as_ref().expect("rendered arena").used();
+    assert!(used > 0);
+    assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
 #[test]
 fn osr_admission_only_accepts_back_edges() {
     assert!(!super::is_osr_candidate(3, crate::ir::Instruction::ret(0)));
