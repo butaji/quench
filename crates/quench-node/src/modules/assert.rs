@@ -290,7 +290,7 @@ pub fn build_value() -> Value {
     }
     let _ = execute::set_callable_property(&strict, "strict", strict.clone());
     let _ = execute::set_callable_property(&strict, "\0quench:strict", Value::Boolean(true));
-    let _ = execute::set_callable_property(&value, "strict", value.clone());
+    let _ = execute::set_callable_property(&value, "strict", strict.clone());
     let _ = execute::set_callable_property(&value, "\0quench:strict-namespace", strict.clone());
     for (name, source) in [
         ("rejects", ASSERT_REJECTS),
@@ -552,7 +552,7 @@ fn missing_args() -> VmError {
 /// Optional trailing message argument; `None` when absent/undefined.
 pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
     match args.get(index) {
-        Some(Value::String(message)) => Some(message.clone()),
+        Some(Value::String(message)) => Some(format_assert_message(message, args.get(index + 1..).unwrap_or_default())),
         Some(Value::Undefined) | None => None,
         Some(value) if is_error_object(value) || is_cross_context_error(value) => match execute::get_property(value, "message") {
             Value::String(message) => Some(message),
@@ -560,6 +560,31 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
         },
         Some(value) => Some(crate::modules::util::inspect(value)),
     }
+}
+
+fn format_assert_message(message: &str, values: &[Value]) -> String {
+    let mut result = String::with_capacity(message.len());
+    let mut chars = message.chars();
+    let mut index = 0usize;
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            if let Some(spec) = chars.next() {
+                if spec == '%' { result.push('%'); continue; }
+                if let Some(value) = values.get(index) {
+                    let text = match spec {
+                        'i' => match value { Value::Number(n) => (*n as i64).to_string(), _ => execute::to_js_string(value).unwrap_or_default() },
+                        'd' => match value { Value::Number(n) => n.to_string(), _ => execute::to_js_string(value).unwrap_or_default() },
+                        's' => execute::to_js_string(value).unwrap_or_default(),
+                        _ => { result.push('%'); result.push(spec); continue; }
+                    };
+                    result.push_str(&text); index += 1; continue;
+                }
+                result.push('%'); result.push(spec); continue;
+            }
+        }
+        result.push(ch);
+    }
+    result
 }
 
 fn rendered(value: &Value) -> String {
@@ -582,7 +607,15 @@ fn rendered(value: &Value) -> String {
             let text = text.strip_suffix('\n').unwrap_or(text);
             format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
         }
+        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) | Value::HostCapability(_) => function_render(value),
         _ => crate::modules::util::inspect(value),
+    }
+}
+
+fn function_render(value: &Value) -> String {
+    match execute::get_property(value, "name") {
+        Value::String(name) if !name.is_empty() => format!("[Function: {name}]"),
+        _ => "[Function (anonymous)]".into(),
     }
 }
 
@@ -678,29 +711,97 @@ fn source_assertion_call(value: &Value) -> Option<String> {
     let source = quench_runtime::vm::current_context();
     let source = source.source_text()?;
     let expected = rendered(value);
+    let mut calls = Vec::new();
     let mut cursor = 0;
-    let mut first_call = None;
-    let mut call_count = 0;
-    while let Some(relative) = source[cursor..].find(".ok(") {
+    while cursor < source.len() {
+        let next_ok = source[cursor..].find(".ok(");
+        let next_assert = source[cursor..].find("assert(");
+        let (relative, bare) = match (next_ok, next_assert) {
+            (Some(ok), Some(assert)) if ok <= assert => (ok, false),
+            (Some(ok), _) => (ok, false),
+            (_, Some(assert)) => (assert, true),
+            (None, None) => break,
+        };
         let start = cursor + relative;
-        let argument_start = start + 4;
-        let end = source[argument_start..].find(')')? + argument_start;
-        call_count += 1;
-        let line_start = source[..start]
-            .rfind([';', '\n', '{', '}'])
-            .map_or(0, |i| i + 1);
-        let call = source[line_start..=end].trim();
-        if first_call.is_none() && !call.is_empty() {
-            first_call = Some(call.to_string());
-        }
-        if source[argument_start..end].trim() == expected {
-            if !call.is_empty() {
-                return Some(call.to_string());
+        let open = if bare { start + 5 } else { start + 3 };
+        let mut depth = 0usize;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut end = None;
+        for (offset, ch) in source[open..].char_indices() {
+            if let Some(q) = quote {
+                if escaped { escaped = false; continue; }
+                if ch == '\\' { escaped = true; continue; }
+                if ch == q { quote = None; }
+                continue;
+            }
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 { end = Some(open + offset); break; }
+                }
+                ']' | '}' => depth = depth.saturating_sub(1),
+                _ => {}
             }
         }
+        let Some(end) = end else { break; };
+        let call_start = if bare {
+            start
+        } else {
+            [source[..start].rfind("assert"), source[..start].rfind("strict")]
+                .into_iter()
+                .flatten()
+                .max()
+                .unwrap_or(start.saturating_sub(5))
+        };
+        let mut call = source[call_start..=end].trim().to_string();
+        if call.ends_with(", undefined)") {
+            let new_len = call.len() - ", undefined)".len();
+            call.truncate(new_len);
+            call.push(')');
+        }
+        if let Some(dot) = call.find(".ok(") {
+            let prefix = call[..dot].trim_end();
+            call = format!("{prefix}{}", &call[dot..]);
+        }
+        let argument = &source[open + 1..end];
+        let argument = argument.trim().to_string();
+        let first_argument = {
+            let mut depth = 0usize;
+            let mut quote = None;
+            let mut escaped = false;
+            argument
+                .char_indices()
+                .find_map(|(index, ch)| {
+                    if let Some(q) = quote {
+                        if escaped { escaped = false; }
+                        else if ch == '\\' { escaped = true; }
+                        else if ch == q { quote = None; }
+                        return None;
+                    }
+                    match ch {
+                        '\'' | '"' | '`' => quote = Some(ch),
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                        ',' if depth == 0 => return Some(index),
+                        _ => {}
+                    }
+                    None
+                })
+                .map_or(argument.as_str(), |index| &argument[..index])
+                .trim()
+                .to_string()
+        };
+        calls.push((call, first_argument));
         cursor = end + 1;
     }
-    (call_count == 1).then_some(first_call).flatten()
+    // Preserve source spelling when the first argument is a literal match.
+    if let Some((call, _)) = calls.iter().find(|(_, argument)| argument == &expected) {
+        return Some(call.clone());
+    }
+    (calls.len() == 1).then(|| calls.first().map(|(call, _)| call.clone())).flatten()
 }
 
 pub fn fail(
@@ -789,7 +890,7 @@ fn binary_assert(
         return Err(VmError::Thrown(value.clone()));
     }
     let relation = if expect_equal { "!==" } else { "===" };
-    let custom = custom_message(args, 2);
+    let custom = custom_message_binary(args, 2, &actual, &expected)?;
     let generated = custom.is_none();
     let message = custom.map_or_else(|| {
         let label = match operator {
@@ -803,6 +904,34 @@ fn binary_assert(
             matches!(execute::get_property(value, "diff"), Value::String(diff) if diff == "full")
         }) || (operator == "strictEqual"
             && (needs_structural_diff(&actual) || needs_structural_diff(&expected)));
+        if operator == "strictEqual"
+            && has_error_shape(&actual)
+            && has_error_shape(&expected)
+            && !execute::same_identity(&actual, &expected)
+        {
+            return format!(
+                "Expected \"actual\" to be reference-equal to \"expected\":\n+ actual - expected\n\n+ {}\n- {}\n",
+                rendered_error(&actual), rendered_error(&expected)
+            );
+        }
+        if operator == "strictEqual"
+            && !execute::same_identity(&actual, &expected)
+            && !is_primitive_value(&actual)
+            && !is_primitive_value(&expected)
+            && crate::modules::deep_equal::deep_equal_opts(&actual, &expected, true, false).unwrap_or(false)
+        {
+            return format!("Values have same structure but are not reference-equal:\n\n{}\n", rendered(&actual));
+        }
+        if operator == "strictEqual"
+            && !is_primitive_value(&actual)
+            && !is_primitive_value(&expected)
+            && !execute::same_identity(&actual, &expected)
+        {
+            return format!(
+                "Expected \"actual\" to be reference-equal to \"expected\":\n+ actual - expected\n\n{}\n",
+                reference_diff_render(&actual, &expected)
+            );
+        }
         if full {
             match operator {
                 "strictEqual" => format!(
@@ -844,7 +973,7 @@ fn binary_assert(
                 ),
                 _ if operator == "notDeepStrictEqual" => format!(
                     "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
-                    rendered_not_deep(&actual)
+                    format!("{}\n", rendered_not_deep(&actual))
                 ),
                 _ if operator == "notStrictEqual"
                     && !matches!(actual, Value::String(_)) => format!(
@@ -881,6 +1010,24 @@ fn binary_assert(
         assertion_error(message, operator, actual, expected, generated),
         receiver,
     ))
+}
+
+/// Assertion message callbacks receive the operands and provide the final
+/// message text. A non-string return is treated as no custom message, matching
+/// Node's generated fallback diagnostics.
+fn custom_message_binary(
+    args: &[Value],
+    index: usize,
+    actual: &Value,
+    expected: &Value,
+) -> Result<Option<String>, VmError> {
+    match args.get(index) {
+        Some(value) if quench_runtime::is_callable(value) => {
+            let result = execute::call(value, &Value::Undefined, &[actual.clone(), expected.clone()])?;
+            Ok(match result { Value::String(text) => Some(text), _ => None })
+        }
+        _ => Ok(custom_message(args, index)),
+    }
 }
 
 fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String {
@@ -1076,7 +1223,7 @@ fn deep_assert(
     {
         return Ok(Value::Undefined);
     }
-    let custom = custom_message(args, 2);
+    let custom = custom_message_binary(args, 2, &actual, &expected)?;
     let generated = custom.is_none();
     let full_diff = _r.is_some_and(|receiver| {
         matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "full")
@@ -1109,8 +1256,14 @@ fn deep_assert(
             format!("Expected values to be strictly deep-equal:\n+ actual - expected{}", diff_block(&diff))
         },
         |message| {
-            let diff = deep_diff_for_mode(&actual, &expected, full_diff);
-            format!("{message}\n+ actual - expected{}", diff_block(&diff))
+            if !strict {
+                message
+            } else if is_primitive_value(&actual) && is_primitive_value(&expected) {
+                format!("{message}\n\n{} {} {}\n", rendered(&actual), "!==", rendered(&expected))
+            } else {
+                let diff = deep_diff_for_mode(&actual, &expected, full_diff);
+                format!("{message}\n+ actual - expected{}", diff_block(&diff))
+            }
         },
     );
     Err(with_instance_diff(
@@ -1143,7 +1296,9 @@ fn is_primitive_value(value: &Value) -> bool {
 
 fn needs_structural_diff(value: &Value) -> bool {
     match value {
-        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) => true,
+        // Functions are opaque references for strict equality; inspecting
+        // their own properties can recurse through constructor links.
+        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) | Value::HostCapability(_) => true,
         Value::Array(_) => execute::own_enumerable_keys(value)
             .iter()
             .any(|key| key.parse::<usize>().is_ok()),
@@ -1211,6 +1366,55 @@ fn strict_operand_render(value: &Value) -> String {
         }
         _ => rendered(value),
     }
+}
+
+fn reference_operand_render(value: &Value) -> String {
+    if value.is_arguments_object() {
+        let lines = execute::own_enumerable_keys(value)
+            .into_iter()
+            .map(|key| format!("    '{}': {}", key, rendered(&execute::get_property(value, &key))))
+            .collect::<Vec<_>>();
+        return format!("[Arguments] {{\n{}\n  }}", lines.join("\n"));
+    }
+    if let Value::Object(_) = value {
+        let lines = execute::own_enumerable_keys(value)
+            .into_iter()
+            .map(|key| {
+                let display_key = if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() };
+                format!("    {display_key}: {}", rendered(&execute::get_property(value, &key)))
+            })
+            .collect::<Vec<_>>();
+        if !lines.is_empty() { return format!("{{\n{}\n  }}", lines.join("\n")); }
+    }
+    rendered(value)
+}
+
+fn reference_diff_render(actual: &Value, expected: &Value) -> String {
+    let actual_lines = reference_operand_render(actual)
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let expected_lines = reference_operand_render(expected)
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    let common = actual_lines.len().min(expected_lines.len());
+    for index in 0..common {
+        if actual_lines[index] == expected_lines[index] {
+            lines.push(actual_lines[index].clone());
+        } else {
+            lines.push(format!("+ {}", actual_lines[index]));
+            lines.push(format!("- {}", expected_lines[index]));
+        }
+    }
+    for line in actual_lines.iter().skip(common) {
+        lines.push(format!("+ {}", line));
+    }
+    for line in expected_lines.iter().skip(common) {
+        lines.push(format!("- {}", line));
+    }
+    lines.join("\n")
 }
 
 fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
@@ -1999,6 +2203,11 @@ fn is_cross_context_error(value: &Value) -> bool {
         && matches!(execute::get_property(value, "message"), Value::String(_))
 }
 
+fn has_error_shape(value: &Value) -> bool {
+    matches!(execute::get_property(value, "name"), Value::String(_))
+        && matches!(execute::get_property(value, "message"), Value::String(_))
+}
+
 fn rendered_error(value: &Value) -> String {
     let name = match execute::get_property(value, "name") {
         Value::String(name) if !name.is_empty() => name,
@@ -2700,7 +2909,7 @@ pub fn partial_deep_strict_equal(
     if crate::modules::deep_equal::partial_deep_equal(&actual, &expected)? {
         return Ok(Value::Undefined);
     }
-    let custom = custom_message(args, 2);
+    let custom = custom_message_binary(args, 2, &actual, &expected)?;
     let generated = custom.is_none();
     let message = custom.map_or_else(
         || {
@@ -2710,10 +2919,11 @@ pub fn partial_deep_strict_equal(
             )
         },
         |message| {
-            format!(
-                "{message}\n+ actual - expected\n\n{}\n",
-                deep_diff(&actual, &expected)
-            )
+            if is_primitive_value(&actual) && is_primitive_value(&expected) {
+                format!("{message}\n\n{} !== {}\n", rendered(&actual), rendered(&expected))
+            } else {
+                format!("{message}\n+ actual - expected\n\n{}\n", deep_diff(&actual, &expected))
+            }
         },
     );
     Err(with_instance_diff(

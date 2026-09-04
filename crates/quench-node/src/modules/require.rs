@@ -1083,7 +1083,7 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     // across requires (assert.strict === assert); cache it like a CJS module.
     if matches!(
         spec.as_str(),
-        "assert" | "node:assert" | "assert/strict" | "node:assert/strict"
+        "assert" | "node:assert"
     ) {
         let key = "node:assert".to_string();
         if let Some(cached) = state.borrow().module_cache.get(&key) {
