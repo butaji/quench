@@ -42,6 +42,7 @@ mod construct;
 mod continuation;
 mod control_flow;
 mod conversion;
+mod cycle_collector;
 pub use conversion::is_callable;
 pub use conversion::to_number;
 pub use conversion::to_string;

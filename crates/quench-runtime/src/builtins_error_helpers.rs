@@ -221,6 +221,9 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    crate::cycle_collector::track_value(&target);
+    crate::cycle_collector::track_value(&value);
+    crate::cycle_collector::checkpoint();
     if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false) {
         return target;
     }

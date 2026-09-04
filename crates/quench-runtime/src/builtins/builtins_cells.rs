@@ -3,6 +3,8 @@ use std::rc::Rc;
 use crate::value::{ObjectData, Value};
 
 pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
+    crate::cycle_collector::track_object(&properties);
+    crate::cycle_collector::track_value(&value);
     let cell = properties
         .iter()
         .rev()
@@ -10,7 +12,10 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
         .and_then(|value| binding_cell(&value))
         .or_else(|| deleted_binding_cell(&properties, key));
     let Some(cell) = cell else {
-        return super::object_alias::set(properties, key, value);
+        let result = super::object_alias::set(properties, key, value);
+        crate::cycle_collector::track_value(&result);
+        crate::cycle_collector::checkpoint();
+        return result;
     };
     if !has_binding_cell_property(&properties, key) {
         let mut values = properties.properties.clone();
@@ -28,12 +33,16 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
             created,
         ));
         cell.store(public_value(value));
-        return Value::Object(properties);
+        let result = Value::Object(properties);
+        crate::cycle_collector::checkpoint();
+        return result;
     }
     if !same_binding_cell(&cell, &value) {
         cell.store(public_value(value));
     }
-    Value::Object(properties)
+    let result = Value::Object(properties);
+    crate::cycle_collector::checkpoint();
+    result
 }
 
 fn same_binding_cell(cell: &Rc<crate::value::BindingCell>, value: &Value) -> bool {
