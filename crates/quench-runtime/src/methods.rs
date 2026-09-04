@@ -128,11 +128,27 @@ pub(crate) fn execute_registered(
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
-    if instruction.flags == 1
+    if instruction.flags <= 4
         && matches!(callee, Value::Builtin(crate::ops::Builtin::ArrayPush))
     {
-        let argument = read_register(registers, instruction.a.saturating_sub(1))?;
-        let value = crate::builtins::array_push(Some(&receiver), &[argument])?;
+        // The intrinsic has already been resolved, so collect only the small
+        // fixed argument window on the stack. Larger/dynamic calls retain the
+        // ordinary Vec-backed path below, preserving all generic semantics.
+        let argument_count = usize::from(instruction.flags);
+        let mut arguments: [Value; 4] = std::array::from_fn(|_| Value::Undefined);
+        for (offset, argument) in arguments.iter_mut().take(argument_count).enumerate() {
+            *argument = read_register(
+                registers,
+                instruction
+                    .a
+                    .saturating_sub(u16::from(instruction.flags))
+                    .saturating_add(offset as u16),
+            )?;
+        }
+        let value = crate::builtins::array_push(
+            Some(&receiver),
+            &arguments[..argument_count],
+        )?;
         write_value(registers, instruction.a, value);
         return Ok(None);
     }
