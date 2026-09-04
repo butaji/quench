@@ -292,7 +292,9 @@ pub fn digest(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let requested = args.first().unwrap_or(&Value::Undefined);
     let name_value = match requested {
         Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(requested, "name"),
@@ -446,7 +448,9 @@ pub fn import_key(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let format = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -497,7 +501,9 @@ pub fn export_key(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let format = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -613,7 +619,9 @@ pub fn generate_key(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
     let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
         .unwrap_or_default()
@@ -740,7 +748,9 @@ pub fn derive_bits(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let length = match args.get(2) {
         Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value as usize,
         Some(Value::Null) | None => 128,
@@ -760,7 +770,9 @@ pub fn sign(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(result) = invalid_subtle_this(receiver) { return Ok(result); }
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
     let algorithm = args.first().unwrap_or(&Value::Undefined);
     let key = args.get(1).unwrap_or(&Value::Undefined);
     let data = args.get(2).and_then(bytes).ok_or_else(|| {
@@ -850,6 +862,9 @@ pub fn encrypt(
         let (Value::Object(_) | Value::ObjectAlias(_)) = value else { return None };
         bytes(&execute::get_property(value, KEY_DATA_PROP))
     });
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "encrypt") {
+        return Ok(settled(Err(error)));
+    }
     if let (Some((iv, aad)), Some(key)) = (algorithm, key) {
         let result = match key.len() {
             16 => Aes128Gcm::new_from_slice(&key)
@@ -891,7 +906,71 @@ pub fn decrypt(
         let value = execute::set_property(value, "name", Value::String("OperationError".into()));
         return Ok(settled(Err(VmError::Thrown(value))));
     }
+    if let (Some((iv, aad)), Some(key)) = (
+        args.first().and_then(aes_gcm_algorithm),
+        args.get(1).and_then(|value| {
+            let (Value::Object(_) | Value::ObjectAlias(_)) = value else { return None };
+            bytes(&execute::get_property(value, KEY_DATA_PROP))
+        }),
+    ) {
+        let result = match key.len() {
+            16 => Aes128Gcm::new_from_slice(&key)
+                .expect("validated AES-128 key length")
+                .decrypt(Nonce::from_slice(&iv), Payload { msg: &data, aad: &aad }),
+            32 => Aes256Gcm::new_from_slice(&key)
+                .expect("validated AES-256 key length")
+                .decrypt(Nonce::from_slice(&iv), Payload { msg: &data, aad: &aad }),
+            _ => return Ok(settled(Ok(array_buffer(&data)))),
+        };
+        return Ok(settled(result.map_or_else(
+            |_| Err(operation_error("The operation failed for an operation-specific reason")),
+            |bytes| Ok(array_buffer(&bytes)),
+        )));
+    }
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "decrypt") {
+        return Ok(settled(Err(error)));
+    }
     Ok(settled(Ok(array_buffer(&data))))
+}
+
+fn validate_key_use(
+    algorithm: Option<&Value>,
+    key: Option<&Value>,
+    usage: &str,
+) -> Option<VmError> {
+    let algorithm = algorithm?;
+    let key = key?;
+    let requested = execute::to_js_string(&execute::get_property(algorithm, "name")).ok()?;
+    let key_algorithm = execute::to_js_string(&execute::get_property(
+        &execute::get_property(key, "algorithm"),
+        "name",
+    ))
+    .ok()?;
+    if !requested.eq_ignore_ascii_case(&key_algorithm) {
+        return Some(operation_error("Key algorithm mismatch"));
+    }
+    let usages = execute::get_property(key, "usages");
+    let length = match execute::get_property(&usages, "length") {
+        Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+        _ => 0,
+    };
+    let allowed = (0..length).any(|index| {
+        execute::to_js_string(&execute::get_property(&usages, &index.to_string()))
+            .is_ok_and(|value| value == usage)
+    });
+    (!allowed).then(|| operation_error(&format!("Unable to use this key to {usage}")))
+}
+
+fn aes_gcm_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>)> {
+    let name = execute::to_js_string(&execute::get_property(value, "name")).ok()?;
+    (name.eq_ignore_ascii_case("AES-GCM")).then_some(())?;
+    let iv = bytes(&execute::get_property(value, "iv"))?;
+    (iv.len() == 12).then_some(())?;
+    let aad = match execute::get_property(value, "additionalData") {
+        Value::Undefined => Vec::new(),
+        value => bytes(&value)?,
+    };
+    Some((iv, aad))
 }
 
 pub fn build() -> (Value, Value) {
