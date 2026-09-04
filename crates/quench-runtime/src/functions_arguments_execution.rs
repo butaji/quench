@@ -60,6 +60,23 @@ pub(crate) fn try_execute_specialized(
         function.code.capture_slots().len(),
         function.code.code(),
     );
+    // A proven side-effect-free numeric loop can complete before the general
+    // specialization ladder. This keeps the per-call path bounded for hot
+    // helpers while retaining the interpreter fallback for non-number input.
+    if matches!(
+        function.code.facts().counted_method_loop.as_deref(),
+        Some(crate::facts::CountedMethodLoopFact::BitCount)
+    ) {
+        if let Some(crate::value::Value::Number(mut value)) = arguments.first().cloned() {
+            let mut count = 0_u32;
+            while value > 0.0 {
+                let bits = crate::vm::vm_arithmetic::numeric_to_int32(value);
+                value = f64::from(bits & bits.wrapping_sub(1));
+                count += 1;
+            }
+            return Ok(Some(crate::value::Value::Number(f64::from(count))));
+        }
+    }
     if is_class_constructor(function) {
         return Err(crate::value::error::throw_type_error(
             "Class constructor cannot be invoked without 'new'",
@@ -84,7 +101,7 @@ pub(crate) fn try_execute_specialized(
     if let Some(result) = execute_plan_loop(function, &receiver)? {
         return Ok(Some(result));
     }
-    if let Some(result) = execute_counted_method_loop(function, &receiver)? {
+    if let Some(result) = execute_counted_method_loop(function, &receiver, arguments)? {
         return Ok(Some(result));
     }
     if let Some(result) = execute_shape_kernel(function, &receiver, arguments) {

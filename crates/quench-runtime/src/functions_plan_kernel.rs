@@ -26,13 +26,31 @@ fn execute_plan_loop(
 fn execute_counted_method_loop(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    let Some(crate::facts::CountedMethodLoopFact::Visit {
+    let Some(fact) = function.code.facts().counted_method_loop.as_deref() else {
+        return Ok(None);
+    };
+    if matches!(fact, crate::facts::CountedMethodLoopFact::BitCount) {
+        let Some(crate::value::Value::Number(mut value)) = arguments.first().cloned() else {
+            return Ok(None);
+        };
+        // The recognized loop only performs numeric comparison and ToInt32
+        // bit operations. Keep non-number arguments on the interpreter path,
+        // where observable coercion and exceptions remain intact.
+        let mut count = 0_u32;
+        while value > 0.0 {
+            let bits = crate::vm::vm_arithmetic::numeric_to_int32(value);
+            value = f64::from(bits & bits.wrapping_sub(1));
+            count += 1;
+        }
+        return Ok(Some(crate::value::Value::Number(f64::from(count))));
+    }
+    let crate::facts::CountedMethodLoopFact::Visit {
         length_method,
         element_method,
         body_method,
-    }) = function.code.facts().counted_method_loop.as_deref()
-    else {
+    } = fact else {
         return Ok(None);
     };
     if let Some(result) =

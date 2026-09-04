@@ -378,6 +378,31 @@ pub(crate) fn array_push(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    // Fast path for the canonical packed array. All guards mirror the
+    // observable checks below, while avoiding a generic `length` property
+    // lookup and receiver reification on every sequential append.
+    if let Some(Value::Array(array)) = receiver {
+        if array.is_packed_ordinary()
+            && crate::properties::object_is_extensible(receiver.unwrap())
+            && crate::builtins::descriptor_flag(receiver.unwrap(), "length", "writable")
+                != Some(false)
+            && crate::builtins::intrinsic_override_keys(crate::ops::Builtin::ArrayPrototype)
+                .is_empty()
+        {
+            let length = array.logical_len();
+            let final_length = length.checked_add(arguments.len()).ok_or_else(|| {
+                crate::value::error::throw_type_error("Array length exceeds maximum safe integer")
+            })?;
+            if (final_length as u64) > 9_007_199_254_740_991u64 {
+                return Err(crate::value::error::throw_type_error(
+                    "Array length exceeds maximum safe integer",
+                ));
+            }
+            if array.append_shared_numbers(arguments) || array.append_shared_values(arguments) {
+                return Ok(Value::Number(final_length as f64));
+            }
+        }
+    }
     let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
     let length = crate::builtins::map_length(&receiver)?;
     let final_length = length.checked_add(arguments.len()).ok_or_else(|| {
@@ -389,12 +414,17 @@ pub(crate) fn array_push(
         ));
     }
     if let Value::Array(array) = &receiver {
-        let prototype_indices_clear = (0..arguments.len()).all(|offset| {
+        let packed_ordinary = array.is_packed_ordinary();
+        // `is_packed_ordinary` already proves a clean Array.prototype and no
+        // indexed/accessor interception, so avoid rebuilding one million
+        // string keys for the common append path. The explicit checks remain
+        // for arrays whose structure needs complete observable semantics.
+        let prototype_indices_clear = packed_ordinary || (0..arguments.len()).all(|offset| {
             let key = (length + offset).to_string();
             !crate::arrays::prototype_override_present(&key)
                 && crate::property_define::accessor(&receiver, &key, "set").is_none()
         });
-        if array.is_packed_ordinary()
+        if packed_ordinary
             && crate::properties::object_is_extensible(&receiver)
             && crate::builtins::descriptor_flag(&receiver, "length", "writable") != Some(false)
             && crate::builtins::intrinsic_override_keys(crate::ops::Builtin::ArrayPrototype)

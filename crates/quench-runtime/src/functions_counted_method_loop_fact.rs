@@ -1,9 +1,84 @@
 pub(crate) fn counted_method_loop_fact(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Option<std::rc::Rc<crate::facts::CountedMethodLoopFact>> {
-    visit_method_loop_fact(function)
+    bit_count_fact(function)
+        .or_else(|| visit_method_loop_fact(function))
         .or_else(|| filter_method_loop_fact(function))
         .map(std::rc::Rc::new)
+}
+
+/// Recognize the conventional population-count loop as a semantic fact.  It
+/// has no observable operations beyond numeric coercion, so the executor can
+/// use the bounded integer operation directly for plain numeric arguments and
+/// retain the complete interpreter path for all other values.
+fn bit_count_fact(
+    function: &oxc::ast::ast::Function<'_>,
+) -> Option<crate::facts::CountedMethodLoopFact> {
+    use oxc::ast::ast::{Expression, Statement, VariableDeclarationKind};
+    use oxc::syntax::operator::{AssignmentOperator, BinaryOperator, UpdateOperator};
+
+    let [parameter] = function.params.items.as_slice() else { return None };
+    let parameter = parameter.pattern.get_identifier()?.as_str();
+    let body = function.body.as_ref()?;
+    let [Statement::VariableDeclaration(declaration), Statement::ForStatement(loop_statement), Statement::ReturnStatement(returned)] =
+        body.statements.as_slice() else { return None };
+    if declaration.kind != VariableDeclarationKind::Let
+        || declaration.declarations.len() != 1
+    {
+        return None;
+    }
+    let count = declaration.declarations[0].id.get_identifier()?.as_str();
+    if declaration.declarations[0].init.is_some()
+        || !matches!(returned.argument.as_ref()?, Expression::Identifier(id) if id.name == count)
+    {
+        return None;
+    }
+    let Expression::AssignmentExpression(init) = loop_statement.init.as_ref()?.as_expression()? else { return None };
+    if init.operator != AssignmentOperator::Assign
+        || !matches!(&init.left, oxc::ast::ast::AssignmentTarget::AssignmentTargetIdentifier(id) if id.name == count)
+        || !matches!(&init.right, Expression::NumericLiteral(number) if number.value == 0.0)
+    {
+        return None;
+    }
+    let Expression::BinaryExpression(test) = loop_statement.test.as_ref()? else { return None };
+    if test.operator != BinaryOperator::GreaterThan
+        || !matches!(&test.left, Expression::Identifier(id) if id.name == parameter)
+        || !matches!(&test.right, Expression::NumericLiteral(number) if number.value == 0.0)
+    {
+        return None;
+    }
+    let Expression::UpdateExpression(update) = loop_statement.update.as_ref()? else { return None };
+    if update.operator != UpdateOperator::Increment
+        || !matches!(&update.argument, oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(id) if id.name == count)
+    {
+        return None;
+    }
+    let Statement::BlockStatement(loop_body) = &loop_statement.body else { return None };
+    let [Statement::ExpressionStatement(statement)] = loop_body.body.as_slice() else { return None };
+    let Expression::AssignmentExpression(assignment) = &statement.expression else { return None };
+    if assignment.operator != AssignmentOperator::Assign
+        || !matches!(&assignment.left, oxc::ast::ast::AssignmentTarget::AssignmentTargetIdentifier(id) if id.name == parameter)
+    {
+        return None;
+    }
+    let Expression::BinaryExpression(and) = &assignment.right else { return None };
+    if and.operator != BinaryOperator::BitwiseAnd
+        || !matches!(&and.left, Expression::Identifier(id) if id.name == parameter)
+    {
+        return None;
+    }
+    let Expression::BinaryExpression(subtract) = unwrap_parenthesized(&and.right) else { return None };
+    (subtract.operator == BinaryOperator::Subtraction
+        && matches!(&subtract.left, Expression::Identifier(id) if id.name == parameter)
+        && matches!(&subtract.right, Expression::NumericLiteral(number) if number.value == 1.0))
+        .then_some(crate::facts::CountedMethodLoopFact::BitCount)
+}
+
+fn unwrap_parenthesized<'a>(mut expression: &'a oxc::ast::ast::Expression<'a>) -> &'a oxc::ast::ast::Expression<'a> {
+    while let oxc::ast::ast::Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    expression
 }
 
 fn visit_method_loop_fact(
@@ -292,5 +367,13 @@ mod counted_method_loop_fact_tests {
     fn rejects_a_loop_with_an_observable_extra_statement() {
         assert!(fact("function visit(){for(var k=0;k<this.count();k++){var x=this.item(k);x.step();sideEffect();}}")
             .is_none());
+    }
+
+    #[test]
+    fn records_bit_count_loop() {
+        assert_eq!(
+            fact("function countBits(n){let count;for(count=0;n>0;count++){n=n&(n-1);}return count;}")
+                , Some(crate::facts::CountedMethodLoopFact::BitCount)
+        );
     }
 }
