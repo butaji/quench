@@ -577,4 +577,101 @@ mod tests {
         );
         run_source_ms(&source) / repetitions as f64
     }
+
+    /// Region selection is a bounded catalog lookup. The generated catalog is
+    /// static, so we exercise repeated lookup of one admitted key and assert
+    /// that its cost does not grow with the probe count itself.
+    #[test]
+    fn region_selection_is_bounded() {
+        let key = crate::stencil_select::move_region_key();
+        let started = Instant::now();
+        let mut found = 0usize;
+        for _ in 0..10_000 {
+            if crate::stencil_select::select_region(key).is_some() {
+                found += 1;
+            }
+        }
+        let short = started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        for _ in 0..100_000 {
+            if crate::stencil_select::select_region(key).is_some() {
+                found += 1;
+            }
+        }
+        let long = started.elapsed().as_secs_f64();
+        black_box(found);
+        let ratio = (long / 10.0) / (short.max(1e-9));
+        eprintln!("architecture invariant #067.1: region lookup ratio {ratio:.3}");
+        assert!(
+            ratio < 16.0,
+            "region lookup scaled with probe count: ratio {ratio:.2}"
+        );
+    }
+
+    /// Rendered-region memoization is fixed-capacity. A hit remains bounded
+    /// after the cache has seen its full 16-entry history; the cache never
+    /// grows a workload-sized side table.
+    #[test]
+    fn rendered_region_cache_lookup_is_bounded() {
+        let target = crate::stencil_fact::RegionKey(99);
+        let mut cache = crate::stencil_select::RenderedRegionCache::new();
+        cache.insert(target, 1, 7);
+        let short = measure_cache_hits(&cache, target, 1, 20_000);
+        for key in 0..cache.capacity() {
+            cache.insert(
+                crate::stencil_fact::RegionKey(key as u64 + 1),
+                key as u64,
+                key,
+            );
+        }
+        cache.insert(target, 1, 7);
+        let long = measure_cache_hits(&cache, target, 1, 20_000);
+        let ratio = long / short.max(1e-9);
+        eprintln!("architecture invariant #067.2: cache-hit ratio {ratio:.3}");
+        assert!(
+            ratio < 16.0,
+            "cache lookup scaled with render history: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_cache_hits(
+        cache: &crate::stencil_select::RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        signature: u64,
+        repetitions: usize,
+    ) -> f64 {
+        let started = Instant::now();
+        let mut address = 0usize;
+        for _ in 0..repetitions {
+            address ^= cache.get(key, signature).unwrap_or_default();
+        }
+        black_box(address);
+        started.elapsed().as_secs_f64()
+    }
+
+    /// Stencil-arena bump allocation is O(1) regardless of prior allocations.
+    /// The arena is bounded and disposable; this test exercises placement only
+    /// and deliberately does not execute machine code.
+    #[test]
+    fn stencil_arena_allocation_is_constant_time() {
+        let short = measure_arena_allocations(1_000);
+        let long = measure_arena_allocations(10_000);
+        let ratio = (long / 10.0) / short.max(1e-9);
+        eprintln!("architecture invariant #067.3: arena allocation ratio {ratio:.3}");
+        assert!(
+            ratio < 16.0,
+            "arena allocation scaled with allocation history: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_arena_allocations(count: usize) -> f64 {
+        let mut arena = crate::stencil_arena::StencilArena::new(1 << 20).expect("arena maps");
+        let started = Instant::now();
+        let mut last = 0usize;
+        for _ in 0..count {
+            last ^= arena.alloc(8).expect("arena capacity");
+        }
+        black_box((last, arena.used()));
+        started.elapsed().as_secs_f64()
+    }
 }
