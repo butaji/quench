@@ -18,11 +18,6 @@ thread_local! {
     // of exhausting the Rust thread stack.
     static RESUME_DEPTH: Cell<usize> = const { Cell::new(0) };
     static ASYNC_CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
-    static ASYNC_STACK_OVERFLOW: Cell<bool> = const { Cell::new(false) };
-}
-
-pub(crate) fn take_async_stack_overflow() -> bool {
-    ASYNC_STACK_OVERFLOW.with(|overflow| overflow.replace(false))
 }
 
 pub(crate) struct AsyncCallGuard;
@@ -40,7 +35,6 @@ impl AsyncCallGuard {
             }
         });
         if overflow {
-            ASYNC_STACK_OVERFLOW.with(|flag| flag.set(true));
             return Err(crate::value::error::throw_range_error(
                 "Maximum call stack size exceeded",
             ));
@@ -348,7 +342,6 @@ pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value,
         }
     });
     if overflow {
-        ASYNC_STACK_OVERFLOW.with(|flag| flag.set(true));
         return Err(crate::value::error::throw_range_error(
             "Maximum call stack size exceeded",
         ));
