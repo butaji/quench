@@ -1,10 +1,12 @@
 {
     "schema": 1,
     "title": "Fact-generated interpreter VM — Deegen two-tier paper alignment",
+    "north_star": "A fully-proven, correctness-verified JS VM (test262/Node-oracle backed) that reaches V8-comparable performance on the real v8-v7 (Octane-derived) benchmark suite -- not a curriculum proxy -- with minimal RSS, achieved entirely through general, workload-shape-justified architecture (fact-generated interpreter, region-stencil baseline JIT, tier-switching, generic IC, a proven cycle collector, provably-scoped arenas) and ZERO benchmark-specific cheating of any kind: no code path may detect a benchmark's name, file, fixture identity, or shape and special-case it; every optimization admitted anywhere in this codebase must be justified by a runtime-shape argument that generalizes to any JavaScript program with that shape, verified against the neutral corpus AND the deegen-curriculum AND the v8-v7 suite together, never tuned to move one benchmark's number in isolation. See docs/benchmark-integrity.md for the mechanical detail; this is the plain-language statement of why that document's rules exist.",
     "source_of_truth": "tasks/index.json",
     "constraints": [
         "quench-runtime owns JavaScript semantics; quench-node owns only the Node host boundary",
         "Benchmark fixtures and workload-specific kernels are not production VM semantics",
+        "No benchmark cheating, stated plainly: production code must never special-case a specific benchmark file, function name, fixture identity, or known input shape from richards.js/deltablue.js/splay.js/etc (or any curriculum/micros case). If a change only helps because it recognizes which program is running, it is disallowed regardless of the score improvement -- see the north_star field above and docs/benchmark-integrity.md.",
         "Every fact is Proven, Guarded, or Unknown; every fast path (interpreter, IC, JIT) has complete fallback semantics",
         "Generated code is derived from one declaration; handwritten code is limited to irreducible behavior",
         "Every task belongs to exactly one theme",
