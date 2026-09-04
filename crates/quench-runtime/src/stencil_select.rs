@@ -198,6 +198,14 @@ pub const fn update_return_region_key() -> RegionKey {
     UPDATE_RETURN_KEY
 }
 
+pub const fn call_region_key() -> RegionKey {
+    CALL_KEY
+}
+
+pub const fn call_n_region_key() -> RegionKey {
+    CALL_N_KEY
+}
+
 /// Canonical admission table for numeric baseline leaves.  The opcode catalog
 /// owns which operations are eligible; callers only ask for the derived key.
 pub fn numeric_region_key(opcode: crate::ir::Opcode) -> Option<RegionKey> {
@@ -407,6 +415,26 @@ mod tests {
             }
         );
         assert!(record.stencil.holes.is_empty());
+    }
+
+    #[test]
+    fn call_rows_have_a_single_entry_cfg_proof() {
+        for key in [call_region_key(), call_n_region_key()] {
+            let record = select_region(key).expect("call admission row");
+            assert_eq!(record.operations.len(), 1);
+            assert!(has_single_entry_point(
+                u32::from(record.entry),
+                &[RegionBlock {
+                    id: 0,
+                    predecessors: &[],
+                    external_entry: true,
+                }]
+            ));
+            assert_eq!(
+                record.executable,
+                cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
+            );
+        }
     }
 
     #[test]

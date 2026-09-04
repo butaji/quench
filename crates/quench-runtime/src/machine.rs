@@ -1784,7 +1784,7 @@ impl NativeRegionPlan {
             return None;
         }
         let record = crate::stencil_select::select_region(key)
-            .filter(|record| record.executable && record.operations.len() > 1)?;
+            .filter(|record| record.executable && !record.operations.is_empty())?;
         Some(Self {
             arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
@@ -1992,6 +1992,8 @@ impl BaselinePlan {
             crate::stencil_select::loop_glue_region_key(),
             crate::stencil_select::binary_glue_region_key(),
             crate::stencil_select::update_return_region_key(),
+            crate::stencil_select::call_region_key(),
+            crate::stencil_select::call_n_region_key(),
         ];
         let native_regions = entries
             .iter()
