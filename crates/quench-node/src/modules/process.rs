@@ -41,6 +41,10 @@ pub struct ProcessState {
     pub version: String,
     pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
+    /// Invocation policy: abort instead of reporting an unhandled exception.
+    /// This is carried in the host state so child re-execs observe the same
+    /// process-level flag without inspecting fixture names or source text.
+    pub abort_on_uncaught_exception: bool,
     pub cwd: std::path::PathBuf,
     pub umask: u32,
     pub title: String,
@@ -87,12 +91,27 @@ impl ProcessState {
             version: "v22.0.0".into(),
             versions,
             exit_code: None,
+            abort_on_uncaught_exception: false,
             cwd,
             umask: 0o022,
             title: "quench-node".into(),
             alive_pids: HashSet::from([std::process::id() as i64]),
         }
     }
+}
+
+pub fn set_abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
+    let enabled = exec_argv.iter().any(|flag| {
+        matches!(
+            flag.as_str(),
+            "--abort-on-uncaught-exception" | "--abort_on_uncaught_exception"
+        )
+    });
+    state.borrow_mut().process.abort_on_uncaught_exception = enabled;
+}
+
+pub fn abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>) -> bool {
+    state.borrow().process.abort_on_uncaught_exception
 }
 
 pub(crate) fn mark_deprecation(
