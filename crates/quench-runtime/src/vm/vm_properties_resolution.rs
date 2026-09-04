@@ -950,10 +950,9 @@ fn array_property_result(
     // before probing generic accessor metadata; the latter otherwise builds
     // descriptor objects on every `array.push(...)` in a hot loop.
     if let Value::Array(values) = value {
-        if values.is_packed_ordinary() {
-            let method = crate::arrays::property(values, key);
-            if matches!(method, Value::Builtin(_)) {
-                return Some(Ok(method));
+        if values.is_packed_ordinary() && crate::builtins::array_prototype_is_clean() {
+            if let Some(method) = crate::arrays::packed_method(key) {
+                return Some(Ok(Value::Builtin(method)));
             }
         }
     }
