@@ -1016,7 +1016,7 @@ impl ArrayData {
             && !self.arguments
             && self.argument_live.is_none();
         // A sequential append is the common ASetI shape (for example the
-        // RegExp harness builds million-code-point strings this way). Extend
+        // RegExp callers build million-code-point strings this way). Extend
         // the canonical numeric store and logical length in O(1), preserving
         // array identity even when several VM words retain the same Rc.
         if plain && index == self.physical_len() && index == self.logical_len() {
@@ -1081,6 +1081,17 @@ impl ArrayData {
         {
             return false;
         }
+        self.append_shared_numbers_proven(values)
+    }
+
+    /// Append numeric values after the caller has already established the
+    /// packed-ordinary invariant. Keeping the proof at the call boundary
+    /// avoids re-reading the array metadata for each intrinsic append.
+    #[inline(always)]
+    pub(crate) fn append_shared_numbers_proven(&self, values: &[Value]) -> bool {
+        if !values.iter().all(|value| matches!(value, Value::Number(_))) {
+            return false;
+        }
         let DenseElements::Numbers(numbers) = &self.values else {
             return false;
         };
@@ -1108,6 +1119,15 @@ impl ArrayData {
     pub(crate) fn append_shared_values(&self, values: &[Value]) -> bool {
         if !self.is_packed_ordinary() || values.is_empty() {
             return values.is_empty() && self.is_packed_ordinary();
+        }
+        self.append_shared_values_proven(values)
+    }
+
+    /// Append values after the packed-ordinary invariant has been proven.
+    #[inline(always)]
+    pub(crate) fn append_shared_values_proven(&self, values: &[Value]) -> bool {
+        if values.is_empty() {
+            return true;
         }
         let DenseElements::Values(current) = &self.values else {
             return false;
@@ -1147,7 +1167,7 @@ impl ArrayData {
         self.values.materialize_values().get_mut(index)
     }
 
-    pub(crate) fn has_index(&self, index: usize) -> bool {
+    pub fn has_index(&self, index: usize) -> bool {
         if let Some(live) = &self.argument_live {
             let live = live.borrow();
             return (index < live.length
@@ -1301,7 +1321,7 @@ impl ArrayData {
         self.descriptors.push((key.to_string(), descriptor));
     }
 
-    pub(crate) fn descriptor_keys(&self) -> Vec<String> {
+    pub fn descriptor_keys(&self) -> Vec<String> {
         self.descriptors
             .iter()
             .map(|(key, _)| key.clone())
@@ -1315,7 +1335,7 @@ impl ArrayData {
             .find_map(|(name, value)| (name == key).then(|| value.clone()))
     }
 
-    pub(crate) fn property_keys(&self) -> Vec<String> {
+    pub fn property_keys(&self) -> Vec<String> {
         self.properties.iter().map(|(key, _)| key.clone()).collect()
     }
 
