@@ -26,10 +26,11 @@
             "044: generated region-admission and CFG-test wiring closed; one declaration covers all 21 catalog regions without changing semantics (commit 406089899)",
             "045: profile-gated shared megamorphic cache closed with no-go finding; degraded-site trace measured 0/399 reusable re-encounters, so no cache was implemented",
             "046: profile-gated rope representation closed with no-go finding; case-032 isolation was split/regex dominated, so no representation change was implemented",
-            "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented"
+            "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented",
+            "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization"
         ],
         "remaining_slices": [
-            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060", "061"
+            "048", "049", "050", "051", "052", "053", "054", "055", "056", "057", "058", "059", "060"
         ]
     },
     "themes": {

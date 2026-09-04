@@ -128,6 +128,53 @@ the fixed peak state; existing call/property differential tests cover the
 semantic gateways. The mechanism is disposable metadata and does not alter
 the W^X publication boundary.
 
+Task 050 fixed detached console methods in both the Node host console class and
+the bootstrap polyfill. The focused `quench-node` regression test exercises
+detached logging, diagnostics, grouping, counters, and timers; `var print =
+console.log; print("x")` now exits successfully. Host output capture preserves
+line boundaries required by the v8-v7 harness.
+
+Task 051's reported Splay mismatch was reproduced and isolated as a harness
+comparison error, not a tree-semantics divergence. The old runner compared
+timing-derived `Score:` lines (Node `86706` versus Quench `46.5`) as raw
+output. The tracked v8-v7 runner compares only suite completion/error markers
+and records scores independently; Splay's size, sortedness, and uniqueness
+teardown passes on both engines. A small five-shape polymorphic dispatch
+regression probe is in `quench-node/src/run.rs`.
+
+Task 052 adds
+`quench-bench/js-engine-benchmark/v8-v7/verify.mjs`, which materializes each
+upstream fixture with `base.js`, runs it against an engine and an oracle, and
+records per-fixture score, completion-marker equality, wall time, and peak RSS.
+On the optimized `target/bench-throughput/quench-node` artifact, isolated
+Richards completed in 4.11 s (Node 2.03 s) with marker equality, and isolated
+DeltaBlue completed in 6.58 s (Node 2.03 s) with marker equality. Earlier
+30-second timeouts came from the unoptimized debug artifact and remain
+performance evidence, not semantic failures.
+
+Task 061's minimal, general polymorphic-dispatch reproduction uses five
+unrelated constructors sharing one method name and distinct instance layouts.
+On the same optimized ARM64 artifact, 100k/250k/500k calls took 676/1,567/3,041
+ms versus Node's 30/34/35 ms: cost scales linearly with work, with no
+quadratic growth or non-terminating path. Execution tracing for the 100k run
+recorded 100,000 `GetN`, 100,017 `SetN`, and 99,999 `CallN` operations, with
+391,996 named-get layout mismatches and 286,097 descriptor-view allocations.
+These counters identify the current bounded single-entry IC/layout-mismatch
+path as the material cost; no correctness bug was found, so no property
+semantics change was made. A follow-on optimization, if pursued, must target
+general bounded polymorphic property/call dispatch and retain complete
+fallback semantics.
+
+The task-061 validation runs passed both runtime configurations (`592` tests
+without tracing and `602` with `execution-trace`). The optimized ARM64
+curriculum sweep completed 33/38 cases with exact observable matches; the five
+remaining cases are performance-ceiling findings (OSR case 026 at 8.98x, cases
+025/027 at 3.50x/3.01x, closure case 028 at 4.44x, and string case 032 at
+4.42x), not correctness failures. The raw run is
+`target/task061-curriculum.log`. This is consistent with the linear
+polymorphic-dispatch reproduction and does not justify changing property
+semantics under task 061.
+
 Task 034 Gate 0 used a DWARF-enabled five-second macOS `sample` of a long
 neutral arithmetic loop and searched for rendered-region symbols
 (`StencilArena`, `render_selected`, `execute_f64`). It found zero such samples;
