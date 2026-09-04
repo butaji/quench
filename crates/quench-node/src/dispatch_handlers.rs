@@ -4194,6 +4194,25 @@ pub fn internal_binding(
     if name == "http2" {
         return Ok(crate::modules::http2_util::binding());
     }
+    if name == "async_wrap" {
+        let providers = [
+            ("PROMISE", 26.0),
+            ("RANDOMBYTESREQUEST", 51.0),
+            ("TLSWRAP", 55.0),
+            ("WORKER", 39.0),
+            ("WRITEWRAP", 41.0),
+        ]
+        .into_iter()
+        .map(|(name, id)| (name.to_string(), Value::Number(id)))
+        .collect();
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "queueDestroyAsyncId".into(),
+                crate::host::capability(crate::registry::SPEC_ASYNC_WRAP_QUEUE_DESTROY),
+            ),
+            ("Providers".into(), crate::host::namespace_object_from_pairs(providers)),
+        ]));
+    }
     if name == "crypto" {
         let secure_context = throwing_accessor_constructor(&["_external"])?;
         let prototype = execute::get_property(&secure_context, "prototype");
@@ -6795,7 +6814,6 @@ pub fn dns_resolve4(
 ) -> Result<Value, VmError> {
     crate::modules::dns::resolve4(state, args)
 }
-
 // ---- net ----
 pub fn net_connect(
     state: &Rc<RefCell<HostState>>,
@@ -7345,6 +7363,30 @@ pub fn module_set_source_maps_support(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::require::module_set_source_maps_support(args)
+}
+
+pub fn module_enable_compile_cache(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_enable_compile_cache(args)
+}
+
+pub fn module_get_compile_cache_dir(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_get_compile_cache_dir(args)
+}
+
+pub fn module_flush_compile_cache(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::require::module_flush_compile_cache(args)
 }
 
 pub fn process_env_set(
@@ -9661,7 +9703,11 @@ fn fork_child_start(
             .filter_map(|key| {
                 let value = execute::get_property(&child_env, &key);
                 (!matches!(value, Value::Undefined | Value::Null))
-                    .then(|| execute::to_js_string(&value).ok().map(|value| (key, Value::String(value))))
+                    .then(|| {
+                        execute::to_js_string(&value)
+                            .ok()
+                            .map(|value| (key, Value::String(value)))
+                    })
                     .flatten()
             })
             .collect();

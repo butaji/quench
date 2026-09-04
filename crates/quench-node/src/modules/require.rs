@@ -537,6 +537,18 @@ pub fn module_api(state: &Rc<RefCell<HostState>>) -> Value {
             "setSourceMapsSupport".into(),
             crate::host::capability(crate::registry::SPEC_MODULE_SET_SOURCEMAPS_SUPPORT),
         ),
+        (
+            "enableCompileCache".into(),
+            crate::host::capability(crate::registry::SPEC_MODULE_ENABLE_COMPILE_CACHE),
+        ),
+        (
+            "getCompileCacheDir".into(),
+            crate::host::capability(crate::registry::SPEC_MODULE_GET_COMPILE_CACHE_DIR),
+        ),
+        (
+            "flushCompileCache".into(),
+            crate::host::capability(crate::registry::SPEC_MODULE_FLUSH_COMPILE_CACHE),
+        ),
     ]);
     // Node exposes the constructor namespace as `module.Module`; preserve
     // identity so `Module.globalPaths` tracks the public array.
@@ -749,6 +761,41 @@ pub fn module_set_source_maps_support(args: &[Value]) -> Result<Value, VmError> 
             }
         }
     }
+    Ok(Value::Undefined)
+}
+
+/// Compile-cache API surface for the Rust engine.  There is no V8 bytecode
+/// format to persist, so enabling is an observable no-op with Node's status
+/// object rather than a second cache implementation.
+pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = args.first() {
+        if matches!(options, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(host_api::object(vec![(
+                "status".into(),
+                Value::Number(3.0),
+            )]));
+        }
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::TypeError,
+            &[Value::String("The \"options\" argument must be of type object".into())],
+        );
+        return Err(VmError::Thrown(execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_INVALID_ARG_TYPE".into()),
+        )));
+    }
+    Ok(host_api::object(vec![(
+        "status".into(),
+        Value::Number(3.0),
+    )]))
+}
+
+pub fn module_get_compile_cache_dir(_: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn module_flush_compile_cache(_: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
