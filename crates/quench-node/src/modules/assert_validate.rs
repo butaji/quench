@@ -53,6 +53,32 @@ pub fn throws(
         }
         Err(thrown) => thrown,
     };
+    if expected.is_none() {
+        if let Some(message) = user_message.as_ref() {
+            let thrown_message = match &thrown {
+                Value::String(value) => Some(value.clone()),
+                _ => match execute::get_property(&thrown, "message") {
+                    Value::String(value) => Some(value),
+                    _ => None,
+                },
+            };
+            if thrown_message.as_deref() == Some(message.as_str()) {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    &[Value::String(format!(
+                        "The \"error/message\" argument is ambiguous. The error{} \"{}\" is identical to the message.",
+                        if matches!(&thrown, Value::String(_)) { "" } else { " message" },
+                        message
+                    ))],
+                );
+                return Err(VmError::Thrown(execute::set_property(
+                    error,
+                    "code",
+                    Value::String("ERR_AMBIGUOUS_ARGUMENT".into()),
+                )));
+            }
+        }
+    }
     validate_expected(&thrown, expected, user_message)
 }
 
@@ -175,7 +201,20 @@ fn validate_expected(
         None | Some(Value::Undefined) => Ok(Value::Undefined),
         Some(pattern) if is_regexp(pattern) => validate_regexp(error, pattern, user_message),
         Some(expected) if is_callable(expected) => validate_callable(error, expected, user_message),
-        Some(expected) => validate_object(error, expected, user_message),
+        Some(expected) => {
+            if execute::own_enumerable_keys(expected).is_empty() {
+                let error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::TypeError,
+                    &[Value::String("The argument 'error' may not be an empty object. Received {}".into())],
+                );
+                return Err(VmError::Thrown(execute::set_property(
+                    error,
+                    "code",
+                    Value::String("ERR_INVALID_ARG_VALUE".into()),
+                )));
+            }
+            validate_object(error, expected, user_message)
+        }
     }
 }
 
@@ -226,10 +265,12 @@ fn validate_callable(
     user_message: Option<String>,
 ) -> Result<Value, VmError> {
     let expected_name = name_of(expected);
-    // Only genuine Error constructors take the instanceof path; other
-    // callables (including ones that happen to have a `prototype`
-    // property, like common.mustCall wrappers) are validation functions.
-    if is_error_constructor(expected) {
+    // Constructors use the same prototype-chain fact as JavaScript's
+    // `instanceof`; arbitrary callable values remain validation predicates.
+    if is_error_constructor(expected) || is_function_constructor(expected) {
+        if is_instance_of(error, expected) {
+            return Ok(Value::Undefined);
+        }
         if expected_name == "Error" && is_error_instance(error) {
             return Ok(Value::Undefined);
         }
@@ -328,6 +369,37 @@ fn is_error_constructor(expected: &Value) -> bool {
             },
             _ => return false,
         };
+    }
+    false
+}
+
+fn is_function_constructor(value: &Value) -> bool {
+    use quench_runtime::ops::FunctionKind;
+    match value {
+        // Ordinary functions are validation predicates in assert.throws.
+        // Error-like ordinary constructors are already recognized by their
+        // prototype chain in `is_error_constructor`; only class constructors
+        // need this remaining constructor path.
+        Value::Function(function) => matches!(function.kind, FunctionKind::ClassConstructor),
+        Value::BoundFunction(bound) => is_function_constructor(&bound.target),
+        _ => false,
+    }
+}
+
+fn is_instance_of(value: &Value, constructor: &Value) -> bool {
+    let prototype = execute::get_property(constructor, "prototype");
+    if !matches!(
+        prototype,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Builtin(_)
+    ) {
+        return false;
+    }
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(candidate) = current {
+        if execute::same_identity(&candidate, &prototype) {
+            return true;
+        }
+        current = execute::get_prototype_of(&candidate).ok();
     }
     false
 }
@@ -479,11 +551,34 @@ fn match_assert(args: &[Value], should_match: bool) -> Result<Value, VmError> {
     } else {
         "doesNotMatch"
     };
+    if let (Some(message), Some(candidate)) = (args.get(3), args.get(2)) {
+        if matches!(message, Value::String(_)) && (is_callable(candidate) || is_error_instance(candidate)) {
+            let label = if is_callable(candidate) {
+                match execute::get_property(candidate, "name") {
+                    Value::String(name) if !name.is_empty() => name,
+                    _ => "anonymous".into(),
+                }
+            } else {
+                error_text(candidate)
+            };
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::TypeError,
+                &[Value::String(format!("The \"error/message\" argument is ambiguous. The error message \"{label}\" is identical to the message."))],
+            );
+            return Err(VmError::Thrown(execute::set_property(error, "code", Value::String("ERR_AMBIGUOUS_ARGUMENT".into()))));
+        }
+    }
     if regexp_matches(&pattern, &input)? == should_match {
         return Ok(Value::Undefined);
     }
-    let message = custom_message(args, 2)
-        .unwrap_or_else(|| format!("The input did not satisfy {operator}: '{input}'"));
+    let message = match args.get(2) {
+        Some(value) if is_callable(value) => match execute::call(value, &Value::Undefined, &[Value::String(input.clone()), pattern.clone()])? {
+            Value::String(text) => text,
+            _ => format!("'{}' {} {}", input, operator, crate::modules::util::inspect(&pattern)),
+        },
+        _ => custom_message(args, 2)
+            .unwrap_or_else(|| format!("The input did not satisfy {operator}: '{input}'")),
+    };
     Err(assertion_error(
         message,
         operator,
