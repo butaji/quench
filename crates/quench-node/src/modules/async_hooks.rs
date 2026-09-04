@@ -20,6 +20,7 @@ const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 const HOOK_ID: &str = "\0quench:async_hooks:hook";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 const LOCAL_DEFAULT: &str = "\0quench:async_hooks:local:default";
+const LOCAL_DEFAULT_SET: &str = "\0quench:async_hooks:local:default:set";
 const SCOPE_ID: &str = "\0quench:async_hooks:scope:id";
 const SCOPE_RESOURCE: &str = "\0quench:async_hooks:scope:resource";
 const SCOPE_PREVIOUS: &str = "\0quench:async_hooks:scope:previous";
@@ -55,6 +56,7 @@ pub struct AsyncHooksState {
     next_hook_id: u64,
     current_id: u64,
     current_resource: Option<Value>,
+    root_resource: Value,
     hooks: Vec<Hook>,
     promise_resources: HashMap<usize, Value>,
     // Stores are keyed by (async resource id, AsyncLocalStorage id). This
@@ -66,19 +68,22 @@ pub struct AsyncHooksState {
     resource_stack: Vec<(u64, Option<Value>)>,
     destroyed_resources: HashSet<u64>,
     tracked_resources: HashMap<u64, (Value, bool)>,
+    pending_destroy_ids: Vec<u64>,
     fatal_error: Option<Value>,
 }
 
 impl AsyncHooksState {
     pub fn new() -> Self {
+        let root_resource = host_api::object(vec![
+            (ASYNC_ID.into(), Value::Number(1.0)),
+            (TRIGGER_ID.into(), Value::Number(0.0)),
+        ]);
         Self {
             next_id: 2,
             next_hook_id: 1,
             current_id: 1,
-            current_resource: Some(host_api::object(vec![
-                (ASYNC_ID.into(), Value::Number(1.0)),
-                (TRIGGER_ID.into(), Value::Number(0.0)),
-            ])),
+            current_resource: Some(root_resource.clone()),
+            root_resource,
             hooks: Vec::new(),
             promise_resources: HashMap::new(),
             local_stores: HashMap::new(),
@@ -87,6 +92,7 @@ impl AsyncHooksState {
             resource_stack: Vec::new(),
             destroyed_resources: HashSet::new(),
             tracked_resources: HashMap::new(),
+            pending_destroy_ids: Vec::new(),
             fatal_error: None,
         }
     }
@@ -100,6 +106,15 @@ impl AsyncHooksState {
     pub(crate) fn has_local_store(&self) -> bool {
         !self.local_stores.is_empty()
     }
+}
+
+pub fn enabled_hooks_exist(state: &Rc<RefCell<HostState>>) -> bool {
+    state
+        .borrow()
+        .async_hooks
+        .hooks
+        .iter()
+        .any(|hook| hook.enabled)
 }
 
 fn record_hook_error(state: &Rc<RefCell<HostState>>, error: VmError) {
@@ -207,25 +222,32 @@ pub fn new_async_local_storage(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    // The bootstrap class is the canonical state machine: it carries stores
-    // on `__nodeCurrentAsyncResource`, so timers, promises, and user-created
-    // resources all share one context representation. Keep the Rust path as
-    // a fallback for profiles that omit the bootstrap surface.
-    let global = quench_runtime::vm::current_global_object();
-    let constructor = execute::get_property(&global, "__nodeAsyncLocalStorage");
-    if quench_runtime::is_callable(&constructor) {
-        return execute::construct_value(&constructor, args);
-    }
+    // Keep the complete state machine in the Rust host. The bootstrap class
+    // is only a compatibility fallback for older profiles; using it here
+    // would make missing properties inherit the execution global.
     let mut host = state.borrow_mut();
     let id = host.async_hooks.next_local_id;
     host.async_hooks.next_local_id += 1;
-    let default = args
-        .first()
-        .and_then(|options| id_property(options, "defaultValue"))
+    let has_default = args.first().is_some_and(|options| {
+        execute::get_own_property_descriptor(options, "defaultValue")
+            .ok()
+            .is_some_and(|descriptor| !matches!(descriptor, Value::Undefined))
+    });
+    let default = has_default
+        .then(|| {
+            args.first()
+                .map(|options| execute::get_property(options, "defaultValue"))
+        })
+        .flatten()
         .unwrap_or(Value::Undefined);
     let object = crate::host::namespace_object_from_pairs(vec![
         (LOCAL_ID.to_string(), Value::Number(id as f64)),
+        (
+            "kResourceStore".to_string(),
+            Value::String(format!("__nodeAsyncStore:{id}")),
+        ),
         (LOCAL_DEFAULT.to_string(), default),
+        (LOCAL_DEFAULT_SET.to_string(), Value::Boolean(has_default)),
     ]);
     let object = execute::set_property(
         object,
@@ -256,9 +278,28 @@ pub fn new_async_local_storage(
     ))
 }
 
+pub(crate) fn legacy_store_for_resource(state: &Rc<RefCell<HostState>>, resource_id: u64) -> Value {
+    let pairs = state
+        .borrow()
+        .async_hooks
+        .local_stores
+        .iter()
+        .filter(|((id, _), _)| *id == resource_id)
+        .map(|((_, local_id), value)| (format!("__nodeAsyncStore:{local_id}"), value.clone()))
+        .collect();
+    host_api::object(pairs)
+}
+
+pub(crate) fn current_resource_id(state: &Rc<RefCell<HostState>>) -> u64 {
+    state.borrow().async_hooks.current_id
+}
+
 fn local_id(receiver: Option<&Value>) -> Option<u64> {
-    match receiver.map(|value| execute::get_property(value, LOCAL_ID)) {
-        Some(Value::Number(id)) if id.is_finite() && id >= 0.0 => Some(id as u64),
+    let descriptor =
+        receiver.and_then(|value| execute::get_own_property_descriptor(value, LOCAL_ID).ok())?;
+    let value = execute::get_property(&descriptor, "value");
+    match value {
+        Value::Number(id) if id.is_finite() && id >= 0.0 => Some(id as u64),
         _ => None,
     }
 }
@@ -276,11 +317,17 @@ pub fn local_get_store(
         .local_stores
         .get(&(resource_id, id))
         .cloned()
-        .unwrap_or_else(|| {
+        .or_else(|| {
             receiver
+                .filter(|value| {
+                    matches!(
+                        execute::get_property(value, LOCAL_DEFAULT_SET),
+                        Value::Boolean(true)
+                    )
+                })
                 .map(|value| execute::get_property(value, LOCAL_DEFAULT))
-                .unwrap_or(Value::Undefined)
-        });
+        })
+        .unwrap_or(Value::Undefined);
     Ok(store)
 }
 
@@ -627,6 +674,17 @@ pub fn execution_resource(
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(resource) = state.borrow().async_hooks.current_resource.clone() {
+        return Ok(resource);
+    }
+    let global = quench_runtime::vm::current_global_object();
+    let current = execute::get_property(&global, "__nodeCurrentAsyncResource");
+    if matches!(
+        execute::get_property(&current, ASYNC_ID),
+        Value::Number(id) if id.is_finite() && id >= 0.0
+    ) {
+        return Ok(current);
+    }
     Ok(state
         .borrow()
         .async_hooks
@@ -1005,7 +1063,36 @@ pub fn collect_garbage(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     for resource in pending {
         resource_destroy(state, Some(&resource), &[])?;
     }
+    drain_queued_destroy_ids(state);
     Ok(())
+}
+
+/// Queue the internal async_wrap destroy edge. Node exposes this for native
+/// bindings that own an async id but no JavaScript resource object.
+pub fn queue_destroy_async_id(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let id = args
+        .first()
+        .and_then(|value| number(value.clone()))
+        .ok_or_else(|| invalid_callback("asyncId"))?;
+    state.borrow_mut().async_hooks.pending_destroy_ids.push(id);
+    Ok(Value::Undefined)
+}
+
+pub fn drain_queued_destroy_ids(state: &Rc<RefCell<HostState>>) {
+    let ids = std::mem::take(&mut state.borrow_mut().async_hooks.pending_destroy_ids);
+    for id in ids {
+        let callbacks = {
+            let host = state.borrow();
+            active_callbacks_from(&host.async_hooks, HookEvent::Destroy)
+        };
+        for (callback, receiver) in callbacks {
+            call_hook(state, &callback, &receiver, &[Value::Number(id as f64)]);
+        }
+    }
 }
 pub fn resource_run(
     state: &Rc<RefCell<HostState>>,
@@ -1185,7 +1272,7 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         }
         let mut host = state.borrow_mut();
         host.async_hooks.current_id = 1;
-        host.async_hooks.current_resource = None;
+        host.async_hooks.current_resource = Some(host.async_hooks.root_resource.clone());
     } else if event == "resolve" {
         let (resource, callbacks) = {
             let host = state.borrow();
