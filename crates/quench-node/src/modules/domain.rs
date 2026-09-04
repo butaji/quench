@@ -17,6 +17,7 @@ use crate::registry::{
 };
 
 const ID: &str = "\0quench:domain:id";
+pub(crate) const PROMISE_DOMAIN: &str = "\0quench:domain:promise";
 pub(crate) const HANDLER_DOMAIN: &str = "\0quench:domain:handler";
 
 struct DomainData {
@@ -66,15 +67,18 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     module
 }
 
-fn install_promise_bridge() {
-    let global = quench_runtime::vm::current_global_object();
-    if matches!(
-        execute::get_property(&global, "__quench_domain_promises_patched"),
-        Value::Boolean(true)
-    ) {
-        return;
-    }
-    let source = r#"(() => {
+pub(crate) const PROMISE_BRIDGE_SOURCE: &str = r#"(() => {
+      const promiseDomain = "\0quench:domain:promise";
+      const tag = (promise) => {
+        const domain = globalThis.process?.domain;
+        if (domain) Object.defineProperty(promise, promiseDomain, {
+          configurable: true,
+          value: domain,
+        });
+        return promise;
+      };
+      const originalResolve = Promise.resolve;
+      const originalReject = Promise.reject;
       const originalThen = Promise.prototype.then;
       const wrap = (callback) => {
         const domain = globalThis.process?.domain;
@@ -85,14 +89,34 @@ fn install_promise_bridge() {
         configurable: true,
         writable: true,
         value: function(onFulfilled, onRejected) {
-          return originalThen.call(this, wrap(onFulfilled), wrap(onRejected));
+          return tag(originalThen.call(this, wrap(onFulfilled), wrap(onRejected)));
         },
+      });
+      Object.defineProperty(Promise, "resolve", {
+        configurable: true,
+        writable: true,
+        value: function(value) { return tag(originalResolve.call(this, value)); },
+      });
+      Object.defineProperty(Promise, "reject", {
+        configurable: true,
+        writable: true,
+        value: function(value) { return tag(originalReject.call(this, value)); },
       });
       Object.defineProperty(globalThis, "__quench_domain_promises_patched", {
         configurable: true,
         value: true,
       });
     })()"#;
+
+fn install_promise_bridge() {
+    let global = quench_runtime::vm::current_global_object();
+    if matches!(
+        execute::get_property(&global, "__quench_domain_promises_patched"),
+        Value::Boolean(true)
+    ) {
+        return;
+    }
+    let source = PROMISE_BRIDGE_SOURCE;
     let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else {
         return;
     };
@@ -566,6 +590,15 @@ pub fn error_handler(state: &Rc<RefCell<HostState>>, domain: &Value) -> Option<V
         .domains
         .get(&id)
         .and_then(|entry| entry.handler.clone())
+}
+
+pub(crate) fn promise_domain(
+    state: &Rc<RefCell<HostState>>,
+    promise: &Value,
+) -> Option<(Value, Value)> {
+    let domain = execute::get_property(promise, PROMISE_DOMAIN);
+    let handler = error_handler(state, &domain)?;
+    Some((domain, handler))
 }
 
 pub(crate) fn stack_values(state: &Rc<RefCell<HostState>>) -> Vec<Value> {

@@ -161,6 +161,19 @@ pub fn run_in_new_context(
             }),
         None => None,
     };
+    let global = quench_runtime::vm::current_global_object();
+    let source = if matches!(
+        execute::get_property(&global, "__quench_domain_promises_patched"),
+        Value::Boolean(true)
+    ) {
+        format!(
+            "{}\n{}",
+            crate::modules::domain::PROMISE_BRIDGE_SOURCE,
+            source
+        )
+    } else {
+        source
+    };
     quench_runtime::vm::execute_script_in_sandbox(&source, args.get(1), filename.as_deref())
 }
 
