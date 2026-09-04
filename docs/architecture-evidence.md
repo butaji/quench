@@ -781,6 +781,17 @@ bounded mechanisms. Task 059 therefore closes without a new arena; a future
 arena task needs a build-time escape proof for a concrete value class rather
 than allocation volume alone.
 
+## Task 060: request-arena Gate 0
+
+Task 060 is intentionally blocked at its mandatory Gate 0. No concrete
+web-framework or host integration has specified the ownership promise, async
+boundary, or required API shape for a request-scoped arena. The runtime cannot
+prove that arbitrary request code does not retain a value through a module,
+Promise, timer, or host callback; implementing an implicit arena now would
+violate the repository's escape-safety and no-corruption requirements. No
+production code or allocation semantics were changed. A concrete host use
+case and explicit opt-in contract are required before this task can proceed.
+
 ## Task 054: TypedArray fast-path survey
 
 The existing `AGetI`/`ASetI` region rows are opcode-level bridges, not a
