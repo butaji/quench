@@ -1020,6 +1020,11 @@ fn format_extra(value: &Value) -> String {
             symbol_string(&Value::String(value.clone()))
         }
         Value::String(value) => value.clone(),
+        // `StringUnits` is the runtime's exact UTF-16 representation for a
+        // primitive string.  Formatting must preserve its full contents;
+        // routing it through `inspect` would apply the inspector's display
+        // truncation to otherwise ordinary console output.
+        Value::StringUnits(value) => String::from_utf16_lossy(value),
         _ => format_spec('s', value),
     }
 }
@@ -1033,6 +1038,7 @@ fn value_to_string(value: &Value) -> String {
     }
     match value {
         Value::String(s) => s.clone(),
+        Value::StringUnits(units) => String::from_utf16_lossy(units),
         Value::Number(n) => js_number(*n),
         Value::Boolean(b) => b.to_string(),
         Value::BigInt(digits) => format!("{}n", bigint_digits(digits)),
