@@ -29,13 +29,17 @@
             "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented"
         ],
         "remaining_slices": [
-            "048", "049"
+            "048", "049", "050", "051", "052", "053", "054", "055"
         ]
     },
     "themes": {
         "deegen_full_jit": {
             "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-044 are closed (034 and 043 with applicability findings). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md). Tasks 045-047 are now closed profile-gated no-go findings: their required measurements did not justify a shared cache, rope representation, or frame-pooling change. Remaining work is 048-049, still bounded and fallback-complete.",
             "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049"]
+        },
+        "vm_completeness": {
+            "goal": "Beyond Deegen-paper alignment: what a top-level JS VM needs that the deegen_full_jit theme never covered, discovered while trying to run the v8-v7 (Octane-derived) benchmark suite for a real V8-comparison score. P0: fix a real Node-compat bug (050, console.log crashes when detached from `this`) and a real correctness bug (051, Splay output mismatch) that currently block running the suite at all. Then wire it into tracked verification (052), and survey three genuinely uncovered areas by any prior task: regex engine performance (053, V8's Irregexp is an entirely separate compiler this project has never touched), TypedArray fast-path coverage (054, NavierStokes-class workloads), and allocation-throughput for allocation-heavy workloads (055, profile-only -- no commitment to change quench's Rc-based memory model without evidence). All of 053-055 are profile-gated surveys, same discipline as 045-047.",
+            "plan": ["050", "051", "052", "053", "054", "055"]
         }
     },
     "items": [
@@ -60,6 +64,12 @@
         {"id": "046", "file": "046.md", "title": "String concatenation representation (rope/cons-string)", "theme": "deegen_full_jit", "depends_on": []},
         {"id": "047", "file": "047.md", "title": "Reduce call-frame allocation overhead for the Call/CallN region", "theme": "deegen_full_jit", "depends_on": ["040"]},
         {"id": "048", "file": "048.md", "title": "Grow region scope from hot glue sequence to whole loop body / small function", "theme": "deegen_full_jit", "depends_on": ["042"]},
-        {"id": "049", "file": "049.md", "title": "Pre-render multiple specialized variants per hot pattern (build-time-enumerated, not speculative)", "theme": "deegen_full_jit", "depends_on": ["048"]}
+        {"id": "049", "file": "049.md", "title": "Pre-render multiple specialized variants per hot pattern (build-time-enumerated, not speculative)", "theme": "deegen_full_jit", "depends_on": ["048"]},
+        {"id": "050", "file": "050.md", "title": "Fix console.log crash when detached from `this` (P0 Node-compat bug)", "theme": "vm_completeness", "depends_on": []},
+        {"id": "051", "file": "051.md", "title": "Fix Splay benchmark output correctness (v8-v7 suite)", "theme": "vm_completeness", "depends_on": ["050"]},
+        {"id": "052", "file": "052.md", "title": "Wire the v8-v7 benchmark suite into the tracked verification loop", "theme": "vm_completeness", "depends_on": ["050", "051"]},
+        {"id": "053", "file": "053.md", "title": "Regex engine performance survey (Irregexp-informed)", "theme": "vm_completeness", "depends_on": ["052"]},
+        {"id": "054", "file": "054.md", "title": "TypedArray fast-path coverage (NavierStokes-class workloads)", "theme": "vm_completeness", "depends_on": ["052"]},
+        {"id": "055", "file": "055.md", "title": "Allocation-throughput survey for allocation-heavy workloads (Splay, RayTrace, EarleyBoyer)", "theme": "vm_completeness", "depends_on": ["052"]}
     ]
 }
