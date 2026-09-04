@@ -131,7 +131,7 @@ pub fn log(
     if is_error {
         eprintln!("{line}");
     } else if let Some(sink) = &state.output {
-        sink(&line);
+        sink(&format!("{line}\n"));
     }
     Ok(Value::Undefined)
 }
@@ -168,7 +168,7 @@ pub fn trace(
     let line = "Trace".to_string();
     let state = state.borrow();
     if let Some(sink) = &state.output {
-        sink(&line);
+        sink(&format!("{line}\n"));
     }
     Ok(Value::Undefined)
 }
