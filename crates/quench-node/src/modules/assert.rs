@@ -730,13 +730,15 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
     let expected = rendered(value);
     if let Some(offset) = quench_runtime::vm::current_source_offset()
         .and_then(|offset| usize::try_from(offset).ok())
+        .filter(|offset| *offset <= source.len())
     {
         if let Some(call) = eval_assertion_call(source, offset) {
             return Some(call);
         }
     }
     let current_offset = quench_runtime::vm::current_source_offset()
-        .and_then(|offset| usize::try_from(offset).ok());
+        .and_then(|offset| usize::try_from(offset).ok())
+        .filter(|offset| *offset <= source.len());
     let mut calls = Vec::new();
     let mut cursor = 0usize;
     while cursor < source.len() {
