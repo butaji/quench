@@ -200,6 +200,8 @@ removing the canonical-layout membership fast path caused the same test to
 run beyond 60 seconds (the old per-key key-vector rebuild), catching the
 historical quadratic failure class; the fast path was restored immediately.
 The existing history-only probe remains the mutation-history regression check.
+The same companion passed under `execution-trace` at 23.32x; the complete
+architecture-invariant module now runs 20/20 in that configuration.
 
 Task 063 extends the module with three collection invariants. Fresh ARM64
 debug runs measured 1.53x (packed-array index-0 access at lengths 10 versus
