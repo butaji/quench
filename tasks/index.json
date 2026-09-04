@@ -16,15 +16,17 @@
     "implementation_state": {
         "completed_slices": [
             "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence.",
-            "027-037 (this theme's first pass): tier-up/OSR committed and verified, slow-path outlining, register-pinning approximation, bounded logical quickening, bounded SMC IC stub chain + inline slab, catalog admission reconciled. NOT fully closed -- see docs/deegen-alignment.md for the honestly-recorded remainder (tag register blocked, hot-cold splitting not justified, Optimizing-tier net win unproven), all three confounded by the x86_64-only executable gate. Tasks 039+ continue from here."
+            "027-037 (this theme's first pass): tier-up/OSR committed and verified, slow-path outlining, register-pinning approximation, bounded logical quickening, bounded SMC IC stub chain + inline slab, catalog admission reconciled. NOT fully closed -- see docs/deegen-alignment.md for the honestly-recorded remainder (tag register blocked, hot-cold splitting not justified, Optimizing-tier net win unproven), all three confounded by the x86_64-only executable gate. Tasks 039+ continue from here.",
+            "039: native AArch64 stencil execution, closed and verified (const-fn bit-packed encoders, no hex, no assembler crate).",
+            "042: bounded multi-op sequential region executor, closed (commit ab738f909) -- docs/copy-and-patch-jit.md's design section now matches what's actually built. Unblocks 040 item 1."
         ],
         "remaining_slices": [
-            "040", "041", "042"
+            "040", "041"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record, which itself found the closure gate not fully satisfied). Task 039 (native AArch64 stencil execution) closed and verified. Priority now: 042 (bounded multi-op sequential stencil executor -- task 040.1 found the existing region stencil is single-leaf-only, not the fused multi-op executor docs/copy-and-patch-jit.md's design section claims; this closes that real doc-vs-implementation gap), in parallel with 040 items 2-5 (Call, Property, Array, ForI -- new single-leaf regions in the existing proven pattern, no dependency on 042), then 040 item 1 once 042 lands, then 041 (V8-informed JS-scenario survey).",
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037 closed (see docs/architecture-evidence.md task 037 record, which itself found the closure gate not fully satisfied). Tasks 039 and 042 closed and verified -- AArch64 execution is real, and the sequential region executor closes the doc-vs-implementation gap task 040.1 found. Priority now: 040 items 1-5 in any order (arithmetic-glue widening now unblocked by 042; Call/CallN, GetProperty/SetN, array element access, ForI as new single-leaf regions -- Call is the single largest measured regression, 13-47x vs Node, and remains zero-coverage), then 041 (V8-informed JS-scenario survey), then revisit 034 (hot-cold splitting) now that 039 gives it something real to profile.",
             "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042"]
         }
     },
