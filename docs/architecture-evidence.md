@@ -224,6 +224,16 @@ ARM64 executable path remains explicitly opt-in via
 `QUENCH_ENABLE_AARCH64_STENCILS`, so no claim of native stencil execution is
 made by this invariant suite.
 
+Task 058 audit: quench already hash-conses ordinary-object layout facts in
+`value.rs` (`OBJECT_LAYOUTS` plus hash buckets), and the existing
+`equal_property_sequences_share_one_layout_fact` test proves two independent
+objects reuse one `semantic_layout_id`. The interner is thread-local and its
+structural key is the visible property-name sequence; descriptor attributes
+and prototype identity are not part of that derived layout fact. This is
+therefore Partial rather than a new implementation claim: extending the key
+would require a representation/IC audit, and no semantics-changing change is
+justified without that evidence.
+
 Task 064 adds three string invariants. ARM64 debug runs measured append
 ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
 tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
