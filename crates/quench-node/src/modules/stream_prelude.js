@@ -607,7 +607,7 @@
       if (syncReadable || (this._isTransform && st.flowing && this.listenerCount("data") > 0)) {
         flowReadable(this);
       }
-      else scheduleFlow(this);
+      else if (st.flowing || !st.awaitDrainWriters) scheduleFlow(this);
       if (st.ended) return false;
       const buffered = st.objectMode
         ? st.buffer.length
@@ -889,7 +889,7 @@
           readable.push(null);
           return;
         }
-        Promise.resolve(result).then((step) => {
+        const settle = (step) => {
           pending = false;
           if (finished) return;
           const iteratorResult = step && typeof step === "object" &&
@@ -906,12 +906,18 @@
           } else {
             readable.push(iteratorResult ? step.value : step);
           }
-        }, (error) => {
+        };
+        const reject = (error) => {
           pending = false;
           finished = true;
           readable._emitter.emit("error", error);
           readable.push(null);
-        });
+        };
+        if (result && typeof result.then === "function") {
+          result.then(settle, reject);
+        } else {
+          settle(result);
+        }
       }
     }));
     readable.__quenchIterator = iterator;
