@@ -672,6 +672,7 @@ historical measurements.
 | `2fff2aa70` release root-safety completion (300 s) | 8 / 8 | 71.84 | 2.416 | 285.028 (100/100) | 178.6 speed, 377.2 memory (33/38 instrumentation; 38/38 output) |
 | `f76c6ff7a` post-048/049/054/059 findings (300 s) | 8 / 8 | 67.91 | 2.504 | 285.389 (100/100) | 178.1 speed, 377.3 memory (33/38 instrumentation; 38/38 output) |
 | `625abe21e` production no-trace rebaseline (300 s) | 8 / 8 | 70.23 | 2.160 | 295.381 (100/100) | 182.6 speed, 377.3 memory (34/38 instrumentation; 38/38 output) |
+| `c87fb7b53` ARM64 rendered-address correction (300 s) | 8 / 8 | 69.91 | 2.133 | 295.423 (100/100) | 195.9 speed, 387.7 memory (38/38 output; no trace counters) |
 
 \* The RegExp fixture is excluded because it emits an error; this is not a
 whole-suite score. The row is a paired measurement record, not an optimization
@@ -690,6 +691,16 @@ optimized `execution-trace` artifact and remained output-correct for all 38
 cases (34/38 optional checks), with speed 182.6 and memory 377.3. This is a
 build-configuration rebaseline, not a semantic optimization claim; the v8-v7
 target remains open.
+
+The `c87fb7b53` row is a fresh production no-trace run after fixing the
+ARM64 native-leaf address contract. All eight fixtures again completed with
+`output_equal:true`: engine scores were Richards 55.6, DeltaBlue 48.5,
+Crypto 16.8, RayTrace 164, EarleyBoyer 72.7, RegExp 13.6, Splay 368, and
+NavierStokes 211. Summed peak RSS was 2,281,603,072 bytes versus Node's
+1,069,793,280 bytes (2.133x). The neutral and curriculum values in the table
+are paired with the same corrected source tree; the curriculum no-trace run
+was 38/38 output-correct (speed 195.9, memory 387.7). This is a measured
+trajectory row, not a claim that the ~60k capstone target has been reached.
 
 ## Task 069 Crypto completion/profile finding
 
