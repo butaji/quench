@@ -175,6 +175,20 @@ gateway produced a 10.31x ratio and failed the test; that hook was reverted.
 This confirms the task-061 finding that historical shape count is not itself
 the scaling problem.
 
+The remaining four task-062 invariants are now implemented in the same
+module. Fresh ARM64 debug-build runs reported ratios of 6.74x (shape
+transition with 4 versus 64 existing properties), 0.95x (10 versus 1,000
+historical callees), 1.56x (enumeration after 0 versus 2,000 add/delete
+mutations), and 0.019x (per-op dispatch cost for 200 versus 20,000
+instructions) without tracing; the execution-trace build reported 6.76x,
+0.96x, 1.64x, and 0.018x respectively. All five tests pass in both
+configurations. The transition bound is deliberately 16x to leave room for
+debug-build/setup noise while still rejecting a full linear walk over the
+16x property-count range. Invariant #1's temporary O(K) property-gateway
+regression produced a 10.31x ratio and failed its <8x bound before being
+reverted; equivalent subsystem-specific fault injection for the remaining
+four tests is still outstanding.
+
 The task-061 validation runs passed both runtime configurations (`592` tests
 without tracing and `602` with `execution-trace`). The optimized ARM64
 curriculum sweep completed 33/38 cases with exact observable matches; the five
