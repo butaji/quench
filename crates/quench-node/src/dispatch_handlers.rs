@@ -8131,7 +8131,15 @@ pub fn cp_spawn(
         candidate as u64
     };
     execute::set_property_in_place(&child, "pid", Value::Number(simulated_pid as f64));
-    let direct_eacces = !matches!(
+    // `fork()` uses the module path as a logical child command while the
+    // Rust host executes that module in the shared fork scope.  It is not an
+    // OS executable lookup, so the POSIX permission probe must not reject a
+    // normal non-executable `.js` source file on this fact-guarded path.
+    let virtual_fork = matches!(
+        execute::get_property(&options, "\0quench:forkIpc"),
+        Value::Boolean(true)
+    );
+    let direct_eacces = !virtual_fork && !matches!(
         execute::get_property(&options, "shell"),
         Value::Boolean(true)
     ) && cp_spawn_path_is_non_executable(&command, &options);
