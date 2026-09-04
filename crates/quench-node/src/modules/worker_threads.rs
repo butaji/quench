@@ -30,6 +30,10 @@ const WORKER_HAS_REF: u16 = 2487;
 const WORKER_TERMINATE: u16 = 2488;
 const WORKER_COMPLETE: u16 = 2489;
 const WORKER_BOOT_MESSAGE: u16 = 2490;
+const BROADCAST_CHANNEL: u16 = 2508;
+const BROADCAST_CHANNEL_CLOSE: u16 = 2509;
+const BROADCAST_CHANNEL_INSPECT: u16 = 2510;
+const BROADCAST_CHANNEL_ID: &str = "\0quench:broadcast-channel";
 
 thread_local! {
     static ENVIRONMENT_DATA: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
@@ -53,6 +57,9 @@ fn cap(kind: u16) -> Value {
         WORKER_HAS_REF => crate::registry::SPEC_WORKER_HAS_REF,
         WORKER_TERMINATE => crate::registry::SPEC_WORKER_TERMINATE,
         WORKER_COMPLETE => crate::registry::SPEC_WORKER_COMPLETE,
+        BROADCAST_CHANNEL => crate::registry::SPEC_BROADCAST_CHANNEL,
+        BROADCAST_CHANNEL_CLOSE => crate::registry::SPEC_BROADCAST_CHANNEL_CLOSE,
+        BROADCAST_CHANNEL_INSPECT => crate::registry::SPEC_BROADCAST_CHANNEL_INSPECT,
         0x0145 => crate::registry::SPEC_MESSAGE_CHANNEL,
         _ => crate::registry::NodeSpec::new("worker_threads:internal", kind),
     };
@@ -134,6 +141,7 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
         execute::set_callable_property(&message_port, "prototype", message_port_prototype.clone());
     crate::modules::event_target::set_message_port_prototype(message_port_prototype);
     let worker = cap(WORKER_CONSTRUCT);
+    let broadcast_channel = cap(BROADCAST_CHANNEL);
     Ok(host_api::object(vec![
         ("isMainThread".into(), Value::Boolean(main)),
         (
@@ -144,6 +152,7 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
         ("parentPort".into(), parent),
         ("MessageChannel".into(), message_channel),
         ("MessagePort".into(), message_port),
+        ("BroadcastChannel".into(), broadcast_channel),
         ("Worker".into(), worker),
         ("receiveMessageOnPort".into(), cap(RECEIVE_MESSAGE)),
         ("SHARE_ENV".into(), host_api::object(Vec::new())),
@@ -175,6 +184,9 @@ handlers! {
     (worker_has_ref_handler, WORKER_HAS_REF), (worker_terminate_handler, WORKER_TERMINATE),
     (worker_complete_handler, WORKER_COMPLETE), (worker_noop_handler, WORKER_NOOP),
     (worker_boot_message_handler, WORKER_BOOT_MESSAGE),
+    (broadcast_channel_handler, BROADCAST_CHANNEL),
+    (broadcast_channel_close_handler, BROADCAST_CHANNEL_CLOSE),
+    (broadcast_channel_inspect_handler, BROADCAST_CHANNEL_INSPECT),
 }
 
 pub fn message_port_construct(
@@ -196,6 +208,96 @@ pub fn worker_construct_handler(
     args: &[Value],
 ) -> Result<Value, VmError> {
     worker_new(state, args)
+}
+
+pub fn broadcast_channel_construct_handler(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    broadcast_channel_new(state, args)
+}
+
+fn broadcast_channel_new(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let name = match args.first() {
+        Some(Value::String(name)) => name.clone(),
+        Some(_) => return Err(type_error("The \"name\" argument must be a string")),
+        None => String::new(),
+    };
+    let object = host_api::object(vec![
+        (BROADCAST_CHANNEL_ID.into(), Value::Boolean(true)),
+        ("name".into(), Value::String(name)),
+        ("active".into(), Value::Boolean(true)),
+    ]);
+    let descriptor = |value| {
+        host_api::object(vec![
+            ("value".into(), value),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ])
+    };
+    let object = execute::define_property(object, "close", descriptor(cap(BROADCAST_CHANNEL_CLOSE)))?;
+    let object = execute::define_property(
+        object,
+        "Symbol.for.nodejs.util.inspect.custom\0",
+        descriptor(cap(BROADCAST_CHANNEL_INSPECT)),
+    )?;
+    Ok(object)
+}
+
+fn broadcast_channel_receiver(receiver: Option<&Value>) -> Result<&Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(invalid_this());
+    };
+    if !matches!(
+        execute::get_property(receiver, BROADCAST_CHANNEL_ID),
+        Value::Boolean(true)
+    ) {
+        return Err(invalid_this());
+    }
+    Ok(receiver)
+}
+
+fn broadcast_channel_close(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    execute::set_property_in_place(receiver, "active", Value::Boolean(false));
+    Ok(Value::Undefined)
+}
+
+fn broadcast_channel_inspect(
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = broadcast_channel_receiver(receiver)?;
+    let depth = args.first().and_then(|value| match value {
+        Value::Number(depth) => Some(*depth),
+        _ => None,
+    });
+    if depth.is_some_and(|depth| depth < 0.0) {
+        return Ok(Value::String("BroadcastChannel".into()));
+    }
+    let name = execute::get_property(receiver, "name");
+    let active = execute::get_property(receiver, "active");
+    let name = execute::to_js_string(&name).unwrap_or_default();
+    let active = matches!(active, Value::Boolean(true));
+    Ok(Value::String(format!(
+        "BroadcastChannel {{ name: '{}', active: {active} }}",
+        name.replace('\\', "\\\\").replace('\'', "\\'")
+    )))
+}
+
+fn invalid_this() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_THIS".into())),
+        (
+            "message".into(),
+            Value::String("Value of \"this\" must be of type BroadcastChannel".into()),
+        ),
+    ]))
 }
 
 fn call(
@@ -227,6 +329,9 @@ fn call(
             }
             Ok(Value::Undefined)
         }
+        BROADCAST_CHANNEL => broadcast_channel_new(state, args),
+        BROADCAST_CHANNEL_CLOSE => broadcast_channel_close(receiver),
+        BROADCAST_CHANNEL_INSPECT => broadcast_channel_inspect(receiver, args),
         WORKER_NOOP => Ok(args.first().cloned().unwrap_or(Value::Undefined)),
         MESSAGE_PORT_CALL | MESSAGE_PORT_CONSTRUCT => message_port_construct(state, args),
         RECEIVE_MESSAGE => receive_message(state, args),

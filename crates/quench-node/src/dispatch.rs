@@ -536,6 +536,9 @@ const CAP_WORKER_HAS_REF: u16 = SPEC_WORKER_HAS_REF.cap;
 const CAP_WORKER_TERMINATE: u16 = SPEC_WORKER_TERMINATE.cap;
 const CAP_WORKER_COMPLETE: u16 = SPEC_WORKER_COMPLETE.cap;
 const CAP_WORKER_BOOT_MESSAGE: u16 = SPEC_WORKER_BOOT_MESSAGE.cap;
+const CAP_BROADCAST_CHANNEL: u16 = SPEC_BROADCAST_CHANNEL.cap;
+const CAP_BROADCAST_CHANNEL_CLOSE: u16 = SPEC_BROADCAST_CHANNEL_CLOSE.cap;
+const CAP_BROADCAST_CHANNEL_INSPECT: u16 = SPEC_BROADCAST_CHANNEL_INSPECT.cap;
 const CAP_STREAM_IS_READABLE: u16 = SPEC_STREAM_IS_READABLE.cap;
 const CAP_STREAM_IS_WRITABLE: u16 = SPEC_STREAM_IS_WRITABLE.cap;
 const CAP_STREAM_IS_ERRORED: u16 = SPEC_STREAM_IS_ERRORED.cap;
@@ -636,6 +639,9 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_WORKER_TERMINATE => crate::modules::worker_threads::worker_terminate_handler,
         CAP_WORKER_COMPLETE => crate::modules::worker_threads::worker_complete_handler,
         CAP_WORKER_BOOT_MESSAGE => crate::modules::worker_threads::worker_boot_message_handler,
+        CAP_BROADCAST_CHANNEL => crate::modules::worker_threads::broadcast_channel_handler,
+        CAP_BROADCAST_CHANNEL_CLOSE => crate::modules::worker_threads::broadcast_channel_close_handler,
+        CAP_BROADCAST_CHANNEL_INSPECT => crate::modules::worker_threads::broadcast_channel_inspect_handler,
         CAP_STREAM_IS_READABLE => crate::modules::stream::is_readable,
         CAP_STREAM_IS_WRITABLE => crate::modules::stream::is_writable,
         CAP_STREAM_IS_ERRORED => crate::modules::stream::is_errored,
@@ -1667,6 +1673,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_NODE_EVENT_TARGET_NEW => crate::modules::event_target::new_node_target,
         CAP_MESSAGE_CHANNEL => crate::dispatch_handlers::message_channel_construct,
         CAP_WORKER_CONSTRUCT => crate::modules::worker_threads::worker_construct_handler,
+        CAP_BROADCAST_CHANNEL => crate::modules::worker_threads::broadcast_channel_construct_handler,
         CAP_MESSAGE_PORT_CONSTRUCT => {
             crate::modules::worker_threads::message_port_construct_handler
         }
