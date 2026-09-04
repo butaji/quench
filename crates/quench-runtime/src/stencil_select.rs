@@ -206,6 +206,10 @@ pub const fn call_n_region_key() -> RegionKey {
     CALL_N_KEY
 }
 
+pub const fn arithmetic_glue_region_key() -> RegionKey {
+    ARITHMETIC_GLUE_KEY
+}
+
 /// Canonical admission table for numeric baseline leaves.  The opcode catalog
 /// owns which operations are eligible; callers only ask for the derived key.
 pub fn numeric_region_key(opcode: crate::ir::Opcode) -> Option<RegionKey> {
@@ -435,6 +439,30 @@ mod tests {
                 cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
             );
         }
+    }
+
+    #[test]
+    fn arithmetic_glue_row_covers_measured_five_op_span() {
+        let record = select_region(arithmetic_glue_region_key()).expect("arithmetic glue row");
+        assert_eq!(record.operations.len(), 5);
+        assert_eq!(
+            record.operations,
+            &[
+                crate::ir::Opcode::LoadConst,
+                crate::ir::Opcode::LoadLocalChecked,
+                crate::ir::Opcode::Binary,
+                crate::ir::Opcode::UpdateLocal,
+                crate::ir::Opcode::StoreLocal,
+            ]
+        );
+        assert!(has_single_entry_point(
+            u32::from(record.entry),
+            &[RegionBlock {
+                id: 0,
+                predecessors: &[],
+                external_entry: true,
+            }]
+        ));
     }
 
     #[test]
