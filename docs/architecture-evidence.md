@@ -601,17 +601,32 @@ clear a suffix whose `SlotStore` is held by a captured binding.
 Evidence is source-neutral: a returned closure retaining five regular
 expressions and an object remains correct after 10,000 intervening allocations
 and repeated calls, and `tools/cycle-audit.mjs` remains bounded for the
-`closure_capture` probe (22.2 MiB at N=50,000). The full RegExp fixture no
-longer fails at the earlier captured-local error, but still exceeds the
-60-second completion attempt, so task 070 remains open as a slow completion
-measurement rather than being claimed complete. The fix preserves the
-complete collector fallback and does not identify any benchmark or fixture.
+`closure_capture` probe (22.2 MiB at N=50,000). The fix preserves the complete
+collector fallback and does not identify any benchmark or fixture.
+
+## Task 070: complete v8-v7 ground truth
+
+The ARM64 release artifact was re-run with the tracked v8-v7 runner at the
+300-second escalation tier after the closure/root-safety fix. All eight
+fixtures completed with `output_equal:true`: Richards 57.1 (3.67 s,
+15.6 MiB), DeltaBlue 49.9 (5.27 s, 79.2 MiB), Crypto 17.2 (215.17 s,
+33.9 MiB), RayTrace 168 (15.84 s, 18.4 MiB), EarleyBoyer 75.3 (66.55 s,
+152.2 MiB), RegExp 13.9 (225.18 s, 1.59 GiB), Splay 381 (3.61 s,
+433.7 MiB), and NavierStokes 216 (23.44 s, 18.1 MiB). The engine score
+geomean is 71.84 versus Node's 87,774.56. The aggregate peak-RSS ratio,
+including the now-completing RegExp process, is 2.416x; this exposes a real
+memory outlier rather than hiding it behind the former timeout/error state.
+RegExp remained CPU-active under a five-second DWARF `sample` and reached the
+completion marker before the 300-second limit, so it is very slow but finite,
+not a hang. The earlier 10-second and 60/120-second snapshots remain above as
+historical measurements.
 
 ## v8-v7 trajectory (paired speed and memory)
 
 | Snapshot | Complete / 8 | Engine score geomean | Aggregate RSS ratio | Neutral score | Curriculum |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `b2da584d6` release root-fix baseline (300 s) | 7 / 8 | 89.25* | 0.7882* | 109.665 (100/100) | 40.0 speed, 233.5 memory (29/38 under ceilings) |
+| `2fff2aa70` release root-safety completion (300 s) | 8 / 8 | 71.84 | 2.416 | 285.028 (100/100) | 178.6 speed, 377.2 memory (33/38 instrumentation; 38/38 output) |
 
 \* The RegExp fixture is excluded because it emits an error; this is not a
 whole-suite score. The row is a paired measurement record, not an optimization
