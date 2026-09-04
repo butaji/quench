@@ -2383,10 +2383,20 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "internal/async_hooks" => Some(host_api::object(vec![
             (
                 "symbols".into(),
-                host_api::object(vec![(
-                    "async_local_storage_context_symbol".into(),
-                    Value::String("__nodeAsyncStoresLegacy".into()),
-                )]),
+                host_api::object(vec![
+                    (
+                        "async_id_symbol".into(),
+                        Value::String("Symbol(async_id_symbol)\0quench".into()),
+                    ),
+                    (
+                        "trigger_async_id_symbol".into(),
+                        Value::String("Symbol(trigger_async_id_symbol)\0quench".into()),
+                    ),
+                    (
+                        "async_local_storage_context_symbol".into(),
+                        Value::String("__nodeAsyncStoresLegacy".into()),
+                    ),
+                ]),
             ),
             (
                 "enabledHooksExist".into(),
