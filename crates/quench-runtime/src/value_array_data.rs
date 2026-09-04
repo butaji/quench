@@ -446,6 +446,21 @@ impl ArrayData {
     /// indexed properties, descriptors, prototypes, or argument mappings.
     #[inline]
     pub(crate) fn is_packed_ordinary(&self) -> bool {
+        // The common dense header has no side metadata at all. Derive its
+        // proof directly from the canonical store and avoid repeating the
+        // descriptor/prototype projections on every intrinsic append.
+        if self.kind.get().is_packed()
+            && self.length.get() == self.values.len()
+            && self.properties.is_empty()
+            && self.descriptors.is_empty()
+            && self.deleted.is_empty()
+            && self.mapped.is_empty()
+            && self.prototype.borrow().is_none()
+            && !self.arguments
+            && self.argument_live.is_none()
+        {
+            return crate::builtins::array_prototype_is_clean();
+        }
         self.is_packed()
             && self.logical_len() == self.physical_len()
             && self.properties.is_empty()
