@@ -9,7 +9,22 @@ Object.defineProperty(globalThis, "__quenchWebStreamsState", {
 });
 const __quenchReadableEnqueue = (stream, value) => {
   const waiter = stream._readWaiters.shift();
-  if (waiter) return waiter({ value, done: false });
+  if (waiter) {
+    if (waiter.view && ArrayBuffer.isView(value) && ArrayBuffer.isView(waiter.view)) {
+      const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      const count = Math.min(bytes.byteLength, waiter.view.byteLength);
+      const output = new Uint8Array(waiter.view.buffer, waiter.view.byteOffset, count);
+      output.set(bytes.subarray(0, count));
+      if (count < bytes.byteLength) {
+        const remainder = bytes.slice(count);
+        const size = stream._size(remainder);
+        stream._queue.unshift({ value: remainder, size });
+        stream._queueSize += size;
+      }
+      return waiter.resolve({ value: output, done: false });
+    }
+    return waiter.resolve({ value, done: false });
+  }
   const size = stream._size(value);
   stream._queue.push({ value, size });
   stream._queueSize += size;
@@ -19,7 +34,7 @@ const __quenchReadableClose = (stream) => {
   stream[__quenchWebStreamsState].state = "closed";
   stream._resolveClosed();
   while (stream._readWaiters.length) {
-    stream._readWaiters.shift()({ value: undefined, done: true });
+    stream._readWaiters.shift().resolve({ value: undefined, done: true });
   }
   if (!stream._queue.length) {
     while (stream._finishWaiters.length) stream._finishWaiters.shift()();
@@ -32,7 +47,7 @@ const __quenchReadableError = (stream, error) => {
   stream[__quenchWebStreamsState].storedError = error;
   stream._rejectClosed(error);
   while (stream._readWaiters.length) {
-    stream._readWaiters.shift()(Promise.reject(error));
+    stream._readWaiters.shift().reject(error);
   }
   while (stream._finishWaiters.length) stream._finishWaiters.shift()(error);
 };
@@ -56,11 +71,24 @@ const __quenchValidateCompressionFormat = (format) => {
   if (["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) return;
   throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
 };
-const __quenchReadableRead = (stream) => {
+const __quenchReadableRead = (stream, view) => {
   if (stream._error) return Promise.reject(stream._error);
   if (stream._queue.length) {
     const item = stream._queue.shift();
     stream._queueSize -= item.size;
+    if (view && ArrayBuffer.isView(item.value) && ArrayBuffer.isView(view)) {
+      const bytes = new Uint8Array(item.value.buffer, item.value.byteOffset, item.value.byteLength);
+      const count = Math.min(bytes.byteLength, view.byteLength);
+      const output = new Uint8Array(view.buffer, view.byteOffset, count);
+      output.set(bytes.subarray(0, count));
+      if (count < bytes.byteLength) {
+        const remainder = bytes.slice(count);
+        const size = stream._size(remainder);
+        stream._queue.unshift({ value: remainder, size });
+        stream._queueSize += size;
+      }
+      return Promise.resolve({ value: output, done: false });
+    }
     if (stream._closed && !stream._queue.length) {
       while (stream._finishWaiters.length) stream._finishWaiters.shift()();
     }
@@ -70,12 +98,18 @@ const __quenchReadableRead = (stream) => {
   // Register the read waiter before invoking a synchronous pull algorithm.
   // Otherwise an enqueue+close performed during pull lands in the queue and
   // can be observed twice by two reads issued in the same turn.
-  const pending = new Promise((resolve) => stream._readWaiters.push(resolve));
+  const pending = new Promise((resolve, reject) => stream._readWaiters.push({ resolve, reject, view }));
+  pending.catch(() => undefined);
   if (stream._pull && !stream._pulling) {
     stream._pulling = true;
-    Promise.resolve(stream._pull(stream._controller)).finally(() => {
+    try {
+      Promise.resolve(stream._pull(stream._controller))
+        .catch((error) => stream._errorStream(error))
+        .finally(() => { stream._pulling = false; });
+    } catch (error) {
       stream._pulling = false;
-    });
+      stream._errorStream(error);
+    }
   }
   return pending;
 };
@@ -85,11 +119,11 @@ const __quenchReadableCancel = async (stream, reason) => {
   if (typeof stream._cancel === "function") await stream._cancel(reason);
   stream._cancelReason = reason;
   while (stream._readWaiters.length) {
-    stream._readWaiters.shift()({ value: undefined, done: true });
+    stream._readWaiters.shift().resolve({ value: undefined, done: true });
   }
 };
 const __quenchReadableReader = (stream) => ({
-  read: () => __quenchReadableRead(stream),
+  read: (view) => __quenchReadableRead(stream, view),
   cancel: (reason) => __quenchReadableCancel(stream, reason),
   closed: stream._closedPromise,
   releaseLock() {

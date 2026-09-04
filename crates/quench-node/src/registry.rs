@@ -1565,6 +1565,7 @@ pub const CAP_FS_STAT_ISFIFO: CapId = SPEC_FS_STAT_ISFIFO.cap;
 pub const CAP_FS_STAT_ISSOCKET: CapId = SPEC_FS_STAT_ISSOCKET.cap;
 pub const CAP_FS_REALPATH: CapId = SPEC_FS_REALPATH.cap;
 pub const CAP_FS_REALPATH_NATIVE: CapId = SPEC_FS_REALPATH_NATIVE.cap;
+pub const CAP_FS_OPENASBLOB: CapId = SPEC_FS_OPENASBLOB.cap;
 pub const CAP_FS_WATCH: CapId = SPEC_FS_WATCH.cap;
 pub const CAP_FS_WATCH_CLOSE: CapId = SPEC_FS_WATCH_CLOSE.cap;
 pub const CAP_FS_READSTREAM: CapId = SPEC_FS_READSTREAM.cap;
@@ -2283,6 +2284,7 @@ node_api! {
     (SPEC_NET_BLOCK_LIST_FROM_JSON, "legacy:net:block:list:fromJSON", 0x7F9B),
     (SPEC_NET_BLOCK_LIST_IS, "legacy:net:block:list:isBlockList", 0x7F9C),
     (SPEC_NET_BLOCK_LIST_INSPECT, "legacy:net:block:list:inspect", 0x7F9D),
+    (SPEC_FS_OPENASBLOB, "legacy:fs:openAsBlob", 0x7FE2),
     (SPEC_TEST_RUN, "legacy:test:run", 0x1b00),
 }
 
