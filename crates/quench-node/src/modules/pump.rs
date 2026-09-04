@@ -325,7 +325,6 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             quench_runtime::drain_promise_jobs();
             return Ok(());
         }
-        quench_runtime::drain_promise_jobs();
     }
 }
 
