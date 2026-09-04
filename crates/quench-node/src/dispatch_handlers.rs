@@ -8272,8 +8272,11 @@ fn cp_run_host_child(
     if matches!(env, Value::Object(_) | Value::ObjectAlias(_)) {
         let mut values = Vec::new();
         for key in execute::own_enumerable_keys(&env) {
-            if let Value::String(value) = execute::get_property(&env, &key) {
-                values.push((key, value));
+            let value = execute::get_property(&env, &key);
+            if !matches!(value, Value::Undefined | Value::Null) {
+                if let Ok(value) = execute::to_js_string(&value) {
+                    values.push((key, value));
+                }
             }
         }
         process.env_clear().envs(values);
@@ -9608,7 +9611,20 @@ fn fork_child_start(
     let child_options = execute::get_property(child, "\0childOptions");
     let child_env = execute::get_property(&child_options, "env");
     if matches!(child_env, Value::Object(_) | Value::ObjectAlias(_)) {
-        execute::set_property_in_place(&process, "env", child_env);
+        // OS environments are string maps.  Normalize fork options before
+        // installing the child view so `{ isWorker: 1 }` has the same
+        // observable value (`"1"`) in an in-process worker as it does across
+        // the real re-exec boundary.
+        let normalized = execute::own_enumerable_keys(&child_env)
+            .into_iter()
+            .filter_map(|key| {
+                let value = execute::get_property(&child_env, &key);
+                (!matches!(value, Value::Undefined | Value::Null))
+                    .then(|| execute::to_js_string(&value).ok().map(|value| (key, Value::String(value))))
+                    .flatten()
+            })
+            .collect();
+        execute::set_property_in_place(&process, "env", host_api::object(normalized));
     }
     if let Value::String(exec_path) = execute::get_property(&child_options, "execPath") {
         execute::set_property_in_place(&process, "execPath", Value::String(exec_path));
@@ -9661,6 +9677,19 @@ fn fork_child_start(
     );
     execute::set_property_in_place(&process, "\0forkChild", child.clone());
     let wrapped = crate::modules::require::wrap_cjs(state, filename, &source);
+    // Forked workers reuse the parent VM realm, but their source is reduced
+    // independently from the runner bootstrap. Ensure the canonical fetch
+    // global is present before common modules inspect the global surface.
+    let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
+    let dgram_surface = source
+        .contains("dgram")
+        .then_some(
+            "if (globalThis.__quenchDgramActiveFds === undefined) Object.defineProperty(globalThis, '__quenchDgramActiveFds', { value: new Set(), configurable: true });\nif (globalThis.__quenchDgramUdpFds === undefined) Object.defineProperty(globalThis, '__quenchDgramUdpFds', { value: new Set(), configurable: true });\nif (globalThis.__quenchDgramUdpHandleInfo === undefined) Object.defineProperty(globalThis, '__quenchDgramUdpHandleInfo', { value: new Map(), configurable: true });",
+        )
+        .unwrap_or_default();
+    let wrapped = format!(
+        "if (typeof globalThis.fetch !== \"function\") {{\n{fetch_surface}\n}}\n{dgram_surface}\n{wrapped}"
+    );
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
