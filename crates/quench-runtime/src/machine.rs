@@ -1994,6 +1994,7 @@ impl BaselinePlan {
             crate::stencil_select::update_return_region_key(),
             crate::stencil_select::call_region_key(),
             crate::stencil_select::call_n_region_key(),
+            crate::stencil_select::arithmetic_glue_region_key(),
         ];
         let native_regions = entries
             .iter()

@@ -2945,6 +2945,40 @@ mod compact_handler_tests {
     fn fused_multi_op_regions_match_one_at_a_time_execution() {
         let cases = [
             (
+                crate::stencil_select::arithmetic_glue_region_key(),
+                vec![
+                    Op::Const {
+                        dst: 1,
+                        value: crate::ops::Constant::Number(3.0),
+                    },
+                    Op::CheckInitialized {
+                        slot: 0,
+                        name: "x".into(),
+                    },
+                    Op::LoadLocal { dst: 2, slot: 0 },
+                    Op::Binary {
+                        dst: 3,
+                        operator: crate::ops::BinaryOp::NumericAdd,
+                        lhs: 2,
+                        rhs: 1,
+                    },
+                    Op::LoadLocal { dst: 4, slot: 0 },
+                    Op::Const {
+                        dst: 5,
+                        value: crate::ops::Constant::Number(1.0),
+                    },
+                    Op::Binary {
+                        dst: 6,
+                        operator: crate::ops::BinaryOp::NumericAdd,
+                        lhs: 4,
+                        rhs: 5,
+                    },
+                    Op::StoreLocal { slot: 0, src: 6 },
+                    Op::StoreLocal { slot: 2, src: 3 },
+                ],
+                vec![Value::Number(2.0), Value::Undefined, Value::Undefined],
+            ),
+            (
                 crate::stencil_select::binary_glue_region_key(),
                 vec![
                     Op::LoadLocal { dst: 1, slot: 1 },
@@ -3009,6 +3043,7 @@ mod compact_handler_tests {
             let mut ordinary = crate::register_file::RegisterFile::from_values(values.clone());
             let expected_transition = {
                 let environment = crate::environment::Environment::new();
+                environment.set(0, values[0].clone());
                 environment.set(1, values[1].clone());
                 let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
                 execute_one_at_a_time(code, &mut ordinary, &context)
@@ -3017,6 +3052,7 @@ mod compact_handler_tests {
             let mut fused = crate::register_file::RegisterFile::from_values(values);
             let actual_transition = {
                 let environment = crate::environment::Environment::new();
+                environment.set(0, expected_registers.read(0).unwrap_or(Value::Undefined));
                 environment.set(1, expected_registers.read(1).unwrap_or(Value::Undefined));
                 let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
                 let mut region = crate::machine::NativeRegionPlan::new_for_test(key)
