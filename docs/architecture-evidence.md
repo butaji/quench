@@ -214,6 +214,16 @@ architecture tests in both configurations. No arena-specific invariant is
 claimed because task 059 is not implemented; deliberate allocation fault
 injection remains outstanding.
 
+Task 067 adds bounded stencil-tier checks. Region lookup (10,000 versus
+100,000 repeated probes) measured a 1.01x per-probe ratio; a full 16-entry
+render memo history produced a 1.20x cache-hit ratio; and arena bump
+allocation (1,000 versus 10,000 placements) measured 0.25x after timer/setup
+amortization. All three pass the documented <16x bounds. These tests exercise
+selection/cache/allocation mechanics without executing native bytes; the
+ARM64 executable path remains explicitly opt-in via
+`QUENCH_ENABLE_AARCH64_STENCILS`, so no claim of native stencil execution is
+made by this invariant suite.
+
 Task 064 adds three string invariants. ARM64 debug runs measured append
 ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
 tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
