@@ -1296,6 +1296,12 @@ pub fn inspect(value: &Value) -> String {
 }
 
 pub fn inspect_minimal(value: &Value) -> String {
+    if matches!(
+        quench_runtime::execute::get_property(value, "\0quench:broadcast-channel"),
+        Value::Boolean(true)
+    ) {
+        return "BroadcastChannel".into();
+    }
     let (Value::Object(_) | Value::ObjectAlias(_)) = value else {
         return inspect_depth(value, 0);
     };
@@ -1362,6 +1368,9 @@ pub fn inspect_minimal(value: &Value) -> String {
 }
 
 pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
+    if let Some(rendered) = broadcast_channel_render(value, depth) {
+        return rendered;
+    }
     if matches!(
         quench_runtime::execute::get_property(value, "\0synthetic_module"),
         Value::Boolean(true)
@@ -2935,6 +2944,30 @@ fn inspect_depth_inner(value: &Value, depth: usize) -> String {
         _ => "<unknown>".into(),
     }
 }
+}
+
+fn broadcast_channel_render(value: &Value, depth: usize) -> Option<String> {
+    if !matches!(
+        quench_runtime::execute::get_property(value, "\0quench:broadcast-channel"),
+        Value::Boolean(true)
+    ) {
+        return None;
+    }
+    if depth == 0 {
+        return Some("BroadcastChannel".into());
+    }
+    let name = quench_runtime::execute::to_js_string(
+        &quench_runtime::execute::get_property(value, "name"),
+    )
+    .unwrap_or_default();
+    let active = matches!(
+        quench_runtime::execute::get_property(value, "active"),
+        Value::Boolean(true)
+    );
+    Some(format!(
+        "BroadcastChannel {{ name: '{}', active: {active} }}",
+        name.replace('\\', "\\\\").replace('\'', "\\'")
+    ))
 }
 
 fn inspect_error_stack_value(value: &Value, depth: usize) -> String {
