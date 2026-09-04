@@ -346,8 +346,6 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
             ? 0
             : args.includes("you-are-the-child")
               ? 0
-              : script.endsWith("exit.js")
-                ? Number(args[1] || 0)
                 : options.shell &&
                     /does-not-exist|hopefully_you_dont_have/.test(
                       String(_command)
