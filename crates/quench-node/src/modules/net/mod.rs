@@ -983,7 +983,16 @@ pub(crate) fn emit(
     if resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
     }
-    execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", previous_resource);
+    execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", previous_resource.clone());
+    if matches!(previous_resource, Value::Undefined) {
+        let descriptor = host_api::object(vec![
+            ("value".into(), Value::Undefined),
+            ("writable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+        ]);
+        let _ = execute::define_property(global.clone(), "__nodeCurrentAsyncResource", descriptor);
+    }
     result
 }
 
