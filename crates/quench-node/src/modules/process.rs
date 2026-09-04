@@ -1085,6 +1085,11 @@ fn stream_chunk(value: Option<&Value>) -> String {
     };
     match value {
         Value::String(text) => text.clone(),
+        // OXC keeps literals containing escapes in the compact UTF-16
+        // representation.  Stream writes are byte/text transport, so they
+        // must observe the decoded string rather than `inspect()`'s quoted
+        // diagnostic form.
+        Value::StringUnits(units) => String::from_utf16_lossy(units),
         Value::Uint8Array(view) => {
             let bytes = view.buffer.bytes.borrow();
             let end = view

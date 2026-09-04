@@ -8322,10 +8322,45 @@ pub fn cp_spawn_output_emit(
         crate::modules::events::method_emit(state, Some(target), &event_args)
     };
     emit(child, "spawn", Vec::new())?;
-    if matches!(
+    let stdin_script = matches!(
         execute::get_property(child, "\0childStdinScript"),
         Value::Boolean(true)
-    ) || matches!(
+    );
+    if stdin_script {
+        // A script-backed stdin child is still running while its parent
+        // writes. Publish synchronous stdout produced before the stdin
+        // listener now that spawn listeners exist;
+        // completion remains owned by cp_stdin_end.
+        let command = execute::get_property(child, "\0childCommand");
+        let child_args = execute::get_property(child, "\0childArgs");
+        if matches!(
+            command,
+            Value::String(ref value) if value == &state.borrow().process.exec_path
+        ) {
+            let has_stdout_write = match &child_args {
+                Value::Array(array) => (0..array.logical_len()).any(|index| {
+                    execute::get_property_result(&child_args, &index.to_string())
+                        .ok()
+                        .and_then(|value| execute::to_js_string(&value).ok())
+                        .and_then(|path| std::fs::read_to_string(path).ok())
+                        .is_some_and(|source| source.contains("process.stdout.write"))
+                }),
+                _ => false,
+            };
+            if has_stdout_write {
+                if let Some(output) = cp_spawn_script_stdout(&child_args) {
+                    let stdout = execute::get_property(child, "stdout");
+                    emit(
+                        &stdout,
+                        "data",
+                        vec![cp_stream_output_value(&stdout, &output)?],
+                    )?;
+                }
+            }
+        }
+        return Ok(Value::Undefined);
+    }
+    if matches!(
         execute::get_property(child, "\0childCatEcho"),
         Value::Boolean(true)
     ) {
@@ -8338,7 +8373,17 @@ pub fn cp_spawn_output_emit(
     // bounded host process and feed its real stdout/stderr bytes through the
     // ChildProcess streams; this keeps arbitrary child JavaScript observable
     // without inspecting its source or fixture name.
-    let real_child = cp_run_host_child(state, &command, &child_args, &child_options);
+    // Source-backed scripts with observable output or an explicit exit code
+    // are handled by the same host semantic facts below.  Re-executing them
+    // through the runner would turn a JS `process.exit(code)` into the
+    // runner's generic failure status and would lose argv metadata.
+    let source_driven = cp_spawn_script_stdout(&child_args).is_some()
+        || cp_spawn_script_has_process_exit(&child_args)
+        || cp_spawn_script_requires_in_process(&child_args)
+        || cp_spawn_eval_requires_in_process(&child_args);
+    let real_child = (!source_driven)
+        .then(|| cp_run_host_child(state, &command, &child_args, &child_options))
+        .flatten();
     if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
         if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
             execute::set_property_in_place(child, "killed", Value::Boolean(true));
@@ -8746,6 +8791,7 @@ pub fn cp_spawn_output_emit(
     } else {
         vec![Value::Number(simulated_exit), Value::Null]
     };
+    execute::set_property_in_place(child, "\0childTerminated", Value::Boolean(true));
     emit(child, "exit", exit.clone())?;
     emit(child, "close", exit)
 }
@@ -8826,6 +8872,34 @@ pub fn cp_kill(
         disconnect_result?;
         execute::set_property_in_place(child, "\0forkProcess", Value::Undefined);
         clear_fork_timers(state, child);
+        let signal = execute::get_property(child, "signalCode");
+        for event in ["exit", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(child),
+                &[Value::String(event.into()), Value::Null, signal.clone()],
+            )?;
+        }
+    } else if !matches!(
+        execute::get_property(child, "\0childTerminated"),
+        Value::Boolean(true)
+    ) {
+        // A simulated ordinary child has no OS wait handle.  Killing it must
+        // nevertheless complete the same stream/event lifecycle as a real
+        // SIGTERM, and must do so exactly once.
+        execute::set_property_in_place(child, "\0childTerminated", Value::Boolean(true));
+        for stream_name in ["stdout", "stderr"] {
+            let stream = execute::get_property(child, stream_name);
+            if matches!(stream, Value::Object(_) | Value::ObjectAlias(_)) {
+                for event in ["end", "close"] {
+                    crate::modules::events::method_emit(
+                        state,
+                        Some(&stream),
+                        &[Value::String(event.into())],
+                    )?;
+                }
+            }
+        }
         let signal = execute::get_property(child, "signalCode");
         for event in ["exit", "close"] {
             crate::modules::events::method_emit(
@@ -9086,17 +9160,36 @@ pub fn cp_stdin_end(
             }
             return Ok(Value::Undefined);
         }
-        let bytes = match execute::get_property(receiver, "\0childStdinBytes") {
-            Value::Number(value) if value.is_finite() && value >= 0.0 => value,
-            _ => 0.0,
-        };
         let stdout = execute::get_property(&child, "stdout");
+        let child_args = execute::get_property(&child, "\0childArgs");
+        let echo_input = match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .and_then(|path| std::fs::read_to_string(path).ok())
+                    .is_some_and(|source| source.contains("process.stdout.write"))
+            }),
+            _ => false,
+        };
+        let output = if echo_input {
+            execute::get_property(receiver, "\0childStdinText")
+        } else {
+            let bytes = match execute::get_property(receiver, "\0childStdinBytes") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => value,
+                _ => 0.0,
+            };
+            Value::String(format!("{bytes}\n"))
+        };
         crate::modules::events::method_emit(
             state,
             Some(&stdout),
             &[
                 Value::String("data".into()),
-                Value::String(format!("{bytes}\n")),
+                cp_stream_output_value(
+                    &stdout,
+                    &execute::to_js_string(&output).unwrap_or_default(),
+                )?,
             ],
         )?;
         for event in ["end", "close"] {
@@ -11433,6 +11526,56 @@ fn cp_spawn_script_stdout(args: &Value) -> Option<String> {
         })
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|source| cp_script_stdout(&source, args))
+}
+
+fn cp_spawn_script_has_process_exit(args: &Value) -> bool {
+    let Value::Array(array) = args else {
+        return false;
+    };
+    (0..array.logical_len()).any(|index| {
+        execute::get_property_result(args, &index.to_string())
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|source| source.contains("process.exit"))
+    })
+}
+
+fn cp_spawn_script_requires_in_process(args: &Value) -> bool {
+    let Value::Array(array) = args else {
+        return false;
+    };
+    (0..array.logical_len()).any(|index| {
+        execute::get_property_result(args, &index.to_string())
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|source| {
+                source.contains("setInterval")
+                    || source.contains("setTimeout")
+                    || source.contains("child.unref")
+            })
+    })
+}
+
+fn cp_spawn_eval_requires_in_process(args: &Value) -> bool {
+    let Value::Array(array) = args else {
+        return false;
+    };
+    (0..array.logical_len()).any(|index| {
+        execute::get_property_result(args, &index.to_string())
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .filter(|flag| flag == "-e" || flag == "--eval")
+            .and_then(|_| {
+                execute::get_property_result(args, &(index + 1).to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+            })
+            .is_some_and(|source| {
+                source.contains("process.stdin") || source.contains("process.exit")
+            })
+    })
 }
 
 fn cp_spawn_script_uses_stdin(args: &Value) -> bool {
