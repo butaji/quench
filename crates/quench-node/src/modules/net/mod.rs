@@ -974,8 +974,25 @@ pub(crate) fn emit(
                 }
             }
             if let Err(error) = execute::call(&listener.callback, receiver, &args) {
-                result = Err(error);
-                break;
+                match error {
+                    VmError::Thrown(reason) => {
+                        match crate::modules::events::route_domain_error(
+                            state,
+                            receiver,
+                            Some(&reason),
+                        )? {
+                            Some(_) => continue,
+                            None => {
+                                result = Err(VmError::Thrown(reason));
+                                break;
+                            }
+                        }
+                    }
+                    other => {
+                        result = Err(other);
+                        break;
+                    }
+                }
             }
         }
         result
