@@ -710,7 +710,25 @@ fn request_inner(
     let opts = request_options(args.first())?;
     let secure = secure_hint || opts.secure;
     let tls_options = if secure {
-        option_source_object(args).or_else(|| opts.tls_options.clone())
+        option_source_object(args).or_else(|| opts.tls_options.clone()).map(|options| {
+            // https.Agent carries TLS defaults in its own `options` object.
+            // Requests inherit those defaults even when the per-request
+            // options omit `rejectUnauthorized`.
+            if matches!(execute::get_property(&options, "rejectUnauthorized"), Value::Undefined)
+                && matches!(execute::get_property(&options, "agent"), Value::Object(_) | Value::ObjectAlias(_))
+            {
+                let agent = execute::get_property(&options, "agent");
+                let agent_options = execute::get_property(&agent, "options");
+                if !matches!(execute::get_property(&agent_options, "rejectUnauthorized"), Value::Undefined) {
+                    return execute::set_property(
+                        options,
+                        "rejectUnauthorized",
+                        execute::get_property(&agent_options, "rejectUnauthorized"),
+                    );
+                }
+            }
+            options
+        })
     } else {
         None
     };
@@ -2701,6 +2719,11 @@ pub fn req_error(
     let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
+    execute::set_property_in_place(
+        socket,
+        "Symbol(async_id_symbol)\0quench",
+        Value::Number(-1.0),
+    );
     crate::modules::http::clear_idle_socket(state, socket);
     let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
@@ -3247,6 +3270,13 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
             "0".into()
         };
         let socket = execute::get_property(&list, &key);
+        if let Some(id) = net::net_id(&socket) {
+            execute::set_property_in_place(
+                &socket,
+                "Symbol(async_id_symbol)\0quench",
+                Value::Number(id as f64),
+            );
+        }
         if lifo {
             let pop = execute::get_property(&list, "pop");
             if quench_runtime::is_callable(&pop) {
@@ -3292,6 +3322,11 @@ fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
     if !found {
         return;
     }
+    execute::set_property_in_place(
+        socket,
+        "Symbol(async_id_symbol)\0quench",
+        Value::Number(-1.0),
+    );
     execute::set_property_in_place(&sockets_pools, name, host_api::array(remaining));
     let free_pools = execute::get_property(agent, "freeSockets");
     let free = match execute::get_property(&free_pools, name) {
@@ -3997,6 +4032,11 @@ pub fn res_end_handler(
     let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
+    execute::set_property_in_place(
+        socket,
+        "Symbol(async_id_symbol)\0quench",
+        Value::Number(-1.0),
+    );
     let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
