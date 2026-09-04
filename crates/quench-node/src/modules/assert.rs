@@ -995,7 +995,7 @@ fn binary_assert(
                 ),
                 _ if operator == "notDeepStrictEqual" => format!(
                     "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
-                    format!("{}\n", rendered_not_deep(&actual))
+                    rendered_not_deep(&actual)
                 ),
                 _ if operator == "notStrictEqual"
                     && !matches!(actual, Value::String(_)) => format!(
@@ -1595,7 +1595,11 @@ fn append_collection_properties(value: &Value, rendered: &mut String) {
         rendered.push_str(", ");
     }
     rendered.push_str(&body);
-    rendered.push('}');
+    if rendered.ends_with('{') {
+        rendered.push_str(" }");
+    } else {
+        rendered.push('}');
+    }
 }
 
 pub fn deep_strict_equal(
