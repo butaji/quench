@@ -305,34 +305,44 @@ pub fn build_value() -> Value {
 }
 
 const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
+  const receivedType = (value) => {
+    if (value === undefined) return "undefined";
+    if (value === null) return "null";
+    if (typeof value === "string") return `type string ('${value}')`;
+    if (typeof value === "number") return `type number (${value})`;
+    if (typeof value === "boolean") return `type boolean (${value})`;
+    if (typeof value === "object" && value.constructor && value.constructor.name)
+      return `an instance of ${value.constructor.name}`;
+    return `type ${typeof value}`;
+  };
   let input;
   if (typeof promiseOrFn === "function") {
     try { input = promiseOrFn(); }
     catch (error) { return Promise.reject(error); }
     if (!(input instanceof Promise)) {
-      const error = new TypeError("The \"promiseFn\" argument must return a Promise");
+      const error = new TypeError(`Expected instance of Promise to be returned from the \"promiseFn\" function but got ${receivedType(input)}.`);
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
     }
   } else input = promiseOrFn;
   if (!input || typeof input.then !== "function") {
-    const error = new TypeError("The promiseFn argument must be a Promise");
+    const error = new TypeError(`The \"promiseFn\" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
   if (typeof input.catch !== "function") {
-    const error = new TypeError("The promiseFn argument must be a Promise");
+    const error = new TypeError(`The \"promiseFn\" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
   return Promise.resolve(input).then(
-    () => Promise.reject(Object.assign(new Error(message || "Missing expected rejection"), {
-      code: "ERR_ASSERTION", operator: "rejects"
+    () => Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
+      code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message
     })),
     (error) => {
       if (typeof expected === "function" && expected(error) !== true) {
-        return Promise.reject(Object.assign(new Error("The rejection did not match"), {
-          code: "ERR_ASSERTION", operator: "rejects", actual: error, expected
+        return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: "The rejection did not match"}), {
+          code: "ERR_ASSERTION", operator: "rejects", actual: error, expected, generatedMessage: true, stack: "AssertionError: The rejection did not match\\n    at Function.rejects"
         }));
       }
       if (expected && typeof expected === "object") {
@@ -359,8 +369,8 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
             ? expectedValue.test(actualValue)
             : rejectsMatch(actualValue, expectedValue);
           if (!matches) {
-            return Promise.reject(Object.assign(new Error(message || "The input did not match"), {
-              code: "ERR_ASSERTION", operator: "rejects"
+            return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || "The input did not match"}), {
+              code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message, actual: error, expected, stack: `AssertionError: ${message || "The input did not match"}\\n    at Function.rejects`
             }));
           }
         }
@@ -371,25 +381,35 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
 }"#;
 
 const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
+  const receivedType = (value) => {
+    if (value === undefined) return "undefined";
+    if (value === null) return "null";
+    if (typeof value === "string") return `type string ('${value}')`;
+    if (typeof value === "number") return `type number (${value})`;
+    if (typeof value === "boolean") return `type boolean (${value})`;
+    if (typeof value === "object" && value.constructor && value.constructor.name)
+      return `an instance of ${value.constructor.name}`;
+    return `type ${typeof value}`;
+  };
   let input;
   if (typeof promiseOrFn === "function") {
     try { input = promiseOrFn(); }
     catch (error) { return Promise.reject(error); }
     if (!(input instanceof Promise)) {
-      const error = new TypeError("The \"promiseFn\" argument must return a Promise");
+      const error = new TypeError(`Expected instance of Promise to be returned from the \"promiseFn\" function but got ${receivedType(input)}.`);
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
     }
   } else input = promiseOrFn;
   if (!input || typeof input.then !== "function") {
-    const error = new TypeError("The promiseFn argument must be a Promise");
+    const error = new TypeError(`The \"promiseFn\" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
   return Promise.resolve(input).then(
     (value) => value,
-    (error) => Promise.reject(Object.assign(new Error(message || "Got unwanted rejection"), {
-      code: "ERR_ASSERTION", operator: "doesNotReject", actual: error
+    (error) => Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || "Got unwanted rejection"}), {
+      code: "ERR_ASSERTION", operator: "doesNotReject", actual: error, generatedMessage: !message
     }))
   );
 }"#;
@@ -534,7 +554,7 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
     match args.get(index) {
         Some(Value::String(message)) => Some(message.clone()),
         Some(Value::Undefined) | None => None,
-        Some(value) if is_error_object(value) => match execute::get_property(value, "message") {
+        Some(value) if is_error_object(value) || is_cross_context_error(value) => match execute::get_property(value, "message") {
             Value::String(message) => Some(message),
             _ => Some(crate::modules::util::inspect(value)),
         },
@@ -611,7 +631,7 @@ pub fn ok(
             crate::modules::util::invalid_arg_received(&arg(args, 1))
         )));
     }
-    if let Some(value) = args.get(1).filter(|value| is_error_object(value)) {
+    if let Some(value) = args.get(1).filter(|value| is_error_object(value) || is_cross_context_error(value)) {
         return Err(VmError::Thrown(value.clone()));
     }
     let custom = custom_message(args, 1);
@@ -1232,8 +1252,8 @@ fn rendered_deep(value: &Value) -> String {
                     )
                 })
                 .collect::<Vec<_>>();
-            entries.sort();
-            let mut rendered = collection_render("Map", entries);
+            let self_circular = map.keys.borrow().iter().chain(map.values.borrow().iter()).any(|entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)));
+            let mut rendered = collection_render("Map", entries, self_circular);
             append_collection_properties(&Value::Map(map.clone()), &mut rendered);
             rendered
         }
@@ -1250,8 +1270,8 @@ fn rendered_deep(value: &Value) -> String {
                 .iter()
                 .map(|value| collection_atom(&owner, value))
                 .collect::<Vec<_>>();
-            entries.sort();
-            let mut rendered = collection_render("Set", entries);
+            let self_circular = set.values.borrow().iter().any(|entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)));
+            let mut rendered = collection_render("Set", entries, self_circular);
             append_collection_properties(&Value::Set(set.clone()), &mut rendered);
             rendered
         }
@@ -1266,7 +1286,7 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
         _ => false,
     };
     if circular {
-        "[Circular]".into()
+        "[Circular *1]".into()
     } else if let Value::Set(set) = value {
         let owner = Value::Set(set.clone());
         let entries = set
@@ -1275,10 +1295,12 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
             .iter()
             .map(|entry| collection_atom(&owner, entry))
             .collect::<Vec<_>>();
+        let self_circular = set.values.borrow().iter().any(|entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)));
         if entries.is_empty() {
             "Set(0) {}".into()
         } else {
-            format!("Set({}) {{ {} }}", entries.len(), entries.join(", "))
+            let prefix = if self_circular { "<ref *1> " } else { "" };
+            format!("{prefix}Set({}) {{ {} }}", entries.len(), entries.join(", "))
         }
     } else if let Value::Map(map) = value {
         let owner = Value::Map(map.clone());
@@ -1295,30 +1317,24 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
                 )
             })
             .collect::<Vec<_>>();
+        let self_circular = map.keys.borrow().iter().chain(map.values.borrow().iter()).any(|entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)));
         if entries.is_empty() {
             "Map(0) {}".into()
         } else {
-            format!("Map({}) {{ {} }}", entries.len(), entries.join(", "))
+            let prefix = if self_circular { "<ref *1> " } else { "" };
+            format!("{prefix}Map({}) {{ {} }}", entries.len(), entries.join(", "))
         }
     } else {
         crate::modules::util::inspect_with_options(value, 1000, false, None, true)
     }
 }
 
-fn collection_render(name: &str, entries: Vec<String>) -> String {
+fn collection_render(name: &str, entries: Vec<String>, self_circular: bool) -> String {
     if entries.is_empty() {
         return format!("{name}(0) {{}}");
     }
-    let mut lines = vec![format!("{name}({}) {{", entries.len())];
-    for (index, entry) in entries.iter().enumerate() {
-        let comma = (index + 1 < entries.len()).then_some(',').unwrap_or(' ');
-        lines.push(format!("  {entry}{comma}"));
-    }
-    if let Some(last) = lines.last_mut() {
-        last.pop();
-    }
-    lines.push("}".into());
-    lines.join("\n")
+    let prefix = if self_circular { "<ref *1> " } else { "" };
+    format!("{prefix}{name}({}) {{ {} }}", entries.len(), entries.join(", "))
 }
 
 /// Assertion diagnostics include enumerable properties attached to collection
@@ -1978,6 +1994,11 @@ fn is_error_object(value: &Value) -> bool {
     false
 }
 
+fn is_cross_context_error(value: &Value) -> bool {
+    matches!(execute::get_property(value, "name"), Value::String(_))
+        && matches!(execute::get_property(value, "message"), Value::String(_))
+}
+
 fn rendered_error(value: &Value) -> String {
     let name = match execute::get_property(value, "name") {
         Value::String(name) if !name.is_empty() => name,
@@ -2390,7 +2411,7 @@ fn collection_diff(actual: &Value, expected: &Value) -> Option<String> {
         _ => return None,
     };
     if actual_entries == expected_entries {
-        return Some(collection_render(name, actual_entries));
+        return Some(collection_render(name, actual_entries, false));
     }
     let mut lines = vec![format!(
         "  {name}({}) {{",
