@@ -186,17 +186,23 @@ configurations. The transition bound is deliberately 16x to leave room for
 debug-build/setup noise while still rejecting a full linear walk over the
 16x property-count range. Invariant #1's temporary O(K) property-gateway
 regression produced a 10.31x ratio and failed its <8x bound before being
-reverted; equivalent subsystem-specific fault injection for the remaining
-four tests is still outstanding.
+reverted. A second source-level regression in the transition path was also
+introduced with a bounded O(N) scan; it produced a 20.80x ratio and failed
+the transition bound before being reverted. These checks validate that the
+suite's ratio bounds are sensitive to the claimed failure class rather than
+being unconditional timing smoke tests.
 
 Task 063 extends the module with three collection invariants. Fresh ARM64
 debug runs measured 1.53x (packed-array index-0 access at lengths 10 versus
 100,000), 0.92x (Map/Set access across 10 versus 1,000 unrelated instances),
 and 2.38x (Map/Set/Array iteration after 0 versus 2,000 add/delete cycles)
 without tracing; all are below the 16x scaling bound. The collection tests
-also pass under `execution-trace`. These are scaling checks only; deliberate
-subsystem fault-injection validation remains to be recorded before task 063
-is considered fully closed.
+also pass under `execution-trace`. The packed-array invariant was validated
+against a temporary source-level O(N) scan hook (capped at 2,000 probes per
+access): it measured a 20.94x ratio and failed its <16x bound before the hook
+was reverted. This representative collection regression gate confirms the
+ratio is sensitive to a real complexity regression; no test-only hook remains
+in production code.
 
 Task 065 adds closure, recursion-frame, and argument-marshaling invariants.
 ARM64 debug ratios were 0.81x/0.75x for closure creation across 10 versus
@@ -233,6 +239,11 @@ and prototype identity are not part of that derived layout fact. This is
 therefore Partial rather than a new implementation claim: extending the key
 would require a representation/IC audit, and no semantics-changing change is
 justified without that evidence.
+An additional regression test now builds the same visible layout through two
+independent transition paths (`independent_transition_histories_share_one_layout_fact`);
+both paths reuse the same interned layout fact. This confirms the existing
+runtime-wide (single-thread VM) deduplication behavior without conflating the
+derived slot layout with full descriptor/prototype shape identity.
 
 Fresh v8-v7 tracked-runner baseline (ARM64, optimized artifact,
 `--runs 1 --timeout-ms 10000`) records both execution score and peak RSS:

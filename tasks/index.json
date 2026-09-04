@@ -33,10 +33,11 @@
             "051: closed with finding; the reported Splay mismatch was a stale harness comparison of timing-derived Score output, not a VM semantic divergence. The tracked runner verifies Splay completion/teardown markers against Node; no tree-semantics fix was applicable (204f0ea2b, 8e727ab8e, e48ba210a)",
             "056: cycle audit confirmed real pure-Rc reference-cycle retention with quantified RSS scaling for plain objects, closure captures, and a DeltaBlue-shaped graph; committed probe tools/cycle-audit.mjs justifies 057 (commit efe5a19fa)",
             "057: periodic full-pass trial-deletion collector implemented and validated; closure environments (including captured parent frames) are traversed, weak edges remain non-owning, and long-running closure-cycle RSS is bounded (current working tree)",
+            "058: shape hash-consing audit closed with a finding; the single-thread runtime already interns structurally-identical visible property layouts globally within its VM thread, with independent-transition regression coverage. Full descriptor/prototype identity remains intentionally outside the derived slot-layout key and no semantics-changing expansion was justified",
             "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization"
         ],
         "remaining_slices": [
-            "048", "049", "052", "053", "054", "055", "058", "059", "060", "062", "063", "064", "065", "066", "067", "068", "069", "070", "071", "072", "073"
+            "048", "049", "052", "053", "054", "055", "059", "060", "062", "063", "064", "065", "066", "067", "068", "069", "070", "071", "072", "073"
         ]
     },
     "themes": {

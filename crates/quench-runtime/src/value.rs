@@ -1766,6 +1766,19 @@ mod object_identity_tests {
     }
 
     #[test]
+    fn independent_transition_histories_share_one_layout_fact() {
+        let mut first = ObjectData::new(Vec::new());
+        first.push((PropertyName::from("alpha"), Value::Number(1.0)));
+        first.push((PropertyName::from("beta"), Value::Number(2.0)));
+
+        let mut second = ObjectData::new(Vec::new());
+        second.set_property_in_place("alpha", Value::Number(3.0));
+        second.set_property_in_place("beta", Value::Number(4.0));
+
+        assert_eq!(first.semantic_layout_id(), second.semantic_layout_id());
+    }
+
+    #[test]
     fn property_sequence_mutation_invalidates_the_layout_fact() {
         let mut object = ObjectData::new(vec![("x".into(), Value::Number(1.0))]);
         let before = object.semantic_layout_id();
