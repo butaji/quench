@@ -3696,13 +3696,20 @@ fn finish_known_response(state: &Rc<RefCell<HostState>>, client_id: u64) -> Resu
             return Ok(());
         };
         let headers = execute::get_property(response, "headers");
+        let status = execute::get_property(response, "statusCode");
+        let no_body_status = matches!(
+            status,
+            Value::Number(value)
+                if (100.0..200.0).contains(&value) || value == 204.0 || value == 304.0
+        );
         let expected = execute::to_js_string(&execute::get_property(&headers, "content-length"))
             .ok()
             .and_then(|value| value.parse::<usize>().ok());
         let chunked = execute::to_js_string(&execute::get_property(&headers, "transfer-encoding"))
             .ok()
             .is_some_and(|value| value.eq_ignore_ascii_case("chunked"));
-        let complete = expected.is_some_and(|length| req.response_received >= length)
+        let complete = no_body_status
+            || expected.is_some_and(|length| req.response_received >= length)
             || (chunked && req.response_chunked_done);
         complete.then(|| req.socket.clone()).flatten()
     };
@@ -4026,6 +4033,12 @@ pub fn res_end_handler(
             }
             _ => None,
         };
+        let status = execute::get_property(&res, "statusCode");
+        let no_body_status = matches!(
+            status,
+            Value::Number(value)
+                if (100.0..200.0).contains(&value) || value == 204.0 || value == 304.0
+        );
         let chunked = match execute::get_property(&res, "headers") {
             headers @ (Value::Object(_) | Value::ObjectAlias(_)) => {
                 execute::to_js_string(&execute::get_property(&headers, "transfer-encoding"))
@@ -4043,7 +4056,10 @@ pub fn res_end_handler(
             net::socket_destroy(state, Some(socket), &[])?;
             return Ok(Value::Undefined);
         }
-        if expected.is_some_and(|expected| expected != received) || (chunked && !chunked_done) {
+        if !no_body_status
+            && (expected.is_some_and(|expected| expected != received)
+                || (chunked && !chunked_done))
+        {
             return abort_incomplete_response(state, client_id, &res);
         }
         set_response_property(&res, "complete", Value::Boolean(true));
