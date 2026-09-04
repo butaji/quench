@@ -31,6 +31,9 @@ fn compare_partial(
     if execute::same_value(left, right) {
         return Ok(true);
     }
+    if is_typed_array(left) && is_typed_array(right) {
+        return partial_typed_array(left, right, memo);
+    }
     if is_date_value(left) != is_date_value(right) && (is_date_value(left) || is_date_value(right))
     {
         return Ok(false);
@@ -317,6 +320,18 @@ fn partial_typed_array(
     let right_len = typed_array_length(right).unwrap_or(0);
     if left_len < right_len || seen(memo, left, right) {
         return Ok(left_len >= right_len);
+    }
+    if left_len == right_len {
+        if let (Some((left_buffer, left_start, left_end)),
+            Some((right_buffer, right_start, right_end))) =
+            (typed_array_bytes(left), typed_array_bytes(right))
+        {
+            let left_bytes = left_buffer.bytes.borrow();
+            let right_bytes = right_buffer.bytes.borrow();
+            if left_bytes.get(left_start..left_end) == right_bytes.get(right_start..right_end) {
+                return partial_enumerable_symbols(left, right);
+            }
+        }
     }
     let mut cursor = 0;
     for index in 0..right_len {
@@ -637,6 +652,13 @@ fn compare(
     if execute::same_value(left, right) {
         return Ok(true);
     }
+    // Typed-array identity and element semantics are self-contained.  Handle
+    // them before the generic object probes below (date/regexp/error/url
+    // markers), whose VM property lookups are disproportionately expensive
+    // for large views and add no information for this value family.
+    if is_typed_array(left) && is_typed_array(right) {
+        return compare_typed_arrays(left, right, strict, skip_prototype, memo);
+    }
     if is_date_value(left) != is_date_value(right) && (is_date_value(left) || is_date_value(right))
     {
         return Ok(false);
@@ -944,6 +966,26 @@ fn compare_typed_arrays(
         let length = typed_array_length(left).unwrap_or(0);
         if typed_array_length(right).unwrap_or(0) != length {
             return Ok(false);
+        }
+        // Equal floating-point views are overwhelmingly the common case in
+        // deep-comparison workloads.  Compare their backing bytes first so
+        // large typed arrays do not cross the VM property boundary once per
+        // element.  A byte mismatch falls back to element semantics below,
+        // preserving SameValue/SameValueZero handling for signed zero and
+        // NaN payloads.
+        if let (Some((left_buffer, left_start, left_end)),
+            Some((right_buffer, right_start, right_end))) =
+            (typed_array_bytes(left), typed_array_bytes(right))
+        {
+            let left_bytes = left_buffer.bytes.borrow();
+            let right_bytes = right_buffer.bytes.borrow();
+            if left_bytes.get(left_start..left_end) == right_bytes.get(right_start..right_end) {
+                return if strict {
+                    same_enumerable_symbols_shallow(left, right)
+                } else {
+                    Ok(true)
+                };
+            }
         }
         for index in 0..length {
             let left_value = execute::get_property(left, &index.to_string());
