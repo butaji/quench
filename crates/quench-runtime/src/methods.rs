@@ -62,10 +62,12 @@ pub(crate) fn execute_named(
         return Ok(None);
     }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
-    let callee = named_known_callee(&receiver, cache).map_or_else(
-        || crate::vm::get_named_property_result(&receiver, key, cache),
-        Ok,
-    )?;
+    let callee = named_known_callee(&receiver, cache)
+        .or_else(|| array_known_callee(&receiver, key))
+        .map_or_else(
+            || crate::vm::get_named_property_result(&receiver, key, cache),
+            Ok,
+        )?;
     let argument = (instruction.flags == 1)
         .then(|| read_register(registers, instruction.c))
         .transpose()?;
@@ -126,6 +128,14 @@ pub(crate) fn execute_registered(
     let first = instruction.a.saturating_sub(u16::from(instruction.flags));
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
+    if instruction.flags == 1
+        && matches!(callee, Value::Builtin(crate::ops::Builtin::ArrayPush))
+    {
+        let argument = read_register(registers, instruction.a.saturating_sub(1))?;
+        let value = crate::builtins::array_push(Some(&receiver), &[argument])?;
+        write_value(registers, instruction.a, value);
+        return Ok(None);
+    }
     if instruction.flags == 1 {
         if let Value::Builtin(
             builtin @ (crate::ops::Builtin::StringCharAt | crate::ops::Builtin::StringCharCodeAt),
@@ -187,6 +197,18 @@ fn named_known_callee(receiver: &Value, cache: &std::cell::Cell<u64>) -> Option<
         Value::Function(_) | Value::Builtin(_) | Value::BoundFunction(_)
     )
     .then_some(callee)
+}
+
+#[inline]
+fn array_known_callee(receiver: &Value, key: &str) -> Option<Value> {
+    let Value::Array(array) = receiver else { return None };
+    if !array.is_packed_ordinary() || !crate::builtins::array_prototype_is_clean() {
+        return None;
+    }
+    match crate::arrays::property(array, key) {
+        value @ Value::Builtin(_) => Some(value),
+        _ => None,
+    }
 }
 
 fn finish_named_call(
