@@ -13265,6 +13265,22 @@ pub fn test_mock_fn(
             original_implementation.clone(),
         ],
     );
+    // A mock of a constructable function inherits the wrapped constructor's
+    // prototype.  Bound host capabilities otherwise expose the ordinary
+    // Function prototype, so `new mock` loses `instanceof` and the outer
+    // bound-constructor normalization replaces the returned object's
+    // prototype.  Keep this as the single constructor fact on the wrapper.
+    let target_prototype = quench_runtime::execute::get_property(&metadata_target, "prototype");
+    if matches!(
+        target_prototype,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Function(_) | Value::BoundFunction(_)
+    ) {
+        wrapper = quench_runtime::execute::set_property(
+            wrapper,
+            "prototype",
+            target_prototype,
+        );
+    }
     wrapper = define_mock_metadata(
         wrapper,
         "name",
