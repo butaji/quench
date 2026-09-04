@@ -49,9 +49,10 @@
             ,"064: string append/search/comparison invariants pass in both feature configurations; each rejected a deliberate superlinear or unrelated-state regression before restoration"
             ,"065: closure creation, recursive frame, and argument marshaling invariants pass in both feature configurations; all three rejected deliberate history/depth/catalog scans before restoration"
             ,"066: allocation and drop invariants pass in both feature configurations; both rejected deliberate live-heap scans before restoration, with arena-specific coverage deferred until task 059"
+            ,"067: generated direct RegionKey dispatch, fixed-capacity render-cache checks, and arena scaling invariants pass in both feature configurations; native ARM64 Add execution is exercised under the opt-in gate and the arena test rejected a deliberate cursor-scan regression"
         ],
         "remaining_slices": [
-            "048", "049", "054", "059", "060", "067", "073"
+            "048", "049", "054", "059", "060", "073"
         ]
     },
     "themes": {

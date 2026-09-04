@@ -898,6 +898,34 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     (crate::stencil_select::RegionRecord { key: GET_INDEX_INC_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_INDEX_INC_BYTES, holes: GET_INDEX_INC_HOLES }, operations: GET_INDEX_INC_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
     (crate::stencil_select::RegionRecord { key: FOR_I_KEY, stencil: crate::stencil_fact::Stencil { bytes: FOR_I_BYTES, holes: FOR_I_HOLES }, operations: FOR_I_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
 ];
+// Generated direct key dispatch keeps selection independent of the number of
+// unrelated catalog rows; the ordinary fallback remains the `_` arm.
+fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'static crate::stencil_select::RegionRecord> {
+    match key {
+        LOOP_KEY => Some(&REGION_TABLE[0]),
+        MOVE_KEY => Some(&REGION_TABLE[1]),
+        PROPERTY_KEY => Some(&REGION_TABLE[2]),
+        FALLTHROUGH_KEY => Some(&REGION_TABLE[3]),
+        SUBTRACT_KEY => Some(&REGION_TABLE[4]),
+        MULTIPLY_KEY => Some(&REGION_TABLE[5]),
+        DIVIDE_KEY => Some(&REGION_TABLE[6]),
+        ADD_CONST_KEY => Some(&REGION_TABLE[7]),
+        DISPATCH_KEY => Some(&REGION_TABLE[8]),
+        LOOP_GLUE_KEY => Some(&REGION_TABLE[9]),
+        BINARY_GLUE_KEY => Some(&REGION_TABLE[10]),
+        UPDATE_RETURN_KEY => Some(&REGION_TABLE[11]),
+        CALL_KEY => Some(&REGION_TABLE[12]),
+        CALL_N_KEY => Some(&REGION_TABLE[13]),
+        ARITHMETIC_GLUE_KEY => Some(&REGION_TABLE[14]),
+        GET_PROPERTY_KEY => Some(&REGION_TABLE[15]),
+        SET_N_KEY => Some(&REGION_TABLE[16]),
+        GET_INDEX_KEY => Some(&REGION_TABLE[17]),
+        SET_INDEX_KEY => Some(&REGION_TABLE[18]),
+        GET_INDEX_INC_KEY => Some(&REGION_TABLE[19]),
+        FOR_I_KEY => Some(&REGION_TABLE[20]),
+        _ => None,
+    }
+}
 "#
     .replace("__LOOP_BYTES__", &byte_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_BYTES__", &byte_decl("PROPERTY", &REGION_DECLARATIONS[1]))

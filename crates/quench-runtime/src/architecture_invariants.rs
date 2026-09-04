@@ -191,7 +191,7 @@ mod tests {
         let source = format!(
             r#"
                 var object = {{a: 1, b: 2, c: 3, d: 4}};
-                for (var i = 0; i < {history}; i++) {{
+                    for (var i = 0; i < {history}; i++) {{
                     object["transient" + i] = i;
                     delete object["transient" + i];
                 }}
@@ -691,6 +691,23 @@ mod tests {
     /// and deliberately does not execute machine code.
     #[test]
     fn stencil_arena_allocation_is_constant_time() {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena maps");
+            let mut cache = crate::stencil_select::RenderedRegionCache::new();
+            let site = crate::quickening::QuickeningSite::<2>::new(crate::ir::Opcode::Add);
+            let values = crate::stencil_fact::PatchValues::from_site(&site);
+            let result = arena.render_selected_f64(
+                &mut cache,
+                crate::stencil_select::fallthrough_region_key(),
+                &values,
+                20.5,
+                22.25,
+                || Ok(7.0),
+            );
+            assert_eq!(result, Ok(42.75));
+            eprintln!("architecture invariant #067: native stencil execution exercised");
+        }
         let short = measure_arena_allocations(1_000);
         let long = measure_arena_allocations(10_000);
         let ratio = (long / 10.0) / short.max(1e-9);
