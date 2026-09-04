@@ -84,6 +84,28 @@ assume is still on the table:
   widening 042's region-size ceiling and 040/041's coverage breadth instead —
   same mechanism, same soundness bar, no new risk class.
 
+**Update (2026-09, external research check) — temper the claim above.**
+Task 040 landed `Call`/property/array/loop region coverage; the curriculum's
+hardest cases (recursion, megamorphic access, closures — 13-47x vs. Node)
+did not measurably improve. This matches a documented general pattern, not a
+quench-specific bug: a 2025 paper ("An Attempt to Catch Up with JIT
+Compilers: The False Lead of Optimizing Inline Caches," arXiv:2502.20547)
+found via binary-instrumentation isolation that IC/coverage refinement has
+**minimal impact** on overall JIT performance — the actual driver is
+speculative optimization, which this project has just decided, correctly,
+not to build. Separately, CPython's own copy-and-patch JIT (3.13, the same
+technique this tier uses) has not yet demonstrated a win over its adaptive
+interpreter at all. **Conclusion: more stencil coverage alone will not close
+this gap — that's expected, not a defect.** The realistic remaining levers
+are non-speculative but different in kind from coverage: a V8-style shared
+global megamorphic cache (task 045, since V8's own answer to a degraded site
+is cross-site memoization, not just "fall back forever"), call-frame
+allocation cost within already-admitted call regions (task 047), and string
+rope representation for the concatenation-heavy outlier (task 046, already
+flagged separately by task 041). All three are profile-gated — build only
+if a real measured cost justifies it, same discipline as every other task
+in this backlog.
+
 ## Summary: what's real work vs. what's misnamed vs. what's done
 
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
