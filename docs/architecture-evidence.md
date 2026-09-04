@@ -194,16 +194,16 @@ being unconditional timing smoke tests.
 
 The enumeration invariant now also includes a live-key scaling companion,
 `enumeration_scales_linearly_with_live_key_count` (20 versus 200 live keys,
-with a 32x bound for ARM64 debug noise). A fresh no-trace run measured 19.71x
-per-enumeration cost and passed. As a deliberate regression check, temporarily
-removing the canonical-layout membership fast path caused the same test to
-run beyond 60 seconds (the old per-key key-vector rebuild), catching the
-historical quadratic failure class; the fast path was restored immediately.
-The existing history-only probe remains the mutation-history regression check.
-The same companion passed under `execution-trace` at 23.32x; the complete
-architecture-invariant module now runs 20/20 in that configuration.
-After this addition, the full runtime gates pass 616 tests without tracing and
-626 with `execution-trace`, and `cargo check -p quench-node` is green.
+with a 32x bound for ARM64 debug noise). After amortizing setup and collector
+checkpoints with a 100-iteration timed phase, fresh ARM64 runs measured
+8.24–10.36x per-enumeration cost and passed in both configurations. As a
+deliberate regression check, temporarily removing the canonical-layout
+membership fast path caused the same test to run beyond 30 seconds (the old
+per-key key-vector rebuild), catching the historical quadratic failure class;
+the fast path was restored immediately. The existing history-only probe remains
+the mutation-history regression check. The complete architecture-invariant
+module now runs 20/20; full runtime gates pass 617 tests without tracing and
+627 with `execution-trace`, and `cargo check -p quench-node` is green.
 
 Task 063 extends the module with three collection invariants. Fresh ARM64
 debug runs measured 1.53x (packed-array index-0 access at lengths 10 versus
