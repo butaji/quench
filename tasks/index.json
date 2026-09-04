@@ -42,10 +42,11 @@
             "069: Crypto completion/profile closed with a no-go finding; a 300-second run still produced no result marker, while a five-second DWARF sample of the actual quench-node process showed active nested execute_call/execute_direct/execute_interpreter work rather than a tight hang. No Crypto-specific optimization was justified",
             "053: regex profile survey closed with a match-execution-dominated finding; no regex-engine rewrite was justified. The previously observed RegExp local-lifetime error is fixed by the general cycle-collector root-safety correction, while the 225-second/1.59GiB completion remains a separate performance/memory finding",
             "074: profile-first slow-lane dispatch survey closed with a no-go finding; a neutral branch/unary clone was dominated by distributed run_instruction/call machinery, while the only generic inlining candidate was neutral in optimized timing and RSS, so no semantic fast path was justified",
-            "070: 300-second ARM64 release rebaseline completed all eight v8-v7 fixtures with output_equal:true; Crypto/EarleyBoyer/RegExp are finite but extremely slow (215.17s/66.55s/225.18s), and RegExp's 1.59GiB peak RSS is now an explicit memory finding rather than a timeout unknown"
+            "070: 300-second ARM64 release rebaseline completed all eight v8-v7 fixtures with output_equal:true; Crypto/EarleyBoyer/RegExp are finite but extremely slow (215.17s/66.55s/225.18s), and RegExp's 1.59GiB peak RSS is now an explicit memory finding rather than a timeout unknown",
+            "055: allocation-throughput survey completed on Splay, RayTrace, and EarleyBoyer with execution-trace allocation/lifecycle counts and native samples; allocation events were 7.3%, 10.7%, and 3.2% of handler events while slow lanes were dispatch/trace/call dominated, so no bounded allocation site or Rc-model change was justified"
         ],
         "remaining_slices": [
-            "048", "049", "054", "055", "059", "060", "062", "063", "064", "065", "066", "067", "073"
+            "048", "049", "054", "059", "060", "062", "063", "064", "065", "066", "067", "073"
         ]
     },
     "themes": {
