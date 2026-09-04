@@ -3124,6 +3124,107 @@ mod compact_handler_tests {
     }
 
     #[test]
+    fn profiled_loop_body_span_matches_ordinary_execution() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![
+            Op::CheckInitialized {
+                slot: 0,
+                name: "left".into(),
+            },
+            Op::LoadLocal { dst: 1, slot: 0 },
+            Op::CheckInitialized {
+                slot: 1,
+                name: "right".into(),
+            },
+            Op::LoadLocal { dst: 2, slot: 1 },
+            Op::Binary {
+                dst: 3,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 1,
+                rhs: 2,
+            },
+            Op::StoreLocal { slot: 3, src: 3 },
+            Op::Move { dst: 4, src: 3 },
+            Op::LoadLocal { dst: 5, slot: 0 },
+            Op::Const {
+                dst: 6,
+                value: crate::ops::Constant::Number(1.0),
+            },
+            Op::Binary {
+                dst: 7,
+                operator: crate::ops::BinaryOp::NumericAdd,
+                lhs: 5,
+                rhs: 6,
+            },
+            Op::CheckInitialized {
+                slot: 0,
+                name: "left".into(),
+            },
+            Op::StoreLocal { slot: 0, src: 7 },
+            Op::Return { src: 4 },
+        ]);
+        let code = executable.code();
+        let key = crate::stencil_select::loop_body_region_key();
+        let record = crate::stencil_select::select_region(key).expect("loop body row");
+        assert_eq!(record.operations.len(), 7);
+        assert_eq!(code.len(), record.operations.len());
+        assert!(code
+            .slice(0, record.operations.len())
+            .is_some_and(|view| (0..view.len()).all(|pc| {
+                view.instruction(pc).is_some_and(|instruction| {
+                    instruction.opcode == record.operations[pc]
+                })
+            })));
+
+        let values = vec![Value::Number(2.0), Value::Number(5.0), Value::Undefined];
+        let context = crate::vm::current_context_or_default();
+        let mut ordinary = crate::register_file::RegisterFile::from_values(values.clone());
+        let expected_transition = {
+            let environment = crate::environment::Environment::new();
+            environment.set(0, values[0].clone());
+            environment.set(1, values[1].clone());
+            let _guard = crate::locals::EnvironmentGuard::install(environment);
+            execute_one_at_a_time(code, &mut ordinary, &context)
+        };
+        let expected_registers = ordinary.clone();
+
+        let mut fused = crate::register_file::RegisterFile::from_values(values);
+        let actual_transition = {
+            let environment = crate::environment::Environment::new();
+            environment.set(0, Value::Number(2.0));
+            environment.set(1, Value::Number(5.0));
+            let _guard = crate::locals::EnvironmentGuard::install(environment);
+            let mut region = crate::machine::NativeRegionPlan::new_for_test(key)
+                .expect("loop body test plan");
+            region
+                .execute(code, 0, &mut fused, &context)
+                .expect("loop body fused execution")
+        };
+        assert_transition_equal(&actual_transition, &expected_transition);
+        assert_eq!(fused, expected_registers);
+
+        // A stale fact in the middle of the seven-op window must reject the
+        // entire span before its first handler mutates a register.
+        let mut partial = crate::register_file::RegisterFile::from_values(vec![
+            Value::Number(2.0),
+            Value::Number(5.0),
+            Value::Undefined,
+        ]);
+        let before = partial.clone();
+        code.quicken_instruction(3, crate::ir::Opcode::Slow, 0, 0, 0);
+        let environment = crate::environment::Environment::new();
+        environment.set(0, Value::Number(2.0));
+        environment.set(1, Value::Number(5.0));
+        let _guard = crate::locals::EnvironmentGuard::install(environment);
+        let mut region = crate::machine::NativeRegionPlan::new_for_test(key)
+            .expect("loop body hostile test plan");
+        assert!(matches!(
+            region.execute(code, 0, &mut partial, &context),
+            Err(crate::machine::NativeDispatchError::Physical(_))
+        ));
+        assert_eq!(partial, before, "hostile span executed a prefix");
+    }
+
+    #[test]
     fn fused_region_unknown_interior_falls_back_atomically() {
         let executable = crate::machine::ExecutableCode::from_ops(vec![
             Op::LoadLocal { dst: 1, slot: 1 },

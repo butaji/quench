@@ -703,3 +703,35 @@ model or add a generational collector on this evidence. A future allocator
 task would need a new, site-specific profile that attributes CPU time (not
 just allocation volume) to one general allocation site, while preserving the
 complete ordinary semantics and RSS bounds.
+
+## Task 048: profiled loop-body region scope
+
+Task 048 adds one bounded `LOOP_BODY` region row to the generated stencil
+catalog. The admission is based on execution-trace data from neutral arithmetic
+loops, not fixture identity: the recurring straight-line window is
+`LoadLocalChecked, LoadLocalChecked, Add, StoreLocal, Move, UpdateLocal,
+Return` (about 5,000 occurrences in curriculum case 017 and about 3,000 in
+case 019). The sequential executor validates every instruction and the whole
+window's single-entry CFG proof; stale, unknown, hostile, or interior-entry
+matches fall back atomically to the ordinary handlers. The existing shorter
+regions and all complete interpreter paths remain intact.
+
+Fresh release/`execution-trace` measurements were paired before and after the
+change. The 100-case neutral corpus remained fully correct and moved from
+Score 283.887 (speed 219.622, memory 366.957) to Score 285.265 (speed
+221.848, memory 366.811). Curriculum cases 017-019 remained 3/3 output and
+instrumentation-correct; speed/memory scores were 233.4/377.0 before and
+227.1/378.4 after, within normal run noise and with no regression claim. The
+required full ARM64 v8-v7 cross-check at the 300-second tier also completed
+all eight fixtures with `output_equal:true`: engine scores were Richards 53,
+DeltaBlue 47.4, Crypto 16.8, RayTrace 158, EarleyBoyer 70.8, RegExp 13.8,
+Splay 355, and NavierStokes 189 (score geomean 67.6204); peak RSS was recorded
+per fixture, including the existing RegExp outlier. This region remains
+architecture-gated/opt-in on ARM64 pending task 068's separate native
+call-boundary decision.
+
+The complete gates passed after the change: runtime library tests with and
+without `execution-trace` (619/629 tests), `cargo check -p quench-node`, the
+neutral 100/100 differential run, targeted CFG and fused-vs-ordinary
+differential tests, and `git diff --check`. No production path references a
+benchmark name, source path, or fixture identity.
