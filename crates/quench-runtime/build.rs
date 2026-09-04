@@ -418,6 +418,74 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "get_property",
+        operations: &["GetProperty"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "set_named",
+        operations: &["SetN"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "get_index",
+        operations: &["AGetI"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "set_index",
+        operations: &["ASetI"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "get_index_inc",
+        operations: &["AGetIInc"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "for_i",
+        // Structured ForI has no bytecode back-edge, so this is a bounded
+        // admission row only; the canonical loop handler remains complete.
+        operations: &["ForI"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
@@ -570,6 +638,12 @@ __UPDATE_RETURN_BYTES__
 __CALL_BYTES__
 __CALL_N_BYTES__
 __ARITHMETIC_GLUE_BYTES__
+__GET_PROPERTY_BYTES__
+__SET_N_BYTES__
+__GET_INDEX_BYTES__
+__SET_INDEX_BYTES__
+__GET_INDEX_INC_BYTES__
+__FOR_I_BYTES__
 const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
 // The catalog remains present on every target for deterministic admission,
 // but only the ISA whose bytes are actually defined may cross the executable
@@ -594,6 +668,12 @@ __UPDATE_RETURN_HOLES__
 __CALL_HOLES__
 __CALL_N_HOLES__
 __ARITHMETIC_GLUE_HOLES__
+__GET_PROPERTY_HOLES__
+__SET_N_HOLES__
+__GET_INDEX_HOLES__
+__SET_INDEX_HOLES__
+__GET_INDEX_INC_HOLES__
+__FOR_I_HOLES__
 const FALLTHROUGH_TAIL_HOLES: &[crate::stencil_fact::Hole] = &[];
 const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {
     bytes: FALLTHROUGH_TAIL_BYTES,
@@ -615,6 +695,12 @@ const UPDATE_RETURN_OPS: &[crate::ir::Opcode] = &[__UPDATE_RETURN_OPS__];
 const CALL_OPS: &[crate::ir::Opcode] = &[__CALL_OPS__];
 const CALL_N_OPS: &[crate::ir::Opcode] = &[__CALL_N_OPS__];
 const ARITHMETIC_GLUE_OPS: &[crate::ir::Opcode] = &[__ARITHMETIC_GLUE_OPS__];
+const GET_PROPERTY_OPS: &[crate::ir::Opcode] = &[__GET_PROPERTY_OPS__];
+const SET_N_OPS: &[crate::ir::Opcode] = &[__SET_N_OPS__];
+const GET_INDEX_OPS: &[crate::ir::Opcode] = &[__GET_INDEX_OPS__];
+const SET_INDEX_OPS: &[crate::ir::Opcode] = &[__SET_INDEX_OPS__];
+const GET_INDEX_INC_OPS: &[crate::ir::Opcode] = &[__GET_INDEX_INC_OPS__];
+const FOR_I_OPS: &[crate::ir::Opcode] = &[__FOR_I_OPS__];
 const LOOP_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(1), LOOP_OPS,
 );
@@ -658,6 +744,24 @@ const CALL_N_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKe
 );
 const ARITHMETIC_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(15), ARITHMETIC_GLUE_OPS,
+);
+const GET_PROPERTY_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(16), GET_PROPERTY_OPS,
+);
+const SET_N_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(17), SET_N_OPS,
+);
+const GET_INDEX_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(18), GET_INDEX_OPS,
+);
+const SET_INDEX_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(19), SET_INDEX_OPS,
+);
+const GET_INDEX_INC_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(20), GET_INDEX_INC_OPS,
+);
+const FOR_I_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(21), FOR_I_OPS,
 );
 static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
     (crate::ir::Opcode::Add, FALLTHROUGH_KEY),
@@ -787,6 +891,12 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         fallthrough: None,
         executable: EXECUTABLE,
     }),
+    (crate::stencil_select::RegionRecord { key: GET_PROPERTY_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_PROPERTY_BYTES, holes: GET_PROPERTY_HOLES }, operations: GET_PROPERTY_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: SET_N_KEY, stencil: crate::stencil_fact::Stencil { bytes: SET_N_BYTES, holes: SET_N_HOLES }, operations: SET_N_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: GET_INDEX_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_INDEX_BYTES, holes: GET_INDEX_HOLES }, operations: GET_INDEX_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: SET_INDEX_KEY, stencil: crate::stencil_fact::Stencil { bytes: SET_INDEX_BYTES, holes: SET_INDEX_HOLES }, operations: SET_INDEX_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: GET_INDEX_INC_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_INDEX_INC_BYTES, holes: GET_INDEX_INC_HOLES }, operations: GET_INDEX_INC_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
+    (crate::stencil_select::RegionRecord { key: FOR_I_KEY, stencil: crate::stencil_fact::Stencil { bytes: FOR_I_BYTES, holes: FOR_I_HOLES }, operations: FOR_I_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
 ];
 "#
     .replace("__LOOP_BYTES__", &byte_decl("LOOP", &REGION_DECLARATIONS[0]))
@@ -810,6 +920,12 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__CALL_BYTES__", &byte_decl("CALL", &REGION_DECLARATIONS[12]))
     .replace("__CALL_N_BYTES__", &byte_decl("CALL_N", &REGION_DECLARATIONS[13]))
     .replace("__ARITHMETIC_GLUE_BYTES__", &byte_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[14]))
+    .replace("__GET_PROPERTY_BYTES__", &byte_decl("GET_PROPERTY", &REGION_DECLARATIONS[15]))
+    .replace("__SET_N_BYTES__", &byte_decl("SET_N", &REGION_DECLARATIONS[16]))
+    .replace("__GET_INDEX_BYTES__", &byte_decl("GET_INDEX", &REGION_DECLARATIONS[17]))
+    .replace("__SET_INDEX_BYTES__", &byte_decl("SET_INDEX", &REGION_DECLARATIONS[18]))
+    .replace("__GET_INDEX_INC_BYTES__", &byte_decl("GET_INDEX_INC", &REGION_DECLARATIONS[19]))
+    .replace("__FOR_I_BYTES__", &byte_decl("FOR_I", &REGION_DECLARATIONS[20]))
     .replace("__LOOP_HOLES__", &hole_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_HOLES__", &hole_decl("PROPERTY", &REGION_DECLARATIONS[1]))
     .replace("__MOVE_HOLES__", &hole_decl("MOVE", &REGION_DECLARATIONS[2]))
@@ -831,6 +947,12 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__CALL_HOLES__", &hole_decl("CALL", &REGION_DECLARATIONS[12]))
     .replace("__CALL_N_HOLES__", &hole_decl("CALL_N", &REGION_DECLARATIONS[13]))
     .replace("__ARITHMETIC_GLUE_HOLES__", &hole_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[14]))
+    .replace("__GET_PROPERTY_HOLES__", &hole_decl("GET_PROPERTY", &REGION_DECLARATIONS[15]))
+    .replace("__SET_N_HOLES__", &hole_decl("SET_N", &REGION_DECLARATIONS[16]))
+    .replace("__GET_INDEX_HOLES__", &hole_decl("GET_INDEX", &REGION_DECLARATIONS[17]))
+    .replace("__SET_INDEX_HOLES__", &hole_decl("SET_INDEX", &REGION_DECLARATIONS[18]))
+    .replace("__GET_INDEX_INC_HOLES__", &hole_decl("GET_INDEX_INC", &REGION_DECLARATIONS[19]))
+    .replace("__FOR_I_HOLES__", &hole_decl("FOR_I", &REGION_DECLARATIONS[20]))
     .replace("__LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[0].operations))
     .replace("__PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[1].operations))
     .replace("__MOVE_OPS__", &opcode_expr(REGION_DECLARATIONS[2].operations))
@@ -844,7 +966,13 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__UPDATE_RETURN_OPS__", &opcode_expr(REGION_DECLARATIONS[11].operations))
     .replace("__CALL_OPS__", &opcode_expr(REGION_DECLARATIONS[12].operations))
     .replace("__CALL_N_OPS__", &opcode_expr(REGION_DECLARATIONS[13].operations))
-    .replace("__ARITHMETIC_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[14].operations));
+    .replace("__ARITHMETIC_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[14].operations))
+    .replace("__GET_PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[15].operations))
+    .replace("__SET_N_OPS__", &opcode_expr(REGION_DECLARATIONS[16].operations))
+    .replace("__GET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[17].operations))
+    .replace("__SET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[18].operations))
+    .replace("__GET_INDEX_INC_OPS__", &opcode_expr(REGION_DECLARATIONS[19].operations))
+    .replace("__FOR_I_OPS__", &opcode_expr(REGION_DECLARATIONS[20].operations));
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
