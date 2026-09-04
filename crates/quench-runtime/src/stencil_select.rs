@@ -117,7 +117,7 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
 }
 
 pub fn select_region(key: RegionKey) -> Option<&'static RegionRecord> {
-    REGION_TABLE.iter().find(|record| record.key == key)
+    generated_region_lookup(key)
 }
 
 /// Execute the selected region through a caller-owned semantic entry point.

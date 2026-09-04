@@ -256,6 +256,13 @@ selection/cache/allocation mechanics without executing native bytes; the
 ARM64 executable path remains explicitly opt-in via
 `QUENCH_ENABLE_AARCH64_STENCILS`, so no claim of native stencil execution is
 made by this invariant suite.
+The selector now uses a build-generated direct key match rather than a
+runtime linear scan over `REGION_TABLE`; cache capacity remains the fixed
+16-entry bound. The architecture test additionally executes the rendered
+ARM64 Add stencil under `QUENCH_ENABLE_AARCH64_STENCILS=1` and reports the
+native result before timing arena placement. A temporary O(previous-cursor)
+scan in `StencilArena::alloc` produced a 4.74x allocation-history ratio and
+failed a temporary <4x bound before both hook and bound were restored.
 
 Task 058 audit: quench already hash-conses ordinary-object layout facts in
 `value.rs` (`OBJECT_LAYOUTS` plus hash buckets), and the existing
