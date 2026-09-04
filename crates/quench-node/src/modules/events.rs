@@ -570,6 +570,19 @@ pub fn method_emit(
                 )?;
                 continue;
             }
+            Err(VmError::Thrown(reason)) => {
+                // Legacy domains own exceptions raised by callbacks attached
+                // to a domain member (for example a response's `end`
+                // listener). EventEmitter must route that throw through the
+                // member's domain before allowing it to reach the process;
+                // otherwise a JSON parse or user callback escapes as an
+                // uncaught VM error instead of a domain `error` event.
+                if let Some(result) = route_domain_error(state, receiver, Some(&reason))? {
+                    result
+                } else {
+                    return Err(VmError::Thrown(reason));
+                }
+            }
             Err(error) => return Err(error),
         };
         if matches!(result, Value::Promise(_)) {
@@ -719,7 +732,7 @@ fn attach_unhandled_rejection(promise: &Value) -> Result<(), VmError> {
 
 /// Domain membership is an edge concern: EventEmitter owns the emission, and
 /// the attached domain owns unhandled-error policy.
-fn route_domain_error(
+pub(crate) fn route_domain_error(
     state: &Rc<RefCell<HostState>>,
     receiver: &Value,
     argument: Option<&Value>,
