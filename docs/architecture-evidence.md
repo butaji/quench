@@ -165,6 +165,16 @@ semantics change was made. A follow-on optimization, if pursued, must target
 general bounded polymorphic property/call dispatch and retain complete
 fallback semantics.
 
+Task 062 invariant #1 is now a permanent runtime test:
+`property_access_does_not_scale_with_historical_shape_count`. It creates K=10
+and K=1000 distinct object layouts, then measures equal numbers of property
+reads per object. The measured per-access ratios were 0.986x (no tracing) and
+0.995x (execution-trace), against a deliberately conservative <8x bound. As a
+validation of the bound, a temporary O(K) scan hook in the actual property
+gateway produced a 10.31x ratio and failed the test; that hook was reverted.
+This confirms the task-061 finding that historical shape count is not itself
+the scaling problem.
+
 The task-061 validation runs passed both runtime configurations (`592` tests
 without tracing and `602` with `execution-trace`). The optimized ARM64
 curriculum sweep completed 33/38 cases with exact observable matches; the five
