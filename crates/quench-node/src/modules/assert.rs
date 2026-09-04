@@ -336,14 +336,24 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
     return Promise.reject(error);
   }
   return Promise.resolve(input).then(
-    () => Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
+    () => {
+      return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
       code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message
-    })),
+      }));
+    },
     (error) => {
-      if (typeof expected === "function" && expected(error) !== true) {
-        return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: "The rejection did not match"}), {
+      if (typeof expected === "function") {
+        const validation = expected(error);
+        if (validation !== true) {
+          const received = typeof validation === "string" ? `'${validation}'` : String(validation);
+          const caught = error && typeof error.name === "string"
+            ? `${error.name}: ${error.message || ""}`
+            : String(error);
+          const validationMessage = `The "validate" validation function is expected to return "true". Received ${received}\n\nCaught error:\n\n${caught}`;
+          return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: validationMessage}), {
           code: "ERR_ASSERTION", operator: "rejects", actual: error, expected, generatedMessage: true, stack: "AssertionError: The rejection did not match\\n    at Function.rejects"
-        }));
+          }));
+        }
       }
       if (expected && typeof expected === "object") {
         const rejectsMatch = (received, wanted) => {
@@ -406,11 +416,19 @@ const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
+  if (typeof input.catch !== "function") {
+    const error = new TypeError(`The "promiseFn" argument must be of type function or an instance of Promise. Received ${receivedType(promiseOrFn)}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
   return Promise.resolve(input).then(
     (value) => value,
-    (error) => Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || "Got unwanted rejection"}), {
+    (error) => {
+      const customMessage = typeof message === "function" ? message(error) : message;
+      return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: typeof customMessage === "string" ? customMessage : `Got unwanted rejection.\nActual message: "${error && typeof error.message === "string" ? error.message : String(error)}"`}), {
       code: "ERR_ASSERTION", operator: "doesNotReject", actual: error, generatedMessage: !message
-    }))
+      }));
+    }
   );
 }"#;
 
@@ -750,11 +768,15 @@ fn source_assertion_call(value: &Value) -> Option<String> {
         let call_start = if bare {
             start
         } else {
-            [source[..start].rfind("assert"), source[..start].rfind("strict")]
-                .into_iter()
-                .flatten()
-                .max()
-                .unwrap_or(start.saturating_sub(5))
+            let mut token_start = start;
+            for (index, ch) in source[..start].char_indices().rev() {
+                if ch.is_whitespace() { continue; }
+                if matches!(ch, ';' | '\n' | '{' | '}' | '(' | ')' | '=' | ',' | ':') {
+                    break;
+                }
+                token_start = index;
+            }
+            token_start
         };
         let mut call = source[call_start..=end].trim().to_string();
         if call.ends_with(", undefined)") {
