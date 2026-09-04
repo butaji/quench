@@ -647,6 +647,15 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
     Value::Builtin(method)
 }
 
+/// Resolve a method on an array whose ordinary packed proof and the global
+/// Array.prototype cleanliness proof have already been established.  This
+/// keeps the hot named-call/property paths from rebuilding the generic
+/// descriptor lookup (including its override-map probe) on every iteration.
+#[inline]
+pub(crate) fn packed_method(key: &str) -> Option<crate::ops::Builtin> {
+    array_method(key)
+}
+
 fn array_method(key: &str) -> Option<crate::ops::Builtin> {
     array_search_method(key).or_else(|| array_method_core(key))
 }
