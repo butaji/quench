@@ -549,3 +549,18 @@ whole-suite score. The row is a paired measurement record, not an optimization
 claim. The required anti-cheat scan was run for this snapshot; its 1,382 text
 matches are semantic API/module names (for example `RegExp`), with no fixture
 identity detection in production code.
+
+## Task 069 Crypto completion/profile finding
+
+The ARM64 artifact was re-run through the tracked v8-v7 runner with a
+300-second timeout. Crypto did not complete within that window
+(`engine_status=null`, with no result marker or score), so it remains a
+confirmed slow workload rather than a valid score. A five-second DWARF
+`sample` of the actual `quench-node` child (not the `/usr/bin/time` wrapper)
+captured the main thread in `execute_call` → `execute_direct` →
+`execute_interpreter`, with repeated nested `methods::execute_call_method` and
+`execute_callee` frames. This indicates broadly distributed call/interpreter
+overhead rather than an isolated bigint or allocation primitive. The sample
+showed active nested execution, not a tight non-progressing loop. No
+Crypto-specific fast path was added; a general call-dispatch investigation is
+the appropriate follow-up and must retain the neutral/curriculum gates.
