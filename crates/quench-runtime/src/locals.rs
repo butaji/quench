@@ -164,7 +164,8 @@ impl EnvironmentGuard {
                 .as_ref()
                 .map_or(std::ptr::null(), Rc::as_ptr)
         });
-        let previous_pointer = CURRENT_ENVIRONMENT_PTR.with(|pointer| pointer.replace(current_pointer));
+        let previous_pointer =
+            CURRENT_ENVIRONMENT_PTR.with(|pointer| pointer.replace(current_pointer));
         // Slot zero is the global object binding.  Install it before any
         // identifier/property resolution so host values attached to the
         // running context are observed through the actual global object.
@@ -670,11 +671,18 @@ pub(crate) fn write(slot: u16, value: Value) {
 }
 
 pub(crate) fn mark_uninitialized(slot: u16) {
-    current().mark_uninitialized(slot);
+    let environment = current();
+    // Slots are reused across nested lexical scopes. Clear a prior const
+    // marker before establishing the new binding's TDZ; a following
+    // MarkImmutable op reinstates it for genuinely immutable declarations.
+    environment.clear_immutable_slot(slot);
+    environment.mark_uninitialized(slot);
 }
 
 pub(crate) fn mark_uninitialized_shared(slot: u16) {
-    current().mark_uninitialized_shared(slot);
+    let environment = current();
+    environment.clear_immutable_slot(slot);
+    environment.mark_uninitialized_shared(slot);
 }
 
 pub(crate) fn mark_immutable(slot: u16) {
@@ -943,6 +951,15 @@ pub(crate) fn reset_replacements() {
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
+    // Replacement identities exist only for mutable object/array/function
+    // owners. Primitive and host-value variants can never have an entry, so
+    // avoid entering the thread-local replacement tables on those hot paths.
+    if !matches!(
+        value,
+        Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_) | Value::Function(_)
+    ) {
+        return value;
+    }
     if let Some(resolved) = resolved_object_replacement(&value) {
         return resolved;
     }
