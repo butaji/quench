@@ -27,6 +27,14 @@ as additional specialized machine-code leaves. Full-window opcode validation
 and whole-span fallback keep an Unknown or stale quickened fact from executing
 a prefix of a region.
 
+Task 048 adds `LOOP_BODY`, a seven-operation, branch-free window selected from
+the neutral/curriculum trace (`LoadLocalChecked, LoadLocalChecked, Add,
+StoreLocal, Move, UpdateLocal, Return`). It is a longer admission of the same
+canonical handlers, not a new semantic leaf: the bounded sequential executor
+checks the complete window before executing it and rejects any externally
+reachable interior or stale fact atomically. The existing shorter glue rows
+remain available when this exact whole-body shape is absent.
+
 | Opcode | Covered region/stencil | Specialized leaf |
 | --- | --- | --- |
 | `LoadConst` | `ARITHMETIC_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |
@@ -60,6 +68,11 @@ a prefix of a region.
 | `GetPropertyQuickened` | `DISPATCH` | No |
 | `GetNQuickened` | `DISPATCH` | No |
 | `AGetIQuickened` | `DISPATCH` | No |
+
+`LOOP_BODY` is an executable region row in addition to the rows named in the
+table; its seven operations are all canonical handlers and therefore do not
+increase the specialized-leaf count (still 8/31). The catalog now has 22
+bounded region rows, all with complete ordinary fallback.
 
 The priority decision follows the existing neutral evidence in
 `architecture-evidence.md`: arithmetic and named-property reads have measured

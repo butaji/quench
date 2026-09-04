@@ -204,6 +204,7 @@ generated_region_admissions! {
     divide_region_key => DIVIDE_KEY / DIVIDE_OPS / 6,
     add_const_region_key => ADD_CONST_KEY / ADD_CONST_OPS / 7,
     loop_glue_region_key => LOOP_GLUE_KEY / LOOP_GLUE_OPS / 10,
+    loop_body_region_key => LOOP_BODY_KEY / LOOP_BODY_OPS / 22,
     binary_glue_region_key => BINARY_GLUE_KEY / BINARY_GLUE_OPS / 11,
     update_return_region_key => UPDATE_RETURN_KEY / UPDATE_RETURN_OPS / 12,
     call_region_key => CALL_KEY / CALL_OPS / 13,
@@ -575,6 +576,35 @@ mod tests {
             },
         ];
         assert!(!has_single_entry_point(0, &blocks));
+    }
+
+    #[test]
+    fn loop_body_span_is_single_entry_and_rejects_interior_edges() {
+        let record = select_region(loop_body_region_key()).expect("loop body row");
+        assert_eq!(record.operations.len(), 7);
+        assert!(has_single_entry_point(
+            u32::from(record.entry),
+            &[RegionBlock {
+                id: 0,
+                predecessors: &[],
+                external_entry: true,
+            }]
+        ));
+        assert!(!has_single_entry_point(
+            0,
+            &[
+                RegionBlock {
+                    id: 0,
+                    predecessors: &[],
+                    external_entry: true,
+                },
+                RegionBlock {
+                    id: 3,
+                    predecessors: &[2],
+                    external_entry: true,
+                },
+            ]
+        ));
     }
 
     #[test]
