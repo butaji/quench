@@ -352,6 +352,27 @@ the ARM default remains off and task 068 is closed with a no-go finding.
 Larger region scope (task 048) is the evidence-backed next lever; no
 benchmark-specific path or ABI hack was introduced.
 
+Task 072's isolated prototype-method probe used a constructor with a stable
+one-level prototype method and 10,000 calls from 100 instances (all names and
+constants unrelated to the v8-v7 fixtures). In an execution-trace build it
+recorded 19,998 `named_property_hit` results, 0 `named_get_prototype_miss`
+events, and 9,998 `GetNQuickened` hits. The stable prototype-chain case is
+therefore already admitted by the compact/quickened path; no guard-vocabulary
+change was justified. The remaining `GetN` slow volume in the Richards
+profile must come from other operations (notably `TraceSite`/`Branch` in the
+instrumented run), so task 072 closes with this narrowing finding.
+
+Task 071's broader IC-miss investigation also closes with a no-go finding.
+The general two-shape property probe recorded only two layout-mismatch events
+and three GetN quickening misses across 10,000 alternating reads; the stable
+prototype probe had zero prototype misses. In the full instrumented profile,
+the 4.285M slow-lane operations were instead dominated by `TraceSite`
+(1.821M), `Branch` (1.714M), `CheckInitialized` (364K), and `Unary` (187K),
+while `named_get_layout_mismatch` was zero. This evidence does not justify
+changing the correct IC representation under task 071. The broad slow-lane
+constant-factor question is recorded as follow-up task 074 rather than being
+silently folded into an IC optimization.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
