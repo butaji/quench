@@ -515,3 +515,37 @@ task 033 snapshot's 249.059.  Aggregate engine/oracle ratios were 0.7462 wall
 time, 0.3074 peak RSS, and 1.0841 retired instructions.  The source change is
 catalog metadata only; no fixture-specific behavior or semantic fast path was
 added.
+
+## Task 053 regex profile
+
+The execution-trace run of the v8-v7 RegExp fixture (`target/regexp-trace-run.err`)
+shows match execution, rather than compilation, as the dominant cost. The
+highest-volume URL pattern executed 5,932 times with 5.85 ms total compilation
+and 3.430 s total matching; `^ba` executed 13,322 times with 3.87 ms compile
+and 29.1 ms match time. Across the run the bounded compiled-pattern cache had
+28,107 hits and 271 misses. The optimized release fixture run is finite
+(2.36 s, 41.0 MiB peak RSS) but still emits `RESULT:RegExp:error`, so it has no
+valid score or output-equality result yet.
+
+Curriculum case 032 (`trim().split(/\\s+/)`) is output-correct and measured
+about 0.76 s / 19.8 MiB on the trace-enabled debug artifact, versus the Node
+oracle's roughly 0.03 s. Its split path uses the compiled backend directly,
+so the current trace schema reports no per-pattern `regexp` row for this path;
+the wall/instruction profile nevertheless isolates the split/match path rather
+than concatenation (case 032's total was about 15.4 billion retired
+instructions). This is a measurement-instrumentation gap, not evidence that
+matching is cheap. Recommendation: keep the existing bounded compile cache and
+scope a future narrow match-engine task after the RegExp correctness failure is
+fixed; do not attempt an Irregexp-scale rewrite under this survey.
+
+## v8-v7 trajectory (paired speed and memory)
+
+| Snapshot | Complete / 8 | Engine score geomean | Aggregate RSS ratio | Neutral score | Curriculum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `b2da584d6` release root-fix baseline (300 s) | 7 / 8 | 89.25* | 0.7882* | 109.665 (100/100) | 40.0 speed, 233.5 memory (29/38 under ceilings) |
+
+\* The RegExp fixture is excluded because it emits an error; this is not a
+whole-suite score. The row is a paired measurement record, not an optimization
+claim. The required anti-cheat scan was run for this snapshot; its 1,382 text
+matches are semantic API/module names (for example `RegExp`), with no fixture
+identity detection in production code.
