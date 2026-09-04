@@ -37,6 +37,18 @@ fn execute_call_method(
         registered_callee,
         call_target_name(&callee),
     );
+    if spreads.is_empty()
+        && args.len() <= 4
+        && matches!(callee, Value::Builtin(crate::ops::Builtin::ArrayPush))
+    {
+        let mut arguments: [Value; 4] = std::array::from_fn(|_| Value::Undefined);
+        for (argument, register) in arguments.iter_mut().zip(args.iter().copied()) {
+            *argument = read_register(registers, register)?;
+        }
+        let value = crate::builtins::array_push(Some(&receiver), &arguments[..args.len()])?;
+        write_value(registers, *dst, value);
+        return Ok(());
+    }
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
