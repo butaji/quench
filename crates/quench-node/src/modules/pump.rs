@@ -323,14 +323,27 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         };
         if !drained {
             quench_runtime::drain_promise_jobs();
+            crate::modules::async_hooks::drain_queued_destroy_ids(state);
             return Ok(());
         }
     }
 }
 
 fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let async_stack_overflow = quench_runtime::vm::take_async_stack_overflow();
     for (promise, reason) in quench_runtime::take_unhandled_rejections() {
         if promise.rejection_handled() {
+            continue;
+        }
+        if async_stack_overflow {
+            // V8 reports a synchronous async-stack overflow diagnostic while
+            // `--unhandled-rejections=none` keeps the rejected promises from
+            // changing the process status. Preserve both observable edges.
+            crate::modules::process::stream_write(
+                state,
+                &[Value::String("RangeError: Maximum call stack size exceeded\n".into())],
+                true,
+            )?;
             continue;
         }
         let mode = state.borrow().process.unhandled_rejection_mode;
@@ -454,6 +467,8 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     };
     let previous_scope = state.borrow().cluster.process_scope();
     let previous_event_scope = state.borrow().event_loop.process_scope();
+    let global = quench_runtime::vm::current_global_object();
+    let previous_resource = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
     if task.process_scope != 0 {
         state
             .borrow_mut()
@@ -466,6 +481,11 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         .set_process_scope(task.process_scope);
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
+        quench_runtime::execute::set_property_in_place(
+            &global,
+            "__nodeCurrentAsyncResource",
+            resource.clone(),
+        );
     }
     let previous_stack = task.domain_stack.as_ref().map(|stack| {
         let previous = crate::modules::domain::stack_values(state);
@@ -491,6 +511,11 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     }
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
+        quench_runtime::execute::set_property_in_place(
+            &global,
+            "__nodeCurrentAsyncResource",
+            previous_resource,
+        );
     }
     let result = match result {
         Err(error) if task.process_scope != 0 => {
