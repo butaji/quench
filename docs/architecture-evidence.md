@@ -245,6 +245,18 @@ The aggregate over completed engine scores is 92.70 versus Node's 83,617.48
 incomplete. This snapshot is measurement-only and does not claim an
 optimization gain.
 
+Long-timeout v8-v7 rebaseline after task 057 (`--runs 1
+--timeout-ms 120000`, ARM64 debug artifact) distinguishes finite slow paths
+from timeout-bound fixtures. Richards completed in 22.96 s (Score 5.24,
+25.1 MiB RSS, output equal) and DeltaBlue in 47.30 s (Score 4.62, 72.7 MiB,
+output equal). Crypto, RayTrace, Earley-Boyer, and Navier-Stokes each reached
+the 120 s engine timeout without a completion marker; their Node oracle runs
+completed. RegExp finished in 13.83 s but reported `RESULT:RegExp:error`
+(semantic/output mismatch, not a timeout). Splay finished in 12.71 s without a
+completion marker and peaked at 439.8 MiB; its output remains unverified by the
+tracked runner. The aggregate over the two verified fixtures is 4.92 versus
+Node 72,590; this is a measurement snapshot and not a whole-suite score.
+
 Task 056 cycle audit confirms a real leak in the current pure-`Rc` object
 graph. The committed measurement probe `tools/cycle-audit.mjs` runs fresh
 processes and parses macOS peak RSS. Plain two-object cycles grew from
@@ -253,8 +265,8 @@ N=50,000. Closure-capture cycles grew from 25,559,040 to 87,146,496 and
 359,940,096 bytes at the same sizes. A DeltaBlue-shaped constraint/variable
 mutual-reference probe grew from 19,775,488 to 27,246,592 and 60,833,792
 bytes. These are process-peak measurements, so they establish monotonic
-retention after the cycles become unreachable; task 057 is now justified,
-but no collector has been implemented yet.
+retention after the cycles become unreachable; task 057 was therefore
+justified and its post-fix measurements are recorded below.
 
 Task 064 adds three string invariants. ARM64 debug runs measured append
 ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
