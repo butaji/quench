@@ -13,6 +13,7 @@ pub fn execute_call(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<crate::completion::Completion, VmError> {
+    let caller_environment = crate::locals::current();
     let raw_callee = super::read_register(registers, callee)?;
     let arguments = collect_call_arguments(registers, args, spreads)?;
     let callee_value = peel_binding_cell(raw_callee);
@@ -31,6 +32,7 @@ pub fn execute_call(
     // result.  A miss falls through to the ordinary continuation path, which
     // preserves all dynamic call/throw/suspend semantics.
     if let Value::Function(function) = &callee_value {
+        let _roots = crate::cycle_collector::protect_environment(&caller_environment);
         if let Some(value) =
             crate::functions::try_execute_specialized(function, &receiver_value, &arguments)?
         {
@@ -92,6 +94,13 @@ pub fn execute_call_continuation(
     registers: &mut crate::register_file::RegisterFile,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
+    // The caller environment is held by the Rust completion driver while the
+    // callee runs; keep it visible to trial deletion just like the moved
+    // continuation values below. This covers ordinary (non-direct) calls as
+    // well as the specialized path guarded in `execute_call`.
+    let caller_environment = crate::locals::current();
+    let _environment_root = crate::cycle_collector::protect_environment(&caller_environment);
+    let _roots = crate::cycle_collector::protect_call(&continuation);
     stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
         execute_call_continuation_inner(registers, continuation)
     })
@@ -114,6 +123,9 @@ fn execute_call_continuation_inner(
         Error(VmError, crate::completion::CallContinuation),
     }
     fn start(continuation: crate::completion::CallContinuation) -> StartedCall {
+        if matches!(&continuation.callee, Value::Function(_)) {
+            crate::cycle_collector::retain_active_function(&continuation.callee);
+        }
         let Value::Function(function) = &continuation.callee else {
             return StartedCall::Fallback(continuation);
         };
@@ -157,6 +169,7 @@ fn execute_call_continuation_inner(
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
+        crate::cycle_collector::retain_active_environment(&environment);
         // Account at the function-entry tier boundary. Once hot, the
         // immutable body is paired with a predecoded baseline plan; no
         // semantic handler or fallback is duplicated by that plan.
