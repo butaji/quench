@@ -735,3 +735,25 @@ without `execution-trace` (619/629 tests), `cargo check -p quench-node`, the
 neutral 100/100 differential run, targeted CFG and fused-vs-ordinary
 differential tests, and `git diff --check`. No production path references a
 benchmark name, source path, or fixture identity.
+
+## Task 049: bounded polymorphic variant survey
+
+Task 049 was evaluated as a profile-gated design decision rather than by
+adding speculative variants. Curriculum case 013 exercised a property read
+rotating across three stable shapes (`GetN.hits = 597`, `misses = 5`), while
+hostile case 021 exercised the same access family with shape churn (3,377
+handler events). Both completed with correct output and the existing bounded
+generic-IC/fallback machinery; the current trace vocabulary does not expose a
+finite per-site shape-set fact that could safely select a build-time 2/3/4-
+shape stencil variant. `RegionKey` describes opcode/fact sequences and
+`PatchValues` carries runtime shape identities, so combining those identities
+into static catalog rows would either be unbounded or duplicate the generic
+IC's already-correct work.
+
+The measured cases were already below the Node wall-time ceiling (case 013:
+0.43x wall, 0.29x RSS; case 021: 0.32x wall, 0.27x RSS), with no evidence of
+a bounded pre-rendered variant producing a general win to offset its N-times
+rendered code cost. Task 049 therefore closes as an evidence-backed **no-go**:
+retain the bounded IC chain and complete fallback, and do not add build-time
+polymorphic variants until instrumentation proves a reusable finite fact
+combination with a measured benefit.
