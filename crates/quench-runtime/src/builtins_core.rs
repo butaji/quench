@@ -382,13 +382,7 @@ pub(crate) fn array_push(
     // observable checks below, while avoiding a generic `length` property
     // lookup and receiver reification on every sequential append.
     if let Some(Value::Array(array)) = receiver {
-        if array.is_packed_ordinary()
-            && crate::properties::object_is_extensible(receiver.unwrap())
-            && crate::builtins::descriptor_flag(receiver.unwrap(), "length", "writable")
-                != Some(false)
-            && crate::builtins::intrinsic_override_keys(crate::ops::Builtin::ArrayPrototype)
-                .is_empty()
-        {
+        if array.is_packed_ordinary() {
             let length = array.logical_len();
             let final_length = length.checked_add(arguments.len()).ok_or_else(|| {
                 crate::value::error::throw_type_error("Array length exceeds maximum safe integer")
@@ -398,7 +392,9 @@ pub(crate) fn array_push(
                     "Array length exceeds maximum safe integer",
                 ));
             }
-            if array.append_shared_numbers(arguments) || array.append_shared_values(arguments) {
+            if array.append_shared_numbers_proven(arguments)
+                || array.append_shared_values_proven(arguments)
+            {
                 return Ok(Value::Number(final_length as f64));
             }
         }
@@ -431,10 +427,10 @@ pub(crate) fn array_push(
                 .is_empty()
             && prototype_indices_clear
         {
-            if array.append_shared_numbers(arguments) {
+            if array.append_shared_numbers_proven(arguments) {
                 return Ok(Value::Number(final_length as f64));
             }
-            if array.append_shared_values(arguments) {
+            if array.append_shared_values_proven(arguments) {
                 return Ok(Value::Number(final_length as f64));
             }
             let (mut values, _, _) = array.hot_storage();
