@@ -570,12 +570,17 @@ fn missing_args() -> VmError {
 /// Optional trailing message argument; `None` when absent/undefined.
 pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
     match args.get(index) {
-        Some(Value::String(message)) => Some(format_assert_message(message, args.get(index + 1..).unwrap_or_default())),
+        Some(Value::String(message)) => Some(format_assert_message(
+            message,
+            args.get(index + 1..).unwrap_or_default(),
+        )),
         Some(Value::Undefined) | None => None,
-        Some(value) if is_error_object(value) || is_cross_context_error(value) => match execute::get_property(value, "message") {
-            Value::String(message) => Some(message),
-            _ => Some(crate::modules::util::inspect(value)),
-        },
+        Some(value) if is_error_object(value) || is_cross_context_error(value) => {
+            match execute::get_property(value, "message") {
+                Value::String(message) => Some(message),
+                _ => Some(crate::modules::util::inspect(value)),
+            }
+        }
         Some(value) => Some(crate::modules::util::inspect(value)),
     }
 }
@@ -587,17 +592,34 @@ fn format_assert_message(message: &str, values: &[Value]) -> String {
     while let Some(ch) = chars.next() {
         if ch == '%' {
             if let Some(spec) = chars.next() {
-                if spec == '%' { result.push('%'); continue; }
+                if spec == '%' {
+                    result.push('%');
+                    continue;
+                }
                 if let Some(value) = values.get(index) {
                     let text = match spec {
-                        'i' => match value { Value::Number(n) => (*n as i64).to_string(), _ => execute::to_js_string(value).unwrap_or_default() },
-                        'd' => match value { Value::Number(n) => n.to_string(), _ => execute::to_js_string(value).unwrap_or_default() },
+                        'i' => match value {
+                            Value::Number(n) => (*n as i64).to_string(),
+                            _ => execute::to_js_string(value).unwrap_or_default(),
+                        },
+                        'd' => match value {
+                            Value::Number(n) => n.to_string(),
+                            _ => execute::to_js_string(value).unwrap_or_default(),
+                        },
                         's' => execute::to_js_string(value).unwrap_or_default(),
-                        _ => { result.push('%'); result.push(spec); continue; }
+                        _ => {
+                            result.push('%');
+                            result.push(spec);
+                            continue;
+                        }
                     };
-                    result.push_str(&text); index += 1; continue;
+                    result.push_str(&text);
+                    index += 1;
+                    continue;
                 }
-                result.push('%'); result.push(spec); continue;
+                result.push('%');
+                result.push(spec);
+                continue;
             }
         }
         result.push(ch);
@@ -625,7 +647,22 @@ fn rendered(value: &Value) -> String {
             let text = text.strip_suffix('\n').unwrap_or(text);
             format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
         }
-        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) | Value::HostCapability(_) => function_render(value),
+        // Large strings may stay in the runtime's UTF-16 representation.
+        // Assertion messages must still render their complete operand rather
+        // than passing that representation through util.inspect's bounded
+        // string formatter (which truncates at 9,488 characters).
+        Value::StringUnits(_) => {
+            let text = execute::to_js_string_explicit(value).unwrap_or_default();
+            if text.starts_with("Symbol(") {
+                return text;
+            }
+            let text = text.strip_suffix('\n').unwrap_or(&text);
+            format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        Value::Function(_)
+        | Value::WeakFunction(_)
+        | Value::BoundFunction(_)
+        | Value::HostCapability(_) => function_render(value),
         _ => crate::modules::util::inspect(value),
     }
 }
@@ -682,7 +719,10 @@ pub fn ok(
             crate::modules::util::invalid_arg_received(&arg(args, 1))
         )));
     }
-    if let Some(value) = args.get(1).filter(|value| is_error_object(value) || is_cross_context_error(value)) {
+    if let Some(value) = args
+        .get(1)
+        .filter(|value| is_error_object(value) || is_cross_context_error(value))
+    {
         return Err(VmError::Thrown(value.clone()));
     }
     let custom = custom_message(args, 1);
@@ -696,8 +736,14 @@ pub fn ok(
             matches!(arg(args, 0), Value::Number(value) if value == 0.0),
         );
         if _r.is_some_and(|receiver| {
-            matches!(execute::get_property(receiver, "\0quench:strict"), Value::Boolean(true))
-        }) && source_call.as_deref().is_some_and(|call| call.starts_with("strict.ok(")) {
+            matches!(
+                execute::get_property(receiver, "\0quench:strict"),
+                Value::Boolean(true)
+            )
+        }) && source_call
+            .as_deref()
+            .is_some_and(|call| call.starts_with("strict.ok("))
+        {
             return "The expression evaluated to a falsy value:\n\n  strict.ok(\n".into();
         }
         if matches!(args.first(), Some(Value::Null))
@@ -711,8 +757,7 @@ pub fn ok(
             return format!("The expression evaluated to a falsy value:\n\n  {call}\n");
         }
         let argument = arg(args, 0);
-        let call = source_call
-            .unwrap_or_else(|| format!("assert.ok({})", rendered(&argument)));
+        let call = source_call.unwrap_or_else(|| format!("assert.ok({})", rendered(&argument)));
         format!("The expression evaluated to a falsy value:\n\n  {call}\n")
     });
     Err(assertion_error(
@@ -726,7 +771,9 @@ pub fn ok(
 
 fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
     let source = quench_runtime::vm::current_context();
-    let source = source.compiled_source_text().or_else(|| source.source_text())?;
+    let source = source
+        .compiled_source_text()
+        .or_else(|| source.source_text())?;
     let expected = rendered(value);
     if let Some(offset) = quench_runtime::vm::current_source_offset()
         .and_then(|offset| usize::try_from(offset).ok())
@@ -757,7 +804,10 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
         let Some((relative, bare)) = candidates
             .into_iter()
             .filter_map(|(position, bare)| position.map(|position| (position, bare)))
-            .min_by_key(|(position, _)| *position) else { break; };
+            .min_by_key(|(position, _)| *position)
+        else {
+            break;
+        };
         let start = cursor + relative;
         if !is_code_position(source, start) {
             cursor = start.saturating_add(1);
@@ -773,9 +823,17 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
         let mut end = None;
         for (offset, ch) in source[open..].char_indices() {
             if let Some(q) = quote {
-                if escaped { escaped = false; continue; }
-                if ch == '\\' { escaped = true; continue; }
-                if ch == q { quote = None; }
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
                 continue;
             }
             match ch {
@@ -783,20 +841,48 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
                 '(' | '[' | '{' => depth += 1,
                 ')' => {
                     depth = depth.saturating_sub(1);
-                    if depth == 0 { end = Some(open + offset); break; }
+                    if depth == 0 {
+                        end = Some(open + offset);
+                        break;
+                    }
                 }
                 ']' | '}' => depth = depth.saturating_sub(1),
                 _ => {}
             }
         }
-        let Some(end) = end else { break; };
+        let Some(end) = end else {
+            break;
+        };
         let call_start = if bare {
             start
         } else {
             let mut token_start = start;
             for (index, ch) in source[..start].char_indices().rev() {
-                if ch.is_whitespace() { break; }
-                if matches!(ch, ';' | '\n' | '{' | '}' | '(' | ')' | '=' | ',' | ':' | '>' | '<' | '!' | '&' | '|' | '+' | '-' | '/' | '\'' | '"' | '`') {
+                if ch.is_whitespace() {
+                    break;
+                }
+                if matches!(
+                    ch,
+                    ';' | '\n'
+                        | '{'
+                        | '}'
+                        | '('
+                        | ')'
+                        | '='
+                        | ','
+                        | ':'
+                        | '>'
+                        | '<'
+                        | '!'
+                        | '&'
+                        | '|'
+                        | '+'
+                        | '-'
+                        | '/'
+                        | '\''
+                        | '"'
+                        | '`'
+                ) {
                     break;
                 }
                 token_start = index;
@@ -823,9 +909,13 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
                 .char_indices()
                 .find_map(|(index, ch)| {
                     if let Some(q) = quote {
-                        if escaped { escaped = false; }
-                        else if ch == '\\' { escaped = true; }
-                        else if ch == q { quote = None; }
+                        if escaped {
+                            escaped = false;
+                        } else if ch == '\\' {
+                            escaped = true;
+                        } else if ch == q {
+                            quote = None;
+                        }
                         return None;
                     }
                     match ch {
@@ -845,12 +935,18 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
         cursor = end + 1;
     }
     if let Some(offset) = current_offset {
-        if let Some((_, _, call, _)) = calls.iter().find(|(start, end, call, _)| *start <= offset && offset <= *end) {
+        if let Some((_, _, call, _)) = calls
+            .iter()
+            .find(|(start, end, call, _)| *start <= offset && offset <= *end)
+        {
             if !null_receiver || call.contains(".call(") || call.contains("[\"apply\"](") {
                 return Some(call.clone());
             }
         }
-        if let Some((start, _, call, _)) = calls.iter().min_by_key(|(start, _, _, _)| start.abs_diff(offset)) {
+        if let Some((start, _, call, _)) = calls
+            .iter()
+            .min_by_key(|(start, _, _, _)| start.abs_diff(offset))
+        {
             if start.abs_diff(offset) < 512 {
                 return Some(call.clone());
             }
@@ -861,17 +957,26 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
             }
         }
     }
-    if let Some((_, _, call, _)) = calls.iter().find(|(_, _, _, argument)| argument == &expected) {
+    if let Some((_, _, call, _)) = calls
+        .iter()
+        .find(|(_, _, _, argument)| argument == &expected)
+    {
         return Some(call.clone());
     }
-    (calls.len() == 1).then(|| calls.first().map(|(_, _, call, _)| call.clone())).flatten()
+    (calls.len() == 1)
+        .then(|| calls.first().map(|(_, _, call, _)| call.clone()))
+        .flatten()
 }
 
 fn eval_assertion_call(source: &str, offset: usize) -> Option<String> {
     let search_end = offset.saturating_add(4096).min(source.len());
     let (relative, pattern) = ["assert(", "assert.ok("]
         .into_iter()
-        .filter_map(|pattern| source[offset..search_end].find(pattern).map(|relative| (relative, pattern)))
+        .filter_map(|pattern| {
+            source[offset..search_end]
+                .find(pattern)
+                .map(|relative| (relative, pattern))
+        })
         .min_by_key(|(relative, _)| *relative)?;
     let start = offset + relative;
     if is_code_position(source, start) {
@@ -895,9 +1000,13 @@ fn eval_assertion_call(source: &str, offset: usize) -> Option<String> {
     let mut escaped = false;
     for (relative, ch) in source[open..].char_indices() {
         if let Some(q) = quote {
-            if escaped { escaped = false; }
-            else if ch == '\\' { escaped = true; }
-            else if ch == q { quote = None; }
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
             continue;
         }
         match ch {
@@ -919,7 +1028,9 @@ fn escape_source_controls(source: &str) -> String {
     let escaped = source
         .chars()
         .map(|ch| match ch {
-            '\u{0000}'..='\u{0009}' | '\u{000b}'..='\u{001f}' | '\u{007f}' => format!("\\u{:04x}", ch as u32),
+            '\u{0000}'..='\u{0009}' | '\u{000b}'..='\u{001f}' | '\u{007f}' => {
+                format!("\\u{:04x}", ch as u32)
+            }
             _ => ch.to_string(),
         })
         .collect::<String>();
@@ -936,7 +1047,9 @@ fn is_code_position(source: &str, target: usize) -> bool {
     while index < target {
         let ch = bytes[index] as char;
         if line_comment {
-            if ch == '\n' { line_comment = false; }
+            if ch == '\n' {
+                line_comment = false;
+            }
             index += 1;
             continue;
         }
@@ -950,9 +1063,13 @@ fn is_code_position(source: &str, target: usize) -> bool {
             continue;
         }
         if let Some(q) = quote {
-            if escaped { escaped = false; }
-            else if ch == '\\' { escaped = true; }
-            else if ch == q { quote = None; }
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
             index += 1;
             continue;
         }
@@ -978,12 +1095,16 @@ fn next_arrow_call(source: &str, from: usize) -> Option<usize> {
         let arrow = cursor + relative + 2;
         let mut index = arrow;
         while let Some(ch) = source[index..].chars().next() {
-            if !ch.is_whitespace() { break; }
+            if !ch.is_whitespace() {
+                break;
+            }
             index += ch.len_utf8();
         }
         let start = index;
         while let Some(ch) = source[index..].chars().next() {
-            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') { break; }
+            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
+                break;
+            }
             index += ch.len_utf8();
         }
         if index > start && source[index..].starts_with('(') {
@@ -1166,9 +1287,15 @@ fn binary_assert(
             }
         } else {
             match (&actual, &expected) {
-                (Value::String(actual), Value::String(expected)) =>
+                (actual, expected)
+                    if matches!(actual, Value::String(_) | Value::StringUnits(_))
+                        && matches!(expected, Value::String(_) | Value::StringUnits(_))
+                        && !execute::is_symbol(actual)
+                        && !execute::is_symbol(expected) =>
                 {
-                    simple_binary_message(operator, actual, expected)
+                    let actual = execute::to_js_string(actual).unwrap_or_default();
+                    let expected = execute::to_js_string(expected).unwrap_or_default();
+                    simple_binary_message(operator, &actual, &expected)
                 }
                 _ if operator == "notDeepEqual" && execute::same_value(&actual, &expected) =>
                     format!(
@@ -1189,7 +1316,7 @@ fn binary_assert(
                     }
                 ),
                 _ if operator == "notStrictEqual"
-                    && !matches!(actual, Value::String(_)) => format!(
+                    && !matches!(actual, Value::String(_) | Value::StringUnits(_)) => format!(
                     "Expected \"actual\" to be strictly unequal to: {}",
                     rendered(&actual)
                 ),
@@ -1231,11 +1358,15 @@ fn string_caret_suffix(actual: &Value, expected: &Value) -> String {
     {
         return String::new();
     }
-    let (actual, expected) = match (execute::to_js_string(actual), execute::to_js_string(expected)) {
+    let (actual, expected) = match (
+        execute::to_js_string(actual),
+        execute::to_js_string(expected),
+    ) {
         (Ok(actual), Ok(expected)) => (actual, expected),
         _ => return String::new(),
     };
-    if actual.len() > 12 || expected.len() > 12 || actual.contains('\n') || expected.contains('\n') {
+    if actual.len() > 12 || expected.len() > 12 || actual.contains('\n') || expected.contains('\n')
+    {
         return String::new();
     }
     let prefix = actual
@@ -1261,8 +1392,15 @@ fn custom_message_binary(
 ) -> Result<Option<String>, VmError> {
     match args.get(index) {
         Some(value) if quench_runtime::is_callable(value) => {
-            let result = execute::call(value, &Value::Undefined, &[actual.clone(), expected.clone()])?;
-            Ok(match result { Value::String(text) => Some(text), _ => None })
+            let result = execute::call(
+                value,
+                &Value::Undefined,
+                &[actual.clone(), expected.clone()],
+            )?;
+            Ok(match result {
+                Value::String(text) => Some(text),
+                _ => None,
+            })
         }
         _ => Ok(custom_message(args, index)),
     }
@@ -1303,7 +1441,9 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
                 } else {
                     String::new()
                 };
-                format!("Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n{caret}")
+                format!(
+                    "Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n{caret}"
+                )
             } else {
                 let mut message = format!(
                     "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
@@ -1497,10 +1637,16 @@ fn deep_assert(
     let message = custom.map_or_else(
         || if !strict {
             match (&actual, &expected) {
-                (Value::String(actual), Value::String(expected))
-                    if simple_diff =>
+                (actual, expected)
+                    if simple_diff
+                        && matches!(actual, Value::String(_) | Value::StringUnits(_))
+                        && matches!(expected, Value::String(_) | Value::StringUnits(_))
+                        && !execute::is_symbol(actual)
+                        && !execute::is_symbol(expected) =>
                 {
-                    simple_loose_message(actual, expected)
+                    let actual = execute::to_js_string(actual).unwrap_or_default();
+                    let expected = execute::to_js_string(expected).unwrap_or_default();
+                    simple_loose_message(&actual, &expected)
                 }
                 _ => format!(
                     "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
@@ -1559,14 +1705,20 @@ fn is_primitive_value(value: &Value) -> bool {
 
 fn is_date_operand(value: &Value) -> bool {
     execute::has_own_property(value, "timeValue")
-        && matches!(execute::get_prototype_of(value), Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)))
+        && matches!(
+            execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        )
 }
 
 fn needs_structural_diff(value: &Value) -> bool {
     match value {
         // Functions are opaque references for strict equality; inspecting
         // their own properties can recurse through constructor links.
-        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) | Value::HostCapability(_) => true,
+        Value::Function(_)
+        | Value::WeakFunction(_)
+        | Value::BoundFunction(_)
+        | Value::HostCapability(_) => true,
         Value::Array(_) => execute::own_enumerable_keys(value)
             .iter()
             .any(|key| key.parse::<usize>().is_ok()),
@@ -1640,7 +1792,13 @@ fn reference_operand_render(value: &Value) -> String {
     if value.is_arguments_object() {
         let lines = execute::own_enumerable_keys(value)
             .into_iter()
-            .map(|key| format!("    '{}': {}", key, rendered(&execute::get_property(value, &key))))
+            .map(|key| {
+                format!(
+                    "    '{}': {}",
+                    key,
+                    rendered(&execute::get_property(value, &key))
+                )
+            })
             .collect::<Vec<_>>();
         return format!("[Arguments] {{\n{}\n  }}", lines.join("\n"));
     }
@@ -1648,11 +1806,20 @@ fn reference_operand_render(value: &Value) -> String {
         let lines = execute::own_enumerable_keys(value)
             .into_iter()
             .map(|key| {
-                let display_key = if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() };
-                format!("    {display_key}: {}", rendered(&execute::get_property(value, &key)))
+                let display_key = if key.parse::<usize>().is_ok() {
+                    format!("'{key}'")
+                } else {
+                    key.clone()
+                };
+                format!(
+                    "    {display_key}: {}",
+                    rendered(&execute::get_property(value, &key))
+                )
             })
             .collect::<Vec<_>>();
-        if !lines.is_empty() { return format!("{{\n{}\n  }}", lines.join("\n")); }
+        if !lines.is_empty() {
+            return format!("{{\n{}\n  }}", lines.join("\n"));
+        }
     }
     rendered(value)
 }
@@ -1665,8 +1832,15 @@ fn identity_operand_render(value: &Value) -> String {
     let lines = keys
         .iter()
         .map(|key| {
-            let display_key = if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() };
-            format!("  {display_key}: {}", rendered(&execute::get_property(value, key)))
+            let display_key = if key.parse::<usize>().is_ok() {
+                format!("'{key}'")
+            } else {
+                key.clone()
+            };
+            format!(
+                "  {display_key}: {}",
+                rendered(&execute::get_property(value, key))
+            )
         })
         .collect::<Vec<_>>();
     format!("{{\n{}\n}}", lines.join("\n"))
@@ -1702,7 +1876,13 @@ fn reference_diff_render(actual: &Value, expected: &Value) -> String {
 
 fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
     if full {
-        if let (Value::String(actual), Value::String(expected)) = (actual, expected) {
+        if matches!(actual, Value::String(_) | Value::StringUnits(_))
+            && matches!(expected, Value::String(_) | Value::StringUnits(_))
+            && !execute::is_symbol(actual)
+            && !execute::is_symbol(expected)
+        {
+            let actual = execute::to_js_string(actual).unwrap_or_default();
+            let expected = execute::to_js_string(expected).unwrap_or_default();
             return format!("+ '{actual}'\n- '{expected}'");
         }
     }
@@ -1711,7 +1891,10 @@ fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
 
 fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
     if full {
-        if let Value::String(value) = value {
+        if matches!(value, Value::String(_) | Value::StringUnits(_))
+            && !execute::is_symbol(value)
+        {
+            let value = execute::to_js_string(value).unwrap_or_default();
             return format!("'{}'", value.trim_end_matches('\n'));
         }
     }
@@ -1739,7 +1922,14 @@ fn rendered_deep(value: &Value) -> String {
                     )
                 })
                 .collect::<Vec<_>>();
-            let self_circular = map.keys.borrow().iter().chain(map.values.borrow().iter()).any(|entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)));
+            let self_circular = map
+                .keys
+                .borrow()
+                .iter()
+                .chain(map.values.borrow().iter())
+                .any(
+                    |entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)),
+                );
             let mut rendered = collection_render("Map", entries, self_circular);
             append_collection_properties(&Value::Map(map.clone()), &mut rendered);
             rendered
@@ -1757,7 +1947,9 @@ fn rendered_deep(value: &Value) -> String {
                 .iter()
                 .map(|value| collection_atom(&owner, value))
                 .collect::<Vec<_>>();
-            let self_circular = set.values.borrow().iter().any(|entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)));
+            let self_circular = set.values.borrow().iter().any(
+                |entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)),
+            );
             let mut rendered = collection_render("Set", entries, self_circular);
             append_collection_properties(&Value::Set(set.clone()), &mut rendered);
             rendered
@@ -1782,12 +1974,19 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
             .iter()
             .map(|entry| collection_atom(&owner, entry))
             .collect::<Vec<_>>();
-        let self_circular = set.values.borrow().iter().any(|entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)));
+        let self_circular =
+            set.values.borrow().iter().any(
+                |entry| matches!(entry, Value::Set(nested) if std::rc::Rc::ptr_eq(nested, set)),
+            );
         if entries.is_empty() {
             "Set(0) {}".into()
         } else {
             let prefix = if self_circular { "<ref *1> " } else { "" };
-            format!("{prefix}Set({}) {{ {} }}", entries.len(), entries.join(", "))
+            format!(
+                "{prefix}Set({}) {{ {} }}",
+                entries.len(),
+                entries.join(", ")
+            )
         }
     } else if let Value::Map(map) = value {
         let owner = Value::Map(map.clone());
@@ -1804,12 +2003,21 @@ fn collection_atom(owner: &Value, value: &Value) -> String {
                 )
             })
             .collect::<Vec<_>>();
-        let self_circular = map.keys.borrow().iter().chain(map.values.borrow().iter()).any(|entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)));
+        let self_circular = map
+            .keys
+            .borrow()
+            .iter()
+            .chain(map.values.borrow().iter())
+            .any(|entry| matches!(entry, Value::Map(nested) if std::rc::Rc::ptr_eq(nested, map)));
         if entries.is_empty() {
             "Map(0) {}".into()
         } else {
             let prefix = if self_circular { "<ref *1> " } else { "" };
-            format!("{prefix}Map({}) {{ {} }}", entries.len(), entries.join(", "))
+            format!(
+                "{prefix}Map({}) {{ {} }}",
+                entries.len(),
+                entries.join(", ")
+            )
         }
     } else {
         crate::modules::util::inspect_with_options(value, 1000, false, None, true)
@@ -1821,7 +2029,11 @@ fn collection_render(name: &str, entries: Vec<String>, self_circular: bool) -> S
         return format!("{name}(0) {{}}");
     }
     let prefix = if self_circular { "<ref *1> " } else { "" };
-    format!("{prefix}{name}({}) {{ {} }}", entries.len(), entries.join(", "))
+    format!(
+        "{prefix}{name}({}) {{ {} }}",
+        entries.len(),
+        entries.join(", ")
+    )
 }
 
 /// Assertion diagnostics include enumerable properties attached to collection
@@ -3208,9 +3420,16 @@ pub fn partial_deep_strict_equal(
         },
         |message| {
             if is_primitive_value(&actual) && is_primitive_value(&expected) {
-                format!("{message}\n\n{} !== {}\n", rendered(&actual), rendered(&expected))
+                format!(
+                    "{message}\n\n{} !== {}\n",
+                    rendered(&actual),
+                    rendered(&expected)
+                )
             } else {
-                format!("{message}\n+ actual - expected\n\n{}\n", deep_diff(&actual, &expected))
+                format!(
+                    "{message}\n+ actual - expected\n\n{}\n",
+                    deep_diff(&actual, &expected)
+                )
             }
         },
     );
