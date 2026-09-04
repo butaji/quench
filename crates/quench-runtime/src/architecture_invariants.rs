@@ -510,4 +510,71 @@ mod tests {
         );
         run_source_ms(&source) / (function_count * repetitions) as f64
     }
+
+    /// Allocation of an acyclic object is amortized O(1) in live-heap size.
+    /// Equal allocation counts and a 16x ratio reject an accidental full-heap
+    /// scan while tolerating allocator/cache noise.
+    #[test]
+    fn object_allocation_does_not_scale_with_live_heap_size() {
+        let small = measure_object_allocation(10, 200_000);
+        let large = measure_object_allocation(10_000, 200_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #066.1: live=10 {small:.6} ms/allocation, live=10000 {large:.6} ms/allocation, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "allocation scaled with live heap size: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_object_allocation(live_count: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var live = [];
+                for (var i = 0; i < {live_count}; i++) live[i] = {{ value: i }};
+                var total = 0;
+                for (var i = 0; i < {repetitions}; i++) {{
+                    var object = {{ value: i }};
+                    total += object.value;
+                }}
+                total + live.length;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
+
+    /// Dropping an acyclic object is O(1) in the number of unrelated live
+    /// objects. Each temporary becomes unreachable immediately; the ratio
+    /// compares equal drop counts with different retained-heap sizes.
+    #[test]
+    fn object_drop_does_not_scale_with_live_heap_size() {
+        let small = measure_object_drop(10, 200_000);
+        let large = measure_object_drop(10_000, 200_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #066.2: live=10 {small:.6} ms/drop, live=10000 {large:.6} ms/drop, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "drop scaled with live heap size: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_object_drop(live_count: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var live = [];
+                for (var i = 0; i < {live_count}; i++) live[i] = {{ value: i }};
+                var total = 0;
+                for (var i = 0; i < {repetitions}; i++) {{
+                    var temporary = {{ value: i }};
+                    total += temporary.value;
+                    temporary = undefined;
+                }}
+                total + live.length;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
 }
