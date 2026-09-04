@@ -550,6 +550,77 @@ fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Opt
 }
 
 impl Environment {
+    /// Collect value-bearing lexical slots, including captured parent frames.
+    /// This is intentionally a diagnostic/GC boundary: it returns values, not
+    /// the mutable slot map, so callers cannot bypass environment invariants.
+    pub(crate) fn cycle_values(&self) -> Vec<Value> {
+        fn collect(environment: &Environment, seen: &mut HashSet<usize>, output: &mut Vec<Value>) {
+            if !seen.insert(environment as *const Environment as usize) {
+                return;
+            }
+            for index in 0..environment.len() {
+                output.push(environment.get(index as u16));
+            }
+            for names in [&environment.names, &environment.eval_names] {
+                if let Some(names) = names.borrow().as_ref() {
+                    for binding in names.values() {
+                        output.push(binding.load());
+                    }
+                }
+            }
+            if let Some(caller) = &environment.caller {
+                collect(caller, seen, output);
+            }
+            if let Some(parent) = &environment.tdz_parent {
+                collect(parent, seen, output);
+            }
+        }
+        let mut seen = HashSet::new();
+        let mut output = Vec::new();
+        collect(self, &mut seen, &mut output);
+        output
+    }
+
+    /// Clear only captured edges that point at trial-deleted nodes. This is
+    /// called only after the graph pass has classified the owning function as
+    /// unreachable; clearing the doomed slots breaks the cycle while leaving
+    /// all live values untouched.
+    pub(crate) fn clear_cycle_edges(&self, doomed: &HashSet<usize>, ids: &HashMap<usize, usize>) {
+        fn clear(
+            environment: &Environment,
+            seen: &mut HashSet<usize>,
+            doomed: &HashSet<usize>,
+            ids: &HashMap<usize, usize>,
+        ) {
+            if !seen.insert(environment as *const Environment as usize) {
+                return;
+            }
+            for index in 0..environment.len() {
+                let value = environment.get(index as u16);
+                if crate::cycle_collector::value_points_to_doomed(&value, doomed, ids) {
+                    environment.set(index as u16, Value::Undefined);
+                }
+            }
+            for names in [&environment.names, &environment.eval_names] {
+                if let Some(names) = names.borrow().as_ref() {
+                    for binding in names.values() {
+                        let value = binding.load();
+                        if crate::cycle_collector::value_points_to_doomed(&value, doomed, ids) {
+                            binding.store(Value::Undefined);
+                        }
+                    }
+                }
+            }
+            if let Some(caller) = &environment.caller {
+                clear(caller, seen, doomed, ids);
+            }
+            if let Some(parent) = &environment.tdz_parent {
+                clear(parent, seen, doomed, ids);
+            }
+        }
+        clear(self, &mut HashSet::new(), doomed, ids);
+    }
+
     pub(crate) fn binding_cells(&self) -> Vec<Rc<crate::value::BindingCell>> {
         fn collect(
             environment: &Environment,
@@ -742,6 +813,14 @@ impl Environment {
     pub(crate) fn recycle_frame(environment: Rc<Self>) {
         if Rc::strong_count(&environment) != 1 {
             return;
+        }
+        // A pooled frame is not a GC root for the values from its previous
+        // invocation.  Clear only the frame-owned suffix: captured prefix
+        // slots may be shared with a live lexical environment and must stay
+        // intact.  This also makes Rc trial-deletion's root accounting match
+        // the VM's actual live frames instead of retaining every old local.
+        for slot in environment.captured_len()..environment.len() {
+            environment.set(slot as u16, Value::Undefined);
         }
         FRAME_POOL.with(|pool| {
             let mut pool = pool.borrow_mut();

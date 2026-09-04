@@ -3,6 +3,9 @@ use std::{cell::RefCell, rc::Rc};
 use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject};
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
+    crate::cycle_collector::track_object(&properties);
+    crate::cycle_collector::track_value(&value);
+    crate::cycle_collector::checkpoint();
     let self_reference = value_targets(&value, &properties);
     if self_reference {
         let parent_alias = alias(&properties);
@@ -69,7 +72,9 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         record_created(&mut created, key);
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
-    Value::Object(object)
+    let result = Value::Object(object);
+    crate::cycle_collector::track_value(&result);
+    result
 }
 
 /// Admit only ordinary named data writes whose complete semantics have already
