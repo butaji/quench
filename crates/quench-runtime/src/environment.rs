@@ -429,6 +429,20 @@ impl SlotRefs {
             .into()
     }
 
+    /// A pooled frame may clear only storage that is not referenced by a
+    /// closure. Captured bindings retain the `SlotStore` directly rather than
+    /// the frame `Environment`, so checking the frame Rc count alone is not
+    /// sufficient to establish unique ownership of its local suffix.
+    fn suffix_has_external_owners(&self) -> bool {
+        self.suffix_store
+            .as_ref()
+            .is_some_and(|store| Rc::strong_count(store) > 1)
+            || self
+                .suffix_overrides
+                .iter()
+                .any(|entry| Rc::strong_count(&entry.binding.store) > 1)
+    }
+
     fn push(&mut self, binding: BindingRef) {
         let slot = self.len();
         self.suffix_len += 1;
@@ -812,6 +826,14 @@ impl Environment {
 
     pub(crate) fn recycle_frame(environment: Rc<Self>) {
         if Rc::strong_count(&environment) != 1 {
+            return;
+        }
+        // A returned closure can outlive this frame while sharing its local
+        // SlotStore through a BindingRef. Clearing that suffix would silently
+        // mutate the closure's captures (for example, a captured RegExp).
+        // Such a frame is not recyclable; dropping the Environment leaves the
+        // shared store owned by the closure intact.
+        if environment.slots_ref().suffix_has_external_owners() {
             return;
         }
         // A pooled frame is not a GC root for the values from its previous
