@@ -110,7 +110,12 @@ fn run_loop_inner(
                 body.instruction(pc)
                     .is_some_and(|instruction| instruction.opcode != crate::ir::Opcode::Slow)
             });
-            if stable_iteration_binding && compact_body && counted_body_is_pure(body) {
+            let pure_body = counted_body_is_pure(body);
+            let guarded_body = counted_body_is_guarded(body, fact.slot);
+            if stable_iteration_binding
+                && compact_body
+                && (pure_body || guarded_body)
+            {
                 if let Some(completion) = run_counted_for(
                     fact,
                     body,
@@ -119,6 +124,7 @@ fn run_loop_inner(
                     registers,
                     loop_shape,
                     !capture_slots_use(body_capture_slots, fact.slot),
+                    !pure_body,
                 )? {
                     return Ok(completion);
                 }
@@ -615,6 +621,7 @@ fn run_counted_for(
     registers: &mut crate::register_file::RegisterFile,
     loop_shape: u64,
     index_unused_by_body: bool,
+    guard_mutations: bool,
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     let environment = crate::locals::current();
@@ -623,8 +630,10 @@ fn run_counted_for(
     if let Some(completion) = run_dense_array_copy(fact, body, dst, registers, &environment) {
         return Ok(Some(completion));
     }
-    let word_body = proven_word_move_body(&environment, body);
-    let word_calls = proven_word_call_body(&environment, body, dst, registers);
+    let word_body = (!guard_mutations).then(|| proven_word_move_body(&environment, body)).flatten();
+    let word_calls = (!guard_mutations)
+        .then(|| proven_word_call_body(&environment, body, dst, registers))
+        .flatten();
     let word_call_chain = word_calls
         .as_deref()
         .is_some_and(crate::register_file::ImmediateNumberCallPlan::is_chain);
@@ -676,8 +685,21 @@ fn run_counted_for(
             crate::execution_trace::loop_shape_iteration(loop_shape);
             crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
             crate::execution_trace::kernel("counted_for", false);
+            let body_index = index;
+            let body_bound = fact.bound.number(&environment);
             match execute_counted_body(body, registers, &context, word_body.as_deref())? {
                 crate::completion::LoopTransition::Continue(value) => {
+                    if guard_mutations
+                        && !counted_state_unchanged(
+                            fact,
+                            body_index,
+                            body_bound,
+                            &environment,
+                        )
+                    {
+                        run_fragment(update, registers)?;
+                        return Ok(None);
+                    }
                     store_loop_value(registers, dst, value)?;
                 }
                 crate::completion::LoopTransition::Break(value) => {
@@ -721,8 +743,21 @@ fn run_counted_for(
         }
         crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
         crate::execution_trace::kernel("counted_for", false);
+        let body_index = index;
+        let body_bound = Some(bound);
         match execute_counted_body(body, registers, &context, word_body.as_deref())? {
             crate::completion::LoopTransition::Continue(value) => {
+                if guard_mutations
+                    && !counted_state_unchanged(
+                        fact,
+                        body_index,
+                        body_bound,
+                        &environment,
+                    )
+                {
+                    run_fragment(update, registers)?;
+                    return Ok(None);
+                }
                 store_loop_value(registers, dst, value)?;
             }
             crate::completion::LoopTransition::Break(value) => {
@@ -901,6 +936,42 @@ fn counted_body_is_pure(body: crate::machine::CodeView<'_>) -> bool {
             )
         })
     })
+}
+
+/// Admit compact loops with calls only when the loop-control locals are not
+/// written directly. Calls remain on the complete VM path; the executor
+/// checks the counter and bound after each body and deopts if an indirect call
+/// mutates either one.
+#[inline]
+fn counted_body_is_guarded(body: crate::machine::CodeView<'_>, counter: u16) -> bool {
+    !body.is_empty()
+        && (0..body.len()).all(|pc| {
+            let Some(instruction) = body.instruction(pc) else {
+                return false;
+            };
+            match instruction.opcode {
+                crate::ir::Opcode::StoreLocal
+                | crate::ir::Opcode::StoreLocalChecked
+                | crate::ir::Opcode::InitLocal => instruction.a != counter,
+                crate::ir::Opcode::UpdateLocal => instruction.c != counter,
+                _ => true,
+            }
+        })
+}
+
+#[inline]
+fn counted_state_unchanged(
+    fact: CountedForFact,
+    index: f64,
+    bound: Option<f64>,
+    environment: &crate::environment::Environment,
+) -> bool {
+    environment.get_number(fact.slot) == Some(index)
+        && match (fact.bound, bound) {
+            (CountedBound::Constant(_), _) => true,
+            (CountedBound::Slot(slot), Some(value)) => environment.get_number(slot) == Some(value),
+            (CountedBound::Slot(_), None) => false,
+        }
 }
 
 #[inline(always)]
