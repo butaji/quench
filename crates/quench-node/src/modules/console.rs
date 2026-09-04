@@ -246,17 +246,22 @@ fn format_args(args: &[Value]) -> String {
     if args.is_empty() {
         return String::new();
     }
-    if let Value::String(template) = &args[0] {
-        crate::modules::util::format_template(template, args)
-    } else {
-        let mut out = String::new();
-        for (i, arg) in args.iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            out.push_str(&inspect(arg));
+    match &args[0] {
+        Value::String(template) => crate::modules::util::format_template(template, args),
+        Value::StringUnits(units) => {
+            let template = String::from_utf16_lossy(units);
+            crate::modules::util::format_template(&template, args)
         }
-        out
+        _ => {
+            let mut out = String::new();
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                out.push_str(&inspect(arg));
+            }
+            out
+        }
     }
 }
 
