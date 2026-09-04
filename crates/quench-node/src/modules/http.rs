@@ -1347,6 +1347,18 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             res_cap(crate::registry::SPEC_HTTP_RES_ADD_TRAILERS),
         ),
         (
+            "getHeader".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_GET_HEADER),
+        ),
+        (
+            "getHeaders".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_GET_HEADERS),
+        ),
+        (
+            "getHeaderNames".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_GET_HEADER_NAMES),
+        ),
+        (
             "removeHeader".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_REMOVE_HEADER),
         ),
@@ -1372,6 +1384,10 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         (
             "writeInformation".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_WRITE_INFORMATION),
+        ),
+        (
+            "writeEarlyHints".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE_EARLY_HINTS),
         ),
         (
             "writeProcessing".to_string(),
@@ -1422,8 +1438,10 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
 
 // Response methods live in `http_res`; re-exported here for dispatch.
 pub use crate::modules::http_res::{
-    res_add_trailers, res_cork, res_end, res_remove_header, res_set_header, res_set_headers, res_uncork, res_write,
-    res_write_continue, res_write_head, res_write_information, res_write_processing,
+    res_add_trailers, res_cork, res_end, res_get_header, res_get_header_names, res_get_headers,
+    res_remove_header, res_set_header, res_set_headers, res_uncork, res_write,
+    res_write_continue, res_write_early_hints, res_write_head, res_write_information,
+    res_write_processing,
 };
 pub use crate::modules::http_res::{res_destroy, res_flush_headers};
 
