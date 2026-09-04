@@ -650,6 +650,7 @@ historical measurements.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `b2da584d6` release root-fix baseline (300 s) | 7 / 8 | 89.25* | 0.7882* | 109.665 (100/100) | 40.0 speed, 233.5 memory (29/38 under ceilings) |
 | `2fff2aa70` release root-safety completion (300 s) | 8 / 8 | 71.84 | 2.416 | 285.028 (100/100) | 178.6 speed, 377.2 memory (33/38 instrumentation; 38/38 output) |
+| `f76c6ff7a` post-048/049/054/059 findings (300 s) | 8 / 8 | 67.91 | 2.504 | 285.389 (100/100) | 178.1 speed, 377.3 memory (33/38 instrumentation; 38/38 output) |
 
 \* The RegExp fixture is excluded because it emits an error; this is not a
 whole-suite score. The row is a paired measurement record, not an optimization
@@ -819,3 +820,26 @@ the existing bridge already covers typed-array opcodes with the canonical
 fallback, there is no before/after optimization claim. Task 054 closes with
 this evidence-backed finding; any future typed-array specialization needs a
 separate representation-level task and per-kind differential coverage.
+
+## Task 073: capstone trajectory row
+
+The fresh paired capstone run used the ARM64 release artifact with the
+300-second tracked v8-v7 timeout, the unchanged neutral 100-case corpus, and
+the 38-case Deegen curriculum. All eight v8-v7 fixtures completed with
+`output_equal:true`; engine scores were Richards 53.2, DeltaBlue 47.9, Crypto
+16.7, RayTrace 159, EarleyBoyer 70.7, RegExp 13.9, Splay 362, and NavierStokes
+188, for a score geomean of 67.9137 versus Node's 89,156.37. Summed peak RSS
+was 2,589,868,032 bytes versus Node's 1,034,256,384 (2.504x); the RegExp
+1.67-GiB process remains the dominant memory outlier. The neutral run was
+100/100 with Score 285.389 (speed 222.199, memory 366.549). The curriculum
+had 38/38 output-correct cases and 33/38 instrumentation/performance-passing
+cases; the five known OSR/string cases exceeded the runner's proxy ceilings,
+without semantic mismatches.
+
+This row is a measurement record, not a claim of reaching the ~60k target:
+the profiled LOOP_BODY coverage from task 048 and the no-go findings in
+049/054/059 did not materially change the real-suite score, and ARM64 native
+stencil execution remains opt-in pending task 068. The required anti-cheat
+grep was run for this cycle; matches are generic semantic names such as the
+`RegExp` builtin and no production path detects fixture identity, source file,
+or benchmark-specific input.
