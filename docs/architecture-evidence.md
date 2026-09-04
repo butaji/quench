@@ -461,6 +461,26 @@ unchanged. Existing neutral (100/100), curriculum (38/38 output-correct), and
 v8-v7 correctness gates remain the applicable cross-checks; no score or RSS
 gain is claimed from this survey.
 
+## Follow-up: direct-call boundary probe
+
+A symbolized five-second ARM64 `sample` of the real call-heavy workload showed
+the dominant general stack as `execute_interpreter` →
+`execute_code_frame_completion_with_owner` → `drive_code_completion_with_tier`
+→ `dispatch_segment` → `run_compact_call`/`run_compact_call_fallback`, rather
+than time in a rendered stencil leaf. This isolates the remaining cost to the
+ordinary recursive call/continuation boundary, not to one benchmark-specific
+property or arithmetic helper.
+
+Two small boundary experiments were run against different optimized binaries
+using the same synthetic recursive program (`f(30)`, 2,692,537 calls). Removing
+the nested `stacker::maybe_grow` probe from `execute_direct` was within run-to-run
+noise (1.72–1.86 s versus 1.72–1.82 s), and inlining that shim was likewise
+neutral. Disabling the direct-call path entirely regressed the same workload to
+2.09–2.10 s user time (from 1.72–1.75 s), confirming that the existing guarded
+direct path is already the cheaper general mechanism. All temporary changes were
+reverted; no unsafe ABI change or new call representation is justified by this
+probe.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
