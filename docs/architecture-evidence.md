@@ -202,6 +202,8 @@ historical quadratic failure class; the fast path was restored immediately.
 The existing history-only probe remains the mutation-history regression check.
 The same companion passed under `execution-trace` at 23.32x; the complete
 architecture-invariant module now runs 20/20 in that configuration.
+After this addition, the full runtime gates pass 616 tests without tracing and
+626 with `execution-trace`, and `cargo check -p quench-node` is green.
 
 Task 063 extends the module with three collection invariants. Fresh ARM64
 debug runs measured 1.53x (packed-array index-0 access at lengths 10 versus
