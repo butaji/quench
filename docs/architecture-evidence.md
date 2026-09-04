@@ -206,6 +206,14 @@ functions (untraced/traced). All 14 architecture tests pass in each
 configuration. Deliberate fault-injection validation for these new claims is
 still outstanding.
 
+Task 066 adds raw allocation and release checks. With 200,000 timed
+allocations/drops (enough to amortize heap setup), ARM64 ratios were 1.51x
+and 1.39x for live heaps of 10 versus 10,000 without tracing, and 1.56x and
+1.52x with tracing. The two invariants pass alongside the preceding 16
+architecture tests in both configurations. No arena-specific invariant is
+claimed because task 059 is not implemented; deliberate allocation fault
+injection remains outstanding.
+
 Task 064 adds three string invariants. ARM64 debug runs measured append
 ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
 tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
