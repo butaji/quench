@@ -1345,6 +1345,10 @@ impl ObjectData {
         self.original_prototype.borrow().clone()
     }
 
+    pub(crate) fn clear_original_prototype(&self) {
+        self.original_prototype.borrow_mut().take();
+    }
+
     /// Whether the internal prototype marker is absent or names the ordinary
     /// Object prototype. The property vector remains authoritative; this
     /// derived fact only avoids rescanning it on every dynamic write.
@@ -1536,6 +1540,11 @@ impl ObjectData {
     pub(crate) fn replace_with(&self, replacement: Rc<ObjectData>) {
         *self.replacement.borrow_mut() = Some(replacement);
         self.replacement_state.set(true);
+    }
+
+    pub(crate) fn clear_replacement(&self) {
+        self.replacement.borrow_mut().take();
+        self.replacement_state.set(false);
     }
 }
 
@@ -3130,6 +3139,34 @@ pub struct FunctionValue {
     /// Whether invocation produces an async completion and Promise result.
     pub is_async: bool,
     pub mapped_arguments: bool,
+}
+
+impl FunctionValue {
+    /// Snapshot all value-bearing closure state for the cycle collector.
+    pub(crate) fn cycle_values(&self) -> Vec<Value> {
+        let mut values = self.captures.cycle_values();
+        values.extend(self.with_captures.iter().cloned());
+        values.extend(
+            self.properties
+                .borrow()
+                .iter()
+                .map(|(_, value)| value.clone()),
+        );
+        for (_, slot) in self.private_slots.borrow().iter() {
+            match slot {
+                PrivateSlot::Data(value) | PrivateSlot::Method(value) => values.push(value.clone()),
+                PrivateSlot::Accessor { get, set } => {
+                    if let Some(value) = get {
+                        values.push(value.clone());
+                    }
+                    if let Some(value) = set {
+                        values.push(value.clone());
+                    }
+                }
+            }
+        }
+        values
+    }
 }
 impl Drop for FunctionValue {
     fn drop(&mut self) {

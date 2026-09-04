@@ -561,6 +561,12 @@ pub(super) fn make(
     if has_prototype {
         attach_prototype(&value);
     }
+    if let crate::value::Value::Function(function) = &value {
+        crate::cycle_collector::track_function(function);
+        for captured in function.cycle_values() {
+            crate::cycle_collector::track_value(&captured);
+        }
+    }
     value
 }
 
@@ -591,6 +597,7 @@ fn make_function_value(
         mapped_arguments: metadata.mapped_arguments,
     }));
     if let crate::value::Value::Function(function) = &value {
+        crate::cycle_collector::track_function(function);
         if let Some(token) = crate::vm::realm_token(function_realm) {
             function
                 .properties
