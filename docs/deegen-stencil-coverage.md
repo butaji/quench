@@ -72,3 +72,21 @@ On ARM64, task 039 now executes the same eight specialized leaves through
 const-fn-generated AArch64 bytes. The generic all-opcode `DISPATCH` row remains
 data-only on ARM until it receives its own ABI audit; every other catalog entry
 retains the ordinary interpreter/baseline fallback.
+
+## Task 041 scenario survey
+
+The V8-informed cross-check is a survey of reusable JavaScript scenarios, not
+an invitation to import V8's representations. Status is based on Quench's own
+handlers and traces:
+
+| Scenario | Status | Evidence and decision |
+| --- | --- | --- |
+| Packed versus holey/dictionary elements | **Present (canonical; bridge is guarded by fallback)** | `ArrayKind` distinguishes packed numeric/value, holey, and sparse storage. `run_compact_get_index`/`run_compact_set_index` admit dense packed access and route holes, sparse arrays, stale storage, and non-arrays through complete property semantics. The `GET_INDEX` region intentionally does not duplicate this fact; `array_region_matches_packed_and_holey_fallbacks` proves identical packed and holey results. No second elements-kind representation or stencil is justified. |
+| Global variable access | **Partial** | `LoadCurrentGlobal` has a direct compact local handler, while `ResolveNameOrUndefined` remains a general slow binding operation. A Richards trace records only 3 `LoadCurrentGlobal` and 3,528 `ResolveNameOrUndefined` events against millions of ordinary compact operations (`target/richards-profile-current.json`), so there is no evidence-backed case for a dedicated global `RegionKey` yet. |
+| Comparison/relational, `typeof`, `instanceof` | **Partial** | Comparisons live in the generic `Binary` family and `typeof`/`instanceof` in `Unary`/binary semantics; the arithmetic-glue region therefore does not claim a comparison-specific guard. The same Richards trace reports 3,409,018 `Binary` and 186,701 `Unary` operations, but no isolated curriculum measurement currently separates a comparison fast path from ordinary dispatch. Keep the complete generic fallback until such evidence exists. |
+| `for-in` enumeration | **Present (semantic path; no stencil gap)** | Enumeration takes one key snapshot and validates membership through the canonical object-layout index, avoiding the former quadratic membership scan while preserving prototype, descriptor, deletion, and proxy behavior. `ForIn` remains a structured slow operation, and the `ForI` row is correctly only a bridge admission because it has no bytecode back-edge. An enum-cache stencil would duplicate mutation-sensitive semantics without a measured benefit. |
+| String concatenation representation | **Absent (explicitly deferred)** | Curriculum case 032 remains a measured string-heavy wall-time outlier (27.41x in the current 38-case trace sweep). This is a rope/cons-string representation issue, not stencil admission; it needs a separate `value.rs`/string-representation task and is not changed here. |
+
+The only correctness-sensitive check in this survey is the packed/holey array
+pair above. All other categories remain complete ordinary semantics with no
+new speculative or representation-specific fast path.
