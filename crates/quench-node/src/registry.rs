@@ -1070,6 +1070,12 @@ pub const SPEC_MODULE_CREATED_RESOLVE: NodeSpec = NodeSpec::new("module:createdR
 pub const SPEC_MODULE_STAT: NodeSpec = NodeSpec::new("module:stat", 0x1209);
 pub const SPEC_MODULE_SET_SOURCEMAPS_SUPPORT: NodeSpec =
     NodeSpec::new("module:setSourceMapsSupport", 0x120A);
+pub const SPEC_MODULE_ENABLE_COMPILE_CACHE: NodeSpec =
+    NodeSpec::new("module:enableCompileCache", 0x120C);
+pub const SPEC_MODULE_GET_COMPILE_CACHE_DIR: NodeSpec =
+    NodeSpec::new("module:getCompileCacheDir", 0x120D);
+pub const SPEC_MODULE_FLUSH_COMPILE_CACHE: NodeSpec =
+    NodeSpec::new("module:flushCompileCache", 0x120E);
 pub const SPEC_SEA_IS_SEA: NodeSpec = NodeSpec::new("sea:isSea", 0x1a00);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
 
