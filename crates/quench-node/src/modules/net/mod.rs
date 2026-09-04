@@ -94,6 +94,9 @@ pub struct NetSocket {
     pub id: u64,
     /// Logical process scope that created or accepted this socket.
     pub process_scope: u64,
+    /// Worker ownership is retained for callbacks delivered after worker
+    /// re-entry returns to the primary VM context.
+    pub owner_worker: Option<u64>,
     pub stream: Option<TcpStream>,
     pub js: Value,
     pub state: SocketState,

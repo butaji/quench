@@ -61,7 +61,8 @@ fn emit_server_scoped(
     event: &str,
     args: Vec<Value>,
 ) -> Result<(), VmError> {
-    let scope = super::net_id(receiver).and_then(|id| {
+    let server_id = super::net_id(receiver);
+    let scope = server_id.and_then(|id| {
         state
             .borrow()
             .net
@@ -69,15 +70,42 @@ fn emit_server_scoped(
             .get(&id)
             .map(|server| server.borrow().process_scope)
     });
+    let worker = server_id.and_then(|id| {
+        state
+            .borrow()
+            .net
+            .servers
+            .get(&id)
+            .and_then(|server| server.borrow().owner_worker)
+            .and_then(|worker_id| {
+                state
+                    .borrow()
+                    .cluster
+                    .worker_object(worker_id)
+                    .map(|worker| (worker_id, worker))
+            })
+    });
     let previous = state.borrow().cluster.process_scope();
     let previous_event_scope = state.borrow().event_loop.process_scope();
+    let previous_worker = state.borrow().cluster.worker_context;
     if let Some(scope) = scope {
         state.borrow_mut().cluster.set_process_scope(scope);
         state.borrow().event_loop.set_process_scope(scope);
     }
+    if let Some((worker_id, worker)) = &worker {
+        crate::modules::cluster::set_worker_mode(state, *worker_id, worker, true);
+        state.borrow_mut().cluster.worker_context = Some(*worker_id);
+    }
     let result = emit(state, receiver, event, args);
+    if let Some((worker_id, worker)) = &worker {
+        crate::modules::cluster::set_worker_mode(state, *worker_id, worker, false);
+    }
+    state.borrow_mut().cluster.worker_context = previous_worker;
     state.borrow_mut().cluster.set_process_scope(previous);
-    state.borrow().event_loop.set_process_scope(previous_event_scope);
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(previous_event_scope);
     result
 }
 
@@ -89,13 +117,43 @@ fn emit_socket_scoped(
     args: Vec<Value>,
 ) -> Result<Value, VmError> {
     let scope = socket.borrow().process_scope;
+    let worker = socket
+        .borrow()
+        .owner_worker
+        .or_else(|| socket.borrow().server_id.and_then(|server_id| {
+            state
+                .borrow()
+                .net
+                .servers
+                .get(&server_id)
+                .and_then(|server| server.borrow().owner_worker)
+        }))
+        .and_then(|worker_id| {
+            state
+                .borrow()
+                .cluster
+                .worker_object(worker_id)
+                .map(|worker| (worker_id, worker))
+        });
     let previous = state.borrow().cluster.process_scope();
     let previous_event_scope = state.borrow().event_loop.process_scope();
+    let previous_worker = state.borrow().cluster.worker_context;
     state.borrow_mut().cluster.set_process_scope(scope);
     state.borrow().event_loop.set_process_scope(scope);
+    if let Some((worker_id, worker)) = &worker {
+        crate::modules::cluster::set_worker_mode(state, *worker_id, worker, true);
+        state.borrow_mut().cluster.worker_context = Some(*worker_id);
+    }
     let result = emit(state, receiver, event, args);
+    if let Some((worker_id, worker)) = &worker {
+        crate::modules::cluster::set_worker_mode(state, *worker_id, worker, false);
+    }
+    state.borrow_mut().cluster.worker_context = previous_worker;
     state.borrow_mut().cluster.set_process_scope(previous);
-    state.borrow().event_loop.set_process_scope(previous_event_scope);
+    state
+        .borrow()
+        .event_loop
+        .set_process_scope(previous_event_scope);
     result.map(|_| Value::Undefined)
 }
 
@@ -263,6 +321,7 @@ fn accept_one(
             .get(&server_id)
             .map(|server| server.borrow().process_scope)
             .unwrap_or_else(|| state.borrow().cluster.process_scope()),
+        owner_worker: state.borrow().cluster.worker_context,
         stream: Some(stream),
         js: object.clone(),
         state: SocketState::Open,
@@ -737,15 +796,14 @@ fn poll_server_close(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             }
         }
     }
-    let mut host = state.borrow_mut();
-    for server in &closed {
-        host.net.servers.remove(&server.borrow().id);
-    }
-    drop(host);
     for server in closed {
-        let js = server.borrow().js.clone();
-        super::end_async_stream(state, server.borrow().id);
-        emit(state, &js, "close", Vec::new())?;
+        let (id, js) = {
+            let guard = server.borrow();
+            (guard.id, guard.js.clone())
+        };
+        super::end_async_stream(state, id);
+        emit_server_scoped(state, &js, "close", Vec::new())?;
+        state.borrow_mut().net.servers.remove(&id);
     }
     Ok(())
 }
@@ -834,7 +892,7 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         super::replace_socket_property(&js, "_handle", quench_runtime::value::Value::Null);
         crate::modules::http::connection_close(state, &js)?;
         // Net socket close carries Node's `hadError` boolean argument.
-        emit(state, &js, "close", vec![Value::Boolean(false)])?;
+        emit_socket_scoped(state, &sock, &js, "close", vec![Value::Boolean(false)])?;
     }
     Ok(())
 }

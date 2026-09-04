@@ -634,11 +634,13 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         execute::call(&read_start, &handle, &[])?;
     }
     let process_scope = state.borrow().cluster.process_scope();
+    let owner_worker = state.borrow().cluster.worker_context;
     state.borrow_mut().net.sockets.insert(
         _id,
         Rc::new(RefCell::new(NetSocket {
             id: _id,
             process_scope,
+            owner_worker,
             stream: fd_stream,
             js: object.clone(),
             state: SocketState::Open,
@@ -1551,6 +1553,7 @@ fn connect_with_receiver(
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
         process_scope: state.borrow().cluster.process_scope(),
+        owner_worker: state.borrow().cluster.worker_context,
         stream: Some(stream),
         js: object.clone(),
         state: SocketState::Open,
