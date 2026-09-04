@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
-use quench_runtime::value::Value;
+use quench_runtime::value::{PromiseState, Value};
 
 use crate::host::HostState;
 use crate::registry::{
@@ -29,6 +29,7 @@ const BOUNDED: &str = "\0quench:diagnostics_channel:bounded";
 const SCOPE_STORE: &str = "\0quench:diagnostics_channel:scope:store";
 const SCOPE_PREVIOUS: &str = "\0quench:diagnostics_channel:scope:previous";
 const SCOPE_ACTIVE: &str = "\0quench:diagnostics_channel:scope:active";
+const SCOPE_PUBLISHED: &str = "\0quench:diagnostics_channel:scope:published";
 const SCOPE_END: &str = "\0quench:diagnostics_channel:scope:end";
 const SCOPE_CONTEXT: &str = "\0quench:diagnostics_channel:scope:context";
 const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
@@ -36,6 +37,7 @@ const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "er
 thread_local! {
     static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) };
     static BOUNDED_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static TEST_ROOT_TRACE_EMITTED: RefCell<bool> = const { RefCell::new(false) };
 }
 
 struct ChannelData {
@@ -413,21 +415,27 @@ pub(crate) fn module_require_end(
     let channel_name = match result {
         Ok(value) => {
             let _ = execute::set_property_in_place(&event, "result", value.clone());
-            "tracing:module.require:end"
+            None
         }
         Err(VmError::Thrown(error)) => {
             let _ = execute::set_property_in_place(&event, "error", error.clone());
-            "tracing:module.require:error"
+            Some("tracing:module.require:error")
         }
-        Err(_) => "tracing:module.require:error",
+        Err(_) => Some("tracing:module.require:error"),
     };
-    let channel = channel(
+    if let Some(channel_name) = channel_name {
+        let channel = channel(state, None, &[Value::String(channel_name.into())])?;
+        if channel_has_subscribers(state, &channel) {
+            publish(state, Some(&channel), std::slice::from_ref(&event))?;
+        }
+    }
+    let end = channel(
         state,
         None,
-        &[Value::String(channel_name.into())],
+        &[Value::String("tracing:module.require:end".into())],
     )?;
-    if channel_has_subscribers(state, &channel) {
-        publish(state, Some(&channel), std::slice::from_ref(&event))?;
+    if channel_has_subscribers(state, &end) {
+        publish(state, Some(&end), std::slice::from_ref(&event))?;
     }
     Ok(())
 }
@@ -483,12 +491,21 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                   context = context || {};\
                   if (typeof fn !== 'function') throw new TypeError('fn');\
                   if (!this.hasSubscribers) return fn.apply(thisArg, args);\
-                  var startScope = this.start?.withStoreScope(context); this.start?.publish(context); var self = this; var result;\
-                  try { result = fn.apply(thisArg, args); context.result = result; self.end?.publish(context); }\
-                  catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); startScope?.dispose?.(); throw error; }\
-                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); startScope?.dispose?.(); return result; }\
-                  startScope?.dispose?.();\
-                  result.then(function(value) { context.result = value; var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); }, function(error) { context.error = error; self.error?.publish(context); var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); throw error; });\
+                  var self = this; var startScope = this.start?.withStoreScope(context); if (!startScope || startScope[\"\\0quench:diagnostics_channel:scope:published\"] !== true) this.start?.publish(context);\
+                  var settle = function(error, value) {\
+                    Object.defineProperty(context, error ? 'error' : 'result', { value: error || value, configurable: true, writable: true });\
+                    if (error) self.error?.publish(context);\
+                    var asyncScope = self.asyncStart?.withStoreScope(context); if (!asyncScope || asyncScope[\"\\0quench:diagnostics_channel:scope:published\"] !== true) self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.();\
+                    self.end?.publish(context); if (startScope) startScope.dispose();\
+                    if (error) throw error; return value;\
+                  };\
+                  var result;\
+                  try { result = fn.apply(thisArg, args); }\
+                  catch (error) { if (startScope) startScope.dispose(); settle(error); throw error; }\
+                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); Object.defineProperty(context, 'result', { value: result, configurable: true, writable: true }); self.end?.publish(context); if (startScope) startScope.dispose(); return result; }\
+                  if (startScope) startScope.dispose();\
+                  if (result instanceof Promise) { Object.defineProperty(result, \"\\0quench:diagnostics:trace-promise-clear-store\", { value: { channel: self, context: context }, configurable: true }); return result; }\
+                  result.then(function(value) { settle(null, value); }, function(error) { settle(error); throw error; });\
                   return result;\
                 }",
             )
@@ -600,6 +617,54 @@ pub fn trace_sync(
             Err(thrown)
         }
     }
+}
+
+/// Complete a native Promise trace from the engine's promise-resolution edge.
+/// The original Promise is returned unchanged; this host hook supplies the
+/// async/error/end events without attaching a rejection handler that would
+/// alter unhandled-rejection semantics.
+pub(crate) fn tracing_promise_settle(
+    state: &Rc<RefCell<HostState>>,
+    channel: &Value,
+    context: &Value,
+    promise: &quench_runtime::value::PromiseData,
+) -> Result<(), VmError> {
+    let settled = promise.state.borrow().clone();
+    let (error, result) = match settled {
+        PromiseState::Rejected(error) => (Some(error), None),
+        PromiseState::Fulfilled(result) => (None, Some(result)),
+        PromiseState::Pending => return Ok(()),
+    };
+    let key = error.as_ref().map(|_| "error").unwrap_or("result");
+    let value = error.clone().or_else(|| result.clone()).unwrap_or(Value::Undefined);
+    let descriptor = host_api::object(vec![
+        ("value".into(), value),
+        ("configurable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("writable".into(), Value::Boolean(true)),
+    ]);
+    execute::define_property(context.clone(), key, descriptor)?;
+
+    let error_channel = execute::get_property(channel, "error");
+    if error.is_some() && channel_has_subscribers(state, &error_channel) {
+        publish(state, Some(&error_channel), std::slice::from_ref(context))?;
+    }
+    let async_start = execute::get_property(channel, "asyncStart");
+    let async_end = execute::get_property(channel, "asyncEnd");
+    let stores = channel_stores(state, &async_start);
+    let previous = enter_stores(&stores, context);
+    if channel_has_subscribers(state, &async_start) {
+        publish(state, Some(&async_start), std::slice::from_ref(context))?;
+    }
+    if channel_has_subscribers(state, &async_end) {
+        publish(state, Some(&async_end), std::slice::from_ref(context))?;
+    }
+    restore_stores(Some(&previous));
+    let end = execute::get_property(channel, "end");
+    if channel_has_subscribers(state, &end) {
+        publish(state, Some(&end), std::slice::from_ref(context))?;
+    }
+    Ok(())
 }
 
 fn channel_object(id: u64, name: Value) -> Value {
@@ -800,6 +865,97 @@ pub fn publish(
     Ok(Value::Undefined)
 }
 
+/// Run a node:test body inside the stores bound to the test start channel and
+/// emit the corresponding start/end/error trace events. Keeping the scope
+/// around the whole body (including promise pumping) makes AsyncLocalStorage
+/// propagation an ordinary channel fact rather than a runner special case.
+pub(crate) fn test_scope(
+    state: &Rc<RefCell<HostState>>,
+    context: &Value,
+    body: impl FnOnce() -> Result<Value, VmError>,
+) -> Result<Value, VmError> {
+    let name = execute::get_property(context, "name");
+    let event = host_api::object(vec![
+        ("name".into(), name),
+        ("type".into(), Value::String("test".into())),
+    ]);
+    let start = channel(
+        state,
+        None,
+        &[Value::String("tracing:node.test:start".into())],
+    )?;
+    let end = channel(
+        state,
+        None,
+        &[Value::String("tracing:node.test:end".into())],
+    )?;
+    let error = channel(
+        state,
+        None,
+        &[Value::String("tracing:node.test:error".into())],
+    )?;
+    let emit_root = TEST_ROOT_TRACE_EMITTED.with(|emitted| {
+        let was_emitted = *emitted.borrow();
+        if !was_emitted {
+            *emitted.borrow_mut() = true;
+        }
+        !was_emitted
+    });
+    if emit_root {
+        let root_event = host_api::object(vec![
+            ("name".into(), Value::String("<root>".into())),
+            ("type".into(), Value::String("suite".into())),
+        ]);
+        let root_stores = channel_stores(state, &start);
+        let (root_previous, root_errors) = enter_stores_with_errors(&root_stores, &root_event);
+        for transform_error in root_errors {
+            schedule_uncaught(state, transform_error)?;
+        }
+        if channel_has_subscribers(state, &start) {
+            publish(state, Some(&start), std::slice::from_ref(&root_event))?;
+        }
+        if channel_has_subscribers(state, &end) {
+            publish(state, Some(&end), std::slice::from_ref(&root_event))?;
+        }
+        restore_stores(Some(&root_previous));
+    }
+    let stores = channel_stores(state, &start);
+    let (previous, transform_errors) = enter_stores_with_errors(&stores, &event);
+    for transform_error in transform_errors {
+        schedule_uncaught(state, transform_error)?;
+    }
+    if channel_has_subscribers(state, &start) {
+        publish(state, Some(&start), std::slice::from_ref(&event))?;
+    }
+    let result = body();
+    match &result {
+        Ok(_) => {
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&event))?;
+            }
+        }
+        Err(VmError::Thrown(thrown)) => {
+            let _ = execute::set_property_in_place(&event, "error", thrown.clone());
+            if channel_has_subscribers(state, &error) {
+                publish(state, Some(&error), std::slice::from_ref(&event))?;
+            }
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&event))?;
+            }
+        }
+        Err(_) => {
+            if channel_has_subscribers(state, &error) {
+                publish(state, Some(&error), std::slice::from_ref(&event))?;
+            }
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&event))?;
+            }
+        }
+    }
+    restore_stores(Some(&previous));
+    result
+}
+
 pub fn bind_store(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -837,6 +993,7 @@ pub fn with_store_scope(
     let stores = channel_stores(state, receiver);
     if stores.is_empty() {
         return Ok(host_api::object(vec![
+            (SCOPE_PUBLISHED.into(), Value::Boolean(false)),
             (
                 "dispose".into(),
                 crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
@@ -864,6 +1021,7 @@ pub fn with_store_scope(
         previous_values.push(previous);
     }
     let scope = host_api::object(vec![
+        (SCOPE_PUBLISHED.into(), Value::Boolean(true)),
         (SCOPE_STORE.into(), host_api::array(store_values)),
         (SCOPE_PREVIOUS.into(), host_api::array(previous_values)),
         (SCOPE_ACTIVE.into(), Value::Boolean(true)),
