@@ -275,6 +275,31 @@ geomean is 52.63 versus Node 119,607; this is not comparable to the debug
 artifact's 4.92 geomean and is recorded only as the post-collector release
 sanity check.
 
+A release-artifact v8-v7 run at the first task-070 escalation tier
+(`--timeout-ms 60000`, `target/v8v7-baseline-60s.json`) completed four of
+eight fixtures with verified output: Richards 56.3 (3.04 s, 15.3 MiB),
+DeltaBlue 49.3 (5.39 s, 80.3 MiB), RayTrace 167 (15.94 s, 18.4 MiB), and
+NavierStokes 212 (23.89 s, 18.1 MiB). Crypto and EarleyBoyer remained
+timeout-bound at 60 s; RegExp completed in 2.37 s but emitted
+`RESULT:RegExp:error`; Splay completed in 1.83 s but emitted no result marker
+and peaked at 431.5 MiB, so neither is output-verified. The four verified
+engine scores have geomean 99.56 versus Node 73,943.78. This is a new
+measurement row, not a replacement for the earlier 10 s and 120 s snapshots.
+
+The next escalation isolated Crypto at `--timeout-ms 300000`:
+`target/v8v7-baseline-300s-crypto.json` completed with verified output in
+221.08 s, Score 16.2, and 33.5 MiB peak RSS (Node: Score 85,721, 61.8 MiB).
+The sustained CPU profile and deep active VM stack distinguish this from a
+parked hang; it is a very slow but finite workload. EarleyBoyer remains the
+next outstanding 300-second completion probe.
+An isolated EarleyBoyer run at the same 300-second tier completed with
+verified output in 70.04 s, Score 71.8, and 149.7 MiB peak RSS
+(`target/v8v7-baseline-300s-earley.json`; Node Score 144,493 and 126.6 MiB).
+Its active CPU execution is therefore very slow but finite rather than a
+non-terminating path. The remaining completion gaps are the RegExp error and
+Splay missing marker, which are correctness/harness findings rather than
+timeout-only unknowns.
+
 Task 056 cycle audit confirms a real leak in the current pure-`Rc` object
 graph. The committed measurement probe `tools/cycle-audit.mjs` runs fresh
 processes and parses macOS peak RSS. Plain two-object cycles grew from
@@ -311,6 +336,21 @@ the executable stencil path is x86_64-gated and inactive on this ARM64 host.
 Therefore icache/branch cost for rendered regions was not a measured cost, and
 the task's required outcome is **not a measured cost, no implementation
 attempted**. No layout or branch-target bytes changed.
+
+Task 068's call-boundary profile was run on a synthetic arithmetic loop with
+the ARM64 stencil opt-in enabled. A five-second DWARF sample captured
+`StencilArena::render_or_get` (including `copy_and_patch`/`make_executable`)
+and the canonical `run_compact_call_fallback`; the native leaf itself is only
+a handful of instructions. The arena already makes `mprotect` idempotent,
+so the remaining cost is the Rust-to-rendered-fragment boundary plus per-plan
+arena setup, not a missed repeated protection call. Paired curriculum cases
+017-019 were 1.24x/2.75x/2.38x wall time with the fallback and 2.01x/3.09x/3.63x
+with ARM stencils enabled (debug, execution-trace artifact); all outputs
+remained equal, but the stencil path regressed. Since the profile does not
+identify a small safe shim change that can amortize a 1-5-instruction leaf,
+the ARM default remains off and task 068 is closed with a no-go finding.
+Larger region scope (task 048) is the evidence-backed next lever; no
+benchmark-specific path or ABI hack was introduced.
 
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
