@@ -336,12 +336,28 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
         }));
       }
       if (expected && typeof expected === "object") {
+        const rejectsMatch = (received, wanted) => {
+          if (
+            received &&
+            wanted &&
+            typeof received === "object" &&
+            typeof wanted === "object" &&
+            (received instanceof Error || wanted instanceof Error ||
+              received instanceof DOMException || wanted instanceof DOMException)
+          ) {
+            if (String(received.name) !== String(wanted.name)) return false;
+            if (String(received.message) !== String(wanted.message)) return false;
+            if ("code" in wanted && received.code !== wanted.code) return false;
+            return true;
+          }
+          return received === wanted;
+        };
         for (const key of Object.keys(expected)) {
           const expectedValue = expected[key];
           const actualValue = error == null ? undefined : error[key];
           const matches = expectedValue instanceof RegExp
             ? expectedValue.test(actualValue)
-            : actualValue === expectedValue;
+            : rejectsMatch(actualValue, expectedValue);
           if (!matches) {
             return Promise.reject(Object.assign(new Error(message || "The input did not match"), {
               code: "ERR_ASSERTION", operator: "rejects"
