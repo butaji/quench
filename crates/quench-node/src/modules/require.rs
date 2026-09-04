@@ -1852,7 +1852,8 @@ fn execute_module(
     let context = quench_runtime::vm::current_context()
         .as_ref()
         .clone()
-        .with_source_text(source.to_owned());
+        .with_source_text(source.to_owned())
+        .with_compiled_source_text(source.to_owned());
     // Re-entrant execution: `execute_with_context` would reset the
     // runtime's locals state and corrupt the frame that called `require`.
     let mut registers = quench_runtime::register_file::RegisterFile::new();
@@ -2318,6 +2319,14 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             });
             if !enabled {
                 return None;
+            }
+            let global = quench_runtime::vm::current_global_object();
+            let stream_iter = execute::get_property(&global, "__quenchRequireStreamIter");
+            if matches!(
+                stream_iter,
+                Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+            ) {
+                return execute::call(&stream_iter, &Value::Undefined, &[]).ok();
             }
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
