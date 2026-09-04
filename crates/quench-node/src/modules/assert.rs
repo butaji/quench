@@ -1591,11 +1591,12 @@ fn append_collection_properties(value: &Value, rendered: &mut String) {
         .collect::<Vec<_>>()
         .join(", ");
     rendered.truncate(rendered.len() - 1);
-    if !rendered.ends_with('{') {
+    let empty_collection = rendered.ends_with('{');
+    if !empty_collection {
         rendered.push_str(", ");
     }
     rendered.push_str(&body);
-    if rendered.ends_with('{') {
+    if empty_collection {
         rendered.push_str(" }");
     } else {
         rendered.push('}');
