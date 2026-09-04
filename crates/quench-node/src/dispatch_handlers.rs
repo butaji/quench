@@ -7040,6 +7040,30 @@ pub fn stream_pipeline(
     crate::modules::stream::pipeline(state, args)
 }
 
+pub fn stream_promises_pipeline(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::promises_pipeline(state, receiver, args)
+}
+
+pub fn stream_promises_finished(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::promises_finished(state, receiver, args)
+}
+
+pub fn stream_promises_callback(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::stream::promises_callback(state, receiver, args)
+}
+
 pub fn stream_abort_signal(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
