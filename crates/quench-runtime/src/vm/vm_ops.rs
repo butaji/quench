@@ -5,6 +5,61 @@ use crate::value::Value;
 
 use crate::vm::VmError;
 
+thread_local! {
+    static CALL_STACK: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static CALL_STACK_SOURCES: std::cell::RefCell<Vec<Option<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static CALL_CONTINUATION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct CallContinuationDepthGuard;
+
+impl CallContinuationDepthGuard {
+    fn enter() -> Result<Self, VmError> {
+        const MAX_CALL_CONTINUATION_DEPTH: usize = 2048;
+        let overflow = CALL_CONTINUATION_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= MAX_CALL_CONTINUATION_DEPTH {
+                true
+            } else {
+                depth.set(current + 1);
+                false
+            }
+        });
+        if overflow {
+            return Err(crate::value::error::throw_range_error(
+                "Maximum call stack size exceeded",
+            ));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for CallContinuationDepthGuard {
+    fn drop(&mut self) {
+        CALL_CONTINUATION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+pub(crate) fn call_stack_frames() -> Vec<String> {
+    CALL_STACK.with(|stack| stack.borrow().clone())
+}
+
+pub(crate) fn reset_call_stack() {
+    CALL_STACK.with(|stack| stack.borrow_mut().clear());
+    CALL_STACK_SOURCES.with(|stack| stack.borrow_mut().clear());
+}
+
+fn function_source_name(value: &Value) -> Option<String> {
+    match crate::execute::get_property(value, "\0quench:source_name") {
+        Value::String(name) => Some(name),
+        _ => None,
+    }
+}
+
+pub(crate) fn current_call_stack_source_names() -> Vec<Option<String>> {
+    CALL_STACK_SOURCES.with(|stack| stack.borrow().clone())
+}
+
 pub fn execute_call(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
@@ -89,6 +144,7 @@ pub fn execute_call_continuation(
     registers: &mut crate::register_file::RegisterFile,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
+    let _depth_guard = CallContinuationDepthGuard::enter()?;
     stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
         execute_call_continuation_inner(registers, continuation)
     })
@@ -250,6 +306,8 @@ fn execute_call_continuation_inner(
                     break;
                 }
                 let Some(parent) = stack.pop() else {
+                    decorate_thrown(&thrown, &current, &stack);
+                    *registers = current.continuation.caller_registers.clone();
                     return Err(crate::execute::VmError::Thrown(thrown));
                 };
                 current = parent;
