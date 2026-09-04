@@ -648,3 +648,35 @@ overhead rather than an isolated bigint or allocation primitive. The sample
 showed active nested execution, not a tight non-progressing loop. No
 Crypto-specific fast path was added; a general call-dispatch investigation is
 the appropriate follow-up and must retain the neutral/curriculum gates.
+
+## Task 055 allocation-throughput survey
+
+The three allocation-heavy v8-v7 workloads were profiled on the ARM64
+release artifact with `QUENCH_EXEC_TRACE=1` and `/usr/bin/time -l`. The trace
+allocation counters are event counts, not a claim that each event has equal
+CPU cost; they are compared with total handler events and with the slow-lane
+breakdown.
+
+| Benchmark | Trace wall / retired instructions / peak RSS | Allocation events (environment + other + descriptor) | Handler events | Allocation-event share | Slow lane and dominant handlers |
+| --- | --- | ---: | ---: | ---: | --- |
+| Splay | 10.68 s / 235,921,011,030 / 447,152,896 bytes | 961,942 + 1,560,581 + 229,286 = 2,751,809 | 37,539,990 | 7.3% | 4,542,406 (12.1%); Branch 1,959,955, MakeObject 766,083, Call 766,080, Unary 489,721 |
+| RayTrace | 45.00 s / 932,164,929,169 / 12,976,560 bytes | 3,958,886 + 11,799,004 + 103,453 = 15,861,343 | 148,434,464 | 10.7% | 12,001,630 (8.1%); TraceSite 5,289,355, Construct 2,197,739, Branch 1,818,973, Unary 1,124,080, CallMethod 902,258 |
+| EarleyBoyer | 224.25 s / 4,705,282,236,127 / 115,950,048 bytes | 17,072,274 + 10,090,763 + 111,995 = 27,275,032 | 861,856,714 | 3.2% | 169,361,717 (19.7%); TraceSite 75,822,923, Branch 46,282,168, Unary 16,697,870, Call 10,004,170, Construct 8,769,589 |
+
+The corresponding heap lifecycle counters are balanced after the cycle
+collector: Splay environment/object/array allocated-dropped were
+961,942/963,012, 1,142,910/1,142,567, and 417,626/417,617; RayTrace had
+3,958,886/3,959,882 environments, 11,368,039/11,366,788 objects, and
+430,833/430,756 arrays; EarleyBoyer had 17,072,274/17,072,660
+environments, 9,746,223/9,679,513 objects, and 205,421/313,762 arrays.
+These are high allocation counts, but the execution-trace slow lanes and
+short native samples are dominated by dispatch, tracing, calls, construction,
+and property/loop handlers rather than a sustained allocator stack. The
+profiles do not isolate Rc retain/drop work as the dominant CPU share, and no
+bounded local pool has a defensible target.
+
+Task 055 is closed as a profile-gated **no-go**: do not rewrite the Rc memory
+model or add a generational collector on this evidence. A future allocator
+task would need a new, site-specific profile that attributes CPU time (not
+just allocation volume) to one general allocation site, while preserving the
+complete ordinary semantics and RSS bounds.
