@@ -40,16 +40,16 @@ a prefix of a region.
 | `Sub` | `SUBTRACT` (also `DISPATCH`) | Yes |
 | `Mul` | `MULTIPLY` (also `DISPATCH`) | Yes |
 | `Div` | `DIVIDE` (also `DISPATCH`) | Yes |
-| `GetProperty` | `DISPATCH` | No |
+| `GetProperty` | `GET_PROPERTY` (also `DISPATCH`) | No (canonical shape-IC bridge) |
 | `Call` | `CALL` (also `DISPATCH`) | No (canonical call-IC bridge) |
 | `Jump` | `DISPATCH` | No |
 | `IncI` | `DISPATCH` | No |
-| `ForI` | `DISPATCH` | No |
-| `AGetI` | `DISPATCH` | No |
-| `ASetI` | `DISPATCH` | No |
-| `AGetIInc` | `DISPATCH` | No |
+| `ForI` | `FOR_I` (also `DISPATCH`) | No (canonical structured-loop bridge) |
+| `AGetI` | `GET_INDEX` (also `DISPATCH`) | No (canonical array-shape bridge) |
+| `ASetI` | `SET_INDEX` (also `DISPATCH`) | No (canonical array-shape bridge) |
+| `AGetIInc` | `GET_INDEX_INC` (also `DISPATCH`) | No (canonical array-shape bridge) |
 | `GetN` | `PROPERTY` (also `DISPATCH`) | Yes |
-| `SetN` | `DISPATCH` | No |
+| `SetN` | `SET_N` (also `DISPATCH`) | No (canonical shape-IC bridge) |
 | `CallN` | `CALL_N` (also `DISPATCH`) | No (canonical named-call bridge) |
 | `UpdateLocal` | `ARITHMETIC_GLUE`, `UPDATE_RETURN` (also `DISPATCH`) | No (canonical handler in bounded span) |
 | `LoadLocalChecked` | `ARITHMETIC_GLUE`, `LOOP_GLUE` (also `DISPATCH`) | No (canonical handler in bounded span) |

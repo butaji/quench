@@ -210,6 +210,25 @@ pub const fn arithmetic_glue_region_key() -> RegionKey {
     ARITHMETIC_GLUE_KEY
 }
 
+pub const fn get_property_region_key() -> RegionKey {
+    GET_PROPERTY_KEY
+}
+pub const fn set_n_region_key() -> RegionKey {
+    SET_N_KEY
+}
+pub const fn get_index_region_key() -> RegionKey {
+    GET_INDEX_KEY
+}
+pub const fn set_index_region_key() -> RegionKey {
+    SET_INDEX_KEY
+}
+pub const fn get_index_inc_region_key() -> RegionKey {
+    GET_INDEX_INC_KEY
+}
+pub const fn for_i_region_key() -> RegionKey {
+    FOR_I_KEY
+}
+
 /// Canonical admission table for numeric baseline leaves.  The opcode catalog
 /// owns which operations are eligible; callers only ask for the derived key.
 pub fn numeric_region_key(opcode: crate::ir::Opcode) -> Option<RegionKey> {
@@ -463,6 +482,28 @@ mod tests {
                 external_entry: true,
             }]
         ));
+    }
+
+    #[test]
+    fn profiled_property_array_and_for_i_rows_are_cfg_admitted() {
+        let rows = [
+            (get_property_region_key(), crate::ir::Opcode::GetProperty),
+            (set_n_region_key(), crate::ir::Opcode::SetN),
+            (get_index_region_key(), crate::ir::Opcode::AGetI),
+            (set_index_region_key(), crate::ir::Opcode::ASetI),
+            (get_index_inc_region_key(), crate::ir::Opcode::AGetIInc),
+            (for_i_region_key(), crate::ir::Opcode::ForI),
+        ];
+        for (key, opcode) in rows {
+            let record = select_region(key).expect("profiled operation row");
+            assert_eq!(record.operations, &[opcode]);
+            assert_eq!(record.entry, 0);
+            assert_eq!(
+                record.executable,
+                cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
+            );
+            assert!(record.stencil.bytes.len() >= 1);
+        }
     }
 
     #[test]
