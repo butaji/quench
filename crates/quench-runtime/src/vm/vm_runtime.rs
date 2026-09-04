@@ -2679,6 +2679,63 @@ mod compact_handler_tests {
     }
 
     #[test]
+    fn array_region_matches_packed_and_holey_fallbacks() {
+        // The admission row is representation-agnostic; the canonical AGetI
+        // handler owns the packed-numeric fast path and falls back for holes.
+        // Compare both through the region bridge and ordinary dispatch so a
+        // future elements-kind specialization cannot accidentally read a hole.
+        let make_code = || {
+            crate::machine::ExecutableCode::from_ops(vec![Op::GetPropertyDynamic {
+                dst: 0,
+                object: 1,
+                key: 2,
+            }])
+        };
+        let context = crate::vm::current_context_or_default();
+        let packed = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(17.0),
+        ])));
+        let mut holey_data = crate::value::ArrayData::new(vec![Value::Number(17.0)]);
+        holey_data.delete_property("0");
+        let holey = Value::Array(Rc::new(holey_data));
+
+        for object in [packed, holey] {
+            let ordinary_code = make_code();
+            let ordinary_view = ordinary_code.code();
+            let ordinary_instruction = ordinary_view.instruction(0).expect("AGetI");
+            let mut ordinary = crate::register_file::RegisterFile::from_values(vec![
+                Value::Undefined,
+                object.clone(),
+                Value::Number(0.0),
+            ]);
+            let expected = run_instruction(
+                ordinary_view,
+                0,
+                ordinary_instruction,
+                &mut ordinary,
+                &context,
+            )
+            .expect("ordinary array access");
+
+            let native_code = make_code();
+            let mut native = crate::register_file::RegisterFile::from_values(vec![
+                Value::Undefined,
+                object,
+                Value::Number(0.0),
+            ]);
+            let mut region = crate::machine::NativeRegionPlan::new_for_test(
+                crate::stencil_select::get_index_region_key(),
+            )
+            .expect("array region admission");
+            let actual = region
+                .execute(native_code.code(), 0, &mut native, &context)
+                .expect("canonical array fallback");
+            assert_transition_equal(&actual, &expected);
+            assert_eq!(native, ordinary);
+        }
+    }
+
+    #[test]
     fn generated_call_site_installs_then_hits_callable_identity() {
         let executable = crate::machine::ExecutableCode::from_ops(vec![Op::Call {
             dst: 0,
