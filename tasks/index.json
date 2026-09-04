@@ -55,6 +55,7 @@
             ,"054: TypedArray survey closed with an evidence-backed finding; AGetI/ASetI opcode bridges already admit typed-array operations when native regions are enabled, while packed-array counters correctly remain zero and canonical typed-array/property handling supplies the fallback. NavierStokes completed output-correct at 192 score/26.27s/19.0MiB; no new representation mechanism was justified."
             ,"059: scoped-arena audit closed as a no-go; FrameStack/RegisterFile already provide bounded contiguous reuse, but call continuations, closures, environments, and temporary Values can escape across returns/coroutines/hosts, so no build-time non-escape proof supports a new data arena. Call-heavy curriculum and Richards/DeltaBlue measurements were recorded with correctness intact."
             ,"060: mandatory Gate 0 is blocked pending a concrete web-framework host use case and explicit request-arena ownership contract; no speculative API or unsafe escape assumption was implemented."
+            ,"073: capstone trajectory row recorded with fresh paired v8-v7/neutral/curriculum measurements and anti-cheat scan; all eight fixtures output-verified, but the current 67.91 score geomean is far below the ~60k north-star target, so the capstone remains open for future general optimizations."
         ],
         "remaining_slices": [
             "060", "073"
