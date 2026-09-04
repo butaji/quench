@@ -76,6 +76,77 @@ pub fn res_set_header(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+fn response_headers(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Vec<(String, String)> {
+    let Some(id) = res_state(receiver) else {
+        return Vec::new();
+    };
+    state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .map(|res| res.headers.clone())
+        .unwrap_or_default()
+}
+
+pub fn res_get_header(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(name) = args.first().map(execute::to_js_string).transpose()? else {
+        return Ok(Value::Undefined);
+    };
+    let values = response_headers(state, receiver)
+        .into_iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(&name))
+        .map(|(_, value)| Value::String(value))
+        .collect::<Vec<_>>();
+    Ok(match values.as_slice() {
+        [] => Value::Undefined,
+        [value] => value.clone(),
+        _ => host_api::array(values),
+    })
+}
+
+pub fn res_get_header_names(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let mut names = Vec::new();
+    for (key, _) in response_headers(state, receiver) {
+        let key = key.to_ascii_lowercase();
+        if !names.iter().any(|name| name == &key) {
+            names.push(key);
+        }
+    }
+    Ok(host_api::array(names.into_iter().map(Value::String).collect()))
+}
+
+pub fn res_get_headers(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let mut values: Vec<(String, String)> = Vec::new();
+    for (key, value) in response_headers(state, receiver) {
+        let key = key.to_ascii_lowercase();
+        if let Some((_, current)) = values.iter_mut().find(|(name, _)| name == &key) {
+            current.push_str(", ");
+            current.push_str(&value);
+        } else {
+            values.push((key, value));
+        }
+    }
+    Ok(execute::set_prototype_of(&host_api::object(
+        values
+            .into_iter()
+            .map(|(key, value)| (key, Value::String(value)))
+            .collect(),
+    ), &Value::Null)?)
+}
+
 pub fn res_set_headers(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -660,6 +731,15 @@ pub fn res_write_information(
         net::socket_write(state, Some(&socket), &[host_api::bytes(&payload)])?;
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn res_write_early_hints(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let headers = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    res_write_information(state, receiver, &[Value::Number(103.0), headers])
 }
 
 /// Legacy spelling for a 102 Processing informational response.
