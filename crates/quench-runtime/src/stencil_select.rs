@@ -183,6 +183,21 @@ pub fn add_const_region_key() -> RegionKey {
     ADD_CONST_KEY
 }
 
+/// Build-generated measured straight-line region keys.  These are kept as a
+/// fixed catalog (rather than a runtime map) so admission remains bounded and
+/// the semantic executor can validate the exact opcode window before entry.
+pub const fn loop_glue_region_key() -> RegionKey {
+    LOOP_GLUE_KEY
+}
+
+pub const fn binary_glue_region_key() -> RegionKey {
+    BINARY_GLUE_KEY
+}
+
+pub const fn update_return_region_key() -> RegionKey {
+    UPDATE_RETURN_KEY
+}
+
 /// Canonical admission table for numeric baseline leaves.  The opcode catalog
 /// owns which operations are eligible; callers only ask for the derived key.
 pub fn numeric_region_key(opcode: crate::ir::Opcode) -> Option<RegionKey> {
@@ -522,6 +537,32 @@ mod tests {
             },
         ];
         assert!(!has_single_entry_point(10, &bad));
+    }
+
+    #[test]
+    fn cfg_rejects_external_entry_into_multi_instruction_span_interior() {
+        // A fused span must contain at least three operations for this check:
+        // an entry at the final operation is still an externally reachable
+        // interior entry and therefore cannot be rendered as one atomic
+        // single-entry region.
+        let blocks = [
+            RegionBlock {
+                id: 0,
+                predecessors: &[],
+                external_entry: true,
+            },
+            RegionBlock {
+                id: 1,
+                predecessors: &[0],
+                external_entry: false,
+            },
+            RegionBlock {
+                id: 2,
+                predecessors: &[1, 9],
+                external_entry: true,
+            },
+        ];
+        assert!(!has_single_entry_point(0, &blocks));
     }
 
     #[test]

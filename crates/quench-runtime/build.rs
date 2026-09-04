@@ -331,6 +331,48 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "loop_glue",
+        // This is the measured straight-line loop body from the neutral
+        // arithmetic corpus.  The generated entry is a copy-and-patch bridge;
+        // the bounded semantic executor validates and runs each operation.
+        operations: &[
+            "LoadLocalChecked",
+            "LoadLocalChecked",
+            "Add",
+            "StoreLocal",
+            "Move",
+        ],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "binary_glue",
+        operations: &["LoadLocal", "LoadConst", "Binary", "Return"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "update_return",
+        operations: &["UpdateLocal", "Return"],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
@@ -477,6 +519,9 @@ __MULTIPLY_BYTES__
 __DIVIDE_BYTES__
 __ADD_CONST_BYTES__
 __DISPATCH_BYTES__
+__LOOP_GLUE_BYTES__
+__BINARY_GLUE_BYTES__
+__UPDATE_RETURN_BYTES__
 const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
 // The catalog remains present on every target for deterministic admission,
 // but only the ISA whose bytes are actually defined may cross the executable
@@ -495,6 +540,9 @@ __MULTIPLY_HOLES__
 __DIVIDE_HOLES__
 __ADD_CONST_HOLES__
 __DISPATCH_HOLES__
+__LOOP_GLUE_HOLES__
+__BINARY_GLUE_HOLES__
+__UPDATE_RETURN_HOLES__
 const FALLTHROUGH_TAIL_HOLES: &[crate::stencil_fact::Hole] = &[];
 const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {
     bytes: FALLTHROUGH_TAIL_BYTES,
@@ -510,6 +558,9 @@ const MOVE_OPS: &[crate::ir::Opcode] = &[__MOVE_OPS__];
 const DISPATCH_OPS: &[crate::ir::Opcode] = crate::ir::Opcode::ALL;
 const _: () = assert!(DISPATCH_OPS.len() == crate::ir::Opcode::COUNT as usize);
 const FALLTHROUGH_OPS: &[crate::ir::Opcode] = &[__FALLTHROUGH_OPS__];
+const LOOP_GLUE_OPS: &[crate::ir::Opcode] = &[__LOOP_GLUE_OPS__];
+const BINARY_GLUE_OPS: &[crate::ir::Opcode] = &[__BINARY_GLUE_OPS__];
+const UPDATE_RETURN_OPS: &[crate::ir::Opcode] = &[__UPDATE_RETURN_OPS__];
 const LOOP_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(1), LOOP_OPS,
 );
@@ -535,6 +586,15 @@ const ADD_CONST_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::Regio
 );
 const DISPATCH_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(9), DISPATCH_OPS,
+);
+const LOOP_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(10), LOOP_GLUE_OPS,
+);
+const BINARY_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(11), BINARY_GLUE_OPS,
+);
+const UPDATE_RETURN_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(12), UPDATE_RETURN_OPS,
 );
 static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
     (crate::ir::Opcode::Add, FALLTHROUGH_KEY),
@@ -616,6 +676,30 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         fallthrough: None,
         executable: DISPATCH_EXECUTABLE,
     }),
+    (crate::stencil_select::RegionRecord {
+        key: LOOP_GLUE_KEY,
+        stencil: crate::stencil_fact::Stencil { bytes: LOOP_GLUE_BYTES, holes: LOOP_GLUE_HOLES },
+        operations: LOOP_GLUE_OPS,
+        entry: 0,
+        fallthrough: None,
+        executable: EXECUTABLE,
+    }),
+    (crate::stencil_select::RegionRecord {
+        key: BINARY_GLUE_KEY,
+        stencil: crate::stencil_fact::Stencil { bytes: BINARY_GLUE_BYTES, holes: BINARY_GLUE_HOLES },
+        operations: BINARY_GLUE_OPS,
+        entry: 0,
+        fallthrough: None,
+        executable: EXECUTABLE,
+    }),
+    (crate::stencil_select::RegionRecord {
+        key: UPDATE_RETURN_KEY,
+        stencil: crate::stencil_fact::Stencil { bytes: UPDATE_RETURN_BYTES, holes: UPDATE_RETURN_HOLES },
+        operations: UPDATE_RETURN_OPS,
+        entry: 0,
+        fallthrough: None,
+        executable: EXECUTABLE,
+    }),
 ];
 "#
     .replace("__LOOP_BYTES__", &byte_decl("LOOP", &REGION_DECLARATIONS[0]))
@@ -633,6 +717,9 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         &byte_decl("ADD_CONST", &REGION_DECLARATIONS[7]),
     )
     .replace("__DISPATCH_BYTES__", &byte_decl("DISPATCH", &REGION_DECLARATIONS[8]))
+    .replace("__LOOP_GLUE_BYTES__", &byte_decl("LOOP_GLUE", &REGION_DECLARATIONS[9]))
+    .replace("__BINARY_GLUE_BYTES__", &byte_decl("BINARY_GLUE", &REGION_DECLARATIONS[10]))
+    .replace("__UPDATE_RETURN_BYTES__", &byte_decl("UPDATE_RETURN", &REGION_DECLARATIONS[11]))
     .replace("__LOOP_HOLES__", &hole_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_HOLES__", &hole_decl("PROPERTY", &REGION_DECLARATIONS[1]))
     .replace("__MOVE_HOLES__", &hole_decl("MOVE", &REGION_DECLARATIONS[2]))
@@ -648,6 +735,9 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         &hole_decl("ADD_CONST", &REGION_DECLARATIONS[7]),
     )
     .replace("__DISPATCH_HOLES__", &hole_decl("DISPATCH", &REGION_DECLARATIONS[8]))
+    .replace("__LOOP_GLUE_HOLES__", &hole_decl("LOOP_GLUE", &REGION_DECLARATIONS[9]))
+    .replace("__BINARY_GLUE_HOLES__", &hole_decl("BINARY_GLUE", &REGION_DECLARATIONS[10]))
+    .replace("__UPDATE_RETURN_HOLES__", &hole_decl("UPDATE_RETURN", &REGION_DECLARATIONS[11]))
     .replace("__LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[0].operations))
     .replace("__PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[1].operations))
     .replace("__MOVE_OPS__", &opcode_expr(REGION_DECLARATIONS[2].operations))
@@ -655,7 +745,10 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
     .replace("__SUBTRACT_OPS__", &opcode_expr(REGION_DECLARATIONS[4].operations))
     .replace("__MULTIPLY_OPS__", &opcode_expr(REGION_DECLARATIONS[5].operations))
     .replace("__DIVIDE_OPS__", &opcode_expr(REGION_DECLARATIONS[6].operations))
-    .replace("__ADD_CONST_OPS__", &opcode_expr(REGION_DECLARATIONS[7].operations));
+    .replace("__ADD_CONST_OPS__", &opcode_expr(REGION_DECLARATIONS[7].operations))
+    .replace("__LOOP_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[9].operations))
+    .replace("__BINARY_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[10].operations))
+    .replace("__UPDATE_RETURN_OPS__", &opcode_expr(REGION_DECLARATIONS[11].operations));
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
