@@ -262,6 +262,10 @@ fn info_props_with_exec_argv(
             "argv",
             host_api::array(argv.iter().cloned().map(Value::String).collect()),
         ),
+        // Keep the public Node shape present even though this Rust host does
+        // not expose Node's native snapshot-loader inventory.  Require hooks
+        // can still observe and mutate one canonical per-process list.
+        ("moduleLoadList", host_api::array(Vec::new())),
         ("env", env_object()),
         (
             "config",
@@ -705,11 +709,8 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     );
     let really_exit = quench_runtime::execute::get_property(&process, "reallyExit");
     if quench_runtime::is_callable(&really_exit) {
-        let _ = quench_runtime::execute::call(
-            &really_exit,
-            &process,
-            &[Value::Number(code as f64)],
-        );
+        let _ =
+            quench_runtime::execute::call(&really_exit, &process, &[Value::Number(code as f64)]);
     }
     Err(VmError::Thrown(Value::String(format!(
         "process.exit({code})"
@@ -1074,10 +1075,7 @@ pub fn stream_write(
 /// `process._rawDebug(...args)` — low-level stderr formatting that bypasses
 /// the console object while retaining the host's observable stream boundary.
 pub fn raw_debug(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let mut message = args
-        .first()
-        .map(raw_debug_text)
-        .unwrap_or_default();
+    let mut message = args.first().map(raw_debug_text).unwrap_or_default();
     for value in args.iter().skip(1) {
         if let Some(index) = message.find("%s") {
             let replacement = raw_debug_text(value);
@@ -1413,10 +1411,7 @@ pub(crate) fn emit_warning_now(
         guard.process.warnings_emitted.push(key);
     }
     let warning = warning_value(state, name, message, code, None);
-    let _ = emit(
-        state,
-        &[Value::String("warning".into()), warning],
-    );
+    let _ = emit(state, &[Value::String("warning".into()), warning]);
 }
 
 pub(crate) fn emit_warning_with_detail(
