@@ -923,3 +923,17 @@ pathological remapping cost and improves the neutral trace run, but the
 curriculum speed is still marginally lower and memory is not better. The
 `QUENCH_ENABLE_AARCH64_STENCILS` opt-in therefore remains off by default; no
 default-on claim is made until both gates are net-positive.
+
+## ARM64 optimizing-plan admission experiment (reverted)
+
+The already-generated AArch64 dispatch-region bytes were temporarily admitted
+through `FunctionCode::executable_optimizing_plan` under the existing
+`QUENCH_ENABLE_AARCH64_STENCILS=1` opt-in. This remained a general mechanism
+experiment: no opcode, fixture, or source identity was inspected, and every
+bridge miss retained the canonical fallback. On the ARM64 release artifact,
+the neutral corpus changed from Score 284.181 (fallback) to 282.457 (native),
+and the curriculum changed from speed 186.2/memory 384.5 to speed
+173.0/memory 381.2. All outputs remained correct, but both speed gates
+regressed, so the experiment was reverted and the optimizing view remains
+x86_64-only. This confirms that the current multi-op AArch64 bridge does not
+yet amortize its call boundary; no trajectory score claim is made.
