@@ -412,6 +412,32 @@ changing the correct IC representation under task 071. The broad slow-lane
 constant-factor question is recorded as follow-up task 074 rather than being
 silently folded into an IC optimization.
 
+## Task 074 slow-lane dispatch survey
+
+The profile-first synthetic clone alternated a branch and numeric unary
+operation for 200,000 iterations, then was repeated at 1,000,000 iterations
+with different identifiers and constants from every benchmark fixture. A
+five-second DWARF `sample` on the ARM64 debug artifact captured 3,702 samples
+through the generic `run_instruction` boundary and canonical call/slow-path
+chain; the residual fallback accounted for 1,168 samples, while the concrete
+`execute_unary` body accounted for only 30. The non-trace sample likewise
+showed the dispatch/call boundary rather than one semantic helper as the
+dominant stack. The execution-trace run recorded 4,000,549 compact operations,
+400,350 slow operations, and 200,003 `Branch` plus 200,004 `Unary` fallback
+handlers, confirming the clone exercised the intended ordinary paths.
+
+A generic optimized-build test of the only small candidate (forcing
+`run_instruction` inline) was neutral: five warm 1,000,000-iteration runs were
+0.42–0.43 s before and after, with identical output, roughly 8.44 billion
+retired instructions, and 11.3–11.6 MiB peak RSS. The candidate was reverted.
+The remaining cost is distributed dispatch/call machinery (and, in trace
+builds, instrumentation), not an isolated handler with a safe compact
+replacement. Therefore task 074 closes with a no-go finding: no production
+semantic or layout change was justified, and complete ordinary fallback remains
+unchanged. Existing neutral (100/100), curriculum (38/38 output-correct), and
+v8-v7 correctness gates remain the applicable cross-checks; no score or RSS
+gain is claimed from this survey.
+
 After the callee-directed continuation rewrite, the same 001–100 corpus still
 produced 100/100 exact matches in a fresh one-run smoke pass. The raw report is
 `target/micro-neutral-after-cps.json`; it is evidence only and is not read by
