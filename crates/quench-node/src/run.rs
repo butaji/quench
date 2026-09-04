@@ -226,4 +226,44 @@ mod tests {
         );
         assert!(output.lock().unwrap().contains("detached-log"));
     }
+
+    #[test]
+    fn polymorphic_method_dispatch_preserves_semantics() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        // This is deliberately a small, general reproduction of the
+        // DeltaBlue shape: unrelated constructors share one method name while
+        // each instance has a distinct property layout.  It must remain on
+        // the ordinary complete semantics path for every shape.
+        let source = r#"
+          function A() { this.x = 1; this.a = 0; }
+          function B() { this.x = 2; this.b = 0; }
+          function C() { this.x = 3; this.c = 0; }
+          function D() { this.x = 4; this.d = 0; }
+          function E() { this.x = 5; this.e = 0; }
+          A.prototype.f = B.prototype.f = C.prototype.f =
+            D.prototype.f = E.prototype.f = function() {
+              this.a = this.x + 1;
+              return this.x;
+            };
+          const values = [];
+          for (let i = 0; i < 25; i++) {
+            values.push(i % 5 === 0 ? new A : i % 5 === 1 ? new B :
+              i % 5 === 2 ? new C : i % 5 === 3 ? new D : new E);
+          }
+          let total = 0;
+          for (let i = 0; i < 250; i++) total += values[i % values.length].f();
+          console.log(total);
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(
+            outcome.error.is_none(),
+            "polymorphic dispatch failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().trim(), "750");
+    }
 }
