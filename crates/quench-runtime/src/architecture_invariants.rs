@@ -203,4 +203,116 @@ mod tests {
         black_box(result);
         started.elapsed().as_secs_f64() * 1_000.0
     }
+
+    /// Packed-array index zero access is O(1) in array length. Both programs
+    /// perform the same number of reads; setup is amortized and the ratio
+    /// bound rejects an implementation that scans the backing array.
+    #[test]
+    fn packed_array_access_does_not_scale_with_length() {
+        let small = measure_array_access(10, 100_000);
+        let large = measure_array_access(100_000, 100_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #063.1: length=10 {small:.6} ms/access, length=100000 {large:.6} ms/access, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "array access scaled with length: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_array_access(length: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var array = [];
+                for (var i = 0; i < {length}; i++) array[i] = i;
+                var total = 0;
+                for (var i = 0; i < {repetitions}; i++) total += array[0];
+                total;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
+
+    /// Map/Set lookup and update are O(1) in the number of unrelated
+    /// instances ever created. This cross-instance form mirrors invariant #1
+    /// for shapes and uses a wall-clock ratio because the trace API has no
+    /// collection-operation counter.
+    #[test]
+    fn collection_access_does_not_scale_with_instance_history() {
+        let small = measure_collection_access(10, 20_000);
+        let large = measure_collection_access(1_000, 200);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #063.2: instances=10 {small:.6} ms/access, instances=1000 {large:.6} ms/access, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "collection access scaled with instance history: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_collection_access(instance_count: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var maps = [], sets = [];
+                for (var i = 0; i < {instance_count}; i++) {{
+                    var map = new Map(); map.set("key", i); maps[i] = map;
+                    var set = new Set(); set.add(i); sets[i] = set;
+                }}
+                var total = 0;
+                for (var round = 0; round < {repetitions}; round++) {{
+                    for (var i = 0; i < {instance_count}; i++) {{
+                        total += maps[i].get("key");
+                        sets[i].has(i);
+                        maps[i].set("key", i);
+                    }}
+                }}
+                total;
+            "#
+        );
+        run_source_ms(&source) / (instance_count * repetitions) as f64
+    }
+
+    /// Collection iteration is proportional to live entries, not historical
+    /// add/delete churn. The final Map, Set, and Array each have four live
+    /// entries while only the pre-loop mutation history changes.
+    #[test]
+    fn collection_iteration_does_not_scale_with_mutation_history() {
+        let small = measure_collection_iteration(0, 1_000);
+        let large = measure_collection_iteration(2_000, 1_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #063.3: history=0 {small:.6} ms/iteration, history=2000 {large:.6} ms/iteration, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 16.0,
+            "collection iteration scaled with mutation history: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_collection_iteration(history: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var map = new Map(), set = new Set(), array = [];
+                map.set("a", 1); map.set("b", 2); map.set("c", 3); map.set("d", 4);
+                set.add(1); set.add(2); set.add(3); set.add(4);
+                array[0] = 1; array[1] = 2; array[2] = 3; array[3] = 4;
+                for (var i = 0; i < {history}; i++) {{
+                    var key = "transient" + i;
+                    map.set(key, i); map.delete(key);
+                    set.add(i + 1000000); set.delete(i + 1000000);
+                    array.push(i); array.pop();
+                }}
+                var total = 0;
+                for (var round = 0; round < {repetitions}; round++) {{
+                    map.forEach(function(value) {{ total += value; }});
+                    set.forEach(function(value) {{ total += value; }});
+                    for (var i = 0; i < array.length; i++) total += array[i];
+                }}
+                total;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
 }
