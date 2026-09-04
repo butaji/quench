@@ -213,11 +213,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const payload = typeof message === "string"
     ? NodeBuffer.from(message)
     : Array.isArray(message)
-    ? NodeBuffer.concat(
-      message.map((chunk) =>
-        typeof chunk === "string" ? NodeBuffer.from(chunk) : chunk
-      ),
-    )
+    ? NodeBuffer.concat(message.map((chunk) => NodeBuffer.from(chunk)))
     : message;
   const bytePayload = payload instanceof NodeBuffer
     ? payload
