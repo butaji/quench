@@ -118,6 +118,9 @@ pub mod stencil_fact;
 pub mod stencil_lifecycle;
 pub mod stencil_patch;
 pub mod stencil_select;
+
+#[cfg(test)]
+mod architecture_invariants;
 mod strings;
 mod super_scope;
 mod switch;
