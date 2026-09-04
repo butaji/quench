@@ -62,8 +62,10 @@ pub(crate) fn execute_named(
         return Ok(None);
     }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
-    let callee = named_known_callee(&receiver, cache)
-        .map_or_else(|| crate::vm::get_named_property_result(&receiver, key, cache), Ok)?;
+    let callee = named_known_callee(&receiver, cache).map_or_else(
+        || crate::vm::get_named_property_result(&receiver, key, cache),
+        Ok,
+    )?;
     let argument = (instruction.flags == 1)
         .then(|| read_register(registers, instruction.c))
         .transpose()?;
@@ -126,11 +128,16 @@ pub(crate) fn execute_registered(
     let callee = read_register(registers, instruction.c)?;
     if instruction.flags == 1 {
         if let Value::Builtin(
-            builtin @ (crate::ops::Builtin::StringCharAt
-            | crate::ops::Builtin::StringCharCodeAt),
+            builtin @ (crate::ops::Builtin::StringCharAt | crate::ops::Builtin::StringCharCodeAt),
         ) = callee
         {
             let argument = read_register(registers, first)?;
+            if let Value::Number(index) = argument {
+                if let Some(value) = crate::strings::char_code_at_number(&receiver, index) {
+                    registers.write_number(usize::from(instruction.a), value);
+                    return Ok(None);
+                }
+            }
             let value = execute_builtin_with_receiver(builtin, &[argument], Some(&receiver))?;
             write_value(registers, instruction.a, value);
             return Ok(None);
@@ -164,10 +171,7 @@ pub(crate) fn execute_registered(
     )
 }
 
-fn named_known_callee(
-    receiver: &Value,
-    cache: &std::cell::Cell<u64>,
-) -> Option<Value> {
+fn named_known_callee(receiver: &Value, cache: &std::cell::Cell<u64>) -> Option<Value> {
     let Value::Object(object) = receiver else {
         return None;
     };
@@ -320,12 +324,33 @@ fn execute_callee(
             };
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
+            let effective_receiver = if matches!(receiver, Value::Undefined)
+                && bound.properties.borrow().iter().any(|(key, value)| {
+                    key == "\0vm_compiled_function" && matches!(value, Value::Boolean(true))
+                }) {
+                Value::BoundFunction(bound.clone())
+            } else {
+                receiver.clone()
+            };
             crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&bound.receiver),
-                Some(receiver),
+                Some(&effective_receiver),
                 &combined,
             )?
+        }
+        Value::BoundFunction(bound)
+            if matches!(bound.target, Value::Builtin(_))
+                && matches!(bound.receiver, Value::HostCapability(_)) =>
+        {
+            // Intrinsic prototype methods are represented as bound values to
+            // carry their realm token, not a JavaScript `this`.  A normal
+            // member call supplies the receiver at this boundary; ordinary
+            // user-created bound builtins retain their captured receiver.
+            let Value::Builtin(builtin) = bound.target else {
+                unreachable!()
+            };
+            execute_builtin_with_receiver(builtin, arguments, Some(receiver))?
         }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments)?,
         Value::Undefined => return Err(crate::vm::not_callable()),
