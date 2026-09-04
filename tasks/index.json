@@ -22,15 +22,19 @@
             "041: V8-informed scenario survey, including packed/holey array differential coverage and explicit deferred findings, closed (commit b0de7ce8a).",
             "042: bounded multi-op sequential region executor, closed (commit ab738f909) -- docs/copy-and-patch-jit.md's design section now matches what's actually built. Unblocks 040 item 1.",
             "034 follow-up: ARM64 CPU-counter gate measured, but no applicable cold basic block or fallthrough branch exists in the current straight-line catalog; no transform attempted (commit 01d06abe1).",
-            "043: stencil-local tag-register survey closed with a no-eligible-region finding; current 040/041 regions do not materialize TAG_PREFIX/TAG_SHIFT/TAG_MASK more than once (commit pending)."
+            "043: stencil-local tag-register survey closed with a no-eligible-region finding; current 040/041 regions do not materialize TAG_PREFIX/TAG_SHIFT/TAG_MASK more than once (commit 933e7765)",
+            "044: generated region-admission and CFG-test wiring closed; one declaration covers all 21 catalog regions without changing semantics (commit 406089899)",
+            "045: profile-gated shared megamorphic cache closed with no-go finding; degraded-site trace measured 0/399 reusable re-encounters, so no cache was implemented",
+            "046: profile-gated rope representation closed with no-go finding; case-032 isolation was split/regex dominated, so no representation change was implemented",
+            "047: profile-gated call-frame reuse closed with no-go finding; DWARF sampling did not isolate frame setup as a material CPU share, so no pool/layout change was implemented"
         ],
         "remaining_slices": [
-            "044", "045", "046", "047"
+            "048", "049"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-037, 039-043 closed (034 closed with an applicability finding: no cold block exists to split yet; 043 closed with a no-eligible-region finding). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md) -- so remaining work targets non-speculative, still-real levers instead of more coverage chasing the recursion/megamorphic gap directly: 044 (generated region-admission wiring), 045 (V8-style shared global megamorphic cache, profile-gated), 046 (string rope representation, profile-gated, independent of the stencil tier), 047 (call-frame allocation cost within already-admitted Call/CallN regions, profile-gated). All three new tasks (045-047) require a measured go/no-go profiling step before implementation -- do not build any of them speculatively.",
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-044 are closed (034 and 043 with applicability findings). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md). Tasks 045-047 are now closed profile-gated no-go findings: their required measurements did not justify a shared cache, rope representation, or frame-pooling change. Remaining work is 048-049, still bounded and fallback-complete.",
             "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049"]
         }
     },
