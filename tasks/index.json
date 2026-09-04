@@ -51,14 +51,15 @@
             ,"066: allocation and drop invariants pass in both feature configurations; both rejected deliberate live-heap scans before restoration, with arena-specific coverage deferred until task 059"
             ,"067: generated direct RegionKey dispatch, fixed-capacity render-cache checks, and arena scaling invariants pass in both feature configurations; native ARM64 Add execution is exercised under the opt-in gate and the arena test rejected a deliberate cursor-scan regression"
             ,"048: profiled seven-op LOOP_BODY region added with bounded sequential execution and atomic complete fallback; CFG/interpreter differential tests, both runtime feature gates, neutral 100/100 corpus, curriculum 017-019, and the 300-second all-eight-fixture v8-v7 cross-check passed. Neutral/curriculum movement was within run noise; ARM native execution remains opt-in pending task 068 (coverage expansion, not a score claim)."
+            ,"049: profile-gated bounded polymorphic variant survey closed as a no-go; curriculum 013 (three stable property shapes) and hostile 021 (shape churn) are correctly handled by the existing bounded generic IC, but no finite reusable RegionKey fact-set was observable to justify N-times rendered variants. Complete fallback and bounded code-size discipline are preserved."
         ],
         "remaining_slices": [
-            "049", "054", "059", "060", "073"
+            "054", "059", "060", "073"
         ]
     },
     "themes": {
         "deegen_full_jit": {
-            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-044 are closed (034 and 043 with applicability findings). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md). Tasks 045-047 are now closed profile-gated no-go findings: their required measurements did not justify a shared cache, rope representation, or frame-pooling change. Task 048 adds one profiled, bounded whole-body span with complete fallback; task 049 remains, still bounded and fallback-complete.",
+            "goal": "Complete quench's alignment with the Deegen paper's (arXiv:2411.11469) actual two-tier design, per the audited gap table in docs/deegen-alignment.md. Tasks 027-044 are closed (034 and 043 with applicability findings). External research (2026-09) found IC/stencil-coverage refinement has a well-documented diminishing return versus true speculative optimization, which this project has correctly and permanently decided not to build (see docs/deegen-alignment.md). Tasks 045-047 are now closed profile-gated no-go findings: their required measurements did not justify a shared cache, rope representation, or frame-pooling change. Tasks 048-049 are now closed: one profiled bounded whole-body span was added, while bounded polymorphic variants were not justified by evidence; all paths remain fallback-complete.",
             "plan": ["027", "028", "029", "030", "031", "032", "033", "034", "035", "036", "037", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049"]
         },
         "vm_completeness": {
