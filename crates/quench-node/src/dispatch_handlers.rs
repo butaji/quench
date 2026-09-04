@@ -8472,32 +8472,18 @@ pub fn cp_spawn_output_emit(
         // writes. Publish synchronous stdout produced before the stdin
         // listener now that spawn listeners exist;
         // completion remains owned by cp_stdin_end.
-        let command = execute::get_property(child, "\0childCommand");
         let child_args = execute::get_property(child, "\0childArgs");
-        if matches!(
-            command,
-            Value::String(ref value) if value == &state.borrow().process.exec_path
-        ) {
-            let has_stdout_write = match &child_args {
-                Value::Array(array) => (0..array.logical_len()).any(|index| {
-                    execute::get_property_result(&child_args, &index.to_string())
-                        .ok()
-                        .and_then(|value| execute::to_js_string(&value).ok())
-                        .and_then(|path| std::fs::read_to_string(path).ok())
-                        .is_some_and(|source| source.contains("process.stdout.write"))
-                }),
-                _ => false,
-            };
-            if has_stdout_write {
-                if let Some(output) = cp_spawn_script_stdout(&child_args) {
-                    let stdout = execute::get_property(child, "stdout");
-                    emit(
-                        &stdout,
-                        "data",
-                        vec![cp_stream_output_value(&stdout, &output)?],
-                    )?;
-                }
-            }
+        // `stdin_script` is established only for a self-host child whose
+        // source was found in the argument vector.  Derive its synchronous
+        // stdout from that same source fact instead of comparing executable
+        // spellings (the launcher and canonical engine paths may differ).
+        if let Some(output) = cp_spawn_script_stdout(&child_args) {
+            let stdout = execute::get_property(child, "stdout");
+            emit(
+                &stdout,
+                "data",
+                vec![cp_stream_output_value(&stdout, &output)?],
+            )?;
         }
         return Ok(Value::Undefined);
     }
@@ -8521,10 +8507,10 @@ pub fn cp_spawn_output_emit(
     let source_driven = cp_spawn_script_stdout(&child_args).is_some()
         || cp_spawn_script_requires_in_process(&child_args)
         || cp_spawn_eval_requires_in_process(&child_args);
-    let real_child = (!source_driven)
-        .then(|| cp_run_host_child(state, &command, &child_args, &child_options))
-        .flatten()
-        .or_else(|| {
+    let real_child = if source_driven {
+        None
+    } else {
+        cp_run_host_child(state, &command, &child_args, &child_options).or_else(|| {
             // `exec()` passes a self-reexec through the shell when its
             // command is a complete string. Preserve that real subprocess
             // result instead of projecting the generic success default.
@@ -8544,7 +8530,8 @@ pub fn cp_spawn_output_emit(
                         child_status_code(&output.status),
                     )
                 })
-        });
+        })
+    };
     if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
         if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
             execute::set_property_in_place(child, "killed", Value::Boolean(true));
