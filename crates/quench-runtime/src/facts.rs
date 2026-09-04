@@ -51,6 +51,10 @@ pub(crate) struct ForwardThenCallFact {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CountedMethodLoopFact {
+    /// A side-effect-free population-count loop (`n &= n - 1`).  This is a
+    /// generic numeric loop fact; callers still fall back to ordinary VM
+    /// execution whenever its input is not a plain Number.
+    BitCount,
     Visit {
         length_method: String,
         element_method: String,

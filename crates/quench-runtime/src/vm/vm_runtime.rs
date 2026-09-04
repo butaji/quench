@@ -754,6 +754,12 @@ pub fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    // Keep the hot canonical array append on its direct Rust implementation;
+    // routing it through the full builtin chain performs a dozen unrelated
+    // capability probes per element.
+    if builtin == Builtin::ArrayPush {
+        return crate::builtins::array_push(receiver, arguments);
+    }
     if let Some(result) = stateful_builtin(builtin, receiver, arguments) {
         return result;
     }
