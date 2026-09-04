@@ -38,6 +38,14 @@ pub(super) fn reset_fixture_state() {
 }
 
 pub(super) fn create(parent: &VmContext) -> RealmId {
+    create_with_host_filter(parent, &[])
+}
+
+pub(super) fn create_without_host_values(parent: &VmContext, hidden: &[&str]) -> RealmId {
+    create_with_host_filter(parent, hidden)
+}
+
+fn create_with_host_filter(parent: &VmContext, hidden: &[&str]) -> RealmId {
     let id = NEXT_REALM.with(|next| {
         let id = next.get();
         next.set(id.saturating_add(1));
@@ -46,7 +54,7 @@ pub(super) fn create(parent: &VmContext) -> RealmId {
     let state = Rc::new(RealmState {
         id,
         global: RefCell::new(Rc::new(crate::value::ObjectData::new(Vec::new()))),
-        context: child_context(parent, id),
+        context: child_context(parent, id, hidden),
         token: Rc::new(HostCapabilityValue::new(HostCapabilityRef {
             realm: id,
             kind: HostCapabilityKind::GetGlobal,
@@ -292,7 +300,7 @@ fn missing_realm() -> VmError {
     VmError::EvalError("Realm is unavailable".to_string())
 }
 
-fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
+fn child_context(parent: &VmContext, realm: RealmId, hidden: &[&str]) -> VmContext {
     let capabilities = parent
         .capabilities
         .iter()
@@ -301,7 +309,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
             kind: capability.kind,
         })
         .collect();
-    VmContext {
+    let mut context = VmContext {
         output_sink: parent.output_sink.clone(),
         host: parent.host.clone(),
         realm,
@@ -323,8 +331,14 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
         persistent_host_values: Vec::new(),
         can_block: parent.can_block(),
         source_text: parent.source_text.clone(),
+        compiled_source_text: parent.compiled_source_text.clone(),
+        source_name: parent.source_name.clone(),
         execution_budget: parent.execution_budget.clone(),
-    }
+    };
+    context
+        .host_values
+        .retain(|(name, _)| !hidden.iter().any(|candidate| *candidate == name));
+    context
 }
 
 fn register(state: Rc<RealmState>) {
