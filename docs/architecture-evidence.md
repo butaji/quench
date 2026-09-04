@@ -587,6 +587,26 @@ large-closure/local-environment lifetime issue that must be isolated before
 the v8-v7 fixture can contribute a valid score. The diagnostic source was
 temporary and no benchmark identity is present in production code.
 
+## Follow-up: cycle-collector root safety
+
+The large-closure diagnosis exposed a second, general correctness issue in the
+new cycle collector. During an allocation checkpoint between repeated calls,
+the collector had no persistent root for the active global object (or the
+currently executing constructor/frame), so it could clear live closure
+bindings even though they were reachable from host/global state. The fix
+admits the current global object as a graph root and protects every execution
+environment for the core frame-entry drivers; pooled frames also refuse to
+clear a suffix whose `SlotStore` is held by a captured binding.
+
+Evidence is source-neutral: a returned closure retaining five regular
+expressions and an object remains correct after 10,000 intervening allocations
+and repeated calls, and `tools/cycle-audit.mjs` remains bounded for the
+`closure_capture` probe (22.2 MiB at N=50,000). The full RegExp fixture no
+longer fails at the earlier captured-local error, but still exceeds the
+60-second completion attempt, so task 070 remains open as a slow completion
+measurement rather than being claimed complete. The fix preserves the
+complete collector fallback and does not identify any benchmark or fixture.
+
 ## v8-v7 trajectory (paired speed and memory)
 
 | Snapshot | Complete / 8 | Engine score geomean | Aggregate RSS ratio | Neutral score | Curriculum |
