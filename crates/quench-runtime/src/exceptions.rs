@@ -88,7 +88,13 @@ fn execute_try_body(
     ops: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Completion, VmError> {
-    crate::vm::execute_code_completion_in_current_frame(ops, registers)
+    match crate::vm::execute_code_completion_in_current_frame(ops, registers) {
+        // Calls are driven through a separate continuation. Convert a host
+        // exception back into the completion form consumed by this try
+        // container, preserving JavaScript catch semantics across that edge.
+        Err(VmError::Thrown(value)) => Ok(Completion::Throw(value)),
+        result => result,
+    }
 }
 
 fn bind_caught(
@@ -98,7 +104,9 @@ fn bind_caught(
 ) -> Option<(u16, std::rc::Rc<crate::value::BindingCell>)> {
     if let Some(slot) = catch_slot {
         crate::execute::write_value(registers, slot, value.clone());
-        let previous = crate::locals::current().replace_slot(slot, value);
+        let environment = crate::locals::current();
+        let previous = environment.replace_slot(slot, value.clone());
+        environment.set(slot, value);
         return Some((slot, previous));
     }
     None
