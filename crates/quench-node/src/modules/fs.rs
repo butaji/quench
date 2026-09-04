@@ -3447,6 +3447,7 @@ pub fn build() -> Value {
         ("utimes", crate::host::capability(SPEC_FS_UTIMES)),
         ("lutimes", crate::host::capability(SPEC_FS_LUTIMES)),
         ("open", crate::host::capability(SPEC_FS_OPEN)),
+        ("openAsBlob", crate::host::capability(SPEC_FS_OPENASBLOB)),
     ];
     props.extend([
         (
@@ -4255,6 +4256,48 @@ fn sync_props() -> Vec<(&'static str, Value)> {
     ];
     props.extend(sync_props_more());
     props
+}
+
+/// Build a file-backed Blob from one stable metadata snapshot.  The Blob
+/// object retains the path and snapshot facts so its read methods can detect
+/// replacement or mutation before exposing bytes.
+pub fn open_as_blob(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let result = (|| {
+        let path = path_arg(args.first())?;
+        let options = args.get(1).cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+        if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options\" argument must be of type object.".into(),
+            ));
+        }
+        let metadata = std::fs::metadata(&path)
+            .map_err(|error| crate::modules::fs_error::fs_error("openAsBlob", Some(&path), &error))?;
+        let bytes = std::fs::read(&path)
+            .map_err(|error| crate::modules::fs_error::fs_error("openAsBlob", Some(&path), &error))?;
+        let blob_ctor = execute::get_property(&quench_runtime::vm::current_global_object(), "Blob");
+        let parts = host_api::array(vec![crate::modules::buffer_proto::make_buffer(&bytes)]);
+        let mut blob = execute::construct_value(&blob_ctor, &[parts, options])?;
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| (value.as_secs_f64() * 1000.0).floor())
+            .unwrap_or(0.0);
+        for (key, value) in [
+            ("\0quench:file-backed:path", Value::String(path.into())),
+            ("\0quench:file-backed:size", Value::Number(metadata.len() as f64)),
+            ("\0quench:file-backed:mtime", Value::Number(modified)),
+            ("\0quench:file-backed", Value::Boolean(true)),
+        ] {
+            blob = execute::set_property(blob, key, value);
+        }
+        Ok(blob)
+    })();
+    Ok(settle(result))
 }
 
 fn sync_props_more() -> Vec<(&'static str, Value)> {
