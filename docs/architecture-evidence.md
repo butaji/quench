@@ -538,6 +538,16 @@ matching is cheap. Recommendation: keep the existing bounded compile cache and
 scope a future narrow match-engine task after the RegExp correctness failure is
 fixed; do not attempt an Irregexp-scale rewrite under this survey.
 
+The RegExp output failure was narrowed with a temporary, source-neutral
+diagnostic wrapper: all 95 local `re0`–`re94` bindings are non-null immediately
+after `RegExpBenchmark` construction, but the first `runBlock0` use of `re7`
+observes a null binding (`re7` is the `/(\\d*)(\\D*)/g` local). A small
+closure with eight regex locals and repeated `exec` calls remains correct, so
+this is not evidence for a regex-pattern-specific fast path; it points to a
+large-closure/local-environment lifetime issue that must be isolated before
+the v8-v7 fixture can contribute a valid score. The diagnostic source was
+temporary and no benchmark identity is present in production code.
+
 ## v8-v7 trajectory (paired speed and memory)
 
 | Snapshot | Complete / 8 | Engine score geomean | Aggregate RSS ratio | Neutral score | Curriculum |
