@@ -539,6 +539,7 @@ pub(crate) fn execute_code_in_environment(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let _environment_root = crate::cycle_collector::protect_environment(&crate::locals::current());
     let mut pc = 0;
     loop {
         let step = run_code_completion_step_from(code, pc, registers, context)?;
@@ -619,6 +620,7 @@ pub(crate) fn execute_code_frame_completion_with_plan(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let pooled = std::rc::Rc::clone(&environment);
+    let _environment_root = crate::cycle_collector::protect_environment(&environment);
     let environment_guard = crate::locals::EnvironmentGuard::install(environment);
     let result = if let Some(plan) = plan {
         drive_code_completion_with_plan(code, registers, context, &plan, None)
@@ -649,6 +651,7 @@ pub(crate) fn execute_code_frame_completion_with_owner(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let pooled = Rc::clone(&environment);
+    let _environment_root = crate::cycle_collector::protect_environment(&environment);
     let environment_guard = crate::locals::EnvironmentGuard::install(environment.clone());
     let result = if let (Some(optimizing), Some(baseline)) =
         (owner.executable_optimizing_plan(), owner.baseline_plan())
@@ -934,6 +937,37 @@ mod tests {
             &crate::vm::VmContext::default(),
         )
         .expect("allocation churn preserves continuation");
+        assert_eq!(result, Value::Undefined);
+    }
+
+    /// A closure returned from a completed call keeps its captured suffix
+    /// alive while later allocation checkpoints run.  This guards both frame
+    /// pooling (which must not clear a captured SlotStore) and trial deletion
+    /// (which must retain the globally reachable closure between calls).
+    #[test]
+    fn returned_closure_survives_cycle_collection_and_reuse() {
+        let source = r#"
+            function makeReader() {
+                var payload = { value: 41 };
+                return function () { return payload.value + 1; };
+            }
+            var reader = makeReader();
+            function churn(count) {
+                for (var i = 0; i < count; i++) {
+                    var left = {}, right = {};
+                    left.peer = right;
+                    right.peer = left;
+                }
+            }
+            churn(3000);
+            if (reader() !== 42) throw "returned closure was reclaimed";
+        "#;
+        let program = crate::reduce::reduce_source(source).expect("source reduces");
+        let result = crate::vm::execute_code_with_context(
+            program.code(),
+            &crate::vm::VmContext::default(),
+        )
+        .expect("returned closure survives collection");
         assert_eq!(result, Value::Undefined);
     }
 
