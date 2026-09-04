@@ -698,7 +698,7 @@ fn compare(
             compare_arrays(left, right, strict, skip_prototype, memo)
         }
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
-            if strict && left.shared != right.shared {
+            if left.shared != right.shared {
                 return Ok(false);
             }
             Ok(left.bytes.borrow().as_slice() == right.bytes.borrow().as_slice())
