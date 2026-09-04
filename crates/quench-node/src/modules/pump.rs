@@ -661,6 +661,14 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if let Some(resource) = task.resource.as_ref() {
             crate::modules::async_hooks::resource_destroy(state, Some(resource), &[])?;
         }
+        // Node reaches a microtask checkpoint after each ordinary check-phase
+        // callback. Keep the immediate snapshot intact, but let nextTick and
+        // promise work from this callback run before the next immediate. A
+        // handled throw deliberately defers that checkpoint until the
+        // snapshot completes, preserving the uncaught-exception phase rule.
+        if !defer_ticks {
+            drain_ticks(state)?;
+        }
     }
     let mut ids: Vec<u64> = state
         .borrow()
