@@ -357,6 +357,15 @@ fn apply_new_target_prototype(
             })
         })
     };
+    // Setting an already-correct prototype is an observable no-op. Preserve
+    // identity for host-owned constructor results (for example node:test
+    // mock call records) instead of materializing a replacement object.
+    if crate::builtins::same_value(
+        crate::execute::get_prototype_of(&value).ok().as_ref(),
+        Some(&prototype),
+    ) {
+        return Ok(value);
+    }
     Ok({
         if let crate::value::Value::Array(_) = &value {
             return Ok(crate::builtins::set_property(
