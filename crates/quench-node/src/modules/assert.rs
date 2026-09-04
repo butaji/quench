@@ -1100,7 +1100,7 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
         }
         "notStrictEqual" => format!(
             "Expected \"actual\" to be strictly unequal to:\n\n{}",
-            value(actual, 48)
+            value(actual, 47)
         ),
         _ => format!(
             "Expected values to be {}:\n\n{} !== {}\n",
@@ -1118,7 +1118,7 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
 fn simple_loose_message(actual: &str, expected: &str) -> String {
     let scalar = |value: &str| {
         if value.contains('\n') {
-            simple_side(value, "", 52)
+            simple_side(value, "", 51)
         } else if value.len() > 508 {
             format!("'{}...", &value[..508])
         } else {
