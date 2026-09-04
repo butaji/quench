@@ -18,10 +18,14 @@
             "001-026 (prior queue, all themes deegen_codegen/quickjs_perf/benchmark_integrity/copy_patch_jit): single-source vm_op! catalog, ordinary interpreter, bounded quickening/inline-cache state, compact tagged values, hashed shape/atom lookup, copy-and-patch region-stencil baseline JIT tier, callee-directed continuation dispatch. See git history and docs/architecture-evidence.md for evidence.",
             "027-037 (this theme's first pass): tier-up/OSR committed and verified, slow-path outlining, register-pinning approximation, bounded logical quickening, bounded SMC IC stub chain + inline slab, catalog admission reconciled. NOT fully closed -- see docs/deegen-alignment.md for the honestly-recorded remainder (tag register blocked, hot-cold splitting not justified, Optimizing-tier net win unproven), all three confounded by the x86_64-only executable gate. Tasks 039+ continue from here.",
             "039: native AArch64 stencil execution, closed and verified (const-fn bit-packed encoders, no hex, no assembler crate).",
-            "042: bounded multi-op sequential region executor, closed (commit ab738f909) -- docs/copy-and-patch-jit.md's design section now matches what's actually built. Unblocks 040 item 1."
+            "040: measured bounded region coverage for arithmetic glue, calls, properties, arrays, and ForI, closed (commits 1951baf57, 87bcff851, a203c88ac).",
+            "041: V8-informed scenario survey, including packed/holey array differential coverage and explicit deferred findings, closed (commit b0de7ce8a).",
+            "042: bounded multi-op sequential region executor, closed (commit ab738f909) -- docs/copy-and-patch-jit.md's design section now matches what's actually built. Unblocks 040 item 1.",
+            "034 follow-up: ARM64 CPU-counter gate measured, but no applicable cold basic block or fallthrough branch exists in the current straight-line catalog; no transform attempted (commit 01d06abe1).",
+            "043: stencil-local tag-register survey closed with a no-eligible-region finding; current 040/041 regions do not materialize TAG_PREFIX/TAG_SHIFT/TAG_MASK more than once (commit pending)."
         ],
         "remaining_slices": [
-            "040", "041", "043", "044"
+            "044"
         ]
     },
     "themes": {
