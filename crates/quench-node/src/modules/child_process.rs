@@ -24,10 +24,19 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
         let engine = current
             .as_ref()
             .and_then(|path| path.parent().map(|parent| parent.join("quench-node")));
+        let runner = current.as_ref().and_then(|path| {
+            path.parent()
+                .map(|parent| parent.join("run"))
+                .filter(|candidate| candidate.is_file())
+        });
         match (current, engine) {
             (Some(current), Some(engine)) => command.replace(
                 engine.to_string_lossy().as_ref(),
-                current.to_string_lossy().as_ref(),
+                runner
+                    .as_ref()
+                    .unwrap_or(&current)
+                    .to_string_lossy()
+                    .as_ref(),
             ),
             _ => command.to_string(),
         }
