@@ -23,6 +23,19 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDomExceptionCod
   InvalidNodeTypeError: 24,
   DataCloneError: 25,
 };
+if (typeof globalThis.require === "function" && !globalThis.worker_threads) {
+  globalThis.worker_threads = globalThis.require("worker_threads");
+}
+for (const name of ["worker_threads", "__nodeCurrentAsyncResource", "__nodeCallChecks"]) {
+  if (name in globalThis) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: globalThis[name],
+    });
+  }
+}
 globalThis.DOMException = class DOMException extends Error {
   constructor(message = "", name = "Error") {
     super(message);
@@ -34,6 +47,53 @@ globalThis.DOMException = class DOMException extends Error {
     return `${this.name}: ${this.message}`;
   }
 };
+if (typeof globalThis.TypeMismatchError !== "function") {
+  globalThis.TypeMismatchError = class TypeMismatchError extends DOMException {
+    constructor(message = "") { super(message, "TypeMismatchError"); }
+  };
+}
+if (typeof globalThis.QuotaExceededError !== "function") {
+  globalThis.QuotaExceededError = class QuotaExceededError extends DOMException {
+    constructor(message = "", options = null) {
+      super(message, "QuotaExceededError");
+      let quota = null;
+      let requested = null;
+      if (options !== null && options !== undefined) {
+        if (typeof options !== "object" && typeof options !== "function") {
+          throw new TypeError("The options argument must be an object");
+        }
+        const read = (name) => {
+          if (!(name in options) || options[name] === undefined) return null;
+          const value = Number(options[name]);
+          if (!Number.isFinite(value)) throw new TypeError(`The ${name} option must be a finite number`);
+          if (value < 0) throw new RangeError(`The ${name} option must be non-negative`);
+          return value;
+        };
+        quota = read("quota");
+        requested = read("requested");
+        if (quota !== null && requested !== null && requested < quota) {
+          throw new RangeError("requested must be greater than or equal to quota");
+        }
+      }
+      this._quota = quota;
+      this._requested = requested;
+    }
+    get quota() {
+      if (!(this instanceof QuotaExceededError)) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      return this._quota;
+    }
+    get requested() {
+      if (!(this instanceof QuotaExceededError)) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      return this._requested;
+    }
+  };
+  Object.defineProperty(globalThis.QuotaExceededError.prototype, "quota", { enumerable: true, configurable: true });
+  Object.defineProperty(globalThis.QuotaExceededError.prototype, "requested", { enumerable: true, configurable: true });
+  Object.defineProperty(globalThis.QuotaExceededError.prototype, Symbol.toStringTag, {
+    configurable: true,
+    value: "QuotaExceededError",
+  });
+}
 for (
   const [name, value] of Object.entries({
     INDEX_SIZE_ERR: 1,
@@ -96,15 +156,73 @@ if (!globalThis.navigator) {
 }
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
+  if (typeof globalThis.ReadableStream !== "function") {
+    class __nodeBlobReadableStream {
+      constructor(source = {}) {
+        this._queue = [];
+        this._closed = false;
+        this._waiters = [];
+        const controller = {
+          enqueue: (value) => {
+            const waiter = this._waiters.shift();
+            if (waiter) waiter({ value, done: false });
+            else this._queue.push(value);
+          },
+          close: () => {
+            this._closed = true;
+            while (this._waiters.length) this._waiters.shift()({ value: undefined, done: true });
+          },
+        };
+        source.start?.(controller);
+      }
+      getReader() {
+        const stream = this;
+        return { read() {
+          if (stream._queue.length) return Promise.resolve({ value: stream._queue.shift(), done: false });
+          if (stream._closed) return Promise.resolve({ value: undefined, done: true });
+          return new Promise((resolve) => stream._waiters.push(resolve));
+        }, releaseLock() {} };
+      }
+      async *[Symbol.asyncIterator]() {
+        const reader = this.getReader();
+        for (;;) { const item = await reader.read(); if (item.done) return; yield item.value; }
+      }
+    }
+    globalThis.ReadableStream = __nodeBlobReadableStream;
+  }
   const __nodeBlobPart = (part) => {
     if (typeof part === "string") return Buffer.from(part);
     if (part instanceof ArrayBuffer) return Buffer.from(part);
-    if (ArrayBuffer.isView(part)) return Buffer.from(part);
+    // Blob consumes the viewed bytes, not typed-array element values.  Using
+    // the view's byte range also preserves the correct width for Uint16 /
+    // Uint32 and floating-point views.
+    if (ArrayBuffer.isView(part)) {
+      return Buffer.from(new Uint8Array(part.buffer, part.byteOffset, part.byteLength));
+    }
     if (part && part._data && typeof part._data.byteLength === "number") {
       return Buffer.from(part._data);
     }
     return Buffer.from(String(part));
   };
+  const __nodeBlobEnsureReadable = (blob) => {
+    const path = blob?.["\0quench:file-backed:path"];
+    if (typeof path !== "string") return;
+    let stat;
+    try {
+      stat = globalThis.__nodeFs?.statSync(path);
+    } catch (_) {
+      stat = undefined;
+    }
+    const size = blob["\0quench:file-backed:size"];
+    const mtime = blob["\0quench:file-backed:mtime"];
+    if (!stat || Number(stat.size) !== Number(size) || Math.trunc(Number(stat.mtimeMs)) !== Number(mtime)) {
+      throw new DOMException("The file has been modified", "NotReadableError");
+    }
+  };
+  Object.defineProperty(globalThis, "__quenchBlobEnsureReadable", {
+    configurable: true,
+    value: __nodeBlobEnsureReadable,
+  });
   class Blob {
     constructor(parts = [], options = {}) {
       if (!Array.isArray(parts)) {
@@ -113,41 +231,116 @@ if (typeof globalThis.Blob !== "function" ||
           { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
-      this._data = Buffer.concat(parts.map(__nodeBlobPart));
-      this.size = this._data.byteLength;
-      const type = String(options?.type || "").toLowerCase();
-      this.type = /^[\x20-\x7e]*$/.test(type) ? type : "";
+      if (options !== undefined && options !== null &&
+          typeof options !== "object" && typeof options !== "function") {
+        throw Object.assign(
+          new TypeError('The "options" argument must be of type object.'),
+          { code: "ERR_INVALID_ARG_TYPE" },
+        );
+      }
+      const endings = options?.endings;
+      if (endings !== undefined && endings !== "transparent" && endings !== "native") {
+        throw Object.assign(
+          new TypeError(`The property 'options.endings' must be one of: 'transparent', 'native'. Received ${String(endings)}`),
+          { code: "ERR_INVALID_ARG_VALUE" },
+        );
+      }
+      const nativeEol = process.platform === "win32" ? "\r\n" : "\n";
+      const normalizedParts = endings === "native"
+        ? parts.map((part) => typeof part === "string"
+          ? part.replace(/\r\n|\r|\n/g, nativeEol)
+          : part)
+        : parts;
+      this._parts = normalizedParts.map(__nodeBlobPart);
+      this._data = Buffer.concat(this._parts);
+      this._size = this._data.byteLength;
+      // Blob's type option stringifies every supplied value, including
+      // falsy values such as `false` and `0`; only an omitted/nullish option
+      // defaults to the empty MIME type.
+      const type = String(options?.type ?? "").toLowerCase();
+      this._type = /^[\x20-\x7e]*$/.test(type) ? type : "";
     }
     async arrayBuffer() {
+      if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      __nodeBlobEnsureReadable(this);
       return this._data.buffer.slice(
         this._data.byteOffset,
         this._data.byteOffset + this._data.byteLength
       );
     }
     async text() {
+      if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      __nodeBlobEnsureReadable(this);
       return this._data.toString();
     }
     slice(start = 0, end = this.size, type = "") {
-      const normalize = (value, fallback) => {
+      if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      __nodeBlobEnsureReadable(this);
+      const normalize = (value, fallback, label) => {
+        if (typeof value === "bigint") {
+          throw Object.assign(new TypeError(`${label} is a BigInt and cannot be converted to a number.`), { code: "ERR_INVALID_ARG_TYPE" });
+        }
+        if (typeof value === "symbol") {
+          throw Object.assign(new TypeError(`${label} is a Symbol and cannot be converted to a number.`), { code: "ERR_INVALID_ARG_TYPE" });
+        }
         const number = Number(value);
         if (!Number.isFinite(number)) return fallback;
         return number < 0 ? Math.max(this.size + number, 0) : Math.min(number, this.size);
       };
       return new Blob([
-        this._data.subarray(normalize(start, 0), normalize(end, this.size))
+        this._data.subarray(normalize(start, 0, "start"), normalize(end, this.size, "end"))
       ], { type });
     }
     stream() {
-      const data = this._data;
-      return new __quenchReadableStream({
-        start(controller) {
-          controller.enqueue(data);
-          controller.close();
+      if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      const chunks = this._parts || [this._data];
+      const Stream = globalThis.ReadableStream || globalThis.__quenchReadableStream;
+      const thisBlob = this;
+      let index = 0;
+      return new Stream({
+        pull(controller) {
+          __nodeBlobEnsureReadable(thisBlob);
+          if (index < chunks.length) controller.enqueue(chunks[index++]);
+          else controller.close();
         }
+      }, { highWaterMark: 0, size: (chunk) => chunk.byteLength });
+    }
+    textStream() {
+      if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      __nodeBlobEnsureReadable(this);
+      const text = this._data.toString();
+      const Stream = globalThis.ReadableStream || globalThis.__quenchReadableStream;
+      const stream = new Stream({
+        start(controller) {
+          controller.enqueue(text);
+          controller.close();
+        },
       });
+      // Some embedded stream shims expose an async-generator method that
+      // loses the stream receiver. Bind a minimal iterator to this instance
+      // so Blob.textStream remains consumable with `for await`.
+      const reader = stream.getReader();
+      stream[Symbol.asyncIterator] = () => ({ next: () => reader.read() });
+      return stream;
+    }
+    async bytes() {
+      if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+      __nodeBlobEnsureReadable(this);
+      return new Uint8Array(this._data);
     }
   }
-  for (const name of ["arrayBuffer", "text", "slice", "stream"]) {
+  for (const [name, getter] of [["size", function () {
+    if (!(this instanceof Blob)) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+    return this._size;
+  }], ["type", function () {
+    if (!(this instanceof Blob)) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+    return this._type;
+  }]]) {
+    Object.defineProperty(Blob.prototype, name, {
+      get: getter, enumerable: true, configurable: true,
+    });
+  }
+  for (const name of ["arrayBuffer", "text", "slice", "stream", "textStream", "bytes"]) {
     Object.defineProperty(Blob.prototype, name, {
       value: Blob.prototype[name], enumerable: true, configurable: true, writable: true
     });
@@ -177,6 +370,47 @@ if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "functio
     writable: true,
     value: File
   });
+}
+// Native Blob methods reject an invalid receiver with an empty reason in some
+// embedded builds. Normalize that edge at the host boundary to Node's
+// observable ERR_INVALID_THIS contract while retaining the native semantics
+// for genuine Blob instances.
+if (typeof globalThis.Blob === "function" && globalThis.Blob.prototype) {
+  const __quenchBlobInvalidThis = () =>
+    Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
+  for (const [name, asynchronous] of [
+    ["arrayBuffer", true], ["text", true], ["bytes", true],
+    ["slice", false], ["stream", false], ["textStream", false],
+  ]) {
+    const original = globalThis.Blob.prototype[name];
+    if (typeof original !== "function") continue;
+    Object.defineProperty(globalThis.Blob.prototype, name, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: function (...args) {
+        if (!(this instanceof globalThis.Blob)) {
+          const error = __quenchBlobInvalidThis();
+          return asynchronous ? Promise.reject(error) : (() => { throw error; })();
+        }
+        // The embedded Blob fallback stores bytes in `_data`; resolve these
+        // methods explicitly because async class methods can lose their
+        // receiver across the VM's Promise continuation boundary.
+        if (this._data && (name === "text" || name === "bytes" || name === "arrayBuffer")) {
+          try {
+            globalThis.__quenchBlobEnsureReadable?.(this);
+          } catch (error) {
+            return Promise.reject(error);
+          }
+          if (name === "text") return Promise.resolve(this._data.toString());
+          if (name === "bytes") return Promise.resolve(new Uint8Array(this._data));
+          const data = this._data;
+          return Promise.resolve(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+        }
+        return original.apply(this, args);
+      },
+    });
+  }
 }
 if (typeof globalThis.Headers !== "function") {
   const HeadersClass = class Headers {
