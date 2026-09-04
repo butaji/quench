@@ -437,7 +437,12 @@ pub fn method_emit(
         Ok(name) => name,
         Err(_) => return Ok(Value::Boolean(false)),
     };
-    let Some(emitter) = state.borrow().emitters.get(id) else {
+    // Clone the emitter handle while the host is immutably borrowed, then
+    // release that borrow before invoking user listeners. Listener callbacks
+    // may re-enter host APIs (including diagnostics channels), and retaining
+    // the map lookup's RefCell borrow across those calls would panic.
+    let emitter = { state.borrow().emitters.get(id) };
+    let Some(emitter) = emitter else {
         return Ok(Value::Boolean(false));
     };
     let process_scope = state.borrow().cluster.process_scope();

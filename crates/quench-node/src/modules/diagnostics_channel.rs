@@ -118,8 +118,19 @@ pub fn channel(
 ) -> Result<Value, VmError> {
     let name = args.first().cloned().unwrap_or(Value::Undefined);
     let key = channel_key(&name)?;
-    if let Some((_, _, object)) = state.borrow().diagnostics.channels.get(&key) {
-        return Ok(object.clone());
+    // End the immutable lookup borrow before acquiring the mutable host
+    // borrow below. Cluster workers can request the same channel while an
+    // event callback is still on the stack, so relying on the `if let`
+    // temporary's lifetime here triggers a RefCell re-entrant-borrow panic.
+    let existing = {
+        let host = state.borrow();
+        host.diagnostics
+            .channels
+            .get(&key)
+            .map(|(_, _, object)| object.clone())
+    };
+    if let Some(object) = existing {
+        return Ok(object);
     }
     let mut host = state.borrow_mut();
     let id = host.diagnostics.next_id;
