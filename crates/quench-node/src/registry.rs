@@ -139,6 +139,7 @@ node_api! {
     (SPEC_STREAM_PROMISES_PIPELINE, "stream/promises:pipeline", 2504),
     (SPEC_STREAM_PROMISES_FINISHED, "stream/promises:finished", 2505),
     (SPEC_STREAM_PROMISES_CALLBACK, "stream/promises:callback", 2506),
+    (SPEC_ASYNC_WRAP_QUEUE_DESTROY, "async_wrap:queueDestroyAsyncId", 2507),
     (SPEC_TEST, "test:test", 0x1b00),
     (SPEC_TEST_SKIP, "test:skip", 0x1b01),
     (SPEC_TEST_MOCK_FN, "test:mock:fn", 0x1b02),

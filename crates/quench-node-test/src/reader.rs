@@ -167,7 +167,7 @@ impl NodeRunner {
             .state()
             .borrow_mut()
             .process
-            .unhandled_rejection_mode = rejection_mode(&fixture.source);
+            .unhandled_rejection_mode = rejection_mode(&fixture.source, &fixture.exec_argv);
         let is_module = fixture
             .path
             .extension()
@@ -197,6 +197,19 @@ impl NodeRunner {
             quench_node::polyfills::bootstrap::lookup("dns")
                 .unwrap_or("")
                 .to_string()
+        } else {
+            String::new()
+        };
+        let stream_iter_surface = if fixture_source.contains("stream/iter")
+            && fixture
+                .exec_argv
+                .iter()
+                .any(|flag| flag == "--experimental-stream-iter")
+        {
+            format!(
+                "const __quenchIterStream = require('stream');\nconst NodeReadable = __quenchIterStream.Readable;\nconst NodeWritable = __quenchIterStream.Writable;\nconst NodeDuplex = __quenchIterStream.Duplex;\nconst NodeTransform = __quenchIterStream.Transform;\n{}\nglobalThis.__quenchRequireStreamIter = __quenchRequireStreamIter;",
+                quench_node::polyfills::bootstrap::cluster::stream_iter_js()
+            )
         } else {
             String::new()
         };
@@ -261,7 +274,7 @@ impl NodeRunner {
         // the runner realm so fixtures using `global.gc`, `global.process`,
         // and identity checks observe the same host surface as `globalThis`.
         let bootstrap_tail = format!(
-            "var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{punycode_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}"
+            "var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{punycode_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{stream_iter_surface}"
         );
         // ESM imports create lexical bindings. Run the host bootstrap through
         // a separately constructed function so its global lookups cannot
@@ -509,13 +522,21 @@ fn strip_v8_native_probes(source: &str) -> String {
         .join("\n")
 }
 
-fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejectionMode {
+fn rejection_mode(
+    source: &str,
+    exec_argv: &[String],
+) -> quench_node::modules::process::UnhandledRejectionMode {
     let mode = source
         .lines()
         .find_map(|line| line.trim().strip_prefix("// Flags:"))
         .and_then(|flags| {
             flags
                 .split_whitespace()
+                .find_map(|flag| flag.strip_prefix("--unhandled-rejections="))
+        })
+        .or_else(|| {
+            exec_argv
+                .iter()
                 .find_map(|flag| flag.strip_prefix("--unhandled-rejections="))
         });
     match mode {
