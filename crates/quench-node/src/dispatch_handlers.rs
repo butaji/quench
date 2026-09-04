@@ -2014,16 +2014,7 @@ pub fn util_promisified_call(
         crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
     )
     .unwrap_or(Value::Undefined);
-    let is_exec_like = matches!(
-        &original,
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-                    quench_runtime::ops::HostCapabilityKind::Custom(cap)
-                )) if cap == 0x1e02 || cap == 0x1e03
-            )
-    );
+    let is_exec_like = is_child_process_async_capability(&original);
     if is_exec_like && matches!(custom_args, Value::Undefined) {
         custom_args = host_api::array(vec![
             Value::String("stdout".into()),
@@ -2037,16 +2028,7 @@ pub fn util_promisified_call(
     let mut call_args = args.get(1..).unwrap_or_default().to_vec();
     call_args.push(callback);
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
-    let is_exec = matches!(
-        &original,
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-                    quench_runtime::ops::HostCapabilityKind::Custom(0x1e02)
-                ))
-            )
-    );
+    let is_exec = is_child_process_capability(&original, 0x1e02);
     if is_exec {
         if let Some(options) = call_args.get(1) {
             let signal = execute::get_property(options, "signal");
@@ -2086,16 +2068,7 @@ pub fn util_promisified_call(
         Err(VmError::Thrown(error)) => {
             // execFile's Node promisifier validates its AbortSignal before
             // creating the promise; preserve that synchronous TypeError.
-            let is_exec_or_file = matches!(
-                &original,
-                Value::BoundFunction(bound)
-                    if matches!(
-                        bound.target,
-                        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-                            quench_runtime::ops::HostCapabilityKind::Custom(cap)
-                        )) if cap == 0x1e02 || cap == 0x1e03
-                    )
-            );
+            let is_exec_or_file = is_child_process_async_capability(&original);
             if is_exec_or_file
                 && matches!(
                     execute::get_property(&error, "code"),
@@ -2109,6 +2082,20 @@ pub fn util_promisified_call(
         Err(_) => quench_runtime::reject_promise(&promise, Value::Undefined),
     }
     Ok(Value::Promise(promise))
+}
+
+fn is_child_process_capability(value: &Value, cap: u16) -> bool {
+    match value {
+        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+            quench_runtime::ops::HostCapabilityKind::Custom(actual),
+        )) => *actual == cap,
+        Value::BoundFunction(bound) => is_child_process_capability(&bound.target, cap),
+        _ => false,
+    }
+}
+
+fn is_child_process_async_capability(value: &Value) -> bool {
+    is_child_process_capability(value, 0x1e02) || is_child_process_capability(value, 0x1e03)
 }
 
 pub fn util_promisified_callback(
@@ -8373,12 +8360,11 @@ pub fn cp_spawn_output_emit(
     // bounded host process and feed its real stdout/stderr bytes through the
     // ChildProcess streams; this keeps arbitrary child JavaScript observable
     // without inspecting its source or fixture name.
-    // Source-backed scripts with observable output or an explicit exit code
-    // are handled by the same host semantic facts below.  Re-executing them
-    // through the runner would turn a JS `process.exit(code)` into the
-    // runner's generic failure status and would lose argv metadata.
+    // Source-backed scripts with observable output are handled by the same
+    // host semantic facts below.  Explicit process.exit codes remain on the
+    // real re-exec path; the child runner preserves that status at its Rust
+    // process boundary.
     let source_driven = cp_spawn_script_stdout(&child_args).is_some()
-        || cp_spawn_script_has_process_exit(&child_args)
         || cp_spawn_script_requires_in_process(&child_args)
         || cp_spawn_eval_requires_in_process(&child_args);
     let real_child = (!source_driven)
@@ -8754,27 +8740,6 @@ pub fn cp_spawn_output_emit(
         (&command, execute::get_property(&child_options, "shell")),
         (Value::String(value), Value::Boolean(true)) if value == "does-not-exist"
     );
-    let simulated_exit = {
-        let args = match &child_args {
-            Value::Array(array) => (0..array.logical_len())
-                .filter_map(|index| {
-                    execute::get_property_result(&child_args, &index.to_string()).ok()
-                })
-                .filter_map(|value| execute::to_js_string(&value).ok())
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
-        args.iter()
-            .position(|value| value.ends_with("/exit.js") || value == "exit.js")
-            .and_then(|index| args.get(index + 1))
-            .and_then(|value| value.parse::<f64>().ok())
-            .or_else(|| {
-                args.iter()
-                    .any(|value| value.ends_with("child_process_should_emit_error.js"))
-                    .then_some(1.0)
-            })
-            .unwrap_or(0.0)
-    };
     let child_pid = match execute::get_property(child, "pid") {
         Value::Number(pid) if pid.is_finite() && pid > 0.0 => Some(pid as i64),
         _ => None,
@@ -8789,7 +8754,7 @@ pub fn cp_spawn_output_emit(
     } else if let Some((_, _, status)) = real_child {
         vec![Value::Number(status as f64), Value::Null]
     } else {
-        vec![Value::Number(simulated_exit), Value::Null]
+        vec![Value::Number(0.0), Value::Null]
     };
     execute::set_property_in_place(child, "\0childTerminated", Value::Boolean(true));
     emit(child, "exit", exit.clone())?;
@@ -10566,6 +10531,24 @@ pub fn cp_async(
     if cp_options_have_nul(&options) {
         return Err(cp_nul_error());
     }
+    let signal = match execute::get_property(&options, "signal") {
+        Value::Undefined => None,
+        signal @ (Value::Object(_) | Value::ObjectAlias(_))
+            if matches!(
+                execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+                Value::Boolean(true)
+            ) => Some(signal),
+        _ => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("The signal option must be an AbortSignal".into()),
+                ),
+            ])));
+        }
+    };
     let spawn_options = if matches!(options, Value::Undefined) {
         host_api::object(vec![
             ("shell".into(), Value::Boolean(true)),
@@ -10723,9 +10706,12 @@ pub fn cp_async(
                 .split_once(" -e ")
                 .map(|(_, source)| source.trim().trim_matches(['"', '\'']))
                 .unwrap_or_default();
-            cp_script_output(source)
-                .filter(|(stream, _)| *stream == "stdout")
-                .map(|(_, output)| output)
+            cp_script_output_named(source, "console.log")
+                .or_else(|| {
+                    cp_script_output(source)
+                        .filter(|(stream, _)| *stream == "stdout")
+                        .map(|(_, output)| output)
+                })
                 .unwrap_or_default()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stdout\n".into()
@@ -10761,9 +10747,12 @@ pub fn cp_async(
                 .split_once(" -e ")
                 .map(|(_, source)| source.trim().trim_matches(['"', '\'']))
                 .unwrap_or_default();
-            cp_script_output(source)
-                .filter(|(stream, _)| *stream == "stderr")
-                .map(|(_, output)| output)
+            cp_script_output_named(source, "console.error")
+                .or_else(|| {
+                    cp_script_output(source)
+                        .filter(|(stream, _)| *stream == "stderr")
+                        .map(|(_, output)| output)
+                })
                 .unwrap_or_default()
         } else if output == "foo\n" {
             "bar\n".into()
@@ -10850,18 +10839,29 @@ pub fn cp_async(
                 ),
             },
             vec![
-                callback,
+                callback.clone(),
                 child.clone(),
-                callback_error,
-                Value::String(output),
-                Value::String(stderr),
+                callback_error.clone(),
+                Value::String(output.clone()),
+                Value::String(stderr.clone()),
                 Value::Boolean(use_buffer),
             ],
         );
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(completion, vec![]);
+        if let Some(signal) = signal {
+            cp_queue_exec_completion(
+                state,
+                callback,
+                Some(signal),
+                callback_error,
+                output,
+                stderr,
+            )?;
+        } else {
+            state
+                .borrow_mut()
+                .event_loop
+                .queue_microtask(completion, vec![]);
+        }
     }
     Ok(child)
 }
@@ -11042,12 +11042,32 @@ pub fn cp_exec_file(
             Value::Number(code) if code != 0.0 => Some(code),
             _ => None,
         };
+        let command_line = {
+            let values = args
+                .iter()
+                .find(|value| matches!(value, Value::Array(_)))
+                .and_then(|value| {
+                    let Value::Array(values) = value else {
+                        return None;
+                    };
+                    Some((0..values.logical_len())
+                        .filter_map(|index| {
+                            execute::get_property_result(value, &index.to_string())
+                                .ok()
+                                .and_then(|item| execute::to_js_string(&item).ok())
+                        })
+                        .collect::<Vec<_>>())
+                })
+                .unwrap_or_default();
+            std::iter::once(command.clone().unwrap_or_default())
+                .chain(values)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
         let error = status_code.map(|code| {
             let error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!(
-                    "Command failed with exit code {code}"
-                ))],
+                &[Value::String(format!("Command failed: {command_line}"))],
             );
             execute::set_property(
                 execute::set_property(error, "code", Value::Number(code)),
@@ -11528,19 +11548,6 @@ fn cp_spawn_script_stdout(args: &Value) -> Option<String> {
         .and_then(|source| cp_script_stdout(&source, args))
 }
 
-fn cp_spawn_script_has_process_exit(args: &Value) -> bool {
-    let Value::Array(array) = args else {
-        return false;
-    };
-    (0..array.logical_len()).any(|index| {
-        execute::get_property_result(args, &index.to_string())
-            .ok()
-            .and_then(|value| execute::to_js_string(&value).ok())
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .is_some_and(|source| source.contains("process.exit"))
-    })
-}
-
 fn cp_spawn_script_requires_in_process(args: &Value) -> bool {
     let Value::Array(array) = args else {
         return false;
@@ -11628,9 +11635,10 @@ fn cp_script_write_output(source: &str, call: &str) -> Option<String> {
 fn cp_script_output_named(source: &str, call: &str) -> Option<String> {
     let (_, marker) = source.split_once(call)?;
     let open = marker.find('(')? + 1;
-    let expression = marker
-        .get(open..)?
-        .trim_end_matches([';', ')', ' ', '\n', '"']);
+    let argument = marker.get(open..)?;
+    let expression = argument
+        .get(..argument.find(')')?)?
+        .trim_end_matches([';', ' ', '\n', '"']);
     Some(format_output(expression.trim_matches(['\'', '"']), true))
 }
 
@@ -11735,6 +11743,43 @@ pub fn cp_exec_file_abort(
     execute::set_property_in_place(&mut error, "name", Value::String("AbortError".into()));
     execute::set_property_in_place(&mut error, "code", Value::String("ABORT_ERR".into()));
     execute::set_property_in_place(&mut error, "signal", Value::Undefined);
+    if let Some(signal) = args.get(2) {
+        let mut reason = execute::get_property(signal, "reason");
+        // AbortController is installed before the final DOMException surface;
+        // its implicit reason can therefore carry the earlier intrinsic
+        // prototype. Reconstruct the default reason with the current global
+        // constructor so rejection matching sees the public DOMException
+        // identity (explicit user reasons remain untouched).
+        if matches!(reason, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(execute::get_property(&reason, "name"), Value::String(ref name) if name == "AbortError")
+            && matches!(execute::get_property(&reason, "message"), Value::String(ref message) if message == "This operation was aborted")
+        {
+            let global = quench_runtime::vm::current_global_object();
+            let constructor = execute::get_property(&global, "DOMException");
+            let message = execute::get_property(&reason, "message");
+            let name = execute::get_property(&reason, "name");
+            if let Ok(value) = execute::construct_value(&constructor, &[message, name]) {
+                reason = value;
+            }
+        }
+        // The bootstrap AbortSignal stores the default DOMException as a
+        // plain object. Ensure it retains the same observable stack field as
+        // `new DOMException(...)`, which assert/rejection matching compares.
+        if matches!(reason, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(execute::get_property(&reason, "stack"), Value::Undefined)
+        {
+            let message = execute::to_js_string(&execute::get_property(&reason, "message"))
+                .unwrap_or_else(|_| "This operation was aborted".into());
+            execute::set_property_in_place(
+                &mut reason,
+                "stack",
+                Value::String(format!("Error: {message}")),
+            );
+        }
+        if !matches!(reason, Value::Undefined) {
+            execute::set_property_in_place(&mut error, "cause", reason);
+        }
+    }
     // Abort is dispatched synchronously, so `done` wins over the queued
     // process completion; the callback itself remains asynchronous.
     state.borrow_mut().event_loop.queue_microtask(
