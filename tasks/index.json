@@ -38,10 +38,11 @@
             "072: prototype-chain dispatch probe closed with a narrowing finding; a stable one-level prototype method produced 19,998 named-property hits, zero prototype misses, and 9,998 quickened GetN hits. The existing compact path already covers this idiom, so no guard change was justified",
             "071: IC/layout-mismatch investigation closed with a no-go finding; synthetic probes showed negligible mismatch volume, while the full trace's slow lane was dominated by generic Branch/TraceSite/CheckInitialized/Unary handlers. Follow-up task 074 owns that broader survey",
             "061: DeltaBlue/Richards catastrophic-slowdown investigation closed with a minimal five-shape reproduction and execution-trace evidence; scaling was linear with no semantic bug or non-terminating path, identifying bounded single-entry IC/layout-mismatch cost for a future general optimization",
-            "069: Crypto completion/profile closed with a no-go finding; a 300-second run still produced no result marker, while a five-second DWARF sample of the actual quench-node process showed active nested execute_call/execute_direct/execute_interpreter work rather than a tight hang. No Crypto-specific optimization was justified"
+            "069: Crypto completion/profile closed with a no-go finding; a 300-second run still produced no result marker, while a five-second DWARF sample of the actual quench-node process showed active nested execute_call/execute_direct/execute_interpreter work rather than a tight hang. No Crypto-specific optimization was justified",
+            "053: regex profile survey closed with a match-execution-dominated finding and an unresolved RegExp correctness error (re7 local becomes null in the first runBlock0 use); no regex-engine rewrite was justified and the error remains a completion blocker for task 070"
         ],
         "remaining_slices": [
-            "048", "049", "052", "053", "054", "055", "059", "060", "062", "063", "064", "065", "066", "067", "070", "073", "074"
+            "048", "049", "052", "054", "055", "059", "060", "062", "063", "064", "065", "066", "067", "070", "073", "074"
         ]
     },
     "themes": {
