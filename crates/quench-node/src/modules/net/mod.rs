@@ -955,7 +955,16 @@ pub(crate) fn emit(
     }
     let result = if listeners.is_empty() {
         if event == "error" {
-            Err(unhandled_error(args.first()))
+            if let Some(result) = crate::modules::events::route_domain_error(
+                state,
+                receiver,
+                args.first(),
+            )? {
+                let _ = result;
+                Ok(())
+            } else {
+                Err(unhandled_error(args.first()))
+            }
         } else {
             Ok(())
         }

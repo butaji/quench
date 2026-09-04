@@ -3532,17 +3532,31 @@ pub fn data_handler(
                     };
                     req.buffer.extend_from_slice(&bytes);
                     let (body, consumed, done) = decode_chunked_prefix(&req.buffer);
+                    let invalid = !done && invalid_chunked_prefix(&req.buffer[consumed..]);
                     let remainder = req.buffer[consumed..].to_vec();
                     req.buffer = remainder;
-                    req.response_received = req
-                        .response_received
-                        .saturating_add(body.len());
+                    req.response_received = req.response_received.saturating_add(body.len());
                     if done {
                         req.response_chunked_done = true;
                     }
-                    body
+                    (body, invalid)
                 };
-                body
+                if body.1 {
+                    if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+                        req.parse_error = true;
+                        req.buffer.clear();
+                    }
+                    let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+                    net::emit(
+                        state,
+                        &request,
+                        "error",
+                        vec![invalid_chunked_response()],
+                    )?;
+                    net::socket_destroy(state, Some(socket), &[])?;
+                    return Ok(Value::Undefined);
+                }
+                body.0
             } else {
                 if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
                     req.response_received = req.response_received.saturating_add(bytes.len());
@@ -3615,7 +3629,7 @@ fn client_value(state: &Rc<RefCell<HostState>>, client_id: u64, req: bool) -> Op
 
 /// Emit leftover buffered bytes as `'data'` once `'response'` fired.
 fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmError> {
-    let (res, body) = {
+    let (res, body, invalid, socket) = {
         let mut guard = state.borrow_mut();
         let Some(req) = guard.http.clientreqs.get_mut(&client_id) else {
             return Ok(());
@@ -3634,15 +3648,33 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
                         .min(req.buffer.len())
                 })
                 .unwrap_or(req.buffer.len());
-            (req.buffer[..consumed].to_vec(), consumed, false)
-        };
+                (req.buffer[..consumed].to_vec(), consumed, false)
+            };
+        let invalid = chunked && !done && invalid_chunked_prefix(&req.buffer[consumed..]);
         req.response_received = req.response_received.saturating_add(body.len());
         if done {
             req.response_chunked_done = true;
         }
         req.buffer.drain(..consumed);
-        (req.res.clone(), body)
+        (req.res.clone(), body, invalid, req.socket.clone())
     };
+    if invalid {
+        if let Some(req) = state.borrow_mut().http.clientreqs.get_mut(&client_id) {
+            req.parse_error = true;
+            req.buffer.clear();
+        }
+        let request = client_value(state, client_id, true).unwrap_or(Value::Undefined);
+        net::emit(
+            state,
+            &request,
+            "error",
+            vec![invalid_chunked_response()],
+        )?;
+        if let Some(socket) = socket {
+            net::socket_destroy(state, Some(&socket), &[])?;
+        }
+        return Ok(());
+    }
     if let Some(res) = res {
         if !body.is_empty() {
             let body = if response_is_chunked(&res) {
@@ -3861,6 +3893,30 @@ fn duplicate_content_length(head: &[u8]) -> Option<Value> {
         "code",
         Value::String("HPE_UNEXPECTED_CONTENT_LENGTH".into()),
     ))
+}
+
+fn invalid_chunked_response() -> Value {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("Parse Error: Invalid character in chunk size".into())],
+    );
+    execute::set_property(
+        execute::set_property(error, "code", Value::String("HPE_INVALID_CHUNK_SIZE".into())),
+        "reason",
+        Value::String("Invalid character in chunk size".into()),
+    )
+}
+
+fn invalid_chunked_prefix(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let line = bytes
+        .iter()
+        .position(|byte| *byte == b'\r' || *byte == b'\n')
+        .map_or(bytes, |end| &bytes[..end]);
+    let token = line.split(|byte| *byte == b';').next().unwrap_or_default();
+    token.is_empty() || token.iter().any(|byte| !byte.is_ascii_hexdigit())
 }
 
 fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
