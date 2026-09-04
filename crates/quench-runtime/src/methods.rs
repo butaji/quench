@@ -205,10 +205,7 @@ fn array_known_callee(receiver: &Value, key: &str) -> Option<Value> {
     if !array.is_packed_ordinary() || !crate::builtins::array_prototype_is_clean() {
         return None;
     }
-    match crate::arrays::property(array, key) {
-        value @ Value::Builtin(_) => Some(value),
-        _ => None,
-    }
+    crate::arrays::packed_method(key).map(Value::Builtin)
 }
 
 fn finish_named_call(
@@ -292,16 +289,22 @@ fn resolved_callee(
     key: &str,
 ) -> Result<Value, VmError> {
     callee.map_or_else(
-        || match get_property_result(receiver, key)? {
-            Value::Undefined if key == "slice" && is_arguments_object(receiver) => {
-                Ok(Value::Builtin(crate::ops::Builtin::ArraySlice))
+        || {
+            if let Some(value) = array_known_callee(receiver, key) {
+                return Ok(value);
             }
-            value => Ok(value),
+            match get_property_result(receiver, key)? {
+                Value::Undefined if key == "slice" && is_arguments_object(receiver) => {
+                    Ok(Value::Builtin(crate::ops::Builtin::ArraySlice))
+                }
+                value => Ok(value),
+            }
         },
         |callee| {
             let value = read_register(registers, callee)?;
             if matches!(value, Value::Undefined) {
-                get_property_result(receiver, key)
+                array_known_callee(receiver, key)
+                    .map_or_else(|| get_property_result(receiver, key), Ok)
             } else {
                 Ok(value)
             }
