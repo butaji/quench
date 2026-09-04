@@ -297,10 +297,25 @@ fn eval_module_factory(source: &str) -> Option<Value> {
     quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context).ok()
 }
 
+fn stream_promises_for(stream: Value) -> Value {
+    let pipeline = crate::host::capability(crate::registry::SPEC_STREAM_PROMISES_PIPELINE);
+    let finished = crate::host::capability(crate::registry::SPEC_STREAM_PROMISES_FINISHED);
+    let promises = crate::host::namespace_object_from_pairs(vec![
+        ("pipeline".into(), pipeline.clone()),
+        ("finished".into(), finished.clone()),
+    ]);
+    let custom = crate::modules::util::PROMISIFY_CUSTOM_KEY;
+    for (name, method) in [("pipeline", "pipeline"), ("finished", "finished")] {
+        let original = execute::get_property(&stream, method);
+        let promisified = execute::get_property(&promises, name);
+        let _ = execute::set_property_in_place(&original, custom, promisified);
+    }
+    promises
+}
+
 fn stream_promises_module(state: &Rc<RefCell<HostState>>) -> Option<Value> {
     let stream = crate::modules::stream::build(state).ok()?;
-    let factory = eval_module_factory("(stream) => ({ pipeline(...args) { return new Promise((resolve, reject) => { const callback = (error) => error ? reject(error) : resolve(); try { stream.pipeline(...args, callback); } catch (error) { reject(error); } }); }, finished(streamValue, options = {}) { return new Promise((resolve, reject) => { const callback = (error) => error ? reject(error) : resolve(); try { stream.finished(streamValue, options, callback); } catch (error) { reject(error); } }); } })")?;
-    execute::call(&factory, &Value::Undefined, &[stream]).ok()
+    Some(stream_promises_for(stream))
 }
 
 fn internal_vfs_router_module() -> Option<Value> {
@@ -1106,6 +1121,12 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             return Ok(cached.clone());
         }
         let value = crate::modules::stream::build(state)?;
+        let promises = stream_promises_for(value.clone());
+        let value = execute::set_property(value, "promises", promises.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("stream/promises".to_string(), promises);
         state
             .borrow_mut()
             .module_cache

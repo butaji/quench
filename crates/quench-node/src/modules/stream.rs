@@ -17,6 +17,8 @@ use crate::registry::{
     SPEC_STREAM_TRANSFORM, SPEC_STREAM_WRITABLE, SPEC_STREAM_DUPLEX_PAIR,
     SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_DUPLEX_PAIR_UNCORK, SPEC_STREAM_DUPLEX_PAIR_FINAL,
     SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR,
+    SPEC_STREAM_PROMISES_PIPELINE, SPEC_STREAM_PROMISES_FINISHED,
+    SPEC_STREAM_PROMISES_CALLBACK,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -83,6 +85,112 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         attach_pipeline_callback(&stages, callback)?;
     }
     Ok(stages.last().cloned().unwrap_or(Value::Undefined))
+}
+
+/// Promise APIs reuse the callback pipeline state machine. The promise
+/// capability is created before validation so synchronous failures become a
+/// rejected promise, while option validation performed by `finished` remains
+/// synchronous as required by Node.
+pub fn promises_pipeline(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (promise, resolve, reject) = promise_resolvers()?;
+    let callback = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(SPEC_STREAM_PROMISES_CALLBACK),
+        vec![resolve, reject.clone()],
+    );
+    let mut pipeline_args = strip_pipeline_options(args);
+    pipeline_args.push(callback);
+    if let Err(error) = pipeline(state, &pipeline_args) {
+        settle_rejected(&reject, error);
+    }
+    Ok(promise)
+}
+
+pub fn promises_finished(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    validate_finished_options(args.get(1))?;
+    let (promise, resolve, reject) = promise_resolvers()?;
+    let callback = host_api::bound_capability_with_arguments(
+        crate::host::capability_ref(SPEC_STREAM_PROMISES_CALLBACK),
+        vec![resolve, reject.clone()],
+    );
+    let mut finished_args = args.to_vec();
+    finished_args.push(callback);
+    if let Err(error) = finished(state, None, &finished_args) {
+        settle_rejected(&reject, error);
+    }
+    Ok(promise)
+}
+
+pub fn promises_callback(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let rejected = !matches!(args.get(2), None | Some(Value::Undefined | Value::Null));
+    let target = if rejected { args.get(1) } else { args.first() };
+    if let Some(target) = target.filter(|value| quench_runtime::is_callable(value)) {
+        let arguments = if rejected {
+            vec![args.get(2).cloned().unwrap_or(Value::Undefined)]
+        } else {
+            Vec::new()
+        };
+        execute::call(target, &Value::Undefined, &arguments)?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn promise_resolvers() -> Result<(Value, Value, Value), VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let promise_ctor = execute::get_property(&global, "Promise");
+    let with_resolvers = execute::get_property(&promise_ctor, "withResolvers");
+    let capability = execute::call(&with_resolvers, &promise_ctor, &[])?;
+    Ok((
+        execute::get_property(&capability, "promise"),
+        execute::get_property(&capability, "resolve"),
+        execute::get_property(&capability, "reject"),
+    ))
+}
+
+fn settle_rejected(reject: &Value, error: VmError) {
+    let reason = match error {
+        VmError::Thrown(value) => value,
+        _ => Value::Undefined,
+    };
+    let _ = execute::call(reject, &Value::Undefined, &[reason]);
+}
+
+fn strip_pipeline_options(args: &[Value]) -> Vec<Value> {
+    let mut values = args.to_vec();
+    if values.len() > 1 {
+        if let Some(last) = values.last() {
+            let streamish = ["pipe", "write", "read", "getReader", "getWriter"]
+                .iter()
+                .any(|name| quench_runtime::is_callable(&execute::get_property(last, name)));
+            if !streamish && matches!(last, Value::Object(_) | Value::ObjectAlias(_)) {
+                values.pop();
+            }
+        }
+    }
+    values
+}
+
+fn validate_finished_options(value: Option<&Value>) -> Result<(), VmError> {
+    let Some(options) = value else { return Ok(()); };
+    let cleanup = execute::get_property(options, "cleanup");
+    if !matches!(cleanup, Value::Undefined | Value::Boolean(_)) {
+        return Err(pipeline_error(
+            "The \"cleanup\" option must be of type boolean",
+            "ERR_INVALID_ARG_TYPE",
+        ));
+    }
+    Ok(())
 }
 
 fn is_web_stage(value: &Value) -> bool {
@@ -590,6 +698,13 @@ pub fn finished(
                 "ERR_INVALID_ARG_TYPE",
             ));
         }
+        let cleanup = execute::get_property(options, "cleanup");
+        if !matches!(cleanup, Value::Undefined | Value::Boolean(_)) {
+            return Err(pipeline_error(
+                "The \"cleanup\" option must be of type boolean",
+                "ERR_INVALID_ARG_TYPE",
+            ));
+        }
         let signal = execute::get_property(options, "signal");
         if !matches!(signal, Value::Undefined | Value::Null)
             && !quench_runtime::is_callable(&execute::get_property(&signal, "addEventListener"))
@@ -676,6 +791,13 @@ pub fn finished(
     }
     let state_object = host_api::object(vec![
         ("done".into(), Value::Boolean(false)),
+        (
+            "cleanup".into(),
+            Value::Boolean(matches!(
+                options.map(|value| execute::get_property(value, "cleanup")),
+                Some(Value::Boolean(true))
+            )),
+        ),
         ("abortedPending".into(), Value::Boolean(false)),
         ("readableWanted".into(), Value::Boolean(want_readable)),
         ("writableWanted".into(), Value::Boolean(want_writable)),
@@ -701,7 +823,9 @@ pub fn finished(
     execute::set_property_in_place(&state_object, "onFinish", on_finish.clone());
     execute::set_property_in_place(&state_object, "onError", on_error.clone());
     execute::set_property_in_place(&state_object, "onClose", on_close.clone());
-    if want_readable {
+    // Node's finished() keeps an `end` observer even for writable-only
+    // streams; callers can observe that listener when cleanup is disabled.
+    if !web_writable {
         execute::call(&once, &stream, &[Value::String("end".into()), on_end])?;
     }
     if want_writable && !web_writable {
@@ -933,6 +1057,12 @@ pub fn finished_cleanup(
     let record = args.first().cloned().unwrap_or(Value::Undefined);
     let stream = args.get(1).cloned().unwrap_or(Value::Undefined);
     execute::set_property_in_place(&record, "done", Value::Boolean(true));
+    if !matches!(
+        execute::get_property(&record, "cleanup"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
     let remove = execute::get_property(&stream, "removeListener");
     if quench_runtime::is_callable(&remove) {
         for (event, key) in [
