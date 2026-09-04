@@ -113,6 +113,21 @@ flagged separately by task 041). All three are profile-gated — build only
 if a real measured cost justifies it, same discipline as every other task
 in this backlog.
 
+**Profile findings (2026-09, tasks 045–047).** The required go/no-go gates
+were run after task 044. Case 014's degraded property site produced 399
+layout mismatches with no named-property hits and no observed repeated
+`(shape,name)` pair (0/399 re-encounters), so a bounded cross-site
+megamorphic cache was not justified (045). Case 032's isolated components
+showed that `trim().split(/\s+/)` (about 0.82 s and 13.8 billion
+instructions) dominates repeat-only (about 0.02 s) and modest concat-only
+(about 0.04 s); a rope would target the wrong cost, so no representation
+change was made (046). DWARF sampling of recursive calls attributed the hot
+path to `execute_call` and frame completion, while frame-construction helpers
+were only tiny leaf samples; frequent environment allocation was not an
+isolated CPU share. Frame pooling was therefore not justified (047). These
+are closed profile findings, not claims of performance improvement; complete
+ordinary fallbacks and bounded-state rules remain unchanged.
+
 ## Summary: what's real work vs. what's misnamed vs. what's done
 
 - **Done**: call IC (#2), type-check elimination algorithm (#4), tier-up
