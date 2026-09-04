@@ -1,6 +1,11 @@
 //! Polyfill: `console`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithConsole = globalThis.require;
+const __quenchConsoleReceiver = (receiver) =>
+  receiver !== null &&
+  (typeof receiver === "object" || typeof receiver === "function")
+    ? receiver
+    : globalThis.console;
 class __quenchConsole {
   constructor(
     stdout = globalThis.process?.stdout,
@@ -10,7 +15,7 @@ class __quenchConsole {
     this._stderr = stderr;
   }
   log(...args) {
-    const output = this._stdout;
+    const output = __quenchConsoleReceiver(this)._stdout || globalThis.process?.stdout;
     if (output && typeof output.write === "function") {
       const format = globalThis.__nodeUtil && globalThis.__nodeUtil.format;
       const text = typeof format === "function" ? format(...args) : args.join(" ");
@@ -18,10 +23,10 @@ class __quenchConsole {
     }
   }
   info(...args) {
-    this.log(...args);
+    return __quenchConsole.prototype.log.call(__quenchConsoleReceiver(this), ...args);
   }
   warn(...args) {
-    const output = this._stderr;
+    const output = __quenchConsoleReceiver(this)._stderr || globalThis.process?.stderr;
     if (output && typeof output.write === "function") {
       const format = globalThis.__nodeUtil && globalThis.__nodeUtil.format;
       const text = typeof format === "function" ? format(...args) : args.join(" ");
@@ -29,23 +34,23 @@ class __quenchConsole {
     }
   }
   error(...args) {
-    this.warn(...args);
+    return __quenchConsole.prototype.warn.call(__quenchConsoleReceiver(this), ...args);
   }
   dir(value) {
-    this.log(value);
+    return __quenchConsole.prototype.log.call(__quenchConsoleReceiver(this), value);
   }
   table(value) {
-    this.log(
+    return __quenchConsole.prototype.log.call(__quenchConsoleReceiver(this),
       Array.isArray(value)
         ? value.map((item) => JSON.stringify(item)).join("\n")
         : JSON.stringify(value),
     );
   }
   trace(...args) {
-    this.error(...args);
+    return __quenchConsole.prototype.warn.call(__quenchConsoleReceiver(this), ...args);
   }
   assert(condition, ...args) {
-    if (!condition) this.error(...args);
+    if (!condition) __quenchConsole.prototype.warn.call(__quenchConsoleReceiver(this), ...args);
   }
   group() {}
   groupCollapsed() {}
@@ -113,7 +118,7 @@ globalThis.console.assert = (condition, ...args) => {
   globalThis.process?.stderr?.write?.(`${message}\n`);
 };
 __quenchConsole.prototype.dirxml ||= function (...args) {
-  return this.log(...args);
+  return __quenchConsole.prototype.log.call(__quenchConsoleReceiver(this), ...args);
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "console") {
