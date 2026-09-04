@@ -352,6 +352,29 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "loop_body",
+        // Profiled, branch-free loop body assembled from already-admitted
+        // canonical handlers.  The sequential executor validates this full
+        // window before invoking any handler, so a stale/unknown fact falls
+        // back atomically to the ordinary interpreter.
+        operations: &[
+            "LoadLocalChecked",
+            "LoadLocalChecked",
+            "Add",
+            "StoreLocal",
+            "Move",
+            "UpdateLocal",
+            "Return",
+        ],
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_DISPATCH_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Ptr64")],
+        aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "binary_glue",
         operations: &["LoadLocal", "LoadConst", "Binary", "Return"],
         x86_bytes: &X86_DISPATCH_BYTES,
@@ -633,6 +656,7 @@ __DIVIDE_BYTES__
 __ADD_CONST_BYTES__
 __DISPATCH_BYTES__
 __LOOP_GLUE_BYTES__
+__LOOP_BODY_BYTES__
 __BINARY_GLUE_BYTES__
 __UPDATE_RETURN_BYTES__
 __CALL_BYTES__
@@ -663,6 +687,7 @@ __DIVIDE_HOLES__
 __ADD_CONST_HOLES__
 __DISPATCH_HOLES__
 __LOOP_GLUE_HOLES__
+__LOOP_BODY_HOLES__
 __BINARY_GLUE_HOLES__
 __UPDATE_RETURN_HOLES__
 __CALL_HOLES__
@@ -690,6 +715,7 @@ const DISPATCH_OPS: &[crate::ir::Opcode] = crate::ir::Opcode::ALL;
 const _: () = assert!(DISPATCH_OPS.len() == crate::ir::Opcode::COUNT as usize);
 const FALLTHROUGH_OPS: &[crate::ir::Opcode] = &[__FALLTHROUGH_OPS__];
 const LOOP_GLUE_OPS: &[crate::ir::Opcode] = &[__LOOP_GLUE_OPS__];
+const LOOP_BODY_OPS: &[crate::ir::Opcode] = &[__LOOP_BODY_OPS__];
 const BINARY_GLUE_OPS: &[crate::ir::Opcode] = &[__BINARY_GLUE_OPS__];
 const UPDATE_RETURN_OPS: &[crate::ir::Opcode] = &[__UPDATE_RETURN_OPS__];
 const CALL_OPS: &[crate::ir::Opcode] = &[__CALL_OPS__];
@@ -729,6 +755,9 @@ const DISPATCH_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::Region
 );
 const LOOP_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(10), LOOP_GLUE_OPS,
+);
+const LOOP_BODY_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
+    crate::stencil_fact::RegionId(22), LOOP_BODY_OPS,
 );
 const BINARY_GLUE_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(
     crate::stencil_fact::RegionId(11), BINARY_GLUE_OPS,
@@ -852,6 +881,14 @@ static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
         executable: EXECUTABLE,
     }),
     (crate::stencil_select::RegionRecord {
+        key: LOOP_BODY_KEY,
+        stencil: crate::stencil_fact::Stencil { bytes: LOOP_BODY_BYTES, holes: LOOP_BODY_HOLES },
+        operations: LOOP_BODY_OPS,
+        entry: 0,
+        fallthrough: None,
+        executable: EXECUTABLE,
+    }),
+    (crate::stencil_select::RegionRecord {
         key: BINARY_GLUE_KEY,
         stencil: crate::stencil_fact::Stencil { bytes: BINARY_GLUE_BYTES, holes: BINARY_GLUE_HOLES },
         operations: BINARY_GLUE_OPS,
@@ -912,17 +949,18 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
         ADD_CONST_KEY => Some(&REGION_TABLE[7]),
         DISPATCH_KEY => Some(&REGION_TABLE[8]),
         LOOP_GLUE_KEY => Some(&REGION_TABLE[9]),
-        BINARY_GLUE_KEY => Some(&REGION_TABLE[10]),
-        UPDATE_RETURN_KEY => Some(&REGION_TABLE[11]),
-        CALL_KEY => Some(&REGION_TABLE[12]),
-        CALL_N_KEY => Some(&REGION_TABLE[13]),
-        ARITHMETIC_GLUE_KEY => Some(&REGION_TABLE[14]),
-        GET_PROPERTY_KEY => Some(&REGION_TABLE[15]),
-        SET_N_KEY => Some(&REGION_TABLE[16]),
-        GET_INDEX_KEY => Some(&REGION_TABLE[17]),
-        SET_INDEX_KEY => Some(&REGION_TABLE[18]),
-        GET_INDEX_INC_KEY => Some(&REGION_TABLE[19]),
-        FOR_I_KEY => Some(&REGION_TABLE[20]),
+        LOOP_BODY_KEY => Some(&REGION_TABLE[10]),
+        BINARY_GLUE_KEY => Some(&REGION_TABLE[11]),
+        UPDATE_RETURN_KEY => Some(&REGION_TABLE[12]),
+        CALL_KEY => Some(&REGION_TABLE[13]),
+        CALL_N_KEY => Some(&REGION_TABLE[14]),
+        ARITHMETIC_GLUE_KEY => Some(&REGION_TABLE[15]),
+        GET_PROPERTY_KEY => Some(&REGION_TABLE[16]),
+        SET_N_KEY => Some(&REGION_TABLE[17]),
+        GET_INDEX_KEY => Some(&REGION_TABLE[18]),
+        SET_INDEX_KEY => Some(&REGION_TABLE[19]),
+        GET_INDEX_INC_KEY => Some(&REGION_TABLE[20]),
+        FOR_I_KEY => Some(&REGION_TABLE[21]),
         _ => None,
     }
 }
@@ -943,17 +981,18 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     )
     .replace("__DISPATCH_BYTES__", &byte_decl("DISPATCH", &REGION_DECLARATIONS[8]))
     .replace("__LOOP_GLUE_BYTES__", &byte_decl("LOOP_GLUE", &REGION_DECLARATIONS[9]))
-    .replace("__BINARY_GLUE_BYTES__", &byte_decl("BINARY_GLUE", &REGION_DECLARATIONS[10]))
-    .replace("__UPDATE_RETURN_BYTES__", &byte_decl("UPDATE_RETURN", &REGION_DECLARATIONS[11]))
-    .replace("__CALL_BYTES__", &byte_decl("CALL", &REGION_DECLARATIONS[12]))
-    .replace("__CALL_N_BYTES__", &byte_decl("CALL_N", &REGION_DECLARATIONS[13]))
-    .replace("__ARITHMETIC_GLUE_BYTES__", &byte_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[14]))
-    .replace("__GET_PROPERTY_BYTES__", &byte_decl("GET_PROPERTY", &REGION_DECLARATIONS[15]))
-    .replace("__SET_N_BYTES__", &byte_decl("SET_N", &REGION_DECLARATIONS[16]))
-    .replace("__GET_INDEX_BYTES__", &byte_decl("GET_INDEX", &REGION_DECLARATIONS[17]))
-    .replace("__SET_INDEX_BYTES__", &byte_decl("SET_INDEX", &REGION_DECLARATIONS[18]))
-    .replace("__GET_INDEX_INC_BYTES__", &byte_decl("GET_INDEX_INC", &REGION_DECLARATIONS[19]))
-    .replace("__FOR_I_BYTES__", &byte_decl("FOR_I", &REGION_DECLARATIONS[20]))
+    .replace("__LOOP_BODY_BYTES__", &byte_decl("LOOP_BODY", &REGION_DECLARATIONS[10]))
+    .replace("__BINARY_GLUE_BYTES__", &byte_decl("BINARY_GLUE", &REGION_DECLARATIONS[11]))
+    .replace("__UPDATE_RETURN_BYTES__", &byte_decl("UPDATE_RETURN", &REGION_DECLARATIONS[12]))
+    .replace("__CALL_BYTES__", &byte_decl("CALL", &REGION_DECLARATIONS[13]))
+    .replace("__CALL_N_BYTES__", &byte_decl("CALL_N", &REGION_DECLARATIONS[14]))
+    .replace("__ARITHMETIC_GLUE_BYTES__", &byte_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[15]))
+    .replace("__GET_PROPERTY_BYTES__", &byte_decl("GET_PROPERTY", &REGION_DECLARATIONS[16]))
+    .replace("__SET_N_BYTES__", &byte_decl("SET_N", &REGION_DECLARATIONS[17]))
+    .replace("__GET_INDEX_BYTES__", &byte_decl("GET_INDEX", &REGION_DECLARATIONS[18]))
+    .replace("__SET_INDEX_BYTES__", &byte_decl("SET_INDEX", &REGION_DECLARATIONS[19]))
+    .replace("__GET_INDEX_INC_BYTES__", &byte_decl("GET_INDEX_INC", &REGION_DECLARATIONS[20]))
+    .replace("__FOR_I_BYTES__", &byte_decl("FOR_I", &REGION_DECLARATIONS[21]))
     .replace("__LOOP_HOLES__", &hole_decl("LOOP", &REGION_DECLARATIONS[0]))
     .replace("__PROPERTY_HOLES__", &hole_decl("PROPERTY", &REGION_DECLARATIONS[1]))
     .replace("__MOVE_HOLES__", &hole_decl("MOVE", &REGION_DECLARATIONS[2]))
@@ -970,17 +1009,18 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     )
     .replace("__DISPATCH_HOLES__", &hole_decl("DISPATCH", &REGION_DECLARATIONS[8]))
     .replace("__LOOP_GLUE_HOLES__", &hole_decl("LOOP_GLUE", &REGION_DECLARATIONS[9]))
-    .replace("__BINARY_GLUE_HOLES__", &hole_decl("BINARY_GLUE", &REGION_DECLARATIONS[10]))
-    .replace("__UPDATE_RETURN_HOLES__", &hole_decl("UPDATE_RETURN", &REGION_DECLARATIONS[11]))
-    .replace("__CALL_HOLES__", &hole_decl("CALL", &REGION_DECLARATIONS[12]))
-    .replace("__CALL_N_HOLES__", &hole_decl("CALL_N", &REGION_DECLARATIONS[13]))
-    .replace("__ARITHMETIC_GLUE_HOLES__", &hole_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[14]))
-    .replace("__GET_PROPERTY_HOLES__", &hole_decl("GET_PROPERTY", &REGION_DECLARATIONS[15]))
-    .replace("__SET_N_HOLES__", &hole_decl("SET_N", &REGION_DECLARATIONS[16]))
-    .replace("__GET_INDEX_HOLES__", &hole_decl("GET_INDEX", &REGION_DECLARATIONS[17]))
-    .replace("__SET_INDEX_HOLES__", &hole_decl("SET_INDEX", &REGION_DECLARATIONS[18]))
-    .replace("__GET_INDEX_INC_HOLES__", &hole_decl("GET_INDEX_INC", &REGION_DECLARATIONS[19]))
-    .replace("__FOR_I_HOLES__", &hole_decl("FOR_I", &REGION_DECLARATIONS[20]))
+    .replace("__LOOP_BODY_HOLES__", &hole_decl("LOOP_BODY", &REGION_DECLARATIONS[10]))
+    .replace("__BINARY_GLUE_HOLES__", &hole_decl("BINARY_GLUE", &REGION_DECLARATIONS[11]))
+    .replace("__UPDATE_RETURN_HOLES__", &hole_decl("UPDATE_RETURN", &REGION_DECLARATIONS[12]))
+    .replace("__CALL_HOLES__", &hole_decl("CALL", &REGION_DECLARATIONS[13]))
+    .replace("__CALL_N_HOLES__", &hole_decl("CALL_N", &REGION_DECLARATIONS[14]))
+    .replace("__ARITHMETIC_GLUE_HOLES__", &hole_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[15]))
+    .replace("__GET_PROPERTY_HOLES__", &hole_decl("GET_PROPERTY", &REGION_DECLARATIONS[16]))
+    .replace("__SET_N_HOLES__", &hole_decl("SET_N", &REGION_DECLARATIONS[17]))
+    .replace("__GET_INDEX_HOLES__", &hole_decl("GET_INDEX", &REGION_DECLARATIONS[18]))
+    .replace("__SET_INDEX_HOLES__", &hole_decl("SET_INDEX", &REGION_DECLARATIONS[19]))
+    .replace("__GET_INDEX_INC_HOLES__", &hole_decl("GET_INDEX_INC", &REGION_DECLARATIONS[20]))
+    .replace("__FOR_I_HOLES__", &hole_decl("FOR_I", &REGION_DECLARATIONS[21]))
     .replace("__LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[0].operations))
     .replace("__PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[1].operations))
     .replace("__MOVE_OPS__", &opcode_expr(REGION_DECLARATIONS[2].operations))
@@ -990,17 +1030,18 @@ fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     .replace("__DIVIDE_OPS__", &opcode_expr(REGION_DECLARATIONS[6].operations))
     .replace("__ADD_CONST_OPS__", &opcode_expr(REGION_DECLARATIONS[7].operations))
     .replace("__LOOP_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[9].operations))
-    .replace("__BINARY_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[10].operations))
-    .replace("__UPDATE_RETURN_OPS__", &opcode_expr(REGION_DECLARATIONS[11].operations))
-    .replace("__CALL_OPS__", &opcode_expr(REGION_DECLARATIONS[12].operations))
-    .replace("__CALL_N_OPS__", &opcode_expr(REGION_DECLARATIONS[13].operations))
-    .replace("__ARITHMETIC_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[14].operations))
-    .replace("__GET_PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[15].operations))
-    .replace("__SET_N_OPS__", &opcode_expr(REGION_DECLARATIONS[16].operations))
-    .replace("__GET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[17].operations))
-    .replace("__SET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[18].operations))
-    .replace("__GET_INDEX_INC_OPS__", &opcode_expr(REGION_DECLARATIONS[19].operations))
-    .replace("__FOR_I_OPS__", &opcode_expr(REGION_DECLARATIONS[20].operations));
+    .replace("__LOOP_BODY_OPS__", &opcode_expr(REGION_DECLARATIONS[10].operations))
+    .replace("__BINARY_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[11].operations))
+    .replace("__UPDATE_RETURN_OPS__", &opcode_expr(REGION_DECLARATIONS[12].operations))
+    .replace("__CALL_OPS__", &opcode_expr(REGION_DECLARATIONS[13].operations))
+    .replace("__CALL_N_OPS__", &opcode_expr(REGION_DECLARATIONS[14].operations))
+    .replace("__ARITHMETIC_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[15].operations))
+    .replace("__GET_PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[16].operations))
+    .replace("__SET_N_OPS__", &opcode_expr(REGION_DECLARATIONS[17].operations))
+    .replace("__GET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[18].operations))
+    .replace("__SET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[19].operations))
+    .replace("__GET_INDEX_INC_OPS__", &opcode_expr(REGION_DECLARATIONS[20].operations))
+    .replace("__FOR_I_OPS__", &opcode_expr(REGION_DECLARATIONS[21].operations));
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");

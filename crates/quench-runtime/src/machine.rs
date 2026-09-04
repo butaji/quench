@@ -1989,6 +1989,7 @@ impl BaselinePlan {
             .collect::<Vec<_>>()
             .into();
         let fused_keys = [
+            crate::stencil_select::loop_body_region_key(),
             crate::stencil_select::loop_glue_region_key(),
             crate::stencil_select::binary_glue_region_key(),
             crate::stencil_select::update_return_region_key(),
