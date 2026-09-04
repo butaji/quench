@@ -1200,6 +1200,11 @@ pub fn disconnect(
                 w.pending_exit = Some((code, None));
             }
         }
+        // Terminal worker events belong to the parent cluster observer even
+        // when disconnect() was invoked from the re-entered worker script.
+        // Restore primary context before dispatch so `emit` selects the
+        // parent's listener set rather than the child's.
+        state.borrow_mut().cluster.worker_context = None;
         let _ = emit(
             state,
             Some(&obj),
