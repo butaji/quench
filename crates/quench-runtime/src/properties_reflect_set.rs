@@ -318,11 +318,27 @@ fn set_receiver_data(
         crate::value::Value::BindingCell(cell) => crate::locals::resolved_replacement(cell.load()),
         _ => crate::locals::resolved_replacement(receiver.clone()),
     };
-    if let crate::value::Value::Array(values) = &mut receiver_resolved {
-        std::rc::Rc::make_mut(values).sync_length_to_storage();
+    if let (crate::value::Value::Object(target), value_target) = (&receiver_resolved, value) {
+        let self_reference = match value_target {
+            crate::value::Value::Object(value) => std::rc::Rc::ptr_eq(target, value),
+            crate::value::Value::ObjectAlias(alias) => {
+                alias.target().is_some_and(|value| std::rc::Rc::ptr_eq(target, &value))
+            }
+            _ => false,
+        };
+        if self_reference {
+            let updated = crate::builtins::object_alias::set(
+                std::rc::Rc::clone(target),
+                key,
+                value.clone(),
+            );
+            crate::locals::replace_value(receiver, &updated);
+            return Ok(true);
+        }
+    }
+    if let crate::value::Value::Array(values) = &receiver_resolved {
         if let Some(index) = crate::arrays::array_index(key).map(|index| index as usize) {
-            let data = std::rc::Rc::make_mut(values);
-            let plain = data.has_plain_dense_index(index);
+            let plain = values.has_plain_dense_index(index);
             if plain {
                 replace_plain_array_index(receiver, values, index, value);
                 return Ok(true);
@@ -336,6 +352,28 @@ fn set_receiver_data(
                 .is_some_and(|length| key.parse::<usize>().is_ok_and(|index| index >= length)))
     {
         return Ok(false);
+    }
+    let mutable_target = match &receiver_resolved {
+        crate::value::Value::Object(properties) => Some(std::rc::Rc::clone(properties)),
+        crate::value::Value::ObjectAlias(alias) => alias.target(),
+        _ => None,
+    };
+    if let Some(properties) = mutable_target {
+        let host_mutable = properties.iter().any(|(name, value)| {
+            name == "\0quench:async_hooks:mutable"
+                && matches!(value, crate::value::Value::Boolean(true))
+        });
+        if host_mutable {
+            // Async-hook resources are identity-bearing host objects. Keep
+            // user properties written by init hooks on the canonical object
+            // rather than publishing a COW replacement unreachable by the
+            // host resource table.
+            unsafe {
+                (&mut *(std::rc::Rc::as_ptr(&properties) as *mut crate::value::ObjectData))
+                    .set_property_in_place(key, value.clone());
+            }
+            return Ok(true);
+        }
     }
     // OrdinarySetWithOwnDescriptor performs one [[GetOwnProperty]] on the
     // receiver.  Keep that lookup unified so a Proxy observes a single
@@ -352,12 +390,11 @@ fn set_receiver_data(
     } else if rejects_new_property(receiver, key) {
         return Ok(false);
     }
-    if let crate::value::Value::Array(values) = &mut receiver_resolved {
+    if let crate::value::Value::Array(values) = &receiver_resolved {
         if let Some(index) = crate::arrays::array_index(key).map(|index| index as usize) {
-            let data = std::rc::Rc::make_mut(values);
-            let plain = index < data.logical_len()
-                && index < data.physical_len()
-                && data.descriptor(key).is_none();
+            let plain = index < values.logical_len()
+                && index < values.physical_len()
+                && values.descriptor(key).is_none();
             if plain {
                 replace_plain_array_index(receiver, values, index, value);
                 return Ok(true);
@@ -392,17 +429,18 @@ fn set_receiver_data(
 }
 
 fn replace_plain_array_index(
-    receiver: &crate::value::Value,
+    _receiver: &crate::value::Value,
     values: &std::rc::Rc<crate::value::ArrayData>,
     index: usize,
     value: &crate::value::Value,
 ) {
-    let mut data = values.as_ref().clone();
-    data.set_length(values.logical_len());
-    let value = value.clone();
-    data.set_index(index, value);
-    let updated = crate::value::Value::Array(std::rc::Rc::new(data));
-    crate::locals::replace_value(receiver, &updated);
+    // Indexed writes mutate the receiver's storage. Copy-on-write here would
+    // detach aliases and make `a[0] = a` observably non-circular.
+    unsafe {
+        let data = &mut *(std::rc::Rc::as_ptr(values) as *mut crate::value::ArrayData);
+        data.set_length(values.logical_len());
+        data.set_index(index, value.clone());
+    }
 }
 
 fn non_configurable_redefinition(error: &crate::execute::VmError) -> bool {

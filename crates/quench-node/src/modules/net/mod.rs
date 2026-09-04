@@ -40,6 +40,8 @@ pub use pump::{finalize, poll};
 const LOCAL_HOST: &str = "127.0.0.1";
 /// Hidden property that stores the host-side net id on a JS object.
 const NET_ID_PROP: &str = "\0quench:net:id";
+/// Hidden property carrying the Rust-owned async resource for a live server.
+pub(crate) const SERVER_ASYNC_RESOURCE_PROP: &str = "\0quench:net:server:async-resource";
 pub(crate) const PIPE_FD_PROP: &str = "\0quench:net:pipe-fd";
 pub(crate) const PIPE_MARKER_PROP: &str = "\0quench:net:pipe";
 pub(crate) const BOUND_ID_PROP: &str = "\0quench:net:bound-id";
@@ -555,6 +557,13 @@ fn register_server_path(
     // registers without one; listen() registers with one).
     let is_listening = listener.is_some();
     let bind_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
+    if is_listening {
+        let resource = crate::modules::async_hooks::new_resource(
+            state,
+            &[Value::String("TCPSERVERWRAP".into())],
+        )?;
+        execute::set_property_in_place(js, SERVER_ASYNC_RESOURCE_PROP, resource);
+    }
     let (owner_worker, refed) = {
         let host = state.borrow();
         let refed = host
@@ -882,19 +891,31 @@ pub(crate) fn emit(
         crate::modules::http_client::CLIENT_ASYNC_RESOURCE_PROP,
         crate::modules::http_client::RES_ASYNC_RESOURCE_PROP,
         crate::modules::http::REQ_ASYNC_RESOURCE_PROP,
+        crate::modules::net::SERVER_ASYNC_RESOURCE_PROP,
     ];
-    let resource = resource_keys
-        .iter()
-        .map(|key| execute::get_property(receiver, key))
-        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
-        .or_else(|| {
-            args.iter().find_map(|value| {
-                resource_keys
-                    .iter()
-                    .map(|key| execute::get_property(value, key))
-                    .find(|resource| matches!(resource, Value::Object(_) | Value::ObjectAlias(_)))
-            })
-        });
+    let receiver_resource = || {
+        resource_keys
+            .iter()
+            .map(|key| execute::get_property(receiver, key))
+            .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    };
+    let argument_resource = || {
+        args.iter().find_map(|value| {
+            resource_keys
+                .iter()
+                .map(|key| execute::get_property(value, key))
+                .find(|resource| matches!(resource, Value::Object(_) | Value::ObjectAlias(_)))
+        })
+    };
+    // HTTP server request events carry the per-request async resource as an
+    // argument. Prefer it over the server's listening-handle resource so
+    // concurrent requests retain independent execution context; lifecycle
+    // events such as `listening` continue to use the receiver resource.
+    let resource = if event == "request" || event == "checkContinue" || event == "checkExpectation" {
+        argument_resource().or_else(receiver_resource)
+    } else {
+        receiver_resource().or_else(argument_resource)
+    };
     if let Some(resource) = resource.as_ref() {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
