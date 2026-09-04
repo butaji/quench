@@ -245,6 +245,17 @@ The aggregate over completed engine scores is 92.70 versus Node's 83,617.48
 incomplete. This snapshot is measurement-only and does not claim an
 optimization gain.
 
+Task 056 cycle audit confirms a real leak in the current pure-`Rc` object
+graph. The committed measurement probe `tools/cycle-audit.mjs` runs fresh
+processes and parses macOS peak RSS. Plain two-object cycles grew from
+19,595,264 bytes at N=1,000 to 29,163,520 at N=10,000 and 71,647,232 at
+N=50,000. Closure-capture cycles grew from 25,559,040 to 87,146,496 and
+359,940,096 bytes at the same sizes. A DeltaBlue-shaped constraint/variable
+mutual-reference probe grew from 19,775,488 to 27,246,592 and 60,833,792
+bytes. These are process-peak measurements, so they establish monotonic
+retention after the cycles become unreachable; task 057 is now justified,
+but no collector has been implemented yet.
+
 Task 064 adds three string invariants. ARM64 debug runs measured append
 ratios of 2.55x (500 versus 5,000 appends) without tracing and 3.20x with
 tracing, search ratios of 1.72x/1.28x after 10 versus 1,000 unrelated strings,
