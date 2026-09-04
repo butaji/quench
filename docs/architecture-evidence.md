@@ -758,6 +758,29 @@ retain the bounded IC chain and complete fallback, and do not add build-time
 polymorphic variants until instrumentation proves a reusable finite fact
 combination with a measured benefit.
 
+## Task 059: scoped arena allocation audit
+
+The direct audit found no safe candidate for moving JavaScript data to a new
+bump arena. `FrameStack` already owns a contiguous, geometrically reserved
+`Vec<Frame>` with a hard depth limit, and `RegisterWindow`/`RegisterFile` keep
+active slots in one canonical word vector. Non-tail calls move the caller
+window into `CallContinuation` and retain caller code, environment, arguments,
+and guards until an arbitrary return; closures and captured locals can outlive
+the current call. These references may cross coroutine, exception, or host
+boundaries, so their non-escape cannot be proved by the current
+Proven/Guarded/Unknown facts. Resetting an arena at call return would be
+unsound. Temporary parser/string values likewise feed general `Value` APIs and
+have no structural non-escape proof.
+
+Call-heavy measurements were recorded before making this no-go decision:
+curriculum case 010 completed output-correct at 1.66x Node wall time (RSS
+0.25x), case 029 at 0.27x (RSS 0.26x); Richards/DeltaBlue completed with
+`output_equal:true` at 3.17/6.57 s and 16.5/88.6 MiB respectively (scores
+53.8/46.1). The existing frame reuse and cycle collector remain the safe
+bounded mechanisms. Task 059 therefore closes without a new arena; a future
+arena task needs a build-time escape proof for a concrete value class rather
+than allocation volume alone.
+
 ## Task 054: TypedArray fast-path survey
 
 The existing `AGetI`/`ASetI` region rows are opcode-level bridges, not a
