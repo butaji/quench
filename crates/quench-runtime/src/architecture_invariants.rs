@@ -150,6 +150,40 @@ mod tests {
         );
     }
 
+    /// Enumeration of an object with N live keys is O(N), not O(N²) from
+    /// rebuilding the complete key vector once for every yielded key. This
+    /// companion probe is needed because history-only measurements can miss a
+    /// regression that rescans the current live keys while deleted history is
+    /// absent.
+    #[test]
+    fn enumeration_scales_linearly_with_live_key_count() {
+        let small = measure_live_enumeration(20, 1_000);
+        let large = measure_live_enumeration(200, 1_000);
+        let ratio = large / small.max(1e-9);
+        eprintln!(
+            "architecture invariant #4b: live=20 {small:.6} ms/enum, live=200 {large:.6} ms/enum, ratio {ratio:.3}"
+        );
+        assert!(
+            ratio < 32.0,
+            "enumeration grew superlinearly with live keys: ratio {ratio:.2}"
+        );
+    }
+
+    fn measure_live_enumeration(live_count: usize, repetitions: usize) -> f64 {
+        let source = format!(
+            r#"
+                var object = {{}};
+                for (var i = 0; i < {live_count}; i++) object["key" + i] = i;
+                var total = 0;
+                for (var round = 0; round < {repetitions}; round++) {{
+                    for (var key in object) total++;
+                }}
+                total;
+            "#
+        );
+        run_source_ms(&source) / repetitions as f64
+    }
+
     fn measure_enumeration_history(history: usize, repetitions: usize) -> f64 {
         let source = format!(
             r#"
