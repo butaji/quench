@@ -266,7 +266,21 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
         sleep_until_next(state);
     }
+    hide_runtime_globals();
     run_exit_handlers(state)
+}
+
+fn hide_runtime_globals() {
+    let global = quench_runtime::vm::current_global_object();
+    for key in ["__nodeCurrentAsyncResource", "__nodeCallChecks"] {
+        let descriptor = quench_runtime::host_api::object(vec![
+            ("value".into(), quench_runtime::execute::get_property(&global, key)),
+            ("writable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+        ]);
+        let _ = quench_runtime::execute::define_property(global.clone(), key, descriptor);
+    }
 }
 
 /// Run `process.on('exit')` handlers once with the exit code.

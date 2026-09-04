@@ -2342,6 +2342,7 @@ pub fn timers_run_loop(
     let result = crate::modules::pump::run_event_loop(state);
     let _ = execute::set_property_in_place(&global, "__nodeCurrentAsyncResource", saved_resource);
     let _ = execute::set_property_in_place(&global, "__nodeCallChecks", saved_calls);
+    rehide_runtime_globals(&global);
     result?;
     Ok(Value::Undefined)
 }
@@ -9863,9 +9864,6 @@ fn fork_child_start(
 fn rehide_runtime_globals(global: &Value) {
     for key in ["__nodeCurrentAsyncResource", "__nodeCallChecks"] {
         let value = execute::get_property(global, key);
-        if matches!(value, Value::Undefined) {
-            continue;
-        }
         let descriptor = host_api::object(vec![
             ("value".into(), value),
             ("writable".into(), Value::Boolean(true)),
