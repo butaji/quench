@@ -79,6 +79,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     // Primitive results cannot participate in replacement aliases. Avoid the
     // thread-local replacement lookup on the very common scalar property path.
     match result {
+        Value::Array(ref array) if array.prototype().is_some() || array.property("\0prototype").is_some() => result,
         Value::Array(_)
         | Value::Object(_)
         | Value::ObjectAlias(_)
@@ -89,7 +90,40 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     }
 }
 
-fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
+    fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
+    if key == "stack"
+        && matches!(
+            crate::execute::get_property(value, crate::builtins::ERROR_SLOT),
+            Value::Boolean(true)
+        )
+        && !matches!(
+            crate::execute::get_property(value, "\0quench:stack_decorated"),
+            Value::Boolean(true)
+        )
+        && !crate::execute::has_own_property(value, "code")
+        && matches!(
+            get_property_value(value, key),
+            Value::String(ref stack) if !stack.is_empty() && !stack.contains('\n')
+        )
+    {
+        return crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ErrorPrototypeStackGetter,
+            &[],
+            Some(value),
+        )
+        .unwrap_or(Value::Undefined);
+    }
+    // The unchecked property API is used by host validators as well as VM
+    // code.  Accessor-backed own properties still need their observable
+    // getter semantics here; otherwise a descriptor silently degrades to its
+    // placeholder value and host argument validation sees `undefined`.
+    if matches!(value, Value::Object(_))
+        && !crate::vm::is_global_object(value)
+        && crate::property_define::accessor(value, key, "get").is_some()
+    {
+        return crate::vm::get_property_with_receiver(value, key, value)
+            .unwrap_or(Value::Undefined);
+    }
     // An own typed-array property containing `undefined` still shadows its
     // prototype. Keep presence separate from the value so the ordinary
     // prototype fallback cannot resurrect an inherited member.
@@ -159,7 +193,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
 
 fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
     use Value::*;
-    if key == "constructor" {
+    if key == "constructor" && !value.is_float16_array() {
         if let Some(result) = crate::typed_array_prototype::constructor_override(value) {
             return result;
         }
@@ -266,6 +300,11 @@ fn get_property_value_async_tail(value: &Value, key: &str) -> Value {
 }
 
 fn iterator_property(value: &Value, key: &str) -> Value {
+    if let Value::Iterator(data) = value {
+        if let Some(own) = data.property(key) {
+            return own;
+        }
+    }
     if key == "Symbol.toStringTag" {
         let Value::Iterator(data) = value else {
             return Value::Undefined;
