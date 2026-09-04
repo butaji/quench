@@ -53,6 +53,22 @@ fn compare_partial(
     if is_url_like(left) || is_url_like(right) {
         return compare_url_like(left, right);
     }
+    if is_crypto_key(left) || is_crypto_key(right) {
+        return if is_crypto_key(left) && is_crypto_key(right) {
+            compare(
+                &execute::get_property(left, crate::modules::crypto::KEY_DATA_PROP),
+                &execute::get_property(right, crate::modules::crypto::KEY_DATA_PROP),
+                true,
+                false,
+                memo,
+            )
+        } else {
+            Ok(false)
+        };
+    }
+    if is_webcrypto_key(left) || is_webcrypto_key(right) {
+        return compare_webcrypto_keys(left, right, memo);
+    }
     match (left, right) {
         (Value::Array(a), Value::Array(b)) => {
             if left.is_arguments_object() != right.is_arguments_object() {
@@ -294,6 +310,9 @@ fn partial_typed_array(
     if std::mem::discriminant(left) != std::mem::discriminant(right) {
         return Ok(false);
     }
+    if value_is_float16(left) != value_is_float16(right) {
+        return Ok(false);
+    }
     let left_len = typed_array_length(left).unwrap_or(0);
     let right_len = typed_array_length(right).unwrap_or(0);
     if left_len < right_len || seen(memo, left, right) {
@@ -524,6 +543,41 @@ fn is_error_value(value: &Value) -> bool {
     false
 }
 
+fn is_crypto_key(value: &Value) -> bool {
+    matches!(
+        execute::get_property(value, crate::modules::crypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    )
+}
+
+fn is_webcrypto_key(value: &Value) -> bool {
+    matches!(
+        execute::get_property(value, crate::modules::webcrypto::KEY_MARKER_PROP),
+        Value::Boolean(true)
+    )
+}
+
+fn compare_webcrypto_keys(
+    left: &Value,
+    right: &Value,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if !is_webcrypto_key(left) || !is_webcrypto_key(right) {
+        return Ok(false);
+    }
+    let left_data = execute::get_property(left, crate::modules::webcrypto::KEY_DATA_PROP);
+    let right_data = execute::get_property(right, crate::modules::webcrypto::KEY_DATA_PROP);
+    if !compare(&left_data, &right_data, true, false, memo)? {
+        return Ok(false);
+    }
+    let left_meta = execute::get_property(left, "\0quench:webcrypto:key-meta");
+    let right_meta = execute::get_property(right, "\0quench:webcrypto:key-meta");
+    if !compare(&left_meta, &right_meta, true, false, memo)? {
+        return Ok(false);
+    }
+    compare_objects(left, right, true, false, memo)
+}
+
 /// `util.isDeepStrictEqual(left, right, options)` — `skip_prototype`
 /// mirrors Node's `skipPrototype` option.
 pub fn deep_equal_opts(
@@ -604,6 +658,22 @@ fn compare(
     }
     if is_url_like(left) || is_url_like(right) {
         return compare_url_like(left, right);
+    }
+    if is_crypto_key(left) || is_crypto_key(right) {
+        return if is_crypto_key(left) && is_crypto_key(right) {
+            compare(
+                &execute::get_property(left, crate::modules::crypto::KEY_DATA_PROP),
+                &execute::get_property(right, crate::modules::crypto::KEY_DATA_PROP),
+                true,
+                false,
+                memo,
+            )
+        } else {
+            Ok(false)
+        };
+    }
+    if is_webcrypto_key(left) || is_webcrypto_key(right) {
+        return compare_webcrypto_keys(left, right, memo);
     }
     match (left, right) {
         (Value::Object(_), Value::Object(_)) if is_date_value(left) && is_date_value(right) => {
@@ -870,6 +940,29 @@ fn compare_typed_arrays(
             return Ok(false);
         }
     }
+    if is_float_typed_array(left) {
+        let length = typed_array_length(left).unwrap_or(0);
+        if typed_array_length(right).unwrap_or(0) != length {
+            return Ok(false);
+        }
+        for index in 0..length {
+            let left_value = execute::get_property(left, &index.to_string());
+            let right_value = execute::get_property(right, &index.to_string());
+            let equal = if strict {
+                execute::same_value(&left_value, &right_value)
+            } else {
+                same_value_zero(&left_value, &right_value)
+            };
+            if !equal {
+                return Ok(false);
+            }
+        }
+        return if strict {
+            same_enumerable_symbols_shallow(left, right)
+        } else {
+            Ok(true)
+        };
+    }
     let Some((left_buffer, left_start, left_end)) = typed_array_bytes(left) else {
         return Ok(false);
     };
@@ -886,6 +979,22 @@ fn compare_typed_arrays(
     } else {
         Ok(true)
     }
+}
+
+fn same_value_zero(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) if *left == 0.0 && *right == 0.0 => true,
+        (Value::Number(left), Value::Number(right)) if left.is_nan() && right.is_nan() => true,
+        _ => execute::same_value(left, right),
+    }
+}
+
+fn is_float_typed_array(value: &Value) -> bool {
+    matches!(value, Value::Float32Array(_) | Value::Float64Array(_)) || value.is_float16_array()
+}
+
+fn value_is_float16(value: &Value) -> bool {
+    value.is_float16_array()
 }
 
 fn same_enumerable_symbols_shallow(left: &Value, right: &Value) -> Result<bool, VmError> {
