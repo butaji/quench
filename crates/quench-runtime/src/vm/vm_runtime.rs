@@ -1136,6 +1136,20 @@ pub(crate) fn execute_optimized_code_step_from(
             return Ok((crate::completion::Completion::Normal, start + 1));
         }
     }
+    if instruction.opcode == crate::ir::Opcode::Unary {
+        if let Some(native) = entry.native_unary.as_ref() {
+            if let Some(value) = registers.read_number(usize::from(instruction.b)) {
+                if let Ok(result) = native.borrow_mut().execute(value) {
+                    write_value(registers, instruction.a, Value::Number(result));
+                    crate::execution_trace::stencil_observation(code, start, "unary", true);
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    return Ok((crate::completion::Completion::Normal, start + 1));
+                }
+            }
+            crate::execution_trace::stencil_observation(code, start, "unary", false);
+            crate::execution_trace::leaf_rejection("optimizing_native_unary");
+        }
+    }
     if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
         if let Some(native) = entry.native_property.as_ref() {
             let slot = registers
@@ -1479,6 +1493,21 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 }
                 crate::execution_trace::stencil_observation(code, pc, "move", false);
                 crate::execution_trace::leaf_rejection("native_move");
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::Unary {
+            if let Some(native) = plan.native_unary_at(pc) {
+                if let Some(value) = registers.read_number(usize::from(instruction.b)) {
+                    if let Ok(result) = native.borrow_mut().execute(value) {
+                        write_value(registers, instruction.a, Value::Number(result));
+                        crate::execution_trace::stencil_observation(code, pc, "unary", true);
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        pc += 1;
+                        continue;
+                    }
+                }
+                crate::execution_trace::stencil_observation(code, pc, "unary", false);
+                crate::execution_trace::leaf_rejection("native_unary");
             }
         }
         if instruction.opcode == crate::ir::Opcode::Add && instruction.flags == 0 {
@@ -2349,6 +2378,20 @@ pub(crate) fn run_binary_instruction(
         instruction.b,
         instruction.c,
     )?;
+    Ok(handler_transition(pc, None))
+}
+
+#[inline(always)]
+pub(crate) fn run_unary_instruction(
+    _code: crate::machine::CodeView<'_>,
+    pc: usize,
+    instruction: crate::ir::Instruction,
+    registers: &mut crate::register_file::RegisterFile,
+    _context: &VmContext,
+) -> Result<DispatchTransition, VmError> {
+    let operator = crate::ir::compact_unary_operator(instruction.flags)
+        .ok_or_else(|| VmError::EvalError("invalid compact unary operator".into()))?;
+    vm_arithmetic::execute_unary(registers, instruction.a, operator, instruction.b)?;
     Ok(handler_transition(pc, None))
 }
 
