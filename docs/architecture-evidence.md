@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `899e1f043` (cleanup files remain
+Evidence below is bound to source revision `809c861af` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -70,3 +70,7 @@ both pass (`/tmp/quench-loop-label-encoding-20260905.log`,
 `/tmp/quench-loop-label-assembler-20260905.log`). Full runtime at
 `899e1f043`: **720 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-loop-labels.log`).
+Unknown-status entry-boundary coverage is **1 passed**
+(`/tmp/quench-native-status-unknown-20260905.log`); full runtime at
+`809c861af` is **721 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-status-boundary.log`).
