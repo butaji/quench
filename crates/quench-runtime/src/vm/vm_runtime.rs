@@ -616,10 +616,23 @@ pub(crate) struct NativeArrayKernelContext {
     pub(crate) result: f64,
 }
 
+#[inline]
+fn valid_f64_span(data: *const f64, len: usize) -> bool {
+    if len == 0 {
+        return true;
+    }
+    let Some(bytes) = len.checked_mul(std::mem::size_of::<f64>()) else {
+        return false;
+    };
+    !data.is_null()
+        && (data as usize) % std::mem::align_of::<f64>() == 0
+        && (data as usize).checked_add(bytes).is_some()
+}
+
 impl NativeArrayKernelContext {
     #[inline]
     fn is_valid(&self) -> bool {
-        self.index < self.len && !self.data.is_null()
+        self.index < self.len && valid_f64_span(self.data, self.len)
     }
 }
 
@@ -1007,9 +1020,7 @@ impl NativeArrayLoopContext {
     fn is_valid(&self) -> bool {
         self.index <= self.end
             && self.end <= self.len
-            && (self.len == 0 || !self.data.is_null())
-            && (self.len == 0
-                || (self.data as usize) % std::mem::align_of::<f64>() == 0)
+            && valid_f64_span(self.data, self.len)
             && !self.interrupt.is_null()
     }
 }
@@ -4437,6 +4448,25 @@ mod compact_handler_tests {
         invalid.interrupt = &interrupt;
         invalid.data = (invalid.data.cast::<u8>()).wrapping_add(1).cast();
         assert!(!invalid.is_valid());
+
+        let overflowing = super::NativeArrayLoopContext {
+            data: 8usize as *mut f64,
+            len: usize::MAX,
+            index: 0,
+            end: 0,
+            addend: 1.0,
+            result: 0.0,
+            interrupt: &interrupt,
+        };
+        assert!(!overflowing.is_valid());
+        let kernel_overflow = super::NativeArrayKernelContext {
+            data: 8usize as *mut f64,
+            len: usize::MAX,
+            index: 0,
+            addend: 1.0,
+            result: 0.0,
+        };
+        assert!(!kernel_overflow.is_valid());
     }
 
     #[cfg(target_arch = "aarch64")]
