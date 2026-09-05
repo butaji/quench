@@ -30,3 +30,5 @@ sysinfo = "0.32"
 hex = "0.4"
 encoding_rs = "0.8"
 idna = "1"
+p384 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"] }
+p521 = { version = "0.14", default-features = false, features = ["arithmetic", "ecdh"] }
