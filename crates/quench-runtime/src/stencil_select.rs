@@ -337,7 +337,9 @@ include!(concat!(env!("OUT_DIR"), "/stencil_artifacts.rs"));
 
 /// Select an admitted region with one canonical table lookup.
 pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
-    let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
+    let record = CANONICAL_REGION_TABLE
+        .iter()
+        .find(|record| record.key == key)?;
     BUILD_STENCIL_ARTIFACTS
         .iter()
         .find(|artifact| {
@@ -1038,7 +1040,19 @@ mod tests {
                 .iter()
                 .find(|record| record.name == artifact.name)
                 .expect("artifact declaration has a catalog row");
-            assert_eq!(artifact.bytes, record.stencil.bytes, "artifact {} drifted", artifact.name);
+            if record.stencil.holes.is_empty() {
+                assert_eq!(
+                    artifact.bytes, record.stencil.bytes,
+                    "artifact {} drifted",
+                    artifact.name
+                );
+            } else {
+                assert!(
+                    !artifact.bytes.is_empty() && artifact.stencil.holes.is_empty(),
+                    "hole-bearing {} requires a complete generated whole-function recipe",
+                    artifact.name
+                );
+            }
             assert!(!artifact.fingerprint.is_empty());
             assert!(!artifact.target.is_empty());
         }

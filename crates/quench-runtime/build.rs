@@ -37,6 +37,7 @@ enum RustLeafRecipe {
     Sub,
     Mul,
     Div,
+    AddConst,
     AddChain,
 }
 
@@ -47,6 +48,7 @@ impl RustLeafRecipe {
             Self::Sub => "a - b",
             Self::Mul => "a * b",
             Self::Div => "a / b",
+            Self::AddConst => "a + b",
             Self::AddChain => "(a + b) + c",
         }
     }
@@ -68,6 +70,7 @@ fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {
         ["Sub", "Return"] => Some(RustLeafRecipe::Sub),
         ["Mul", "Return"] => Some(RustLeafRecipe::Mul),
         ["Div", "Return"] => Some(RustLeafRecipe::Div),
+        ["AddConst", "Return"] => Some(RustLeafRecipe::AddConst),
         ["Add", "Add"] => Some(RustLeafRecipe::AddChain),
         _ => None,
     }
