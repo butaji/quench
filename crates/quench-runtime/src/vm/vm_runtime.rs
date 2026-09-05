@@ -186,6 +186,14 @@ impl<'a> NativeRegionContext<'a> {
             NATIVE_DISPATCH_COMMITTED_ERROR => Err(crate::machine::NativeDispatchError::Committed(
                 "native region reported a post-entry failure".into(),
             )),
+            NATIVE_DISPATCH_INTERRUPT if self.entry_started => Err(
+                crate::machine::NativeDispatchError::Committed(
+                    "native region interrupted after committed progress".into(),
+                ),
+            ),
+            NATIVE_DISPATCH_INTERRUPT => Err(crate::machine::NativeDispatchError::Physical(
+                "native region interrupted before entry".into(),
+            )),
             _ if self.entry_started => Err(crate::machine::NativeDispatchError::Committed(
                 "native region returned an invalid post-entry status".into(),
             )),
@@ -5641,6 +5649,26 @@ mod compact_handler_tests {
             Err(crate::machine::NativeDispatchError::Committed(_))
         ));
         assert_eq!(registers, before, "committed status must not replay the region");
+    }
+
+    #[test]
+    fn interrupted_region_status_is_non_retryable_after_entry() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(3.0)]);
+        let context = crate::vm::current_context_or_default();
+        let mut region = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            &[crate::ir::Opcode::Return],
+            &mut registers,
+            &context,
+        );
+        region.entry_started = true;
+        assert!(matches!(
+            region.finish(super::NATIVE_DISPATCH_INTERRUPT),
+            Err(crate::machine::NativeDispatchError::Committed(message))
+                if message.contains("committed progress")
+        ));
     }
 
     #[test]
