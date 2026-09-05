@@ -2691,6 +2691,7 @@ pub(crate) struct NativeLoadConstPlan {
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     site: crate::quickening::QuickeningSite<2>,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     installed: InstalledConstantEntry,
     #[cfg(test)]
     native_entry_count: u64,
@@ -2712,6 +2713,7 @@ impl NativeLoadConstPlan {
     fn clear_shared_capabilities(&mut self) {
         self.installed = InstalledConstantEntry::Unpublished;
         self.cache.clear();
+        self.lifecycle.reset();
     }
 
     fn new_with_shared(
@@ -2739,6 +2741,7 @@ impl NativeLoadConstPlan {
                 shared_arena: None,
                 cache: crate::stencil_select::RenderedRegionCache::new(),
                 site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::LoadConst),
+                lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 installed: InstalledConstantEntry::Unpublished,
                 #[cfg(test)]
@@ -2748,6 +2751,11 @@ impl NativeLoadConstPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
+        if self.lifecycle.observe_site(&self.site, self.key, true)
+            == crate::stencil_lifecycle::StencilState::Retired
+        {
+            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
         if let Some(shared) = self.shared_arena.clone() {
             if let InstalledConstantEntry::Shared(owned) = self.installed {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry()) {
