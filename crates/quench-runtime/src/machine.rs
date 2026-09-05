@@ -1530,6 +1530,8 @@ impl NativeBinaryPlan {
         let opcode = instruction.opcode;
         let (key, returns_boolean, integer_op) = if opcode.numeric_operator().is_some() {
             (crate::stencil_select::numeric_region_key(opcode)?, false, None)
+        } else if opcode == crate::ir::Opcode::IncI {
+            (crate::stencil_select::increment_region_key(), false, None)
         } else if opcode == crate::ir::Opcode::Binary
             && instruction.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual)
         {
@@ -1880,7 +1882,8 @@ impl NativeBinaryPlan {
             }
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let values = (self.opcode == crate::ir::Opcode::AddConst)
+        let values = (self.opcode == crate::ir::Opcode::AddConst
+            || self.opcode == crate::ir::Opcode::IncI)
             .then(|| values.with_constant_bits(rhs.to_bits()))
             .unwrap_or(values);
         let key = self.key;
