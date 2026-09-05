@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `809c861af` (cleanup files remain
+Evidence below is bound to source revision `1212ea6a6` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -74,3 +74,8 @@ Unknown-status entry-boundary coverage is **1 passed**
 (`/tmp/quench-native-status-unknown-20260905.log`); full runtime at
 `809c861af` is **721 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-status-boundary.log`).
+`NativeRegionPlan` now retires cached physical bytes on both physical and
+post-entry committed failures; direct retirement coverage passes
+(`/tmp/quench-composed-retire-20260905.log`) and full runtime at
+`1212ea6a6` is **722 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-composed-retire.log`).
