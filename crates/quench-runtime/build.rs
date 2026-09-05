@@ -1535,7 +1535,7 @@ fn verify_stencil_encodings() {
             .expect("append ARM numeric-loop verification source");
     }
     run_tool(
-        Command::new("clang").args([
+        stencil_tool("clang").args([
             "--target=aarch64-apple-darwin",
             "-c",
             "-x",
@@ -1547,7 +1547,7 @@ fn verify_stencil_encodings() {
         "assemble AArch64 stencil verification source",
     );
     let arm_dump = run_tool_output(
-        Command::new("objdump").args(["-d", arm_object.to_str().expect("ARM object path")]),
+        stencil_tool("objdump").args(["-d", arm_object.to_str().expect("ARM object path")]),
         "disassemble AArch64 stencil verification object",
     );
     for word in [
@@ -1622,6 +1622,34 @@ fn run_tool(command: &mut Command, description: &str) {
         .status()
         .unwrap_or_else(|error| panic!("{description} failed to start: {error}"));
     assert!(status.success(), "{description} exited with {status}");
+}
+
+fn stencil_tool(name: &str) -> Command {
+    let variable = format!("QUENCH_{}", name.to_ascii_uppercase());
+    if let Some(path) = env::var_os(&variable) {
+        return Command::new(path);
+    }
+    let candidates = match name {
+        "clang" => ["clang", "clang-18", "clang-17"].as_slice(),
+        "objdump" => ["llvm-objdump", "objdump"].as_slice(),
+        _ => &[name],
+    };
+    for candidate in candidates {
+        if Command::new(candidate).arg("--version").output().is_ok() {
+            return Command::new(candidate);
+        }
+    }
+    if cfg!(target_os = "macos") {
+        if let Ok(output) = Command::new("xcrun").args(["--find", name]).output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if !path.is_empty() {
+                    return Command::new(path);
+                }
+            }
+        }
+    }
+    Command::new(name)
 }
 
 fn run_tool_output(command: &mut Command, description: &str) -> String {
