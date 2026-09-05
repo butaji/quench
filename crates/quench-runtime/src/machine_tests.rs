@@ -1301,6 +1301,49 @@ fn ordinary_residual_named_get_executes_guarded_property_stencil() {
     );
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
+    let function = crate::machine::FunctionCode::from_ops(vec![
+        crate::ops::Op::GetProperty {
+            dst: 0,
+            object: 1,
+            key: "value".into(),
+        },
+        crate::ops::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("lowered prototype get");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let prototype = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".into(), crate::value::Value::Number(11.0)),
+    ]));
+    let receiver = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("\0prototype".into(), crate::value::Value::Object(prototype)),
+    ]));
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Undefined,
+        crate::value::Value::Object(receiver),
+    ]);
+    let context = crate::vm::current_context_or_default();
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .expect("prototype get execution");
+    assert_eq!(
+        completion,
+        crate::completion::Completion::Return(crate::value::Value::Number(11.0))
+    );
+    assert!(plan
+        .native_property_at(0)
+        .is_some_and(|native| native.borrow().native_entry_count > 0));
+}
+
 #[test]
 fn osr_admission_only_accepts_back_edges() {
     assert!(!super::is_osr_candidate(3, crate::ir::Instruction::ret(0)));
