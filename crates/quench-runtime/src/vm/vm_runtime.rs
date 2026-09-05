@@ -386,7 +386,15 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                 return NATIVE_DISPATCH_OK;
             }
             Some(Err(error)) => {
-                region.error_pc = Some(region.pc + 4);
+                let (pc, error) = match error {
+                    crate::machine::NativeDispatchError::SemanticAt { pc, error } => (pc, error),
+                    crate::machine::NativeDispatchError::Semantic(error) => (region.pc, error),
+                    crate::machine::NativeDispatchError::Committed(_)
+                    | crate::machine::NativeDispatchError::Physical(_) => {
+                        return NATIVE_DISPATCH_COMMITTED_ERROR
+                    }
+                };
+                region.error_pc = Some(pc);
                 region.error = Some(error);
                 return NATIVE_DISPATCH_SEMANTIC_ERROR;
             }
@@ -544,7 +552,7 @@ fn validate_residual_window(
 /// register, environment, or array mutation occurs.
 fn execute_composed_array_loop(
     region: &mut NativeRegionContext<'_>,
-) -> Option<Result<DispatchTransition, VmError>> {
+) -> Option<Result<DispatchTransition, crate::machine::NativeDispatchError>> {
     let code = region.code;
     let pc = region.pc;
     let registers = unsafe { &mut *region.registers };
@@ -616,7 +624,12 @@ fn execute_composed_array_loop(
     registers.write_number(usize::from(i2.a), result);
     let value = match read_register(registers, i4.a) {
         Ok(value) => value,
-        Err(error) => return Some(Err(error)),
+        Err(error) => {
+            return Some(Err(crate::machine::NativeDispatchError::SemanticAt {
+                pc: pc + 4,
+                error,
+            }))
+        }
     };
     Some(Ok(handler_transition(
         pc + 4,
