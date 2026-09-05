@@ -805,6 +805,45 @@ fn invalid_access_error(message: &str) -> VmError {
     ))
 }
 
+fn pbkdf2_webcrypto(
+    state: &Rc<RefCell<HostState>>,
+    algorithm: &Value,
+    key: Option<&Value>,
+    length: usize,
+) -> Result<Vec<u8>, VmError> {
+    let Some(hash) = algorithm_hash(algorithm) else {
+        return Err(not_supported("Unrecognized algorithm name"));
+    };
+    let digest = hash.to_ascii_lowercase().replace('-', "");
+    if !matches!(digest.as_str(), "sha1" | "sha224" | "sha256" | "sha384" | "sha512") {
+        return Err(not_supported("Unrecognized algorithm name"));
+    }
+    let salt = match execute::get_property(algorithm, "salt") {
+        Value::Undefined => {
+            return Err(error(
+                Builtin::TypeError,
+                Some("ERR_MISSING_OPTION"),
+                "The \"salt\" option is required",
+            ))
+        }
+        value => bytes(&value).unwrap_or_default(),
+    };
+    let iterations = execute::get_property(algorithm, "iterations");
+    let key_data = execute::get_property(key.unwrap_or(&Value::Undefined), KEY_DATA_PROP);
+    let Some(key_data) = bytes(&key_data) else {
+        return Err(operation_error("Invalid key data"));
+    };
+    let args = [
+        array_buffer(&key_data),
+        array_buffer(&salt),
+        iterations,
+        Value::Number((length / 8) as f64),
+        Value::String(digest),
+    ];
+    let output = crate::modules::crypto::pbkdf2_sync(state, None, &args)?;
+    bytes(&output).ok_or_else(|| operation_error("Invalid derived key"))
+}
+
 pub fn derive_bits(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -816,7 +855,8 @@ pub fn derive_bits(
     let Some(algorithm) = args.first() else {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     };
-    if !algorithm_name(algorithm).eq_ignore_ascii_case("HKDF") {
+    let base_name = algorithm_name(algorithm);
+    if !matches!(base_name.to_ascii_uppercase().as_str(), "HKDF" | "PBKDF2") {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveBits") {
@@ -850,6 +890,11 @@ pub fn derive_bits(
             ))))
         }
     };
+    if base_name.eq_ignore_ascii_case("PBKDF2") {
+        let output = pbkdf2_webcrypto(_state, algorithm, args.get(1), length)
+            .map(|bytes| array_buffer(&bytes));
+        return Ok(settled(output));
+    }
     let Some(hash) = algorithm_hash(algorithm) else {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     };
@@ -906,7 +951,8 @@ pub fn derive_key(
     let Some(algorithm) = args.first() else {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     };
-    if !algorithm_name(algorithm).eq_ignore_ascii_case("HKDF") {
+    let base_name = algorithm_name(algorithm);
+    if !matches!(base_name.to_ascii_uppercase().as_str(), "HKDF" | "PBKDF2") {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveKey") {
@@ -948,6 +994,21 @@ pub fn derive_key(
     };
     if !valid_length {
         return Ok(settled(Err(operation_error("Invalid key length"))));
+    }
+    if base_name.eq_ignore_ascii_case("PBKDF2") {
+        let data = match pbkdf2_webcrypto(state, algorithm, args.get(1), length) {
+            Ok(data) => data,
+            Err(error) => return Ok(settled(Err(error))),
+        };
+        let prototype = execute::get_prototype_of(args.get(1).unwrap_or(&Value::Undefined))
+            .unwrap_or(Value::Undefined);
+        let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
+        let usages = args
+            .get(4)
+            .cloned()
+            .unwrap_or_else(|| host_api::array(Vec::new()));
+        let derived = key(&prototype, derived_algorithm.clone(), extractable, usages, Some(data));
+        return Ok(settled(Ok(key_metadata(derived, "secret", "raw"))));
     }
     let Some(hash) = algorithm_hash(algorithm) else {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));

@@ -574,7 +574,7 @@ pub fn install_with_argv_and_title_and_exec_argv(
     let (crypto, crypto_key) = crate::modules::webcrypto::build();
     let crypto_key_prototype = quench_runtime::execute::get_property(&crypto_key, "prototype");
     context = context
-        .with_host_value("crypto".to_string(), crypto)
+        .with_persistent_host_value("crypto".to_string(), crypto)
         .with_host_value("CryptoKey".to_string(), crypto_key)
         .with_host_value(
             "__quench_crypto_key_prototype".to_string(),
