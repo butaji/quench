@@ -1388,6 +1388,14 @@ pub(crate) fn execute_optimized_code_step_from(
                         .and_then(|metadata| metadata.name.as_deref())?;
                     quickened_own_slot_data(code, start, &object, key)
                         .map(|word| word as *const crate::register_file::SlotWord)
+                        .or_else(|| {
+                            object
+                                .hot_properties()
+                                .position_rev(key)
+                                .is_none()
+                                .then(|| quickened_prototype_slot_data(&object, key))
+                                .flatten()
+                        })
                 });
             if let Some(slot) = slot {
                 if let Some(site) = code.quickening_site(start) {
