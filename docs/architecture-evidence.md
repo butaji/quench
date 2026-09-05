@@ -38,18 +38,3 @@ The fused indexed-update declaration also matches ordinary frontend lowering:
 destructive-alias sibling remains canonical fallback.
 The host/API boundary also compiles against this source (`cargo check -p
 quench-node --no-default-features`, `/tmp/quench-node-check-20260905-fused-update.log`).
-The ordinary-source nullish case is explicitly admission plus canonical execution
-coverage; its native-byte witness remains the separate direct normal-driver test.
-The prototype-property G path now has a normal baseline-driver witness in
-`/tmp/quench-prototype-native-20260905.log`; shadowing/accessor/dictionary cases
-stop the chain proof and remain on complete canonical property semantics.
-The same guarded slot selection is wired through the optimizing entry path.
-Prototype replacement and stale-entry rejection are covered by
-`/tmp/quench-prototype-mutation-20260905.log`.
-Ordinary frontend/lowering semantics for prototype reads and mutation are
-covered by `ordinary_source_prototype_property_lookup_preserves_semantics`
-(`/tmp/quench-prototype-source-20260905.log`).
-Latest post-guard runtime regression: **701 passed, 0 failed, 1 ignored** at
-`80d00a941` (`/tmp/quench-runtime-full-20260905-prototype-guard.log`).
-The same suite at current source `67c1860ee` is **710 passed, 0 failed, 1
-ignored** (`/tmp/quench-runtime-full-20260905-property-source-guards.log`).
