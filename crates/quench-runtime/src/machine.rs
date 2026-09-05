@@ -3069,10 +3069,22 @@ impl NativeAddChainPlan {
         let result = shared.borrow().with_owned(owned, |entry| unsafe {
             invoke_f64x3_entry(entry, lhs, rhs, third)
         });
-        if result.is_ok() {
-            self.note_entry();
+        match result {
+            Ok(value) => {
+                self.note_entry();
+                Ok(value)
+            }
+            Err(error) => {
+                // Publication succeeded, but the owner may have been retired
+                // before invocation. Drop every capability derived from that
+                // generation so the next attempt must revalidate and render;
+                // never retain a callable pointer after an ownership miss.
+                self.shared_entry = None;
+                self.cache.clear();
+                self.lifecycle.reset();
+                Err(error)
+            }
         }
-        result
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3307,10 +3319,18 @@ impl NativeMovePlan {
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_entry = Some(owned);
             let result = shared.borrow().with_owned(owned, |entry| entry(source));
-            if result.is_ok() {
-                self.note_entry();
-            }
-            return result;
+            return match result {
+                Ok(value) => {
+                    self.note_entry();
+                    Ok(value)
+                }
+                Err(error) => {
+                    self.shared_entry = None;
+                    self.cache.clear();
+                    self.lifecycle.reset();
+                    Err(error)
+                }
+            };
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -3497,7 +3517,14 @@ impl NativePropertyPlan {
                 }
             };
             let owned = shared.borrow().owned_entry(address, entry)?;
-            let bits = shared.borrow().with_owned(owned, |entry| entry(slot.cast()))?;
+            let bits = match shared.borrow().with_owned(owned, |entry| entry(slot.cast())) {
+                Ok(bits) => bits,
+                Err(error) => {
+                    self.cache.clear();
+                    self.lifecycle.reset();
+                    return Err(error);
+                }
+            };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 self.shared_entry = Some(owned);
