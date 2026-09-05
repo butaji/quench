@@ -440,10 +440,19 @@ pub fn message_port_deliver(
         let Some((data, ports)) = target.message_queue.first().cloned() else {
             return Ok(Value::Undefined);
         };
-        if target
+        let has_event_target_listener = target
             .events
             .iter()
-            .all(|(_, listeners)| listeners.is_empty())
+            .any(|(_, listeners)| !listeners.is_empty());
+        let has_emitter_listener = crate::modules::events::method_listener_count(
+            state,
+            Some(peer),
+            &[Value::String("message".into())],
+        )
+        .ok()
+        .is_some_and(|value| matches!(value, Value::Number(count) if count > 0.0));
+        if !has_event_target_listener
+            && !has_emitter_listener
             && !quench_runtime::is_callable(&execute::get_property(peer, "onmessage"))
         {
             return Ok(Value::Undefined);
