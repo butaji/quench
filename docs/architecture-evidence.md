@@ -36,6 +36,8 @@ The current source revision `47fb4b639` also has an invocation-level
 interrupt-status transport test (`/tmp/quench-interrupt-status-20260905.log`):
 an interrupt after entry is classified as committed and cannot become an
 entry retry.
+The same revision's full runtime regression is **719 passed, 0 failed, 1
+ignored** (`/tmp/quench-runtime-full-20260905-interrupt-status.log`).
 The fused indexed-update declaration also matches ordinary frontend lowering:
 `ordinary_source_lowering_executes_fused_indexed_numeric_update` passed at
 `375445281` (`/tmp/quench-array-update-source-20260905.log`), while its
