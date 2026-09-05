@@ -40,7 +40,9 @@ pub(crate) fn protect_call(continuation: &crate::completion::CallContinuation) -
         roots.push(continuation.callee.clone());
         roots.push(continuation.receiver.clone());
         roots.extend(continuation.arguments.iter().cloned());
-        roots.extend(continuation.caller_registers.to_values());
+        continuation
+            .caller_registers
+            .visit_values(|value| roots.push(value));
         let environment_length = ENV_ROOTS.with(|environments| environments.borrow().len());
         RootGuard {
             value_length,
