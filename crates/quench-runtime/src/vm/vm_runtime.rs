@@ -92,6 +92,7 @@ pub(crate) struct NativeRegionContext<'a> {
     code: crate::machine::CodeView<'a>,
     pc: usize,
     operations: &'static [crate::ir::Opcode],
+    abi: crate::stencil_select::RegionAbi,
     registers: *mut crate::register_file::RegisterFile,
     context: *const VmContext,
     result: Option<DispatchTransition>,
@@ -114,10 +115,29 @@ impl<'a> NativeRegionContext<'a> {
         registers: &mut crate::register_file::RegisterFile,
         context: &VmContext,
     ) -> Self {
+        Self::new_with_abi(
+            code,
+            pc,
+            operations,
+            crate::stencil_select::RegionAbi::Bridge,
+            registers,
+            context,
+        )
+    }
+
+    pub(crate) fn new_with_abi(
+        code: crate::machine::CodeView<'a>,
+        pc: usize,
+        operations: &'static [crate::ir::Opcode],
+        abi: crate::stencil_select::RegionAbi,
+        registers: &mut crate::register_file::RegisterFile,
+        context: &VmContext,
+    ) -> Self {
         Self {
             code,
             pc,
             operations,
+            abi,
             registers,
             context,
             result: None,
@@ -261,19 +281,14 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
     // effects. Any failure is therefore an exit, never a retryable miss.
     region.entry_started = true;
 
-    // The array-loop declaration has a fixed residual shape.  Execute that
-    // shape through one statically wired kernel before falling back to the
-    // generic bridge.  The kernel performs all guards up front and then
-    // commits the five operations without re-entering opcode dispatch between
-    // them; unsupported operands simply return `None` and use the complete
-    // ordinary path below.
-    if region.operations == [
-        crate::ir::Opcode::LoadLocalChecked,
-        crate::ir::Opcode::AGetI,
-        crate::ir::Opcode::Add,
-        crate::ir::Opcode::ASetI,
-        crate::ir::Opcode::Return,
-    ] {
+    // Physical dispatch is selected from the generated declaration's ABI.
+    // The kernel still verifies its operand wiring, while this boundary no
+    // longer grows a second opcode-sequence allowlist.
+    if matches!(
+        region.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::ArrayNumericLoop
+    ) {
         match execute_composed_array_loop(region) {
             Some(Ok(transition)) => {
                 crate::execution_trace::stencil_observation(
