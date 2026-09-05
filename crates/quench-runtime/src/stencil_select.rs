@@ -398,6 +398,7 @@ fn generated_physical_view(
 ) -> Option<PhysicalStencilView> {
     let metadata_matches = artifact.name == record.name
         && artifact.key == key
+        && artifact_target_matches_host(artifact.target)
         && artifact.abi == record.abi
         && artifact.entry == record.entry
         && artifact.external_entries == record.external_entries
