@@ -378,6 +378,18 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
     select_physical(key).map(|view| view.stencil)
 }
 
+/// Select bytes only after checking the typed entry ABI.  Callers that retain
+/// an ABI-specific entry must use this gate instead of pairing a raw stencil
+/// lookup with an independently chosen function signature.
+pub fn select_stencil_for_abi(
+    key: RegionKey,
+    abi: RegionAbi,
+) -> Option<&'static Stencil> {
+    select_physical(key)
+        .filter(|view| view.executable && view.abi == abi)
+        .map(|view| view.stencil)
+}
+
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
     let Some(artifact) = BUILD_STENCIL_ARTIFACTS
