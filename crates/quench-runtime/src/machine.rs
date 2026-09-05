@@ -2633,6 +2633,9 @@ impl NativeNullishPlan {
                 {
                     self.native_entry_count = self.native_entry_count.saturating_add(1);
                 }
+            } else {
+                self.shared_entry = None;
+                self.cache.clear();
             }
             return result;
         }
@@ -2762,7 +2765,14 @@ impl NativeLoadConstPlan {
             };
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_entry = Some(owned);
-            return shared.borrow().with_owned(owned, |entry| entry());
+            return match shared.borrow().with_owned(owned, |entry| entry()) {
+                Ok(result) => Ok(result),
+                Err(error) => {
+                    self.shared_entry = None;
+                    self.cache.clear();
+                    Err(error)
+                }
+            };
         }
         if let Some(entry) = self.entry {
             return Ok(entry());
