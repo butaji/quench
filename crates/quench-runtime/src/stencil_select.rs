@@ -36,6 +36,10 @@ pub struct AbiContract {
     /// declare an empty mask; bridge/raw entries name their bounded scratch
     /// set so exit materialization can be audited separately.
     pub hardware_clobber_mask: u16,
+    /// Integer register destinations written by raw machine templates. This
+    /// is separate from the SIMD mask above because AArch64 contexts use x0-x6
+    /// for address arithmetic while numeric values live in d0-d2.
+    pub hardware_gpr_clobber_mask: u16,
     /// Canonical live-out slots published by the physical entry. Bit zero is
     /// the ordinary result slot; wider masks are reserved for region exits.
     pub live_out_mask: u16,
@@ -160,8 +164,11 @@ impl RegionContract {
 
     pub const fn abi_is_well_formed(self) -> bool {
         let abi = self.abi_contract();
-        (!abi.preserves_vm_registers || abi.hardware_clobber_mask == 0)
-            && (abi.preserves_vm_registers || abi.hardware_clobber_mask != 0)
+        (!abi.preserves_vm_registers
+            || (abi.hardware_clobber_mask == 0 && abi.hardware_gpr_clobber_mask == 0))
+            && (abi.preserves_vm_registers
+                || abi.hardware_clobber_mask != 0
+                || abi.hardware_gpr_clobber_mask != 0)
             && (!self.operations.is_empty() || abi.live_out_mask == 0)
             && (!abi.may_call_helper || abi.root_materialization_required)
             && (!abi.interruptible_backedge || self.has_control_effect())

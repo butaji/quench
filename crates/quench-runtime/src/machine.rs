@@ -3724,6 +3724,14 @@ fn validate_physical_template(
                 actual & !abi.hardware_clobber_mask
             ));
         }
+        let actual_gpr = physical_template_gpr_clobber_mask(record.stencil.bytes);
+        if actual_gpr & !abi.hardware_gpr_clobber_mask != 0 {
+            return Err(format!(
+                "raw ABI declares GPR clobber mask {:04x}, template uses undeclared {:04x}",
+                abi.hardware_gpr_clobber_mask,
+                actual_gpr & !abi.hardware_gpr_clobber_mask
+            ));
+        }
     }
     Ok(())
 }
@@ -3750,6 +3758,39 @@ fn physical_template_clobber_mask(bytes: &[u8]) -> u16 {
                     // The compact contract cannot represent high SIMD
                     // registers; force a fail-closed mismatch instead of
                     // silently dropping the physical write.
+                    u16::MAX
+                }
+            });
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = bytes;
+        0
+    }
+}
+
+/// Derive integer register writes from the small AArch64 raw-template subset.
+/// Loads, adds and move-immediates are the only GPR-producing instructions we
+/// admit today; unknown encodings contribute no bits and are rejected by the
+/// declaration/byte-shape checks before publication.
+fn physical_template_gpr_clobber_mask(bytes: &[u8]) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return bytes
+            .chunks_exact(4)
+            .filter_map(|word| {
+                let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+                let writes_rt = encoded & 0xFFC0_0000 == 0xF940_0000
+                    || encoded & 0xFFE0_0000 == 0x8B00_0000
+                    || encoded & 0xFFC0_0000 == 0x9100_0000
+                    || encoded & 0xFFE0_0000 == 0x5280_0000
+                    || encoded & 0xFFC0_0000 == 0x3940_0000;
+                writes_rt.then_some(encoded & 0x1f)
+            })
+            .fold(0u16, |mask, register| {
+                if register < 16 {
+                    mask | (1u16 << register)
+                } else {
                     u16::MAX
                 }
             });
@@ -5938,6 +5979,31 @@ mod tests {
         assert!(super::validate_physical_template(&record)
             .expect_err("d3 is outside the ArrayKernel scratch contract")
             .contains("undeclared"));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn raw_template_rejects_undeclared_gpr_clobber() {
+        static BYTES: [u8; 4] = 0xF940_0007u32.to_le_bytes(); // ldr x7, [x0]
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::AGetI];
+        static ENTRIES: [u16; 1] = [0];
+        let record = crate::stencil_select::RegionRecord {
+            name: "test_raw_gpr_clobber",
+            key: crate::stencil_fact::RegionKey(4),
+            stencil: crate::stencil_fact::Stencil {
+                bytes: &BYTES,
+                holes: &[],
+            },
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::ArrayKernel,
+            executable: true,
+        };
+        assert!(super::validate_physical_template(&record)
+            .expect_err("x7 is outside the ArrayKernel GPR scratch contract")
+            .contains("GPR clobber"));
     }
 
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
