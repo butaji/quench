@@ -67,6 +67,9 @@ pub fn write_branch26<const N: usize>(
     values: &PatchValues<'_, N>,
 ) -> Result<(), PatchError> {
     let start = usize::from(offset);
+    if start % 4 != 0 {
+        return Err(PatchError::UnsupportedOffset);
+    }
     let displacement = values.value_for(HoleKind::Branch26) as i64;
     if displacement % 4 != 0 {
         return Err(PatchError::UnsupportedOffset);

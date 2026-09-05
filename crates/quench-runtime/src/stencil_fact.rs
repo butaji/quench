@@ -95,12 +95,27 @@ pub struct Stencil {
 
 impl Stencil {
     pub fn validate(&self) -> bool {
-        self.holes.iter().all(|hole| {
+        self.holes.iter().enumerate().all(|(index, hole)| {
             let width = match hole.kind {
                 HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
                 HoleKind::Ptr64 => 8,
             };
-            usize::from(hole.offset).saturating_add(width) <= self.bytes.len()
+            let aligned = !matches!(hole.kind, HoleKind::Branch26)
+                || usize::from(hole.offset) % 4 == 0;
+            let disjoint = self.holes[..index].iter().all(|prior| {
+                let prior_width = match prior.kind {
+                    HoleKind::Imm32
+                    | HoleKind::Disp32
+                    | HoleKind::Rel32
+                    | HoleKind::Branch26 => 4,
+                    HoleKind::Ptr64 => 8,
+                };
+                let start = usize::from(hole.offset);
+                let prior_start = usize::from(prior.offset);
+                start.saturating_add(width) <= prior_start
+                    || prior_start.saturating_add(prior_width) <= start
+            });
+            aligned && disjoint && usize::from(hole.offset).saturating_add(width) <= self.bytes.len()
         })
     }
 }
@@ -412,6 +427,47 @@ mod tests {
                 usize::from(BoxingFact::from_tag(tag).is_some())
             );
         }
+    }
+
+    #[test]
+    fn stencil_validation_rejects_misaligned_or_overlapping_relocations() {
+        static BYTES: [u8; 16] = [0; 16];
+        assert!(!Stencil {
+            bytes: &BYTES,
+            holes: &[Hole {
+                offset: 2,
+                kind: HoleKind::Branch26,
+            }],
+        }
+        .validate());
+        assert!(!Stencil {
+            bytes: &BYTES,
+            holes: &[
+                Hole {
+                    offset: 0,
+                    kind: HoleKind::Ptr64,
+                },
+                Hole {
+                    offset: 4,
+                    kind: HoleKind::Imm32,
+                },
+            ],
+        }
+        .validate());
+        assert!(Stencil {
+            bytes: &BYTES,
+            holes: &[
+                Hole {
+                    offset: 0,
+                    kind: HoleKind::Branch26,
+                },
+                Hole {
+                    offset: 8,
+                    kind: HoleKind::Ptr64,
+                },
+            ],
+        }
+        .validate());
     }
 
     #[test]
