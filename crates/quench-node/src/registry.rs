@@ -1113,6 +1113,8 @@ pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
+pub const SPEC_CP_GET_VALID_STDIO: NodeSpec =
+    NodeSpec::new("child_process:getValidStdio", 0x1e18);
 node_api! {
     (SPEC_URL_PATH_TO_FILE_URL, CAP_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
     (SPEC_URL_GET_HREF, CAP_URL_GET_HREF, "url:get:href", 0x0506),
@@ -1734,6 +1736,7 @@ pub const CAP_CP_SPAWN: CapId = SPEC_CP_SPAWN.cap;
 pub const CAP_CP_SPAWNSYNC: CapId = SPEC_CP_SPAWNSYNC.cap;
 pub const CAP_CP_SPAWN_ERROR_EMIT: CapId = SPEC_CP_SPAWN_ERROR_EMIT.cap;
 pub const CAP_CP_SPAWN_OUTPUT_EMIT: CapId = SPEC_CP_SPAWN_OUTPUT_EMIT.cap;
+pub const CAP_CP_GET_VALID_STDIO: CapId = SPEC_CP_GET_VALID_STDIO.cap;
 pub const CAP_CP_STDIN_END: CapId = SPEC_CP_STDIN_END.cap;
 pub const CAP_CP_STDIN_WRITE: CapId = SPEC_CP_STDIN_WRITE.cap;
 pub const CAP_CP_STDOUT_READ: CapId = SPEC_CP_STDOUT_READ.cap;
