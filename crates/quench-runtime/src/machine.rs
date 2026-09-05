@@ -2244,6 +2244,20 @@ pub(crate) struct NativeTruthinessPlan {
 
 impl NativeTruthinessPlan {
     #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.cache.clear();
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            self.entry = None;
+            self.word_entry = None;
+            self.pointer_entry = None;
+            self.shared_entry = None;
+            self.shared_word_entry = None;
+            self.shared_pointer_entry = None;
+        }
+    }
+
+    #[inline]
     fn note_entry(&mut self) {
         #[cfg(test)]
         {
@@ -2339,16 +2353,19 @@ impl NativeTruthinessPlan {
             };
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_entry = Some(owned);
-            return shared
-                .borrow()
-                .with_owned(owned, |entry| entry(value))
-                .map(|result| {
+            return match shared.borrow().with_owned(owned, |entry| entry(value)) {
+                Ok(result) => {
                     #[cfg(test)]
                     {
                         self.native_entry_count = self.native_entry_count.saturating_add(1);
                     }
-                    result != 0
-                });
+                    Ok(result != 0)
+                }
+                Err(error) => {
+                    self.clear_shared_capabilities();
+                    Err(error)
+                }
+            };
         }
         if let Some(entry) = self.entry {
             #[cfg(test)]
@@ -2404,7 +2421,13 @@ impl NativeTruthinessPlan {
             drop(slab);
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_word_entry = Some(owned);
-            let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
+            let result = match shared.borrow().with_owned(owned, |entry| entry(value)) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.clear_shared_capabilities();
+                    return Err(error);
+                }
+            };
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2461,7 +2484,13 @@ impl NativeTruthinessPlan {
             drop(slab);
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_pointer_entry = Some(owned);
-            let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
+            let result = match shared.borrow().with_owned(owned, |entry| entry(value)) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.clear_shared_capabilities();
+                    return Err(error);
+                }
+            };
             self.note_entry();
             return Ok(result != 0);
         }
