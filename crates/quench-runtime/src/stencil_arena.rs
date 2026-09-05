@@ -2474,6 +2474,42 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn dispatch_lease_rejects_stale_generation_before_entry() {
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(
+            SharedStencilSlab::new(4096).expect("slab"),
+        ));
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).expect("add key");
+        let record = crate::stencil_select::select_region(key).expect("add row");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let address = shared
+            .borrow_mut()
+            .render_or_get(
+                &mut RenderedRegionCache::new(),
+                key,
+                &record.stencil,
+                &PatchValues::from_site(&site),
+            )
+            .expect("render");
+        shared.borrow_mut().make_executable(address).expect("publish");
+        let owner = shared.borrow().owner_for(address).expect("owner");
+        let state = std::rc::Rc::new(LeaseState {
+            active: Cell::new(1),
+            peak: Cell::new(1),
+        });
+        let lease = AllocationLease {
+            owner: std::rc::Rc::clone(&shared),
+            state,
+            address,
+            owner_id: owner.wrapping_add(1),
+            abi: crate::stencil_select::RegionAbi::Scalar,
+        };
+        assert!(lease
+            .invoke_dispatch(std::ptr::NonNull::<u8>::dangling().as_ptr().cast())
+            .is_err());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn owned_entry_rejects_pointer_address_pairing_within_owner() {
         let key = crate::stencil_select::numeric_region_key(Opcode::Add).expect("add key");
         let record = crate::stencil_select::select_region(key).expect("add row");
