@@ -1519,6 +1519,8 @@ pub(crate) struct NativeBinaryPlan {
     installed: InstalledBinaryEntry,
     #[cfg(test)]
     native_entry_count: u64,
+    #[cfg(test)]
+    last_native_view: Option<crate::stencil_select::PhysicalStencilView>,
 }
 
 #[inline]
@@ -1685,6 +1687,8 @@ impl NativeBinaryPlan {
             installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
+            #[cfg(test)]
+            last_native_view: None,
         })
     }
 
@@ -1722,6 +1726,8 @@ impl NativeBinaryPlan {
             installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
+            #[cfg(test)]
+            last_native_view: None,
         })
     }
 
@@ -1730,12 +1736,18 @@ impl NativeBinaryPlan {
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
+            self.last_native_view = crate::stencil_select::select_physical(self.key);
         }
     }
 
     #[cfg(test)]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
+        self.last_native_view
     }
 
     #[inline]
