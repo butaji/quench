@@ -70,6 +70,20 @@ Object.defineProperty(globalThis, "__nodeCommon", { value: {
         }));
     });
   },
+  childShouldThrowAndAbort: () => {
+    const escapedArgs = globalThis.__nodeCommon.escapePOSIXShell`"${process.argv[0]}" --abort-on-uncaught-exception "${process.argv[1]}" child`;
+    if (process.platform !== "win32") {
+      escapedArgs[0] = `ulimit -c 0 && ${escapedArgs[0]}`;
+    }
+    const child = globalThis.require("child_process").exec(...escapedArgs);
+    child.on("exit", (exitCode, signal) => {
+      if (!globalThis.__nodeCommon.nodeProcessAborted(exitCode, signal)) {
+        throw new Error(
+          `Test should have aborted but instead exited with exit code ${exitCode} and signal ${signal}`,
+        );
+      }
+    });
+  },
   platformTimeout: (milliseconds) => milliseconds,
   pwdCommand: ["pwd", []],
   escapePOSIXShell: (parts, ...values) => {
