@@ -92,12 +92,12 @@ pub struct SharedStencilSlab {
     peak_dispatches: Cell<usize>,
 }
 
-/// A typed entry pointer paired with the slab generation that published it.
-/// The address alone is not a stable capability: an evicted mapping may be
-/// recycled by the OS.  Callers must pass this token through `with_active` so
-/// execution fails closed if the owner changed.
+/// A non-owning typed entry token paired with the slab generation that
+/// published it. The address alone is not a stable capability: an evicted
+/// mapping may be recycled by the OS. Callers pass this token through
+/// `with_owned`, which acquires a retaining active lease for the call.
 #[derive(Clone, Copy)]
-pub(crate) struct OwnedEntry<F: Copy> {
+pub(crate) struct EntryToken<F: Copy> {
     address: usize,
     owner: u64,
     abi: crate::stencil_select::RegionAbi,
@@ -113,7 +113,7 @@ macro_rules! typed_owned_entry {
         pub(crate) fn $name(
             &self,
             address: usize,
-        ) -> Result<OwnedEntry<$ty>, ArenaError> {
+        ) -> Result<EntryToken<$ty>, ArenaError> {
             let entry = self.$entry(address)?;
             self.owned_entry(address, entry, $abi)
         }
@@ -242,9 +242,9 @@ impl SharedStencilSlab {
         address: usize,
         entry: F,
         abi: crate::stencil_select::RegionAbi,
-    ) -> Result<OwnedEntry<F>, ArenaError> {
+    ) -> Result<EntryToken<F>, ArenaError> {
         let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
-        Ok(OwnedEntry { address, owner, abi, entry })
+        Ok(EntryToken { address, owner, abi, entry })
     }
 
     typed_owned_entry!(owned_f64_entry, f64_entry, extern "C" fn(f64, f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
@@ -262,7 +262,7 @@ impl SharedStencilSlab {
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
-        owned: OwnedEntry<F>,
+        owned: EntryToken<F>,
         invoke: impl FnOnce(F) -> R,
     ) -> Result<R, ArenaError> {
         if self.owner_for(owned.address) != Some(owned.owner) {
@@ -1771,7 +1771,7 @@ mod tests {
         pool.make_executable(address).unwrap();
         let entry = pool.f64_entry(address).unwrap();
         let owner = pool.owner_for(address).unwrap();
-        let stale = OwnedEntry {
+        let stale = EntryToken {
             address,
             owner: owner.wrapping_add(1),
             abi: crate::stencil_select::RegionAbi::Scalar,
@@ -1780,13 +1780,13 @@ mod tests {
         assert!(pool
             .with_owned(stale, |_| panic!("stale entry was invoked"))
             .is_err());
-        let live = OwnedEntry {
+        let live = EntryToken {
             address,
             owner,
             abi: crate::stencil_select::RegionAbi::Scalar,
             entry,
         };
-        let wrong_abi = OwnedEntry {
+        let wrong_abi = EntryToken {
             address,
             owner,
             abi: crate::stencil_select::RegionAbi::ScalarBool,
