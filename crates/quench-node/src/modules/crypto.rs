@@ -919,6 +919,9 @@ fn hkdf_bytes(args: &[Value]) -> Result<Vec<u8>, VmError> {
         "sha256" => derive!(Sha256),
         "sha384" => derive!(Sha384),
         "sha512" => derive!(Sha512),
+        "sha3256" => derive!(Sha3_256),
+        "sha3384" => derive!(Sha3_384),
+        "sha3512" => derive!(Sha3_512),
         _ => Err(crypto_error("ERR_CRYPTO_INVALID_DIGEST", "Invalid digest")),
     }
 }

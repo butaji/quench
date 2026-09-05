@@ -112,6 +112,10 @@ fn key(
     usages: Value,
     data: Option<Vec<u8>>,
 ) -> Value {
+    let algorithm = match algorithm {
+        Value::String(name) => host_api::object(vec![("name".into(), Value::String(name))]),
+        value => value,
+    };
     let usages = normalize_usages(&usages);
     let value = host_api::object(vec![
         ("type".into(), Value::String("secret".into())),
@@ -809,12 +813,28 @@ pub fn derive_bits(
     if let Some(result) = invalid_subtle_this(receiver) {
         return Ok(result);
     }
+    let Some(algorithm) = args.first() else {
+        return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
+    };
+    if !algorithm_name(algorithm).eq_ignore_ascii_case("HKDF") {
+        return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
+    }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveBits") {
         return Ok(settled(Err(error)));
     }
     let length = match args.get(2) {
-        Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value as usize,
-        Some(Value::Null) | None => 128,
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 => {
+            let length = *value as usize;
+            if length % 8 != 0 {
+                return Ok(settled(Err(operation_error(
+                    "length must be a multiple of 8",
+                ))));
+            }
+            length
+        }
+        Some(Value::Null | Value::Undefined) | None => {
+            return Ok(settled(Err(operation_error("length cannot be null"))))
+        }
         Some(_) => {
             return Ok(settled(Err(error(
                 Builtin::TypeError,
@@ -823,7 +843,161 @@ pub fn derive_bits(
             ))))
         }
     };
-    Ok(settled(Ok(array_buffer(&vec![0; length.div_ceil(8)]))))
+    let Some(hash) = algorithm_hash(algorithm) else {
+        return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
+    };
+    let salt = match execute::get_property(algorithm, "salt") {
+        Value::Undefined => {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_MISSING_OPTION"),
+                "The \"salt\" option is required",
+            ))))
+        }
+        value => bytes(&value).unwrap_or_default(),
+    };
+    let info = match execute::get_property(algorithm, "info") {
+        Value::Undefined => {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_MISSING_OPTION"),
+                "The \"info\" option is required",
+            ))))
+        }
+        value => bytes(&value).unwrap_or_default(),
+    };
+    if let Some(error) = validate_hkdf_webcrypto(&hash, info.len(), length / 8) {
+        return Ok(settled(Err(error)));
+    }
+    let key_data = execute::get_property(
+        args.get(1).unwrap_or(&Value::Undefined),
+        KEY_DATA_PROP,
+    );
+    let Some(key_data) = bytes(&key_data) else {
+        return Ok(settled(Err(operation_error("Invalid key data"))));
+    };
+    let hkdf_args = [
+        Value::String(hash),
+        array_buffer(&key_data),
+        array_buffer(&salt),
+        array_buffer(&info),
+        Value::Number((length / 8) as f64),
+    ];
+    let output = crate::modules::crypto::hkdf_sync(_state, None, &hkdf_args)
+        .map_err(|error| error);
+    Ok(settled(output))
+}
+
+pub fn derive_key(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(result) = invalid_subtle_this(receiver) {
+        return Ok(result);
+    }
+    let Some(algorithm) = args.first() else {
+        return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
+    };
+    if !algorithm_name(algorithm).eq_ignore_ascii_case("HKDF") {
+        return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
+    }
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveKey") {
+        return Ok(settled(Err(error)));
+    }
+    let Some(derived_algorithm) = args.get(2) else {
+        return Ok(settled(Err(error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The derived key algorithm is required",
+        ))));
+    };
+    let name = algorithm_name(derived_algorithm).to_ascii_uppercase();
+    let length = match name.as_str() {
+        "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" | "AES-OCB" | "HMAC" => {
+            match execute::get_property(derived_algorithm, "length") {
+                Value::Number(value)
+                    if value.is_finite() && value.fract() == 0.0 && value > 0.0 =>
+                {
+                    value as usize
+                }
+                _ => {
+                    return Ok(settled(Err(error(
+                        Builtin::TypeError,
+                        Some("ERR_MISSING_OPTION"),
+                        "The \"length\" option is required",
+                    ))))
+                }
+            }
+        }
+        _ => return Ok(settled(Err(not_supported("Unrecognized algorithm name")))),
+    };
+    let valid_length = match name.as_str() {
+        "AES-OCB" => matches!(length, 128 | 256),
+        "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" => {
+            matches!(length, 128 | 192 | 256)
+        }
+        _ => length > 0,
+    };
+    if !valid_length {
+        return Ok(settled(Err(operation_error("Invalid key length"))));
+    }
+    let Some(hash) = algorithm_hash(algorithm) else {
+        return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
+    };
+    let salt = match execute::get_property(algorithm, "salt") {
+        Value::Undefined => {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_MISSING_OPTION"),
+                "The \"salt\" option is required",
+            ))))
+        }
+        value => bytes(&value).unwrap_or_default(),
+    };
+    let info = match execute::get_property(algorithm, "info") {
+        Value::Undefined => {
+            return Ok(settled(Err(error(
+                Builtin::TypeError,
+                Some("ERR_MISSING_OPTION"),
+                "The \"info\" option is required",
+            ))))
+        }
+        value => bytes(&value).unwrap_or_default(),
+    };
+    if let Some(error) = validate_hkdf_webcrypto(&hash, info.len(), length / 8) {
+        return Ok(settled(Err(error)));
+    }
+    let key_data = execute::get_property(
+        args.get(1).unwrap_or(&Value::Undefined),
+        KEY_DATA_PROP,
+    );
+    let Some(key_data) = bytes(&key_data) else {
+        return Ok(settled(Err(operation_error("Invalid key data"))));
+    };
+    let hkdf_args = [
+        Value::String(hash),
+        array_buffer(&key_data),
+        array_buffer(&salt),
+        array_buffer(&info),
+        Value::Number((length / 8) as f64),
+    ];
+    let derived = match crate::modules::crypto::hkdf_sync(state, None, &hkdf_args) {
+        Ok(value) => value,
+        Err(error) => return Ok(settled(Err(error))),
+    };
+    let Some(data) = bytes(&derived) else {
+        return Ok(settled(Err(operation_error("Invalid derived key"))));
+    };
+    let prototype = execute::get_prototype_of(args.get(1).unwrap_or(&Value::Undefined))
+        .unwrap_or(Value::Undefined);
+    let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
+    let usages = args
+        .get(4)
+        .cloned()
+        .unwrap_or_else(|| host_api::array(Vec::new()));
+    let derived = key(&prototype, derived_algorithm.clone(), extractable, usages, Some(data));
+    Ok(settled(Ok(key_metadata(derived, "secret", "raw"))))
 }
 
 pub fn sign(
@@ -913,6 +1087,42 @@ fn algorithm_name(value: &Value) -> String {
         }
         _ => execute::to_js_string(value).unwrap_or_default(),
     }
+}
+
+fn algorithm_hash(value: &Value) -> Option<String> {
+    let hash = execute::get_property(value, "hash");
+    let hash = match hash {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            execute::get_property(&hash, "name")
+        }
+        value => value,
+    };
+    let hash = execute::to_js_string(&hash).ok()?;
+    let normalized = hash.to_ascii_uppercase();
+    matches!(
+        normalized.as_str(),
+        "SHA-1" | "SHA-224" | "SHA-256" | "SHA-384" | "SHA-512"
+            | "SHA3-256" | "SHA3-384" | "SHA3-512"
+    )
+    .then_some(normalized)
+}
+
+fn validate_hkdf_webcrypto(hash: &str, info_len: usize, output_len: usize) -> Option<VmError> {
+    if info_len > 1024 {
+        return Some(operation_error(
+            "algorithm.info must be at most 1024 bytes",
+        ));
+    }
+    let digest_len = match hash {
+        "SHA-1" => 20,
+        "SHA-224" => 28,
+        "SHA-256" | "SHA3-256" => 32,
+        "SHA-384" | "SHA3-384" => 48,
+        "SHA-512" | "SHA3-512" => 64,
+        _ => return None,
+    };
+    (output_len > 255 * digest_len)
+        .then(|| operation_error("length exceeds the maximum derived bit length"))
 }
 
 pub fn encrypt(
@@ -1128,7 +1338,9 @@ fn validate_key_use(
             .is_ok_and(|value| value == usage)
     });
     if !allowed {
-        return Some(invalid_access_error(&format!("Unable to use this key to {usage}")));
+        return Some(invalid_access_error(&format!(
+            "baseKey does not have {usage} usage"
+        )));
     }
     let key_type = execute::to_js_string(&execute::get_property(key, "type")).ok()?;
     let required_type = match (key_algorithm.to_ascii_uppercase().as_str(), usage) {
@@ -1375,7 +1587,7 @@ pub fn build() -> (Value, Value) {
                 ),
                 (
                     "deriveKey".into(),
-                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_DERIVE_BITS),
+                    crate::host::capability(crate::registry::SPEC_WEBCRYPTO_DERIVE_KEY),
                 ),
                 (
                     "sign".into(),
