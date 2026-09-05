@@ -108,7 +108,11 @@ fn update_await_frame(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<(), VmError> {
-    if !matches!(completion, crate::completion::Completion::Suspend(_)) {
+    if !matches!(
+        completion,
+        crate::completion::Completion::Suspend(_)
+            | crate::completion::Completion::SuspendAt(_, _)
+    ) {
         return Ok(());
     }
     if let Some(iterator) = crate::loops::take_pending_async_for_of() {
@@ -116,6 +120,10 @@ fn update_await_frame(
         iterator.await_dst = await_destination(generator);
         state.async_for_of = Some(iterator);
     }
+    let destination = completion
+        .suspension_point()
+        .and_then(suspension_destination)
+        .unwrap_or_else(|| await_destination(generator));
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Await {
@@ -123,9 +131,18 @@ fn update_await_frame(
             // Await is a stack marker; resumption continues from the machine
             // PC, while frame validation still needs a canonical code range.
             resume: generator.function.code.range,
-            destination: await_destination(generator),
+            destination,
         },
     )
+}
+
+fn suspension_destination(point: &crate::continuation::SuspensionPoint) -> Option<u16> {
+    match point {
+        crate::continuation::SuspensionPoint::Loop { yield_dst, .. }
+        | crate::continuation::SuspensionPoint::Yield { src: yield_dst, .. } => Some(*yield_dst),
+        crate::continuation::SuspensionPoint::YieldStar { dst, .. } => Some(*dst),
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => suspension_destination(inner),
+    }
 }
 
 fn await_destination(generator: &GeneratorData) -> u16 {
@@ -305,7 +322,7 @@ fn initial_try_path(
     range: crate::machine::CodeRange,
 ) -> Option<InitialTryPath> {
     for (index, op) in code.cold_ops() {
-        if let Op::Yield { src } = op {
+        if let Op::Yield { src } | Op::Await { dst: src, .. } = op {
             return Some(InitialTryPath {
                 frames: Vec::new(),
                 yield_dst: *src,
@@ -315,6 +332,24 @@ fn initial_try_path(
                     end: range.end,
                 },
             });
+        }
+        let nested = match op {
+            Op::Loop { body, .. }
+            | Op::ForOf { body, .. }
+            | Op::ForIn { body, .. } => Some(body),
+            _ => None,
+        };
+        if let Some(nested) = nested {
+            let Some(nested_code) = nested.code() else { continue };
+            let Some(mut path) = initial_try_path(nested_code, nested.range) else {
+                continue;
+            };
+            path.continuation = crate::machine::CodeRange {
+                code: range.code,
+                start: range.start.saturating_add(index as u32 + 1),
+                end: range.end,
+            };
+            return Some(path);
         }
         let Op::Try {
             body,

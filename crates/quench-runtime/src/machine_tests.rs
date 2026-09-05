@@ -37,6 +37,32 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
 }
 
 #[test]
+fn code_store_drops_after_nested_function_owner_is_released() {
+    let nested = super::FunctionCode::pending(vec![
+        super::Op::Const {
+            dst: 0,
+            value: crate::ops::Constant::Number(1.0),
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let owner = super::FunctionCode::from_ops(vec![super::Op::MakeFunctionWithKind {
+        dst: 0,
+        body: nested,
+        params: 0,
+        length: 0,
+        captures: 0,
+        kind: crate::ops::FunctionKind::Ordinary,
+        strictness: crate::ops::FunctionStrictness::Sloppy,
+        is_async: false,
+        mapped_arguments: false,
+        source: None,
+    }]);
+    let weak = std::rc::Rc::downgrade(&owner.store().expect("nested code store"));
+    drop(owner);
+    assert!(weak.upgrade().is_none(), "nested code store retained a cycle");
+}
+
+#[test]
 fn machine_rejects_call_continuation_from_unknown_code_source() {
     let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
     let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);

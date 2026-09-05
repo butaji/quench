@@ -284,7 +284,7 @@ pub fn install_with_argv(
     // Node schedules every async-function continuation as a microtask,
     // including awaits whose operand is already fulfilled.
     quench_runtime::module_bindings::defer_fulfilled_await(true);
-    let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
+    let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink.clone()));
     let host_state = host.state.clone();
     quench_runtime::install_host_job_pump(Rc::new(move || {
         crate::modules::pump::drain_one_tick(&host_state)
@@ -294,7 +294,7 @@ pub fn install_with_argv(
         (state.process.argv.clone(), state.process.exec_path.clone())
     };
     let bindings = crate::registry::namespace_bindings(&argv, &exec_path);
-    let mut context = VmContext::default().with_host(host.clone());
+    let mut context = VmContext::with_output_sink(sink).with_host(host.clone());
     // Bootstrap globals derive the public process surface from these
     // canonical argv facts. Keep them identical to the host state so
     // script arguments survive the shared bootstrap path.
