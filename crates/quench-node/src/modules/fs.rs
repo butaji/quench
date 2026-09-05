@@ -3449,16 +3449,24 @@ pub fn build() -> Value {
         ("open", crate::host::capability(SPEC_FS_OPEN)),
         ("openAsBlob", crate::host::capability(SPEC_FS_OPENASBLOB)),
     ];
+    let read_stream = crate::host::capability(SPEC_FS_READSTREAM);
+    let read_stream_proto = host_api::object(Vec::new());
+    let _ = execute::set_property_in_place(
+        &read_stream_proto,
+        "constructor",
+        read_stream.clone(),
+    );
+    let _ = execute::set_property_in_place(&read_stream, "prototype", read_stream_proto);
+    let create_read_stream = crate::host::capability(SPEC_FS_CREATE_READSTREAM);
+    let _ = execute::set_property_in_place(
+        &create_read_stream,
+        "prototype",
+        execute::get_property(&read_stream, "prototype"),
+    );
     props.extend([
-        (
-            "createReadStream",
-            crate::host::capability(SPEC_FS_CREATE_READSTREAM),
-        ),
-        (
-            "createWriteStream",
-            crate::host::capability(SPEC_FS_WRITESTREAM),
-        ),
-        ("ReadStream", crate::host::capability(SPEC_FS_READSTREAM)),
+        ("createReadStream", create_read_stream),
+        ("createWriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
+        ("ReadStream", read_stream),
         ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
     ]);
     props.extend(sync_props());
@@ -3616,7 +3624,25 @@ pub fn create_read_stream(
         }
         value => Some(path_arg(value)?),
     };
-    let stream = readable_stream(state, &options)?;
+    let mut stream = readable_stream(state, &options)?;
+    // ReadStream instances inherit the public constructor prototype (which is
+    // patchable by user code) while retaining the ordinary Readable methods.
+    let read_ctor = state
+        .borrow()
+        .module_cache
+        .get("fs")
+        .map(|module| execute::get_property(module, "ReadStream"))
+        .unwrap_or_else(|| crate::host::capability(crate::registry::SPEC_FS_READSTREAM));
+    let read_proto = execute::get_property(&read_ctor, "prototype");
+    if matches!(read_proto, Value::Object(_) | Value::ObjectAlias(_)) {
+        let current_proto = execute::get_prototype_of(&stream).unwrap_or(Value::Undefined);
+        if matches!(current_proto, Value::Object(_) | Value::ObjectAlias(_)) {
+            let _ = execute::set_prototype_of(&read_proto, &current_proto);
+        }
+        if let Ok(updated) = execute::set_prototype_of(&stream, &read_proto) {
+            stream = updated;
+        }
+    }
     execute::set_property_in_place(
         &stream,
         "path",
@@ -3636,6 +3662,15 @@ pub fn create_read_stream(
     execute::set_property_in_place(&stream, "readable", Value::Boolean(true));
     execute::set_property_in_place(&stream, "closed", Value::Boolean(false));
     execute::set_property_in_place(&stream, "destroyed", Value::Boolean(false));
+    // ReadStream exposes the normalized range/lifecycle options as public
+    // state.  Read them through the ordinary property path so options supplied
+    // via an inherited `__proto__` are reflected just like own properties.
+    for name in ["start", "end", "autoClose", "bufferSize"] {
+        let value = execute::get_property(&options, name);
+        if !matches!(value, Value::Undefined) {
+            execute::set_property_in_place(&stream, name, value);
+        }
+    }
     execute::set_property_in_place(
         &stream,
         "close",
@@ -3655,7 +3690,12 @@ pub fn create_read_stream(
         30_000.0
     };
     execute::set_property_in_place(&stream, "length", Value::Number(length));
-    let open = crate::host::capability(crate::registry::SPEC_FS_READSTREAM_OPEN);
+    let open = execute::get_property(&stream, "open");
+    let open = if quench_runtime::is_callable(&open) {
+        open
+    } else {
+        crate::host::capability(crate::registry::SPEC_FS_READSTREAM_OPEN)
+    };
     defer(
         state,
         &open,
