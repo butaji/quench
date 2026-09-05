@@ -475,6 +475,7 @@ fn execute_composed_array_loop(
 /// numeric borrow alive until the call returns; the kernel only touches the
 /// proven backing words and publishes its result here.
 #[repr(C)]
+#[repr(C)]
 pub(crate) struct NativeArrayKernelContext {
     pub(crate) data: *mut f64,
     pub(crate) len: usize,
@@ -3228,6 +3229,27 @@ mod compact_handler_tests {
     use crate::ops::Op;
     use crate::value::{ObjectData, Value};
     use std::rc::Rc;
+
+    #[test]
+    fn raw_array_context_layout_matches_emitted_offsets() {
+        use std::mem::{align_of, offset_of, size_of};
+        assert_eq!(align_of::<super::NativeArrayKernelContext>(), 8);
+        assert_eq!(size_of::<super::NativeArrayKernelContext>(), 40);
+        assert_eq!(offset_of!(super::NativeArrayKernelContext, data), 0);
+        assert_eq!(offset_of!(super::NativeArrayKernelContext, len), 8);
+        assert_eq!(offset_of!(super::NativeArrayKernelContext, index), 16);
+        assert_eq!(offset_of!(super::NativeArrayKernelContext, addend), 24);
+        assert_eq!(offset_of!(super::NativeArrayKernelContext, result), 32);
+
+        assert_eq!(align_of::<super::NativeArrayLoopContext>(), 8);
+        assert_eq!(size_of::<super::NativeArrayLoopContext>(), 48);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, data), 0);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, len), 8);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, index), 16);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, end), 24);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, addend), 32);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, result), 40);
+    }
 
     #[test]
     fn catalog_handler_returns_explicit_next_transition() {
