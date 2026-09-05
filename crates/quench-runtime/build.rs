@@ -14,7 +14,7 @@ struct RegionDeclaration {
     external_entries: &'static [u32],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum DeclAbi {
     Scalar,
     TaggedWord,
@@ -1784,60 +1784,6 @@ fn generate_stencil_catalog() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let abi_contracts = r#"
-const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate::stencil_select::AbiContract {
-    match abi {
-        crate::stencil_select::RegionAbi::Scalar
-        | crate::stencil_select::RegionAbi::TaggedWord
-        | crate::stencil_select::RegionAbi::ConstantWord
-        | crate::stencil_select::RegionAbi::ScalarBool
-        | crate::stencil_select::RegionAbi::ScalarWordBool
-        | crate::stencil_select::RegionAbi::ScalarWordPairBool
-        | crate::stencil_select::RegionAbi::ScalarI32
-        | crate::stencil_select::RegionAbi::ScalarU32 => crate::stencil_select::AbiContract {
-            context_arg_words: 0,
-            preserves_vm_registers: true,
-            may_call_helper: false,
-            interruptible_backedge: false,
-            hardware_clobber_mask: 0,
-            hardware_gpr_clobber_mask: 0,
-            live_out_mask: 1,
-            root_materialization_required: false,
-        },
-        crate::stencil_select::RegionAbi::Bridge => crate::stencil_select::AbiContract {
-            context_arg_words: 1,
-            preserves_vm_registers: false,
-            may_call_helper: true,
-            interruptible_backedge: false,
-            hardware_clobber_mask: 0xffff,
-            hardware_gpr_clobber_mask: 0xffff,
-            live_out_mask: 0xffff,
-            root_materialization_required: true,
-        },
-        crate::stencil_select::RegionAbi::ArrayKernel => crate::stencil_select::AbiContract {
-            context_arg_words: 1,
-            preserves_vm_registers: false,
-            may_call_helper: false,
-            interruptible_backedge: false,
-            hardware_clobber_mask: 0x0003,
-            hardware_gpr_clobber_mask: 0x001f,
-            live_out_mask: 1,
-            root_materialization_required: false,
-        },
-        crate::stencil_select::RegionAbi::ArrayNumericLoop => crate::stencil_select::AbiContract {
-            context_arg_words: 1,
-            preserves_vm_registers: false,
-            may_call_helper: false,
-            interruptible_backedge: true,
-            hardware_clobber_mask: 0x0007,
-            hardware_gpr_clobber_mask: 0x007f,
-            live_out_mask: 0x0003,
-            root_materialization_required: false,
-        },
-    }
-}
-
-"#;
     let mut generated = String::from(
         r#"
 // Generated from REGION_DECLARATIONS.  The declaration is the sole source of
@@ -1855,7 +1801,7 @@ const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64
 const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
 "#,
     );
-    generated.push_str(abi_contracts);
+    generated.push_str(&generated_abi_catalog());
     generated.push('\n');
     generated.push_str(&canonical_bytes);
     generated.push('\n');
@@ -1965,6 +1911,81 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ArrayKernel | DeclAbi::ArrayNumericLoop => {
             "crate::stencil_select::RegionAbi::Bridge"
         }
+    }
+}
+
+/// Emit the Rust ABI catalog invocation from the same `DeclAbi` values that
+/// drive every generated region row.  The selector macro owns the type-safe
+/// contract shape; this build-time view owns only the mechanical field data.
+fn generated_abi_catalog() -> String {
+    let mut variants = Vec::new();
+    for declaration in REGION_DECLARATIONS {
+        if !variants.contains(&declaration.abi) {
+            variants.push(declaration.abi);
+        }
+    }
+    let rows = variants
+        .into_iter()
+        .map(|abi| {
+            let (name, context, priority, fields) = abi_contract_fields(abi);
+            format!(
+                "    {name} => {{ context: {context}, priority: {priority}, {fields} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("region_abi_catalog! {{\n{rows},\n}}")
+}
+
+fn abi_contract_fields(abi: DeclAbi) -> (&'static str, bool, u8, &'static str) {
+    match abi {
+        DeclAbi::Scalar
+        | DeclAbi::TaggedWord
+        | DeclAbi::ConstantWord
+        | DeclAbi::ScalarBool
+        | DeclAbi::ScalarWordBool
+        | DeclAbi::ScalarWordPairBool
+        | DeclAbi::ScalarI32
+        | DeclAbi::ScalarU32 => (
+            abi_variant_name(abi),
+            false,
+            0,
+            "context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, root_materialization_required: false",
+        ),
+        DeclAbi::Bridge => (
+            "Bridge",
+            true,
+            1,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, root_materialization_required: true",
+        ),
+        DeclAbi::ArrayKernel => (
+            "ArrayKernel",
+            true,
+            2,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0x0003, hardware_gpr_clobber_mask: 0x001f, live_out_mask: 1, root_materialization_required: false",
+        ),
+        DeclAbi::ArrayNumericLoop => (
+            "ArrayNumericLoop",
+            true,
+            3,
+            "context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0x0007, hardware_gpr_clobber_mask: 0x007f, live_out_mask: 0x0003, root_materialization_required: false",
+        ),
+    }
+}
+
+fn abi_variant_name(abi: DeclAbi) -> &'static str {
+    match abi {
+        DeclAbi::Scalar => "Scalar",
+        DeclAbi::TaggedWord => "TaggedWord",
+        DeclAbi::ConstantWord => "ConstantWord",
+        DeclAbi::ScalarBool => "ScalarBool",
+        DeclAbi::ScalarWordBool => "ScalarWordBool",
+        DeclAbi::ScalarWordPairBool => "ScalarWordPairBool",
+        DeclAbi::ScalarI32 => "ScalarI32",
+        DeclAbi::ScalarU32 => "ScalarU32",
+        DeclAbi::Bridge => "Bridge",
+        DeclAbi::ArrayKernel => "ArrayKernel",
+        DeclAbi::ArrayNumericLoop => "ArrayNumericLoop",
     }
 }
 
