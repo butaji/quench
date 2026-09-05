@@ -223,6 +223,9 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
     // no callee can retain the erased lifetime or pointer beyond this call.
     let dispatch = unsafe { &mut *(raw.cast::<NativeDispatchContext<'static>>()) };
     dispatch.entry_started = true;
+    let registers = unsafe { &*dispatch.registers };
+    let environment = crate::locals::current();
+    let _frame_roots = crate::cycle_collector::protect_frame(registers, &environment);
     let result = unsafe {
         run_baseline_instruction(
             dispatch.code,
