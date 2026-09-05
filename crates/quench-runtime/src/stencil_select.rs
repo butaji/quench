@@ -1032,6 +1032,11 @@ mod tests {
                 .find(|record| record.name == "add_chain")
                 .expect("fused chain declaration");
             assert_eq!(chain.bytes, chain_record.stencil.bytes);
+            assert_eq!(
+                select_stencil(chain_record.key).map(|stencil| stencil.bytes),
+                Some(chain.bytes),
+                "normal selection must use the generated chain artifact"
+            );
         }
     }
 }
