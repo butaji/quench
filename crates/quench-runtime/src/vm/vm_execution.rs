@@ -256,6 +256,38 @@ pub(crate) fn execute_code_completion_with_owner(
     }
 }
 
+/// Execute one owner-aware fragment step without erasing the exact next PC.
+/// Structured async loops use this boundary to record the operation that
+/// actually suspended instead of searching their source for a likely await.
+pub(crate) fn execute_code_completion_step_with_owner(
+    code: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<CompletionStep, VmError> {
+    let context = current_context_or_default();
+    if let (Some(optimizing), Some(baseline)) =
+        (owner.executable_optimizing_plan(), owner.baseline_plan())
+    {
+        let (completion, next) = crate::vm::execute_optimized_code_step_from(
+            code,
+            &optimizing,
+            &baseline,
+            pc,
+            registers,
+            &context,
+        )?;
+        return Ok(CompletionStep { completion, next, suspended_pc: None });
+    }
+    if let Some(plan) = owner.baseline_plan() {
+        let (completion, next) = crate::vm::execute_baseline_code_step_from_with_owner(
+            code, &plan, pc, registers, &context, owner,
+        )?;
+        return Ok(CompletionStep { completion, next, suspended_pc: None });
+    }
+    run_code_completion_step_from(code, pc, registers, &context)
+}
+
 fn drive_completion(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -319,12 +351,12 @@ fn drive_code_completion_with_plan(
             let (completion, next) = crate::vm::execute_baseline_code_step_from_with_owner(
                 code, plan, pc, registers, context, owner,
             )?;
-            crate::vm::CompletionStep { completion, next }
+            crate::vm::CompletionStep { completion, next, suspended_pc: None }
         } else {
             let (completion, next) = crate::vm::execute_baseline_code_step_from(
                 code, plan, pc, registers, context,
             )?;
-            crate::vm::CompletionStep { completion, next }
+            crate::vm::CompletionStep { completion, next, suspended_pc: None }
         };
         pc = step.next;
         match step.completion {

@@ -724,6 +724,38 @@ fn execute_loop_body_with_owner(
     ))
 }
 
+fn execute_loop_body_step_with_owner(
+    registers: &mut crate::register_file::RegisterFile,
+    label: &Option<String>,
+    body: crate::machine::CodeView<'_>,
+    owner: &crate::machine::FunctionCode,
+) -> Result<(crate::completion::LoopTransition, usize, Option<u16>), crate::execute::VmError> {
+    let mut pc = 0;
+    loop {
+        let suspension_slot = body.cold_at(pc).and_then(|op| match op {
+            crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
+            _ => None,
+        });
+        let step = crate::vm::execute_code_completion_step_with_owner(body, owner, pc, registers)?;
+        pc = step.next;
+        match step.completion {
+            crate::completion::Completion::Call(continuation) => {
+                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+            }
+            completion => {
+                return Ok((
+                    crate::completion::Completion::into_loop_transition(completion, label),
+                    pc,
+                    step.suspended_pc.and_then(|pc| body.cold_at(pc)).and_then(|op| match op {
+                        crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
+                        _ => None,
+                    }).or(suspension_slot),
+                ));
+            }
+        }
+    }
+}
+
 include!("loops_run.rs");
 include!("loops_body.rs");
 include!("loops_while.rs");

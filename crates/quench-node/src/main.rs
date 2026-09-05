@@ -1,6 +1,6 @@
 #![cfg(not(test))]
 
-use quench_node::run::eval_script;
+use quench_node::run::{eval_script, run_script_with_sink};
 use quench_runtime::vm::OutputSink;
 use std::{
     env, fs,
@@ -74,11 +74,12 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn run_file(path: &Path, _script_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_file(path: &Path, script_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)?;
     let sink: OutputSink = std::sync::Arc::new(|chunk| print!("{chunk}"));
-    // Script files run as global programs, matching the CLI's ordinary file semantics.
-    let outcome = eval_script(&source, sink);
+    // File execution uses the canonical CJS/event-loop runner.  Evaluating the
+    // source directly skips timer pumping and module completion propagation.
+    let outcome = run_script_with_sink(path, script_args, &source, sink);
     match outcome.error {
         Some(error) => Err(error.into()),
         None if outcome.exit_code == 0 => Ok(()),

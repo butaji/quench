@@ -93,11 +93,20 @@ fn run_generator_code_steps(
                 continue;
             }
             crate::vm::flush_global_declaration_batch(registers);
-            let suspension = code.cold(instruction).and_then(|op| {
-                matches!(completion, crate::completion::Completion::Yield(_))
-                    .then(|| direct_suspension(op, next))
-                    .flatten()
-            });
+            let suspension = completion
+                .suspension_point()
+                .cloned()
+                .or_else(|| {
+                    code.cold(instruction).and_then(|op| {
+                        matches!(
+                            completion,
+                            crate::completion::Completion::Yield(_)
+                                | crate::completion::Completion::Suspend(_)
+                        )
+                            .then(|| direct_suspension(op, next))
+                            .flatten()
+                    })
+                });
             return Ok(GeneratorStep {
                 completion,
                 pc: next_pc,
@@ -217,9 +226,18 @@ fn run_generator_op(
     }
     if let Some(completion) = result {
         crate::vm::flush_global_declaration_batch(registers);
-        let suspension = matches!(completion, crate::completion::Completion::Yield(_))
-            .then(|| direct_suspension(op, next))
-            .flatten();
+        let suspension = completion
+            .suspension_point()
+            .cloned()
+            .or_else(|| {
+                matches!(
+                    completion,
+                    crate::completion::Completion::Yield(_)
+                        | crate::completion::Completion::Suspend(_)
+                )
+                    .then(|| direct_suspension(op, next))
+                    .flatten()
+            });
         return Ok(Some(GeneratorStep {
             completion,
             pc: next + 1,
@@ -232,37 +250,15 @@ fn run_generator_op(
 fn direct_suspension(op: &Op, pc: usize) -> Option<crate::continuation::SuspensionPoint> {
     match op {
         Op::Yield { src } => Some(crate::continuation::SuspensionPoint::Yield { pc, src: *src }),
-        Op::Loop {
-            label,
-            body,
-            test,
-            update,
-            post_test,
-            dst,
-            ..
-        } => {
-            let body_code = body.code()?;
-            let (index, Op::Yield { src }) =
-                body_code.find_cold(|candidate| matches!(candidate, Op::Yield { .. }))?
-            else {
-                return None;
-            };
-            Some(crate::continuation::SuspensionPoint::Loop {
-                pc,
-                label: label.clone(),
-                body: body.range,
-                test: test.range,
-                update: update.range,
-                body_resume: crate::machine::CodeRange {
-                    code: body.range.code,
-                    start: body.range.start.saturating_add(index as u32 + 1),
-                    end: body.range.end,
-                },
-                dst: *dst,
-                yield_dst: *src,
-                post_test: *post_test,
-            })
+        // Await uses the same internal resume-slot shape as a yield.  It is
+        // never exposed as a generator yield; the marker lets a structured
+        // loop retain its body suffix until the promise resumes.
+        Op::Await { dst, .. } => {
+            Some(crate::continuation::SuspensionPoint::Yield { pc, src: *dst })
         }
+        Op::Loop {
+            ..
+        } => None,
         _ => None,
     }
 }

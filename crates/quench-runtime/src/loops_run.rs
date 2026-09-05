@@ -95,7 +95,9 @@ fn run_loop_inner(
         }
         crate::execute::write_value(registers, dst, crate::value::Value::Undefined);
         let _ = body_owner.enter_invocation();
-        match execute_loop_body_with_owner(registers, label, body, body_owner)? {
+        let (transition, body_next, suspension_slot) =
+            execute_loop_body_step_with_owner(registers, label, body, body_owner)?;
+        match transition {
             crate::completion::LoopTransition::Continue(value) => {
                 store_loop_value(registers, dst, value)?;
             }
@@ -104,6 +106,19 @@ fn run_loop_inner(
                 break;
             }
             crate::completion::LoopTransition::Propagate(completion) => {
+                let completion = loop_suspension(
+                    completion,
+                    promise_loop_point(
+                        body,
+                        body_next,
+                        suspension_slot,
+                        label,
+                        test,
+                        update,
+                        dst,
+                        post_test,
+                    ),
+                );
                 return update_empty_from(registers, dst, completion);
             }
         }
@@ -116,6 +131,64 @@ fn run_loop_inner(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+fn promise_loop_point(
+    body: crate::machine::CodeView<'_>,
+    next: usize,
+    suspension_slot: Option<u16>,
+    label: &Option<String>,
+    test: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+    dst: u16,
+    post_test: bool,
+) -> crate::continuation::SuspensionPoint {
+    crate::continuation::SuspensionPoint::Loop {
+        pc: 0,
+        label: label.clone(),
+        body: body.range(),
+        test: test.range(),
+        update: update.range(),
+        body_resume: crate::machine::CodeRange {
+            code: body.range().code,
+            start: body.range().start.saturating_add(next as u32),
+            end: body.range().end,
+        },
+        dst,
+        yield_dst: suspension_slot.unwrap_or_else(|| suspended_destination(body, next)),
+        post_test,
+    }
+}
+
+fn suspended_destination(body: crate::machine::CodeView<'_>, next: usize) -> u16 {
+    next.checked_sub(1)
+        .and_then(|pc| body.cold_at(pc))
+        .and_then(|op| match op {
+            crate::ops::Op::Await { dst, .. } | crate::ops::Op::Yield { src: dst } => Some(*dst),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+fn loop_suspension(
+    completion: crate::completion::Completion,
+    point: crate::continuation::SuspensionPoint,
+) -> crate::completion::Completion {
+    match completion {
+        crate::completion::Completion::Suspend(promise) => {
+            crate::completion::Completion::SuspendAt(promise, point)
+        }
+        crate::completion::Completion::SuspendAt(promise, inner) => {
+            crate::completion::Completion::SuspendAt(
+                promise,
+                crate::continuation::SuspensionPoint::Nested {
+                    inner: Box::new(inner),
+                    outer: Box::new(point),
+                },
+            )
+        }
+        other => other,
+    }
 }
 
 fn store_loop_value(
@@ -143,13 +216,14 @@ fn loop_test(
     owner: &crate::machine::FunctionCode,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<bool, crate::execute::VmError> {
-    match crate::vm::execute_code_completion_with_owner(test, owner, registers)? {
+    let result = match crate::vm::execute_code_completion_with_owner(test, owner, registers)? {
         crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
         crate::completion::Completion::Normal => Ok(false),
         completion => completion
             .into_vm_error()
             .map(|value| crate::execute::is_truthy(&value)),
-    }
+    }?;
+    Ok(result)
 }
 
 fn run_fragment(

@@ -30,8 +30,28 @@ fn install_direct_resume_input(
         crate::continuation::SuspensionPoint::Yield { src, .. }
         | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. }
         | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. } => src,
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => {
+            return install_nested_point_input(generator, &inner, input);
+        }
     };
     crate::execute::write_value(&mut registers_mut(generator), src, input.clone());
+    true
+}
+
+fn install_nested_point_input(
+    generator: &GeneratorData,
+    point: &crate::continuation::SuspensionPoint,
+    input: &Value,
+) -> bool {
+    let slot = match point {
+        crate::continuation::SuspensionPoint::Yield { src, .. }
+        | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. }
+        | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. } => *src,
+        crate::continuation::SuspensionPoint::Nested { inner, .. } => {
+            return install_nested_point_input(generator, inner, input);
+        }
+    };
+    crate::execute::write_value(&mut registers_mut(generator), slot, input.clone());
     true
 }
 

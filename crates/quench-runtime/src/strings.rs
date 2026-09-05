@@ -580,7 +580,12 @@ pub(crate) fn repeat(
     // Keep ordinary one-unit strings in their compact UTF-8 representation;
     // this avoids a transient UTF-16 allocation for Node's documented maximum
     // string-length boundary while preserving the same observable value.
-    if source.len() == value.encode_utf16().count() {
+    // The lossy display form of StringUnits can have the same unit length as
+    // the exact source while containing replacement characters.  Only the
+    // UTF-8-owned variant can use String::repeat without changing units.
+    if matches!(receiver, Some(Value::String(_)))
+        && source.len() == value.encode_utf16().count()
+    {
         return Ok(Value::String(value.repeat(count)));
     }
     let mut result = Vec::with_capacity(total_units);
@@ -1031,6 +1036,13 @@ mod tests {
             &[Value::Number((super::MAX_STRING_BYTES as f64) + 1.0)],
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn repeat_preserves_lone_surrogate_units() {
+        let source = super::from_units(vec![u16::from(b'x'), 0xd800]);
+        let repeated = super::repeat(Some(&source), &[Value::Number(1.0)]).unwrap();
+        assert_eq!(super::units_of(&repeated), Some(vec![u16::from(b'x'), 0xd800]));
     }
 
     #[test]

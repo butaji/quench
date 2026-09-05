@@ -203,6 +203,10 @@ pub enum Completion {
         value: Option<Value>,
     },
     Suspend(Rc<PromiseData>),
+    /// A structured fragment suspended after recording its exact continuation
+    /// point.  The point is internal VM state; outward async APIs still expose
+    /// only the promise through `into_vm_error`.
+    SuspendAt(Rc<PromiseData>, crate::continuation::SuspensionPoint),
     Yield(Value),
 }
 
@@ -244,7 +248,16 @@ impl Completion {
     }
 
     pub(crate) fn is_suspension(&self) -> bool {
-        matches!(self, Self::Suspend(_) | Self::Yield(_))
+        matches!(self, Self::Suspend(_) | Self::SuspendAt(_, _) | Self::Yield(_))
+    }
+
+    pub(crate) fn suspension_point(
+        &self,
+    ) -> Option<&crate::continuation::SuspensionPoint> {
+        match self {
+            Self::SuspendAt(_, point) => Some(point),
+            _ => None,
+        }
     }
 
     pub(crate) fn from_vm_error(
@@ -279,6 +292,7 @@ impl Completion {
             Self::Break { label, .. } => Err(VmError::Break(label)),
             Self::Continue { label, .. } => Err(VmError::Continue(label)),
             Self::Suspend(promise) => Err(VmError::Suspended(promise)),
+            Self::SuspendAt(promise, _) => Err(VmError::Suspended(promise)),
             Self::Yield(_) => Err(VmError::EvalError(
                 "Unconsumed yield completion".to_string(),
             )),

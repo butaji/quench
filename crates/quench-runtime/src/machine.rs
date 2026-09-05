@@ -3879,6 +3879,11 @@ impl NativePropertyPlan {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
+    }
+
     #[inline]
     pub(crate) fn execute(
         &mut self,
@@ -5462,6 +5467,11 @@ impl TierState {
 
 impl<'a> CodeView<'a> {
     #[inline]
+    pub(crate) fn range(self) -> CodeRange {
+        self.range
+    }
+
+    #[inline]
     #[cfg(feature = "execution-trace")]
     pub(crate) fn trace_identity(self) -> (usize, u32) {
         (self.store as *const CodeStore as usize, self.range.code.0)
@@ -5995,14 +6005,17 @@ impl FunctionCode {
     }
 
     pub(crate) fn rehome(&mut self, arena: &mut CodeArena, store: &Rc<OnceLock<Rc<CodeStore>>>) {
-        // Keep the immutable source view after linking nested ranges. The
-        // lowering pass needs that canonical residual sequence to flatten
-        // eligible loops/branches into one CFG; runtime execution still uses
-        // the linked range, so this is metadata rather than a second semantic
-        // representation.
-        let body = self.source.as_deref().map(ToOwned::to_owned);
-        let Some(body) = body else { return };
-        self.range = arena.append_tree(body, store);
+        // Link the canonical source before both flattening and range emission.
+        // Keeping the pre-link clone here leaves nested functions with their
+        // original OnceLock and lets structured branch encoding observe an
+        // owner-less body after a conditional has been flattened.
+        let Some(body) = self.source.take() else { return };
+        let mut body = body.to_vec();
+        for op in &mut body {
+            op.rehome_bodies(arena, store);
+        }
+        self.source = Some(body.clone().into_boxed_slice().into());
+        self.range = arena.append(body);
         self.store = store.clone();
     }
 

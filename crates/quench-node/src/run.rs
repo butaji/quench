@@ -190,8 +190,9 @@ fn reduce(source: &str) -> Result<quench_runtime::reduce::ResidualProgram, Strin
 
 #[cfg(test)]
 mod tests {
-    use super::eval_script;
+    use super::{eval_script, run_script_with_sink};
     use quench_runtime::vm::OutputSink;
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -225,6 +226,115 @@ mod tests {
             outcome.error
         );
         assert!(output.lock().unwrap().contains("detached-log"));
+    }
+
+    #[test]
+    fn eval_routes_print_through_the_vm_output_sink() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let outcome = eval_script("print('plain');", sink);
+        assert!(outcome.error.is_none(), "print failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().as_str(), "plain\n");
+    }
+
+    #[test]
+    fn print_delimits_records_without_changing_stream_writes() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let outcome = eval_script(
+            "print('line'); process.stdout.write('raw'); process.stdout.write('\\nnext');",
+            sink,
+        );
+        assert!(outcome.error.is_none(), "print/write failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().as_str(), "line\nraw\nnext");
+    }
+
+    #[test]
+    fn conditional_returned_function_keeps_linked_body_and_completion() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          function choose(flag) {
+            if (flag) return { f: function() { return 42; } };
+            return { f: function() { return 7; } };
+          }
+          const yes = choose(true);
+          const no = choose(false);
+          console.log(yes.f());
+          console.log(no.f());
+          console.log("after");
+        "#;
+        let outcome = eval_script(source, sink);
+        assert!(outcome.error.is_none(), "conditional call failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().as_str(), "42\n7\nafter\n");
+    }
+
+    #[test]
+    fn file_runner_pumps_timers_and_preserves_sync_output_order() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-host-timer.js"),
+            &[],
+            "console.log('sync'); setTimeout(() => console.log('timer'), 0);",
+            sink,
+        );
+        assert!(outcome.error.is_none(), "timer failed: {:?}", outcome.error);
+        assert_eq!(output.lock().unwrap().as_str(), "sync\ntimer\n");
+    }
+
+    #[test]
+    fn async_loop_continuations_preserve_conditional_and_finally_suffixes() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          async function conditional() {
+            let value = 0;
+            for (let i = 0; i < 2; i++) {
+              if (i === 1) value += await 1;
+              value += await 10;
+            }
+            return value;
+          }
+          async function finalized() {
+            let value = 0;
+            try { for (let i = 0; i < 2; i++) value += await 1; }
+            finally { value += 100; }
+            return value;
+          }
+          conditional().then(console.log);
+          finalized().then(console.log);
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-async-continuation.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(outcome.error.is_none(), "async continuation failed: {:?}", outcome.error);
+        let lines = output
+            .lock()
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert!(lines.contains(&"21".to_string()), "missing conditional result: {lines:?}");
+        assert!(lines.contains(&"102".to_string()), "missing finally result: {lines:?}");
     }
 
     #[test]
