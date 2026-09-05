@@ -9,6 +9,9 @@ fn generated_artifact_target_is_selected_as_one_physical_view() {
         let view = select_physical(artifact.key).expect("selected physical view");
         assert!(view.generated);
         assert_eq!(view.key, artifact.key);
+        assert_eq!(view.artifact_id, artifact.artifact_id);
+        assert_eq!(view.data, artifact.data);
+        assert_eq!(view.compiler, Some(artifact.compiler));
         assert_eq!(view.abi, artifact.abi);
         assert_eq!(view.entry, artifact.entry);
         assert_eq!(view.external_entries, artifact.external_entries);
