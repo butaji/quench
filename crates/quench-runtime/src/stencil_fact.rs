@@ -76,6 +76,8 @@ pub enum HoleKind {
     Imm32,
     Disp32,
     Rel32,
+    /// AArch64 `B` immediate: signed word displacement in bits [25:0].
+    Branch26,
     Ptr64,
 }
 
@@ -95,7 +97,7 @@ impl Stencil {
     pub fn validate(&self) -> bool {
         self.holes.iter().all(|hole| {
             let width = match hole.kind {
-                HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 => 4,
+                HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
                 HoleKind::Ptr64 => 8,
             };
             usize::from(hole.offset).saturating_add(width) <= self.bytes.len()
@@ -142,8 +144,9 @@ impl<'a, const N: usize> PatchValues<'a, N> {
     }
 
     /// Attach a build-selected relative branch target without copying any
-    /// quickening state. `next_instruction` is the address immediately after
-    /// the four-byte displacement field.
+    /// quickening state. For `Rel32`, `next_instruction` is the address after
+    /// the four-byte displacement; the AArch64 `Branch26` writer instead
+    /// supplies the branch instruction's own PC, as required by `B`.
     pub fn with_relative_target(self, target: usize, next_instruction: usize) -> Option<Self> {
         let displacement = target as i128 - next_instruction as i128;
         (i128::from(i32::MIN)..=i128::from(i32::MAX))
@@ -214,6 +217,9 @@ impl<'a, const N: usize> PatchValues<'a, N> {
                 .map_or(self.callable_count() as u64, |(target, next)| {
                     target.wrapping_sub(next) as u64
                 }),
+            HoleKind::Branch26 => self
+                .relative_target
+                .map_or(0, |(target, next)| target.wrapping_sub(next) as u64),
             HoleKind::Ptr64 => self
                 .pointer_bits
                 .or(self.constant_bits)

@@ -35,7 +35,7 @@ fn execute_call_method(
         args.len(),
         spreads.iter().any(|spread| *spread),
         registered_callee,
-        call_target_name(&callee),
+        crate::execution_trace::call_target_name(&callee),
     );
     let propagates = matches!(
         callee,
@@ -108,7 +108,7 @@ pub(crate) fn execute_named(
         usize::from(instruction.flags),
         false,
         true,
-        call_target_name(&callee),
+        crate::execution_trace::call_target_name(&callee),
     );
     let argument_values = argument
         .as_ref()
@@ -226,7 +226,7 @@ pub(crate) fn execute_registered(
         usize::from(instruction.flags),
         false,
         true,
-        call_target_name(&callee),
+        crate::execution_trace::call_target_name(&callee),
     );
     let consecutive;
     let argument_registers = if let Some(window) = metadata_window {
@@ -402,16 +402,6 @@ fn execute_named_callee(
         );
     }
     Ok(value)
-}
-
-fn call_target_name(value: &Value) -> &'static str {
-    match value {
-        Value::Function(_) => "Function",
-        Value::Builtin(_) => "Builtin",
-        Value::BoundFunction(_) => "BoundFunction",
-        Value::Undefined => "Undefined",
-        _ => "Other",
-    }
 }
 
 fn resolved_callee(

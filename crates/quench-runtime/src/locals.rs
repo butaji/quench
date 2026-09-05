@@ -222,7 +222,7 @@ pub(crate) fn current() -> Rc<Environment> {
 }
 
 #[inline(always)]
-fn with_current_ref<R>(use_environment: impl FnOnce(Option<&Environment>) -> R) -> R {
+pub(crate) fn with_current_ref<R>(use_environment: impl FnOnce(Option<&Environment>) -> R) -> R {
     CURRENT_ENVIRONMENT_PTR.with(|pointer| {
         // SAFETY: the pointer is derived from the owning CURRENT_ENVIRONMENT
         // Rc and is restored whenever its guard leaves scope.
@@ -305,6 +305,26 @@ pub(crate) fn store_proven(
         Some(environment.copy_proven_from_register(slot, registers, source))
     });
     if fast == Some(true) {
+        return Ok(());
+    }
+    store(registers, slot, source)
+}
+
+/// Environment-pinned counterpart of [`store_proven`]. The dispatch driver
+/// passes the active frame fact directly when it owns the environment, so the
+/// proven word copy does not need to reopen the TLS closure on each store.
+#[inline(always)]
+pub(crate) fn store_proven_in(
+    environment: &Environment,
+    registers: &crate::register_file::RegisterFile,
+    slot: u16,
+    source: u16,
+) -> Result<(), VmError> {
+    if !environment.is_deleted_slot(slot)
+        && !environment.is_immutable_slot(slot)
+        && !environment.is_uninitialized(slot)
+        && environment.copy_proven_from_register(slot, registers, source)
+    {
         return Ok(());
     }
     store(registers, slot, source)
@@ -588,6 +608,29 @@ pub(crate) fn load_proven(
                 "Cannot access deleted binding",
             ));
         }
+        environment.load_into(registers, dst, slot);
+    }
+    Ok(())
+}
+
+/// Load a proven local when the dispatch driver already holds the active
+/// environment. Keeping that immutable fact in the dispatch state avoids a
+/// TLS pointer closure on every compact `LoadLocal`; all deletion and missing
+/// slot checks remain identical to `load_proven`.
+#[inline(always)]
+pub(crate) fn load_proven_in(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    if environment.is_deleted_slot(slot) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access deleted binding",
+        ));
+    }
+    if !environment.load_proven_into(registers, dst, slot) {
         environment.load_into(registers, dst, slot);
     }
     Ok(())

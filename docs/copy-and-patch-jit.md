@@ -26,7 +26,7 @@ stencil catalog rather than a runtime code generator.
 - `RegionKey` — canonical specialization key: `hash(region_id, fact_vector)`.
   Same facts always hash to the same key.
 - `Hole` — `{ offset: u16, kind: HoleKind }`.
-- `HoleKind` — a closed enum: `Imm32 | Disp32 | Rel32 | Ptr64`. No generic
+- `HoleKind` — a closed enum: `Imm32 | Disp32 | Rel32 | Branch26 | Ptr64`. No generic
   relocation engine.
 - `Stencil` — `{ bytes: &'static [u8], holes: &'static [Hole] }`, pure data.
 - `PatchValues` — a read-only view into the existing `QuickeningSite`
@@ -49,9 +49,14 @@ stencil catalog rather than a runtime code generator.
   so hot-cold splitting and jump-to-fallthrough stay sound across the fused
   boundary. The current multi-op executor renders one bounded bridge stencil
   per admitted region; its generated operation slice is validated in full
-  before the bridge invokes each canonical handler in order. It is therefore
-  a sequential region executor, not a claim that one numeric leaf implements
-  every operation in the region.
+  before the bridge invokes each canonical handler in order. The AArch64
+  Add+Return fallthrough row is the one composed exception: it emits `FADD`, a
+  patched direct `B` imm26, and one return tail in the same arena. The wider
+  glue regions remain bridge-backed, so they are sequential region metadata
+  rather than a claim that one native leaf implements every operation in the
+  region. A generated two-`Add` numeric chain is now a true composed native
+  region: one allocation, two FP instructions, and one `ret`, with an ABI
+  guard that falls back on operand aliasing or non-number values.
 - **Type-check elimination as one named algorithm.** Mirrors the paper's
   algorithm 𝒜 (§5.1): one reusable build-time pass over a region's semantic
   function and a fact predicate, not per-operation ad hoc logic.
@@ -100,8 +105,8 @@ closing any remaining named-technique gaps is tracked in `tasks/index.json`
 
 The build script emits a fused Number Add+Return x86-64 fragment, a guarded
 property region with a typed `Ptr64` hole, a two-region `Rel32` fallthrough
-variant, and bounded sequential bridge stencils for the measured arithmetic
-glue spans. Each generated key is derived from that region's generated opcode
+variant, a true two-Add numeric chain, and bounded sequential bridge stencils
+for the measured arithmetic glue spans. Each generated key is derived from that region's generated opcode
 slice, so the eligibility facts have one source. Before execution, the bridge
 checks the entire span against the live instruction view; a mismatch or patch
 failure falls back before any operation in the span runs.
@@ -119,3 +124,41 @@ The interpreter continuation path now invokes the handler-supplied callee
 target directly; the ordinary driver remains only the frame entry/exit shim.
 This evidence still does not claim a complete baseline-JIT or platform-specific
 assembly tail-call backend.
+
+## Region ABI and composed array block
+
+### Infrastructure checklist (2026-09-04)
+
+- **Implemented/wired:** build-time RegionKey declarations, single-entry
+  admission checks, bounded arena publication/eviction, AArch64 cache flush and
+  relocation validation, canonical context/transition ABI, and an actual
+  lowered array block selected by the normal baseline/optimizing plan path.
+- **Implemented/tested:** one guarded composed executor for the five-op numeric
+  array block; canonical and hostile holey cases; policy keeps it ARM opt-in.
+- **Disabled by policy:** legacy scalar/fused catalog rows on ARM that still
+  cross the generic bridge; no policy toggle silently treats those rows as
+  composed code.
+- **Missing:** an in-region native backedge/condition kernel, machine-register
+  array ABI, and broad loop admission. These remain required before claiming
+  the full numeric-array-loop gate or resuming micros qualification.
+
+The shared region boundary is a synchronous, non-retaining call with one
+opaque context pointer in the platform's first argument register. The context
+pins the immutable `CodeView`, entry PC, build-time opcode slice, mutable
+RegisterFile and `VmContext`; native code may not retain any of these pointers.
+An admitted executor must establish all representation/aliasing guards before
+its first effect, keep intermediate numeric values in the register file's
+canonical numeric representation, and return one `DispatchTransition` carrying
+the exact residual successor or completion. Helpers that can allocate, throw,
+call JS, or re-enter are explicit boundaries and return a semantic error once;
+the caller never replays a committed prefix.
+
+The first physically composed block is the generated
+`LoadLocalChecked -> AGetI -> Add -> ASetI -> Return` declaration. Its ARM64
+entry is still a compact literal trampoline (the ISA-safe entry mechanism), but
+the target executes one statically wired guarded block rather than iterating a
+per-op baseline dispatch loop. It admits only plain dense numeric arrays with
+stable operand wiring; holes, prototypes/accessors, non-numeric values and
+stale facts remain complete fallback. This is a bounded infrastructure step,
+not yet a native loop with an in-region backedge or a claim that all catalog
+rows are physically composed.

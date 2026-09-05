@@ -38,7 +38,7 @@ pub(crate) fn create(
     } else {
         Vec::new()
     };
-    let register_count = function.code.len().clamp(32, usize::from(u16::MAX)) as u16;
+    let register_count = registers.len().clamp(4, usize::from(u16::MAX)) as u16;
     let mut machine = crate::machine::Machine::with_function(
         &function.code,
         crate::machine::EnvironmentRef(0),

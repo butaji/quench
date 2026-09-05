@@ -555,6 +555,10 @@ impl ArrayData {
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
+        let written_number_kind = match &value {
+            Value::Number(number) => Some(number_kind(*number)),
+            _ => None,
+        };
         if self.is_sparse() && index >= self.values.len() {
             self.set_sparse_index(index, value);
             return;
@@ -600,7 +604,21 @@ impl ArrayData {
         self.deleted[index] = false;
         self.length
             .set(self.length.get().max(index.saturating_add(1)));
-        let candidate = if self.kind.get().is_packed() {
+        let previous_kind = self.kind.get();
+        let candidate = if previous_kind.is_packed()
+            && self.deleted.is_empty()
+            && self.length.get() == self.values.len()
+        {
+            // An overwrite of a dense packed array cannot introduce a hole or
+            // sparse index. Derive the monotonic widening directly from the
+            // mutation, avoiding a full backing-store scan on every store.
+            written_number_kind.map_or(ArrayKind::PackedValue, |kind| {
+                appended_kind.unwrap_or(kind)
+            })
+        } else if previous_kind.is_packed() {
+            // The append fast path above already supplied its number kind;
+            // this branch is only for a packed array whose structural facts
+            // need one conservative recomputation (for example a hole fill).
             appended_kind.unwrap_or_else(|| {
                 self.values
                     .kind_with_holes(&self.deleted, self.length.get())

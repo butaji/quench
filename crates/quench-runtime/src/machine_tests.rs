@@ -70,6 +70,40 @@ fn machine_resolves_frame_ranges_from_its_function_store() {
 }
 
 #[test]
+fn code_view_register_width_comes_from_lowered_operands() {
+    let function = super::FunctionCode::from_ops(vec![
+        // A long instruction stream must not imply a 32-slot frame when the
+        // lowered data flow only names three registers.
+        super::Op::Move { dst: 2, src: 1 },
+        super::Op::Return { src: 2 },
+    ]);
+    assert_eq!(function.code().expect("compact code").register_count(), 3);
+}
+
+#[test]
+fn baseline_region_admission_respects_declared_abi() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("compact code");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    // The Add/Return row is a scalar f64 entry, not a NativeRegionContext
+    // bridge.  It must be handled by NativeBinaryPlan/canonical dispatch;
+    // opcode adjacency alone cannot construct a region plan with the wrong
+    // ABI.
+    assert!(plan.native_region_at(0).is_none());
+}
+
+#[test]
 fn hot_function_builds_one_reusable_baseline_plan() {
     let function = super::FunctionCode::from_ops(vec![super::Op::Move { dst: 0, src: 0 }]);
     function.set_tier_threshold_for_test(2);
@@ -156,6 +190,7 @@ fn hot_back_edge_osr_transfers_live_frame_into_baseline() {
         ])]
         .into(),
         metadata: vec![vec![super::InstructionMeta::empty(); 4]].into(),
+        register_counts: vec![1].into(),
         quickening_sites: vec![Vec::<
             std::cell::RefCell<crate::quickening::QuickeningSite<4>>,
         >::new()
@@ -346,6 +381,41 @@ fn non_x86_native_execution_rejects_before_mapping() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_numeric_entry_pointer_is_cached_after_first_render() {
+    let mut plan = super::NativeBinaryPlan {
+        arena: None,
+        cache: crate::stencil_select::RenderedRegionCache::new(),
+        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
+        opcode: crate::ir::Opcode::Add,
+        entry: None,
+    };
+    assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
+    assert!(plan.entry.is_some());
+    let used = plan.arena.as_ref().expect("rendered arena").used();
+    assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
+    assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_add_chain_executes_two_ops_with_one_entry() {
+    let mut plan = super::NativeAddChainPlan {
+        arena: None,
+        cache: crate::stencil_select::RenderedRegionCache::new(),
+        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
+        entry: None,
+    };
+    assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
+    assert!(plan.entry.is_some());
+    let used = plan.arena.as_ref().expect("rendered chain").used();
+    assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
+    assert_eq!(plan.arena.as_ref().expect("cached chain").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_move_uses_rendered_address_without_remapping() {
     let mut plan = super::NativeMovePlan {
         arena: None,
@@ -353,6 +423,7 @@ fn native_move_uses_rendered_address_without_remapping() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
         opcode: crate::ir::Opcode::Move,
+        entry: None,
     };
     let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
@@ -370,6 +441,7 @@ fn native_property_uses_rendered_address_without_remapping() {
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         opcode: crate::ir::Opcode::GetN,
+        entry: None,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
     let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));

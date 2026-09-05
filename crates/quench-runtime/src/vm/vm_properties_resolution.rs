@@ -916,21 +916,17 @@ pub(crate) fn cached_plain_own_word<'a>(
         return None;
     }
     let word = object.hot_properties().slot_word(slot)?;
-    let value = word.load();
-    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
+    // Keep validation in the execute-word representation. Decoding a
+    // temporary `Value` here doubled the ownership traffic on every IC hit;
+    // only the two identity-sensitive exceptions need explicit tag checks.
+    word.plain_tagged_bits()?;
+    if word.is_null() && crate::vm::global_builtin_exists(key) {
         return None;
     }
-    if key == "format"
-        && matches!(
-            value,
-            Value::Builtin(
-                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
-            )
-        )
-    {
+    if key == "format" && word.is_intl_format_builtin() {
         return None;
     }
-    (!matches!(value, Value::BindingCell(_) | Value::WeakFunction(_))).then_some(word)
+    Some(word)
 }
 
 fn function_inherited_property_result(

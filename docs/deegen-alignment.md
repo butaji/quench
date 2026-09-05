@@ -25,28 +25,39 @@ optimizations below — not an optimizing JIT or deopt.
 | 6 | Tag register optimization (§5.3) | **Closed with no-eligible-region finding** | Task 030's Gate 0 correctly found no reliably pinned physical register *across the Rust-level interpreter dispatch loop*. The stencil-local survey in task 043 then inspected every 040/041 region and the eight existing leaves: none materializes `TAG_PREFIX`, `TAG_SHIFT`, or `TAG_MASK` more than once (the current bridge regions only carry a pointer hole; numeric leaves operate on unboxed doubles; `GetN` loads an already-tagged word). Adding a scratch-register load would therefore add instructions without removing any repeated materialization. No bytes or boxing semantics changed; revisit only if a future measured region has two or more tag-constant references. |
 | 7 | Register pinning for VM state across dispatch (§6.1) | **Present (safe approximation)** | `vm_runtime.rs` `DispatchState` groups `CodeView`/`RegisterFile`/`VmContext`/tier owner behind one stable state pointer across the CPS chain. Gate-0 DWARF/sample + ARM64 disassembly measured dispatch stack-memory operations at 259/1030 (25.15%) before and 242/1006 (24.06%) after; `run_instruction` remained 16.42% vs 16.52%. Rust has no portable GHCcc equivalent, so this is deliberately not a fixed physical-register ABI or unsafe register hack. |
 | 8 | Bytecode quickening — opcode/instruction rewrite on IC hit (§6.2) | **Present (bounded logical rewrite)** | `ir.rs` declares generated `GetPropertyQuickened`/`GetNQuickened`/`AGetIQuickened` variants. `machine.rs` stores a fixed-size per-instruction rewrite cell; `CodeView::instruction` exposes the specialized opcode after a confirmed shape hit, and `dequicken_instruction` restores the canonical opcode on shape/key/descriptor mismatch. The immutable canonical stream and complete generic handler remain the fallback; no source/fixture identity is involved. |
-| 9 | Baseline JIT stencil granularity: one stencil per bytecode variant (§7) | **Diverges by design; full catalog fallback** | quench fuses multi-opcode **region** stencils instead (`docs/copy-and-patch-jit.md`: "this project's own extension beyond the paper"). The generated `DISPATCH` region admits every `Opcode::ALL` entry (31/31, including the bounded quickened variants; 100% before and after task 035's declaration reconciliation), while the inventory in `docs/deegen-stencil-coverage.md` distinguishes that complete trampoline fallback from the smaller set of specialized leaves (8/31, 25.8%). |
+| 9 | Baseline JIT stencil granularity: one stencil per bytecode variant (§7) | **Diverges by design; full catalog fallback** | quench fuses multi-opcode **region** stencils instead (`docs/copy-and-patch-jit.md`: "this project's own extension beyond the paper"). The generated `DISPATCH` region admits every `Opcode::ALL` entry (31/31, including the bounded quickened variants; 100% before and after task 035's declaration reconciliation), while the inventory in `docs/deegen-stencil-coverage.md` distinguishes that complete trampoline fallback from the smaller set of specialized leaves (9/31, 29.0%). |
 | 10 | Polymorphic IC + IC inline slab in JIT (§7.1) | **Present (bounded placement model)** | `IcStubChain::install` chooses the reserved inline slab when a stub fits and otherwise allocates an outlined placement; capacity is fixed and the (N+1)th key returns ordinary fallback. Unit tests assert both placement classes and the arena-sized state bound. |
 | 11 | Hot-cold code splitting by block-frequency analysis, fallthrough branch elimination (§7.2) | **Profile measured; no applicable cold block** | Task 039/040 enabled real ARM64 rendered-region execution. macOS `xctrace` CPU Counters captured 5,658 counter samples for a neutral 500k arithmetic loop with ARM stencils enabled (average counters 3,853/445/4,986/694) versus 1,898 samples with the complete fallback (4,373/1,301/3,292/991). The signal is above measurement noise, but every currently executable ARM region is a straight-line leaf or two-instruction bridge; there is no cold basic block or fallthrough branch to separate. `sample` also shows `execute_f64` inlined. No layout bytes were changed because applying a split to a region with no cold block would be a semantic no-op; task 034 is therefore closed with an applicability finding rather than an invented transform. |
 | 12 | Tier-up via per-function retired-bytecode counting (§3) | **Present, committed and verified** | `TierState{invocations, retired, threshold:32}` (`machine.rs:1940-1961`), `enter_invocation()`/`retire_at()` (`machine.rs:2241-2340`) — counts bytecodes retired within the function, matching the paper's design exactly. Covered by the runtime library gates and the neutral-corpus run recorded for task 027. |
 | 13 | OSR-entry: branch into already-compiled JIT code at a back-edge (§7.1) | **Present and verified** | `is_osr_candidate`/`is_osr_entry` (`machine.rs`) computes admission; `maybe_osr_switch` (`vm_runtime.rs`) now checks the compiled plan entry before transferring the live frame into baseline code. The synthetic compact back-edge test records one transfer and matches the cold interpreter result; `ForI` is explicitly excluded as a structured loop with no bytecode back-edge. |
 
 Task 044 closes the region-wiring portion of item 1. The declarative
-`generated_region_admissions!` macro in `stencil_select.rs` covers all 21
+`generated_region_admissions!` macro in `stencil_select.rs` covers all 23
 catalog regions, derives each `RegionKey::from_opcodes` accessor, and emits
 the shared CFG single-entry admission test. Per-region hand-written accessors
 and duplicate CFG scaffolding were removed; handler semantics and complete
 ordinary fallback remain handwritten and unchanged.
+
+The earlier hot-cold audit predates the ARM fallthrough relocation: the
+Add+Return row now has a direct `B`/imm26 edge into an aligned return tail.
+This removes one internal return but does not create a cold block; the larger
+bridge-backed rows remain gated and the profile conclusion is unchanged.
+The native catalog now also contains a genuinely composed two-`Add` numeric
+chain (`FADD; FADD; RET`) with one typed entry and one RX publication. Its
+runtime admission is limited to a proven producer/consumer register shape;
+all other multi-op rows still use the complete canonical bridge.
 
 ## Extra, beyond-paper: `ExecutionTier::Optimizing`
 
 `machine.rs` has a third promotion tier (`ExecutionTier::Optimizing`,
 `OptimizingPlan`) beyond the paper's two tiers. Its own doc comment: "a
 physical execution view, not a second semantic IR" — re-wraps the same
-baseline entries/stencil plans, x86_64-gated, no real instruction selection,
-register allocation, or speculation (so no deopt needed — it never
-speculates). **Decision: keep it**, verify it's a measured net win (task 030),
-document it as not the paper's (nonexistent) optimizing JIT.
+baseline entries/stencil plans, with no real instruction selection, register
+allocation, or speculation (so no deopt needed — it never speculates). The
+host-derived `ExecutionPolicy` keeps this view x86_64-only until ARM has a
+composed native region; scalar ARM leaves are a separate explicit opt-in.
+**Decision: keep it**, verify it's a measured net win (task 030), and document
+it as not the paper's (nonexistent) optimizing JIT.
 
 Task 036 validation on this ARM64 macOS host used the same optimized
 `target/debug/quench-node` artifact and three-run neutral-corpus command in
@@ -58,8 +69,9 @@ was unreachable), it was also 100/100, Score **251.828**, wall ratio **0.8104**,
 RSS ratio **0.3056**, and instruction ratio **1.0835**
 (`target/micro-neutral-036-disabled.txt`). The +0.83% score delta is within
 the task's stated 2–3% noise band, and the executable optimizing view is
-x86_64-gated, so this is **not a measured net win on the current ARM64
-machine**. The temporary multiplier change was reverted to 8; no behavior
+x86_64-gated by the derived execution policy, so this is **not a measured net
+win on the current ARM64 machine**. The temporary multiplier change was
+reverted to 8; no behavior
 change is being claimed.
 
 ## Closed decision: a real optimizing JIT + deoptimization will not be built
@@ -173,3 +185,12 @@ memory score **352.5**. With the ARM switch enabled, cases 017/018/019 passed
 at 0.41x/0.58x/0.50x wall time; cases 025/026/027 remained constrained
 (3.09x, timeout, and 2.60x). These are existing slow-path findings, not
 fixture-specific tuning.
+
+The later ARM64 call-boundary follow-up caches a typed entry pointer after the
+first successful render for numeric, Move, and own-property leaves. DWARF
+sampling confirms that render/protection work is one-time; a synthetic 5M
+numeric loop is 6--7% faster with the opt-in leaves. Baseline admission now
+borrows the existing leaf cells instead of cloning an `Rc` per instruction.
+The neutral composite is
+still parity and memory is slightly higher, so `QUENCH_ENABLE_AARCH64_STENCILS`
+remains opt-in rather than being claimed as a default-on win.

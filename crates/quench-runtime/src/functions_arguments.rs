@@ -77,7 +77,11 @@ pub(crate) fn build_registers(
             mark_arguments_immutable(function, &environment, arguments_slot);
         }
     }
-    let register_count = function.code.len().max(32);
+    // Frame width is derived once from the lowered register operands rather
+    // than from instruction count. Four spare slots cover tiny residual
+    // fragments; writes still grow the file safely if an unknown slow path
+    // materializes an additional temporary.
+    let register_count = usize::from(function.code.required_register_count()).max(4);
     (
         crate::register_file::RegisterFile::with_undefined(register_count),
         environment,

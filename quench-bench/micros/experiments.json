@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "edition": "1",
+  "sizes": { "small": 64, "medium": 512, "large": 4096 },
+  "seeds": { "development": [17], "qualification": [104729, 130363] },
+  "files": [
+    "cases/numeric.js", "cases/conversion.js", "cases/control.js", "cases/calls.js",
+    "cases/locals.js", "cases/closures.js", "cases/objects.js", "cases/property-mutation.js",
+    "cases/prototypes.js", "cases/construction.js", "cases/arrays.js", "cases/array-interaction.js",
+    "cases/strings.js", "cases/regexp.js", "cases/iteration.js", "cases/collections.js",
+    "cases/typed-memory.js", "cases/exceptions.js", "cases/dynamic.js", "cases/builtins.js",
+    "cases/suspension.js", "cases/lifetime.js", "cases/diversity.js", "cases/composition.js"
+  ],
+  "protocol": {
+    "timeRatio": 0.95, "rssRatio": 1.05, "confidence": 0.95,
+    "bootstrapSamples": 10000, "timingPairs": 30, "memoryPairs": 20,
+    "warmupMs": 2000, "windowMs": 250, "windows": 5,
+    "fixedCalls": 32, "lifecycleRuns": 3, "epochs": 120, "epochCalls": 100,
+    "epochMinMs": 250, "epochMaxCalls": 1000000,
+    "rssSampleMs": 100, "lifecycleFloorBytes": 8388608, "lifecycleFraction": 0.05
+  }
+}
