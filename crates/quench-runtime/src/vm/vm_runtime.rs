@@ -1224,6 +1224,26 @@ pub(crate) fn execute_optimized_code_step_from(
             ));
         }
         crate::ir::Opcode::JumpIfFalse => {
+            if let Some(native) = entry.native_truthiness.as_ref() {
+                if let Some(value) = registers.read_number(usize::from(instruction.a)) {
+                    if let Ok(truthy) = native.borrow_mut().execute(value) {
+                        crate::execution_trace::stencil_observation(
+                            code, start, "truthy_number", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        return Ok((
+                            crate::completion::Completion::Normal,
+                            if truthy {
+                                start + 1
+                            } else {
+                                usize::from(instruction.b)
+                            },
+                        ));
+                    }
+                }
+                crate::execution_trace::stencil_observation(code, start, "truthy_number", false);
+                crate::execution_trace::leaf_rejection("optimizing_native_truthy_number");
+            }
             if let Some(truthy) = registers.word_truthiness(usize::from(instruction.a)) {
                 return Ok((
                     crate::completion::Completion::Normal,
@@ -1573,6 +1593,26 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 }
                 crate::execution_trace::stencil_observation(code, pc, "load_const", false);
                 crate::execution_trace::leaf_rejection("native_load_const");
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::JumpIfFalse {
+            if let Some(native) = plan.native_truthiness_at(pc) {
+                if let Some(value) = registers.read_number(usize::from(instruction.a)) {
+                    if let Ok(truthy) = native.borrow_mut().execute(value) {
+                        crate::execution_trace::stencil_observation(
+                            code, pc, "truthy_number", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        pc = if truthy {
+                            pc + 1
+                        } else {
+                            usize::from(instruction.b)
+                        };
+                        continue;
+                    }
+                }
+                crate::execution_trace::stencil_observation(code, pc, "truthy_number", false);
+                crate::execution_trace::leaf_rejection("native_truthy_number");
             }
         }
         if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {

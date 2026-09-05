@@ -281,6 +281,16 @@ impl SharedStencilSlab {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn bool_unary_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(f64) -> u64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .bool_unary_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn f64x3_entry(
         &self,
         address: usize,
@@ -460,6 +470,19 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64, f64) -> f64, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn bool_unary_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(f64) -> u64, ArenaError> {
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -1573,6 +1596,31 @@ mod tests {
         arena.make_executable().unwrap();
         let entry = arena.constant_word_entry(address).unwrap();
         assert_eq!(entry(), crate::tagged_value::TaggedValue::number(42.5).bits());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_numeric_truthiness_matches_number_toboolean() {
+        let key = crate::stencil_select::truthy_number_region_key();
+        let record = crate::stencil_select::select_region(key).expect("truthiness declaration");
+        let site = QuickeningSite::<2>::new(Opcode::JumpIfFalse);
+        let values = PatchValues::from_site(&site);
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        let entry = arena.bool_unary_entry(address).unwrap();
+        for (value, expected) in [
+            (0.0, false),
+            (-0.0, false),
+            (f64::NAN, false),
+            (f64::INFINITY, true),
+            (-3.5, true),
+        ] {
+            assert_eq!(entry(value) != 0, expected);
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
