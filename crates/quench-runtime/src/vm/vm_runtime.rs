@@ -179,11 +179,12 @@ impl<'a> NativeRegionContext<'a> {
 const NATIVE_DISPATCH_OK: u64 = 1;
 const NATIVE_DISPATCH_SEMANTIC_ERROR: u64 = 2;
 const NATIVE_DISPATCH_COMMITTED_ERROR: u64 = 3;
+const NATIVE_DISPATCH_INTERRUPT: u64 = 4;
 
-/// Native loops are deliberately bounded until the physical ABI has an
-/// interrupt poll/safepoint instruction of its own.  Keeping a finite chunk
-/// prevents an admitted byte region from monopolizing the VM thread; larger
-/// spans remain semantically complete through the ordinary residual loop.
+/// Native loops are deliberately bounded and poll an explicit interrupt flag
+/// at each backedge. Keeping a finite chunk also prevents an admitted byte
+/// region from monopolizing the VM thread; larger spans remain semantically
+/// complete through the ordinary residual loop.
 const MAX_NATIVE_ARRAY_LOOP_ITERATIONS: usize = 4096;
 
 // Keep the CPS fast path shallow enough that the large transition frame does
@@ -492,6 +493,7 @@ pub(crate) struct NativeArrayLoopContext {
     pub end: usize,
     pub addend: f64,
     pub result: f64,
+    pub interrupt: *const std::sync::atomic::AtomicBool,
 }
 
 /// Enter the direct physical array kernel after one complete semantic guard.
@@ -715,6 +717,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
         Some(words) if end <= words.len() => words,
         _ => return Ok(None),
     };
+    let interrupt = std::sync::atomic::AtomicBool::new(false);
     let mut kernel = NativeArrayLoopContext {
         data: words.as_mut_ptr(),
         len: words.len(),
@@ -722,6 +725,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
         end,
         addend,
         result: 0.0,
+        interrupt: &interrupt,
     };
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
@@ -731,7 +735,23 @@ pub(crate) fn execute_composed_array_numeric_loop(
             "array loop kernel failed after entry: {error:?}"
         ))
     })?;
-    if status != NATIVE_DISPATCH_OK || kernel.index != end {
+    if status == NATIVE_DISPATCH_INTERRUPT && kernel.index < end {
+        crate::locals::write(store_index.b, crate::value::Value::Number(kernel.index as f64));
+        registers.write(usize::from(set.a), array_value);
+        registers.write_number(usize::from(add_value.a), kernel.result);
+        registers.write_number(usize::from(move_result.a), kernel.result);
+        registers.write_number(usize::from(load_index.a), kernel.index as f64);
+        crate::execution_trace::stencil_iterations(
+            code,
+            pc,
+            "composed_array_numeric_loop_interrupt",
+            kernel.index.saturating_sub(index),
+        );
+        return Ok(Some(handler_transition(pc, None)));
+    }
+    let completed_after_interrupt =
+        status == NATIVE_DISPATCH_INTERRUPT && kernel.index == end;
+    if (status != NATIVE_DISPATCH_OK && !completed_after_interrupt) || kernel.index != end {
         return Err(crate::machine::NativeDispatchError::Committed(
             "array loop kernel returned incomplete progress".into(),
         ));
@@ -3255,13 +3275,14 @@ mod compact_handler_tests {
         assert_eq!(offset_of!(super::NativeArrayKernelContext, result), 32);
 
         assert_eq!(align_of::<super::NativeArrayLoopContext>(), 8);
-        assert_eq!(size_of::<super::NativeArrayLoopContext>(), 48);
+        assert_eq!(size_of::<super::NativeArrayLoopContext>(), 56);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, data), 0);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, len), 8);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, index), 16);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, end), 24);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, addend), 32);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, result), 40);
+        assert_eq!(offset_of!(super::NativeArrayLoopContext, interrupt), 48);
     }
 
     #[test]
@@ -3971,6 +3992,7 @@ mod compact_handler_tests {
             (vec![2.0, 3.0], 9.0, 4.0, vec![3.0, 4.0]),
         ] {
             let end = data.len();
+            let interrupt = std::sync::atomic::AtomicBool::new(false);
             let mut raw = super::NativeArrayLoopContext {
                 data: data.as_mut_ptr(),
                 len: end,
@@ -3978,6 +4000,7 @@ mod compact_handler_tests {
                 end,
                 addend: 1.0,
                 result: initial_result,
+                interrupt: &interrupt,
             };
             let status = arena
                 .execute_dispatch(
@@ -3990,6 +4013,42 @@ mod compact_handler_tests {
             assert_eq!(raw.result, expected_result);
             assert_eq!(data, expected_data);
         }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn rendered_numeric_array_loop_poll_exits_after_committed_iteration() {
+        let key = crate::stencil_select::array_numeric_loop_region_key();
+        let record = crate::stencil_select::select_region(key).expect("numeric loop declaration");
+        let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::LoadLocal);
+        let values = crate::stencil_fact::PatchValues::from_site(&site);
+        let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
+        let mut cache = crate::stencil_select::RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .expect("render numeric loop");
+        arena.make_executable().expect("protect numeric loop");
+        let interrupt = std::sync::atomic::AtomicBool::new(true);
+        let mut data = vec![10.0, 20.0];
+        let mut raw = super::NativeArrayLoopContext {
+            data: data.as_mut_ptr(),
+            len: data.len(),
+            index: 0,
+            end: data.len(),
+            addend: 1.0,
+            result: 0.0,
+            interrupt: &interrupt,
+        };
+        let status = arena
+            .execute_dispatch(
+                address,
+                (&mut raw as *mut super::NativeArrayLoopContext).cast::<std::ffi::c_void>(),
+            )
+            .expect("execute interruptible native loop");
+        assert_eq!(status, super::NATIVE_DISPATCH_INTERRUPT);
+        assert_eq!(raw.index, 1);
+        assert_eq!(raw.result, 11.0);
+        assert_eq!(data, vec![11.0, 20.0]);
     }
 
     #[test]
