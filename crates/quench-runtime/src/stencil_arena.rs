@@ -996,7 +996,7 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key) else {
             return fallback();
         };
-        if !view.record.executable || view.abi != crate::stencil_select::RegionAbi::Scalar {
+        if !view.executable || view.abi != crate::stencil_select::RegionAbi::Scalar {
             return fallback();
         }
         let stencil = view.stencil;
@@ -1018,7 +1018,7 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key) else {
             return fallback();
         };
-        if !view.record.executable {
+        if !view.executable {
             return fallback();
         }
         let stencil = view.stencil;
@@ -1060,7 +1060,7 @@ impl StencilArena {
         lhs: f64,
         rhs: f64,
     ) -> Result<bool, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
         if view.abi != crate::stencil_select::RegionAbi::ScalarBool
@@ -1089,7 +1089,7 @@ impl StencilArena {
         lhs: i32,
         rhs: i32,
     ) -> Result<i32, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
         if view.abi != crate::stencil_select::RegionAbi::ScalarI32
@@ -1118,7 +1118,7 @@ impl StencilArena {
         lhs: u32,
         rhs: u32,
     ) -> Result<u32, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
         if view.abi != crate::stencil_select::RegionAbi::ScalarU32
@@ -1172,7 +1172,7 @@ impl StencilArena {
         rhs: f64,
         third: f64,
     ) -> Result<f64, ArenaError> {
-        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.record.executable) else {
+        let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
         // A fused chain is emitted as one complete stencil and therefore must

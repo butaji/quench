@@ -136,7 +136,7 @@ fn empty_artifacts() -> String {
 }
 
 fn artifact_schema() -> &'static str {
-    "pub struct BuildStencilArtifact { pub name: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }"
+    "pub struct BuildStencilArtifact { pub name: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }"
 }
 
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
@@ -432,11 +432,12 @@ fn render_artifact(
         .collect::<Vec<_>>()
         .join(", ");
     let row = format!(
-        "    BuildStencilArtifact {{ name: {name:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},",
+        "    BuildStencilArtifact {{ name: {name:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},",
         super::abi_expr(declaration),
         declaration.entry,
         entries,
         declaration.name == "fallthrough",
+        super::target_template_calls_helper(declaration),
     );
     (constant, row)
 }

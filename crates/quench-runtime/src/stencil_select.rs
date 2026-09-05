@@ -237,6 +237,8 @@ pub struct PhysicalStencilView {
     pub entry: u16,
     pub external_entries: &'static [u16],
     pub fallthrough: Option<(&'static Stencil, u16)>,
+    pub executable: bool,
+    pub template_calls_helper: bool,
     pub target: Option<&'static str>,
     pub fingerprint: Option<&'static str>,
 }
@@ -386,6 +388,8 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         entry: record.entry,
         external_entries: record.external_entries,
         fallthrough: record.fallthrough,
+        executable: record.executable,
+        template_calls_helper: record.template_calls_helper,
         target: None,
         fingerprint: None,
     }
@@ -404,7 +408,9 @@ fn generated_physical_view(
         && artifact.external_entries == record.external_entries
         && !artifact.has_fallthrough
         && record.fallthrough.is_none();
-    if !metadata_matches || !artifact.stencil.validate() {
+    let effects_match = artifact.executable == record.executable
+        && artifact.template_calls_helper == record.template_calls_helper;
+    if !metadata_matches || !effects_match || !artifact.stencil.validate() {
         return None;
     }
     Some(PhysicalStencilView {
@@ -416,6 +422,8 @@ fn generated_physical_view(
         entry: artifact.entry,
         external_entries: artifact.external_entries,
         fallthrough: None,
+        executable: artifact.executable,
+        template_calls_helper: artifact.template_calls_helper,
         target: Some(artifact.target),
         fingerprint: Some(artifact.fingerprint),
     })
@@ -1166,6 +1174,8 @@ mod tests {
             entry: 1,
             external_entries: &[0],
             has_fallthrough: false,
+            executable: true,
+            template_calls_helper: false,
             bytes: BYTES,
             stencil: Stencil { bytes: BYTES, holes: &[] },
         };
@@ -1179,6 +1189,8 @@ mod tests {
             entry: 0,
             external_entries: WRONG_ENTRIES,
             has_fallthrough: false,
+            executable: true,
+            template_calls_helper: false,
             bytes: BYTES,
             stencil: Stencil { bytes: BYTES, holes: &[] },
         };
