@@ -1402,6 +1402,10 @@ pub(crate) fn execute_optimized_code_step_from(
                     };
                     Some((lhs, *rhs))
                 })
+        } else if instruction.opcode == crate::ir::Opcode::IncI {
+            registers
+                .read_number(usize::from(instruction.b))
+                .map(|value| (value, if instruction.flags == 0 { 1.0 } else { -1.0 }))
         } else {
             registers.read_number_pair(
                 usize::from(instruction.b),
@@ -1412,7 +1416,16 @@ pub(crate) fn execute_optimized_code_step_from(
             let returns_boolean = native.borrow().returns_boolean();
             let result = { native.borrow_mut().execute(lhs, rhs) };
             if let Ok(result) = result {
-                crate::execution_trace::stencil_observation(code, start, "binary", true);
+                crate::execution_trace::stencil_observation(
+                    code,
+                    start,
+                    if instruction.opcode == crate::ir::Opcode::IncI {
+                        "increment"
+                    } else {
+                        "binary"
+                    },
+                    true,
+                );
                 let value = if returns_boolean {
                     Value::Boolean(result != 0.0)
                 } else {
@@ -1423,7 +1436,16 @@ pub(crate) fn execute_optimized_code_step_from(
                 return Ok((crate::completion::Completion::Normal, start + 1));
             }
         }
-        crate::execution_trace::stencil_observation(code, start, "binary", false);
+        crate::execution_trace::stencil_observation(
+            code,
+            start,
+            if instruction.opcode == crate::ir::Opcode::IncI {
+                "increment"
+            } else {
+                "binary"
+            },
+            false,
+        );
         crate::execution_trace::leaf_rejection("optimizing_native_execution");
     }
     if let Some(native) = entry.native_dispatch.as_ref() {
@@ -1861,6 +1883,10 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                         };
                         Some((lhs, *rhs))
                     })
+            } else if instruction.opcode == crate::ir::Opcode::IncI {
+                registers
+                    .read_number(usize::from(instruction.b))
+                    .map(|value| (value, if instruction.flags == 0 { 1.0 } else { -1.0 }))
             } else {
                 registers.read_number_pair(
                     usize::from(instruction.b),
@@ -1872,7 +1898,14 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 let result = { native.borrow_mut().execute(lhs, rhs) };
                 if let Ok(result) = result {
                     crate::execution_trace::stencil_observation(
-                        code, pc, "binary", true,
+                        code,
+                        pc,
+                        if instruction.opcode == crate::ir::Opcode::IncI {
+                            "increment"
+                        } else {
+                            "binary"
+                        },
+                        true,
                     );
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                     let value = if returns_boolean {
@@ -1884,7 +1917,16 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     pc += 1;
                     continue;
                 }
-                crate::execution_trace::stencil_observation(code, pc, "binary", false);
+                crate::execution_trace::stencil_observation(
+                    code,
+                    pc,
+                    if instruction.opcode == crate::ir::Opcode::IncI {
+                        "increment"
+                    } else {
+                        "binary"
+                    },
+                    false,
+                );
                 crate::execution_trace::leaf_rejection("native_execution");
             } else {
                 crate::execution_trace::stencil_observation(code, pc, "binary", false);

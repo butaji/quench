@@ -1090,6 +1090,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "increment",
+        // IncI is admitted only for Number values; ToNumeric/BigInt and
+        // overflow-sensitive cases remain on the canonical updater.
+        operations: &["IncI", "Return"],
+        abi: DeclAbi::Scalar,
+        x86_bytes: &X86_ADD_CONST_BYTES,
+        aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(13, 8, "Literal64")],
+        aarch64_holes: &[(16, 8, "Literal64")],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
