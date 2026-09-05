@@ -688,7 +688,7 @@ pub(crate) fn resume_async_for_of(
     };
     loop {
         if body_pc != 0 {
-            let _binding = crate::locals::IterationBinding::install_many(spec.bindings.clone());
+            let _binding = crate::locals::IterationBinding::install_cells(spec.bindings.clone());
             let (completion, next_pc) =
                 execute_async_loop_body(registers, body, &spec.label, body_pc)?;
             match completion {
@@ -811,16 +811,20 @@ fn body_await_destination(body: crate::machine::CodeView<'_>, body_pc: usize) ->
 fn capture_iteration_bindings(
     slot: u16,
     iteration_slots: &[u16],
-) -> Vec<(u16, crate::value::Value)> {
-    std::iter::once(slot)
+) -> Vec<(u16, std::rc::Rc<crate::value::BindingCell>)> {
+    let slots = std::iter::once(slot)
         .chain(iteration_slots.iter().copied())
-        .collect::<Vec<_>>()
-        .into_iter()
-        .scan(None, |last, slot| {
-            (*last != Some(slot)).then(|| {
-                *last = Some(slot);
-                (slot, crate::locals::current().get(slot))
-            })
+        .collect::<Vec<_>>();
+    slots.into_iter()
+        .filter_map({
+            let mut last = None;
+            move |slot| {
+                if last == Some(slot) {
+                    return None;
+                }
+                last = Some(slot);
+                Some((slot, crate::locals::current().capture_slot_cell(slot)))
+            }
         })
         .collect()
 }

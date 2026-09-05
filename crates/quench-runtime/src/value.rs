@@ -547,6 +547,7 @@ pub struct GeneratorState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AsyncForOfState {
+    pub owner: usize,
     pub label: Option<String>,
     pub slot: u16,
     pub body: crate::machine::FunctionCode,
@@ -556,6 +557,8 @@ pub(crate) struct AsyncForOfState {
     pub iterator: Value,
     pub dst: u16,
     pub await_dst: u16,
+    pub await_values: bool,
+    pub bindings: Vec<(u16, Rc<BindingCell>)>,
 }
 
 /// Canonical out-of-line attributes for an ordinary property.
