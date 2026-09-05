@@ -1494,6 +1494,7 @@ pub(crate) struct NativeBinaryPlan {
     // numeric execution, so a cold function cannot allocate native code for
     // every arithmetic instruction it happens to contain.
     arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     // Numeric leaves currently have no dynamic holes, but retaining one site
@@ -1526,6 +1527,16 @@ fn number_to_int32(value: f64) -> i32 {
 }
 
 impl NativeBinaryPlan {
+    fn new_with_shared(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(instruction, policy)?;
+        plan.shared_arena = Some(shared_arena);
+        Some(plan)
+    }
+
     fn new(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -1615,6 +1626,7 @@ impl NativeBinaryPlan {
         crate::stencil_select::select_region(key).filter(|record| record.executable)?;
         Some(Self {
             arena: None,
+            shared_arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(opcode),
@@ -1656,6 +1668,7 @@ impl NativeBinaryPlan {
         }
         Some(Self {
             arena: None,
+            shared_arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
@@ -1699,10 +1712,35 @@ impl NativeBinaryPlan {
             {
                 return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
             }
+            let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some(shared) = self.shared_arena.clone() {
+                if self.integer_unsigned {
+                    let entry = {
+                        let mut slab = shared.borrow_mut();
+                        let stencil = crate::stencil_select::select_stencil(self.key)
+                            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                        let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                        slab.make_executable(address)?;
+                        slab.u32_entry(address)?
+                    };
+                    self.uint_entry = Some(entry);
+                    return Ok(f64::from(entry(left as u32, right as u32)));
+                }
+                let entry = {
+                    let mut slab = shared.borrow_mut();
+                    let stencil = crate::stencil_select::select_stencil(self.key)
+                        .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                    let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                    slab.make_executable(address)?;
+                    slab.i32_entry(address)?
+                };
+                self.int_entry = Some(entry);
+                return Ok(f64::from(entry(left, right)));
+            }
             if self.arena.is_none() {
                 self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
             }
-            let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             let arena = self
                 .arena
                 .as_mut()
@@ -1767,6 +1805,23 @@ impl NativeBinaryPlan {
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if let Some(shared) = self.shared_arena.clone() {
+            let entry = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                slab.make_executable(address)?;
+                if self.returns_boolean {
+                    let entry = slab.bool_entry(address)?;
+                    return Ok(if entry(lhs, rhs) != 0 { 1.0 } else { 0.0 });
+                }
+                slab.f64_entry(address)?
+            };
+            self.entry = Some(entry);
+            return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -1844,7 +1899,12 @@ impl std::fmt::Debug for NativeBinaryPlan {
             .field("integer_op", &self.integer_op)
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+                &self
+                    .shared_arena
+                    .as_ref()
+                    .map(|arena| arena.borrow().used())
+                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
+                    .unwrap_or(0),
             )
             .field("cache_len", &self.cache.len())
             .finish()
@@ -2839,10 +2899,18 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let shared_region_arena = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(4096)
+                .expect("compile-time region slab capacity is valid"),
+        ));
         let native_binary = entries
             .iter()
             .map(|entry| {
-                NativeBinaryPlan::new(entry.instruction, policy)
+                NativeBinaryPlan::new_with_shared(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
                     .map(|native| Rc::new(RefCell::new(native)))
             })
             .collect::<Vec<_>>()
@@ -2891,10 +2959,6 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
-        let shared_region_arena = Rc::new(RefCell::new(
-            crate::stencil_arena::SharedStencilSlab::new(4096)
-                .expect("compile-time region slab capacity is valid"),
-        ));
         let native_regions = entries
             .iter()
             .enumerate()
