@@ -378,16 +378,24 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
     select_physical(key).map(|view| view.stencil)
 }
 
-/// Select bytes only after checking the typed entry ABI.  Callers that retain
-/// an ABI-specific entry must use this gate instead of pairing a raw stencil
-/// lookup with an independently chosen function signature.
+/// Select one complete physical view after checking the typed entry ABI.
+/// Despite the historical name, this returns the view rather than bare bytes;
+/// callers retain its metadata through rendering and publication.
 pub fn select_stencil_for_abi(
     key: RegionKey,
     abi: RegionAbi,
-) -> Option<&'static Stencil> {
-    select_physical(key)
-        .filter(|view| view.executable && view.abi == abi)
-        .map(|view| view.stencil)
+) -> Option<PhysicalStencilView> {
+    select_physical_for_abi(key, abi)
+}
+
+/// Select one complete physical view for an ABI-specific entry.  Callers
+/// should retain this value through rendering and publication so bytes and
+/// boundary metadata cannot be selected independently.
+pub fn select_physical_for_abi(
+    key: RegionKey,
+    abi: RegionAbi,
+) -> Option<PhysicalStencilView> {
+    select_physical(key).filter(|view| view.executable && view.abi == abi)
 }
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
@@ -1292,5 +1300,27 @@ mod tests {
             fallthrough_entry: 0,
         };
         assert!(generated_physical_view(record.key, record, &BAD_TARGET).is_none());
+    }
+
+    #[test]
+    fn typed_selection_carries_the_verified_view_and_rejects_wrong_abi() {
+        let mut checked = 0;
+        for record in CANONICAL_REGION_TABLE {
+            let Some(view) = select_physical_for_abi(record.key, record.abi) else {
+                continue;
+            };
+            assert_eq!(view.key, record.key);
+            assert_eq!(view.record.name, record.name);
+            assert_eq!(view.abi, record.abi);
+            assert!(!view.stencil.bytes.is_empty());
+            assert!(view.contract().abi_is_well_formed());
+            checked += 1;
+        }
+        assert!(checked > 0, "catalog must expose a typed physical view");
+        let scalar = CANONICAL_REGION_TABLE
+            .iter()
+            .find(|record| record.abi == RegionAbi::Scalar)
+            .expect("scalar catalog row");
+        assert!(select_physical_for_abi(scalar.key, RegionAbi::TaggedWord).is_none());
     }
 }
