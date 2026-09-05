@@ -137,6 +137,15 @@ pub fn build(state: &Rc<std::cell::RefCell<HostState>>) -> Result<Value, VmError
     let message_port_prototype =
         execute::set_prototype_of(&message_port_prototype, &event_target_prototype)
             .unwrap_or(message_port_prototype);
+    // MessagePort is both an EventTarget and an EventEmitter in Node.  Keep
+    // the emitter method table shared with EventEmitter so `events.once()`
+    // receives the posted value (rather than an EventTarget wrapper object).
+    let original_message_port_prototype = message_port_prototype.clone();
+    let message_port_prototype = crate::modules::events::install_emitter_props(
+        message_port_prototype,
+        false,
+    )
+    .unwrap_or(original_message_port_prototype);
     let _ =
         execute::set_callable_property(&message_port, "prototype", message_port_prototype.clone());
     crate::modules::event_target::set_message_port_prototype(message_port_prototype);
@@ -239,7 +248,8 @@ fn broadcast_channel_new(
             ("configurable".into(), Value::Boolean(true)),
         ])
     };
-    let object = execute::define_property(object, "close", descriptor(cap(BROADCAST_CHANNEL_CLOSE)))?;
+    let object =
+        execute::define_property(object, "close", descriptor(cap(BROADCAST_CHANNEL_CLOSE)))?;
     let object = execute::define_property(
         object,
         "Symbol.for.nodejs.util.inspect.custom\0",
@@ -267,10 +277,7 @@ fn broadcast_channel_close(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
-fn broadcast_channel_inspect(
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+fn broadcast_channel_inspect(receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
     let receiver = broadcast_channel_receiver(receiver)?;
     let depth = args.first().and_then(|value| match value {
         Value::Number(depth) => Some(*depth),
@@ -514,7 +521,10 @@ fn worker_start(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
 
 fn worker_is_refed(worker: &Value) -> bool {
     let Some(id) = worker_id(worker) else {
-        return !matches!(execute::get_property(worker, "_worker-refed"), Value::Boolean(false));
+        return !matches!(
+            execute::get_property(worker, "_worker-refed"),
+            Value::Boolean(false)
+        );
     };
     WORKER_FLAGS.with(|flags| flags.borrow().get(&id).map(|entry| entry.0).unwrap_or(true))
 }
@@ -784,9 +794,9 @@ fn worker_terminate(
     // fulfillment value is the worker exit code.  Keep the host transition
     // synchronous, but preserve the observable promise-shaped boundary.
     Ok(Value::Promise(Rc::new(
-        quench_runtime::value::PromiseData::new(
-            quench_runtime::value::PromiseState::Fulfilled(Value::Number(0.0)),
-        ),
+        quench_runtime::value::PromiseData::new(quench_runtime::value::PromiseState::Fulfilled(
+            Value::Number(0.0),
+        )),
     )))
 }
 
