@@ -615,13 +615,9 @@ fn cached_plain_writable_slot<'a>(
     if !plain_writable_own_data(data, key) {
         return None;
     }
-    if matches!(
-        data.hot_properties().slot_value(slot),
-        Some(crate::value::Value::BindingCell(_))
-    ) {
-        return None;
-    }
-    data.hot_properties().slot_word(slot)
+    let word = data.hot_properties().slot_word(slot)?;
+    word.plain_tagged_bits()?;
+    Some(word)
 }
 
 /// Return a proven writable own-data slot for the typed property-store leaf.
