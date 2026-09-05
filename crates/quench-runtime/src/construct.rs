@@ -463,6 +463,22 @@ fn construct_bound(
                 new_target.clone()
             };
             let prototype = crate::execute::get_property_result(&prototype_target, "prototype")?;
+            // Host constructors may return an object whose prototype is owned
+            // by the host implementation (for example fs.ReadStream).  A
+            // bound capability has no explicit JavaScript `prototype`
+            // property, so deriving the realm fallback here would replace
+            // the host object's method surface with an empty object.  Keep
+            // that existing prototype when no constructor prototype was
+            // declared; constructors that expose one still take the normal
+            // path below.
+            if matches!(prototype, Value::Undefined)
+                && matches!(
+                    crate::execute::get_prototype_of(&value),
+                    Ok(Value::Object(_) | Value::ObjectAlias(_) | Value::Null)
+                )
+            {
+                return Ok(value);
+            }
             return apply_new_target_prototype(value, target, &prototype_target, prototype);
         }
         let value = crate::builtins::set_property(
