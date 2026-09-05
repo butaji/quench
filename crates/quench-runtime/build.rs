@@ -116,6 +116,13 @@ const fn aarch64_str_d(rt: u8, rn: u8, byte_offset: u16) -> u32 {
         | (rt as u32 & 0x1F)
 }
 
+const fn aarch64_str_x(rt: u8, rn: u8, byte_offset: u16) -> u32 {
+    0xF900_0000
+        | (((byte_offset as u32 / 8) & 0xFFF) << 10)
+        | (((rn as u32) & 0x1F) << 5)
+        | (rt as u32 & 0x1F)
+}
+
 const fn aarch64_mov_w_imm0(imm: u16) -> u32 {
     0x5280_0000 | (((imm as u32) & 0xFFFF) << 5)
 }
@@ -461,6 +468,18 @@ const AARCH64_PROPERTY_BYTES: [u8; 8] = aarch64_pair(aarch64_ldr_x0_x0(), aarch6
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
 const AARCH64_ARRAY_GET_NUMBER_BYTES: [u8; 20] = aarch64_array_get_number_bytes();
 const AARCH64_ARRAY_SET_NUMBER_BYTES: [u8; 20] = aarch64_array_set_number_bytes();
+const AARCH64_ARRAY_GET_INC_NUMBER_BYTES: [u8; 32] = {
+    let mut out = [0; 32];
+    put32(&mut out, 0, aarch64_ldr_x(1, 0, 0));
+    put32(&mut out, 4, aarch64_ldr_d(0, 1, 0));
+    put32(&mut out, 8, aarch64_str_d(0, 0, 8));
+    put32(&mut out, 12, aarch64_ldr_x(1, 0, 16));
+    put32(&mut out, 16, 0x9100_0421); // add x1, x1, #1
+    put32(&mut out, 20, aarch64_str_x(1, 0, 24));
+    put32(&mut out, 24, aarch64_mov_w_imm0(1));
+    put32(&mut out, 28, aarch64_ret());
+    out
+};
 const AARCH64_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_b());
 const AARCH64_SUBTRACT_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_ret());
 const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_ret());
@@ -1130,6 +1149,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         abi: DeclAbi::ArrayKernel,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_ARRAY_SET_NUMBER_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "array_get_inc_number",
+        // A proven dense numeric read plus induction update.  The index is
+        // published as a scalar context field, never as a raw VM-word pointer.
+        operations: &["AGetIInc"],
+        abi: DeclAbi::ArrayKernel,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_GET_INC_NUMBER_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],

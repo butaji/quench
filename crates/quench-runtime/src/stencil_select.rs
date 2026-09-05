@@ -434,7 +434,7 @@ mod generated_region_admission_tests {
                     );
                 }
                 RegionAbi::ArrayKernel => {
-                    assert!(matches!(record.stencil.bytes.len(), 12 | 20 | 44))
+                    assert!(matches!(record.stencil.bytes.len(), 12 | 20 | 32 | 44))
                 }
                 RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 100),
             }
