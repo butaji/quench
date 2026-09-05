@@ -62,6 +62,22 @@ fn invoke_f64x3_entry(
     entry(lhs, rhs, third)
 }
 
+/// Clear a plan's physical capabilities as one lifecycle transition.  The
+/// entry fields remain typed per ABI; this macro only derives the repetitive
+/// invalidation mechanics so owner retirement cannot leave one stale variant
+/// behind.
+macro_rules! invalidate_plan_capabilities {
+    ($this:expr, [$($field:ident),+ $(,)?], with_lifecycle) => {{
+        $( $this.$field = None; )+
+        $this.cache.clear();
+        $this.lifecycle.reset();
+    }};
+    ($this:expr, [$($field:ident),+ $(,)?], no_lifecycle) => {{
+        $( $this.$field = None; )+
+        $this.cache.clear();
+    }};
+}
+
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 
 // Code stores are isolate-local and never shared across runtime threads. The
@@ -1733,20 +1749,11 @@ impl NativeBinaryPlan {
 
     #[inline]
     fn clear_physical_capabilities(&mut self) {
-        self.cache.clear();
-        self.lifecycle.reset();
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        {
-            self.entry = None;
-            self.int_entry = None;
-            self.tagged_entry = None;
-            self.uint_entry = None;
-            self.shared_entry = None;
-            self.shared_bool_entry = None;
-            self.shared_int_entry = None;
-            self.shared_uint_entry = None;
-            self.tagged_shared_entry = None;
-        }
+        invalidate_plan_capabilities!(self, [
+            entry, int_entry, tagged_entry, uint_entry, shared_entry,
+            shared_bool_entry, shared_int_entry, shared_uint_entry,
+            tagged_shared_entry
+        ], with_lifecycle);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1784,7 +1791,7 @@ impl NativeBinaryPlan {
                 (address, slab.word_pair_bool_entry(address)?)
             };
             drop(values);
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_word_pair_bool_entry(address)?;
             self.tagged_shared_entry = Some(owned);
             return match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
                 Ok(result) => {
@@ -1896,7 +1903,7 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
-                    let owned = shared.borrow().owned_entry(address, entry)?;
+                    let owned = shared.borrow().owned_u32_entry(address)?;
                     let result = match shared
                         .borrow()
                         .with_owned(owned, |entry| entry(left as u32, right as u32))
@@ -1931,7 +1938,7 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                let owned = shared.borrow().owned_entry(address, entry)?;
+                let owned = shared.borrow().owned_i32_entry(address)?;
                 let result = match shared.borrow().with_owned(owned, |entry| entry(left, right)) {
                     Ok(result) => result,
                     Err(error) => {
@@ -2061,7 +2068,7 @@ impl NativeBinaryPlan {
                 })();
                 return match rendered {
                     Ok((address, entry)) => {
-                        let owned = shared.borrow().owned_entry(address, entry)?;
+                        let owned = shared.borrow().owned_bool_entry(address)?;
                         self.shared_bool_entry = Some(owned);
                         match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs) != 0) {
                             Ok(value) => {
@@ -2098,7 +2105,7 @@ impl NativeBinaryPlan {
                 }
             };
             self.entry = Some(entry);
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_f64_entry(address)?;
             self.shared_entry = Some(owned);
             return match shared
                 .borrow()
@@ -2351,7 +2358,7 @@ impl NativeTruthinessPlan {
                 slab.make_executable(address)?;
                 (address, slab.bool_unary_entry(address)?)
             };
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_bool_unary_entry(address)?;
             self.shared_entry = Some(owned);
             return match shared.borrow().with_owned(owned, |entry| entry(value)) {
                 Ok(result) => {
@@ -2420,7 +2427,7 @@ impl NativeTruthinessPlan {
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_word_bool_entry(address)?;
             self.shared_word_entry = Some(owned);
             let result = match shared.borrow().with_owned(owned, |entry| entry(value)) {
                 Ok(result) => result,
@@ -2483,7 +2490,7 @@ impl NativeTruthinessPlan {
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_word_bool_entry(address)?;
             self.shared_pointer_entry = Some(owned);
             let result = match shared.borrow().with_owned(owned, |entry| entry(value)) {
                 Ok(result) => result,
@@ -2630,7 +2637,7 @@ impl NativeNullishPlan {
                 slab.make_executable(address)?;
                 (address, slab.word_bool_entry(address)?)
             };
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_word_bool_entry(address)?;
             self.shared_entry = Some(owned);
             let result = shared
                 .borrow()
@@ -2787,7 +2794,7 @@ impl NativeLoadConstPlan {
                 slab.make_executable(address)?;
                 (address, slab.constant_word_entry(address)?)
             };
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_constant_word_entry(address)?;
             self.shared_entry = Some(owned);
             return match shared.borrow().with_owned(owned, |entry| entry()) {
                 Ok(result) => {
@@ -2970,7 +2977,7 @@ impl NativeUnaryPlan {
             slab.make_executable(address)?;
             (address, slab.f64_unary_entry(address)?)
         };
-        let owned = shared.borrow().owned_entry(address, entry)?;
+        let owned = shared.borrow().owned_f64_unary_entry(address)?;
         self.shared_number_entry = Some(owned);
         match shared.borrow().with_owned(owned, |entry| entry(value)) {
             Ok(result) => {
@@ -3058,7 +3065,7 @@ impl NativeUnaryPlan {
                 self.lifecycle.reset();
                 error
             })?;
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_i32_unary_entry(address)?;
             let result = match shared.borrow().with_owned(owned, |entry| entry(operand)) {
                 Ok(result) => result,
                 Err(error) => {
@@ -3214,7 +3221,7 @@ impl NativeAddChainPlan {
                 return Err(error);
             }
         };
-        let owned = shared.borrow().owned_entry(address, entry)?;
+        let owned = shared.borrow().owned_f64x3_entry(address)?;
         self.shared_entry = Some(owned);
         Ok(owned)
     }
@@ -3491,7 +3498,7 @@ impl NativeMovePlan {
                     return Err(error);
                 }
             };
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_tagged_word_entry(address)?;
             self.shared_entry = Some(owned);
             let result = shared.borrow().with_owned(owned, |entry| entry(source));
             return match result {
@@ -3698,7 +3705,7 @@ impl NativePropertyPlan {
                     return Err(error);
                 }
             };
-            let owned = shared.borrow().owned_entry(address, entry)?;
+            let owned = shared.borrow().owned_tagged_word_entry(address)?;
             let bits = match shared.borrow().with_owned(owned, |entry| entry(slot.cast())) {
                 Ok(bits) => bits,
                 Err(error) => {
