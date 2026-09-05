@@ -672,6 +672,20 @@ pub fn export_key(
                 .to_string();
             let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
                 .unwrap_or_default();
+            if name.to_ascii_uppercase().starts_with("RSA-") {
+                let alg = match name.to_ascii_uppercase().as_str() {
+                    "RSA-PSS" => format!("PS{hash}"),
+                    "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
+                    "RSA-OAEP" => format!("RSA-OAEP-{hash}"),
+                    _ => String::new(),
+                };
+                return Ok(settled(Ok(host_api::object(vec![
+                    ("kty".into(), Value::String("RSA".into())),
+                    ("alg".into(), Value::String(alg)),
+                    ("key_ops".into(), execute::get_property(&metadata, "usages")),
+                    ("ext".into(), Value::Boolean(true)),
+                ]))));
+            }
             let alg = if hash.is_empty() || !name.eq_ignore_ascii_case("HMAC") {
                 Value::Undefined
             } else {
