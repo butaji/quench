@@ -30,3 +30,6 @@ wasmparser = "0.247"
 
 [build-dependencies]
 object = "0.39.1"
+
+[dev-dependencies]
+object = "0.39.1"
