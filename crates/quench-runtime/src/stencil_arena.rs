@@ -2335,6 +2335,10 @@ mod tests {
         let view = crate::stencil_select::select_physical(key).expect("generated physical view");
         assert!(view.generated, "test must use the generated artifact");
         assert_eq!(view.record.abi, crate::stencil_select::RegionAbi::Scalar);
+        assert_eq!(view.abi, crate::stencil_select::RegionAbi::Scalar);
+        assert_eq!(view.key, key);
+        assert!(view.target.is_some_and(|target| !target.is_empty()));
+        assert!(view.fingerprint.is_some_and(|fingerprint| !fingerprint.is_empty()));
         assert_ne!(view.stencil.bytes, view.record.stencil.bytes);
         assert_eq!(
             arena.render_selected_f64(&mut cache, key, &values, 3.5, 2.25, || Ok(0.0)),
