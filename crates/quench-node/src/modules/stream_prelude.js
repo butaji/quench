@@ -1710,7 +1710,7 @@
           st.errorEmitted = true;
           stream._emitter.emit("error", error);
         }
-        if (!error && !st.destroyed && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
+        if (!error && !st.destroyed && !st.ended && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
         if (!error) finishWritable(stream);
       };
       try {
@@ -1920,7 +1920,7 @@
                     st.errorEmitted = true;
                     this._emitter.emit("error", batchError);
                   }
-                  if (!batchError && (shouldDrain || st.drainPending) && !st.destroyed &&
+                  if (!batchError && (shouldDrain || st.drainPending) && !st.destroyed && !st.ended &&
                       st.buffered <= st.highWaterMark) {
                     st.drainPending = false;
                     nextTick(() => this._emitter.emit("drain"));
@@ -1952,7 +1952,7 @@
           st.ended = wasEnded;
           return;
         }
-        if (!st.destroyed && (shouldDrain || st.drainPending) &&
+        if (!st.destroyed && !st.ended && (shouldDrain || st.drainPending) &&
             st.buffered <= st.highWaterMark) {
           // Node emits drain as part of the synchronous write completion once
           // the buffered total returns below the high-water mark.
