@@ -3714,8 +3714,16 @@ fn physical_template_clobber_mask(bytes: &[u8]) -> u16 {
                 let fp_move = encoded & 0xFF20_FC00 == 0x1E20_4000;
                 (fp_load || fp_arith || fp_move).then_some(encoded & 0x1f)
             })
-            .filter(|register| *register < 16)
-            .fold(0u16, |mask, register| mask | (1u16 << register));
+            .fold(0u16, |mask, register| {
+                if register < 16 {
+                    mask | (1u16 << register)
+                } else {
+                    // The compact contract cannot represent high SIMD
+                    // registers; force a fail-closed mismatch instead of
+                    // silently dropping the physical write.
+                    u16::MAX
+                }
+            });
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
