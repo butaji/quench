@@ -9781,10 +9781,10 @@ fn fork_child_start(
     script: &Value,
     fork_args: &Value,
 ) -> Result<(), VmError> {
-    let Value::String(filename) = script else {
+    let Value::String(requested_path) = script else {
         return Ok(());
     };
-    let Ok(source) = std::fs::read_to_string(filename) else {
+    let Some((filename, source)) = resolve_child_entry(requested_path) else {
         return Ok(());
     };
     let global = quench_runtime::vm::current_global_object();
@@ -9892,7 +9892,7 @@ fn fork_child_start(
         crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
     );
     execute::set_property_in_place(&process, "\0forkChild", child.clone());
-    let wrapped = crate::modules::require::wrap_cjs(state, filename, &source);
+    let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
     // Forked workers reuse the parent VM realm, but their source is reduced
     // independently from the runner bootstrap. Ensure the canonical fetch
     // global is present before common modules inspect the global surface.
@@ -9953,6 +9953,20 @@ fn fork_child_start(
         return Ok(());
     }
     Ok(())
+}
+
+fn resolve_child_entry(requested_path: &str) -> Option<(String, String)> {
+    let candidates = [
+        requested_path.to_string(),
+        format!("{requested_path}.js"),
+        format!("{requested_path}.mjs"),
+        format!("{requested_path}.cjs"),
+    ];
+    candidates.into_iter().find_map(|path| {
+        std::fs::read_to_string(&path)
+            .ok()
+            .map(|source| (path, source))
+    })
 }
 
 fn rehide_runtime_globals(global: &Value) {
