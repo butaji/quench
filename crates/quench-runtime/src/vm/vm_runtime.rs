@@ -14,6 +14,7 @@ pub(crate) struct NativeDispatchContext<'a> {
     result: Option<DispatchTransition>,
     error: Option<VmError>,
     error_pc: Option<usize>,
+    entry_started: bool,
 }
 
 impl<'a> NativeDispatchContext<'a> {
@@ -33,6 +34,7 @@ impl<'a> NativeDispatchContext<'a> {
             result: None,
             error: None,
             error_pc: None,
+            entry_started: false,
         }
     }
 
@@ -42,15 +44,27 @@ impl<'a> NativeDispatchContext<'a> {
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
         match status {
             NATIVE_DISPATCH_OK => self.result.ok_or_else(|| {
-                crate::machine::NativeDispatchError::Physical(
-                    "native bridge returned without a transition".into(),
-                )
+                if self.entry_started {
+                    crate::machine::NativeDispatchError::Committed(
+                        "native bridge entered without a transition".into(),
+                    )
+                } else {
+                    crate::machine::NativeDispatchError::Physical(
+                        "native bridge returned without a transition".into(),
+                    )
+                }
             }),
             NATIVE_DISPATCH_SEMANTIC_ERROR => self.error.map_or_else(
                 || {
-                    Err(crate::machine::NativeDispatchError::Physical(
-                        "native bridge returned an empty semantic error".into(),
-                    ))
+                    Err(if self.entry_started {
+                        crate::machine::NativeDispatchError::Committed(
+                            "native bridge lost its post-entry error".into(),
+                        )
+                    } else {
+                        crate::machine::NativeDispatchError::Physical(
+                            "native bridge returned an empty semantic error".into(),
+                        )
+                    })
                 },
                 |error| match self.error_pc {
                     Some(pc) => Err(crate::machine::NativeDispatchError::SemanticAt {
@@ -60,8 +74,11 @@ impl<'a> NativeDispatchContext<'a> {
                     None => Err(crate::machine::NativeDispatchError::Semantic(error)),
                 },
             ),
+            _ if self.entry_started => Err(crate::machine::NativeDispatchError::Committed(
+                "native bridge returned an invalid post-entry status".into(),
+            )),
             _ => Err(crate::machine::NativeDispatchError::Physical(
-                "native bridge returned an invalid status".into(),
+                "native bridge returned an invalid entry status".into(),
             )),
         }
     }
@@ -184,6 +201,7 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
     // The context is created and consumed synchronously by NativeDispatchPlan;
     // no callee can retain the erased lifetime or pointer beyond this call.
     let dispatch = unsafe { &mut *(raw.cast::<NativeDispatchContext<'static>>()) };
+    dispatch.entry_started = true;
     let result = unsafe {
         run_baseline_instruction(
             dispatch.code,
@@ -4024,6 +4042,32 @@ mod compact_handler_tests {
         assert!(matches!(
             region.finish(status),
             Err(crate::machine::NativeDispatchError::SemanticAt { pc: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn native_dispatch_finish_rejects_post_entry_malformed_status() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![Op::Return { src: 0 }]);
+        let entry = crate::machine::BaselineEntry {
+            instruction: code.code().instruction(0).expect("entry"),
+            handler: crate::ir::Opcode::Return.handler(),
+            control: crate::ir::Opcode::Return.control_operands(
+                code.code().instruction(0).expect("entry"),
+            ),
+        };
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(1.0)]);
+        let context = crate::vm::current_context_or_default();
+        let mut dispatch = super::NativeDispatchContext::new(
+            code.code(),
+            0,
+            entry,
+            &mut registers,
+            &context,
+        );
+        dispatch.entry_started = true;
+        assert!(matches!(
+            dispatch.finish(0),
+            Err(crate::machine::NativeDispatchError::Committed(_))
         ));
     }
 
