@@ -7,6 +7,13 @@ impl QuenchNodeHost {
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
+            HostCapabilityKind::Custom(CapabilityName::CryptoKeyObjectFrom) => {
+                return crate::modules::crypto::key_object_from(
+                    &self.state,
+                    receiver,
+                    arguments,
+                );
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateConstructor) => {
                 let value = Value::object(vec![
                     (

@@ -296,7 +296,7 @@ fn key_getter(name: &str) -> Option<Value> {
         KEY_MARKER_PROP.trim_start_matches('\0')
     );
     let source = format!(
-        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") return Array.from(value); if (name === \"algorithm\") return structuredClone(value); return value; }}"
+        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") return Array.from(value); if (name === \"algorithm\") {{ const copy = Object.assign({{}}, value); if (value.hash && typeof value.hash === \"object\") copy.hash = Object.assign({{}}, value.hash); if (value.publicExponent && typeof value.publicExponent === \"object\") copy.publicExponent = new Uint8Array(value.publicExponent); return copy; }} return value; }}"
     );
     let factory = eval_function(&source).ok()?;
     execute::call(&factory, &Value::Undefined, &[Value::String(name.into())]).ok()
