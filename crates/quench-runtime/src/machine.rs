@@ -4157,6 +4157,7 @@ fn validate_physical_template(
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
     ) {
+        crate::stencil_physical::validate_raw_instruction_stream(record.stencil.bytes)?;
         let actual = crate::stencil_physical::simd_clobber_mask(record.stencil.bytes);
         if actual & !abi.hardware_clobber_mask != 0 {
             return Err(format!(
@@ -6358,6 +6359,32 @@ mod tests {
         assert!(super::validate_physical_template(&record)
             .expect_err("x7 is outside the ArrayKernel GPR scratch contract")
             .contains("GPR clobber"));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn raw_template_rejects_unknown_instruction_before_entry() {
+        static BYTES: [u8; 4] = 0xFFFF_FFFFu32.to_le_bytes();
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::AGetI];
+        static ENTRIES: [u16; 1] = [0];
+        let record = crate::stencil_select::RegionRecord {
+            name: "test_raw_unknown_instruction",
+            key: crate::stencil_fact::RegionKey(6),
+            stencil: crate::stencil_fact::Stencil {
+                bytes: &BYTES,
+                holes: &[],
+            },
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::ArrayKernel,
+            template_calls_helper: false,
+            executable: true,
+        };
+        assert!(super::validate_physical_template(&record)
+            .expect_err("unknown instructions must fail closed")
+            .contains("unknown instruction"));
     }
 
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
