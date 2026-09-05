@@ -586,7 +586,7 @@ pub fn import_key(
         .to_ascii_lowercase();
     if !matches!(
         format.as_str(),
-        "raw" | "raw-secret" | "jwk" | "spki" | "pkcs8"
+        "raw" | "raw-secret" | "raw-public" | "jwk" | "spki" | "pkcs8"
     ) {
         return Ok(settled(Err(error(
             Builtin::TypeError,
@@ -595,6 +595,19 @@ pub fn import_key(
         ))));
     }
     let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let algorithm_name_upper = algorithm_name(&algorithm).to_ascii_uppercase();
+    let raw_alias_unsupported = format == "raw-public"
+        || (format == "raw-secret"
+            && matches!(
+                algorithm_name_upper.as_str(),
+                "ECDSA" | "ECDH" | "ED25519" | "ED448" | "X25519" | "X448"
+            ));
+    if raw_alias_unsupported {
+        let name = algorithm_name(&algorithm);
+        return Ok(settled(Err(not_supported(&format!(
+            "Unable to import {name} using {format} format"
+        )))));
+    }
     let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
     let usages = args
         .get(4)
