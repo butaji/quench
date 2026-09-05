@@ -9,7 +9,7 @@ use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::RenderedRegionCache;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 extern "C" {
@@ -49,6 +49,26 @@ const STENCIL_ALIGNMENT: usize = 1;
 pub const MAX_SHARED_SLAB_BYTES: usize = 4 * MAX_ARENA_BYTES;
 /// Workload-independent disposable code budget for one arena.
 pub const MAX_ARENA_BYTES: usize = 1 << 20;
+const MAX_GLOBAL_SHARED_SLAB_BYTES: usize = 16 * MAX_SHARED_SLAB_BYTES;
+static GLOBAL_SHARED_SLAB_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+fn reserve_global_bytes(bytes: usize) -> bool {
+    GLOBAL_SHARED_SLAB_BYTES
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            used.checked_add(bytes)
+                .filter(|next| *next <= MAX_GLOBAL_SHARED_SLAB_BYTES)
+        })
+        .is_ok()
+}
+
+fn release_global_bytes(bytes: usize) {
+    GLOBAL_SHARED_SLAB_BYTES.fetch_sub(bytes, Ordering::AcqRel);
+}
+
+#[cfg(test)]
+pub(crate) fn global_shared_slab_bytes() -> usize {
+    GLOBAL_SHARED_SLAB_BYTES.load(Ordering::Acquire)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhysicalExecutionWitness {
@@ -334,7 +354,12 @@ impl SharedStencilSlab {
         if remove == 0 {
             return 0;
         }
+        let released = self.slabs[..remove]
+            .iter()
+            .map(StencilArena::capacity)
+            .sum();
         self.slabs.drain(0..remove);
+        release_global_bytes(released);
         remove
     }
 
@@ -354,11 +379,16 @@ impl SharedStencilSlab {
         if remove == 0 {
             return 0;
         }
+        let released = self.slabs[..remove]
+            .iter()
+            .map(StencilArena::capacity)
+            .sum();
         let owners = self.slabs[..remove]
             .iter()
             .map(StencilArena::id)
             .collect::<Vec<_>>();
         self.slabs.drain(0..remove);
+        release_global_bytes(released);
         for owner in owners {
             cache.remove_owner(owner);
         }
@@ -383,7 +413,9 @@ impl SharedStencilSlab {
             && self.slabs.len() > 1
         {
             let owner = self.slabs[0].id();
+            let released = self.slabs[0].capacity();
             self.slabs.remove(0);
+            release_global_bytes(released);
             cache.remove_owner(owner);
         }
         self.total_capacity().saturating_add(additional) <= MAX_SHARED_SLAB_BYTES
@@ -406,8 +438,23 @@ impl SharedStencilSlab {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
-        let mut slab = StencilArena::new(self.slab_capacity)?;
-        let address = slab.render_or_get(cache, key, stencil, values)?;
+        if !reserve_global_bytes(self.slab_capacity) {
+            return Err(ArenaError::Exhausted);
+        }
+        let mut slab = match StencilArena::new(self.slab_capacity) {
+            Ok(slab) => slab,
+            Err(error) => {
+                release_global_bytes(self.slab_capacity);
+                return Err(error);
+            }
+        };
+        let address = match slab.render_or_get(cache, key, stencil, values) {
+            Ok(address) => address,
+            Err(error) => {
+                release_global_bytes(self.slab_capacity);
+                return Err(error);
+            }
+        };
         self.slabs.push(slab);
         Ok(address)
     }
@@ -433,8 +480,23 @@ impl SharedStencilSlab {
         if !self.reclaim_for(self.slab_capacity, cache) {
             return Err(ArenaError::Exhausted);
         }
-        let mut slab = StencilArena::new(self.slab_capacity)?;
-        let address = slab.render_selected_view(cache, view, values)?;
+        if !reserve_global_bytes(self.slab_capacity) {
+            return Err(ArenaError::Exhausted);
+        }
+        let mut slab = match StencilArena::new(self.slab_capacity) {
+            Ok(slab) => slab,
+            Err(error) => {
+                release_global_bytes(self.slab_capacity);
+                return Err(error);
+            }
+        };
+        let address = match slab.render_selected_view(cache, view, values) {
+            Ok(address) => address,
+            Err(error) => {
+                release_global_bytes(self.slab_capacity);
+                return Err(error);
+            }
+        };
         self.slabs.push(slab);
         Ok(address)
     }
@@ -744,6 +806,12 @@ impl std::fmt::Debug for SharedStencilSlab {
             .field("active_dispatches", &self.active_dispatches())
             .field("peak_dispatches", &self.peak_dispatches())
             .finish()
+    }
+}
+
+impl Drop for SharedStencilSlab {
+    fn drop(&mut self) {
+        release_global_bytes(self.total_capacity());
     }
 }
 
