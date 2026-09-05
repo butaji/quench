@@ -553,8 +553,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let mut plan = super::NativeBinaryPlan {
         arena: None,
         shared_arena: None,
-        cache: crate::stencil_select::RenderedRegionCache::new(),
-        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        physical: super::PhysicalState::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
