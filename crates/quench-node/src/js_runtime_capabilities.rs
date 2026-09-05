@@ -389,6 +389,7 @@ impl CapabilityName {
     const ChildSpawn: u16 = 2194;
     const ChildSpawnOn: u16 = 2195;
     const ChildSpawnSync: u16 = 2196;
+    const ChildGetValidStdio: u16 = 0x1e18;
     const UtilDebuglog: u16 = 0x0735;
     const ChildStdoutToString: u16 = 2197;
     const ReplServer: u16 = 2202;

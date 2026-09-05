@@ -883,6 +883,124 @@ fn value_contains_nul(value: &Value) -> bool {
         .is_some_and(|text| text.contains('\0'))
 }
 
+/// Normalize the stdio descriptor used by Node's child-process internals.
+/// The host keeps descriptors as plain data so spawn and fork share one
+/// validation path without manufacturing stream implementations.
+pub fn get_valid_stdio(args: &[Value]) -> Result<Value, VmError> {
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    let sync = matches!(args.get(1), Some(Value::Boolean(true)));
+    let (stdio, from_array) = match input {
+        Value::String(kind)
+            if matches!(kind.as_str(), "pipe" | "ignore" | "inherit" | "overlapped") =>
+        {
+            (host_api::array((0..3).map(|_| Value::String(kind.clone())).collect()), false)
+        }
+        Value::String(_) => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+        Value::Array(array) => (Value::Array(array), true),
+        _ => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+    };
+    let length = match &stdio {
+        Value::Array(array) => array.logical_len(),
+        _ => 0,
+    };
+    if from_array {
+        for index in length..3 {
+            execute::set_property_in_place(&stdio, &index.to_string(), Value::Undefined);
+        }
+        execute::set_property_in_place(&stdio, "length", Value::Number(3.0));
+    }
+    let mut normalized = Vec::with_capacity(3);
+    let mut ipc = Value::Undefined;
+    for index in 0..3 {
+        let value = execute::get_property(&stdio, &index.to_string());
+        let descriptor = match value {
+            Value::Undefined => host_api::object(vec![(
+                "type".into(),
+                Value::String("pipe".into()),
+            )]),
+            Value::String(kind) => match kind.as_str() {
+                "pipe" => host_api::object(vec![(
+                    "type".into(),
+                    Value::String("pipe".into()),
+                )]),
+                "overlapped" => host_api::object(vec![(
+                    "type".into(),
+                    Value::String("overlapped".into()),
+                )]),
+                "ignore" => host_api::object(vec![(
+                    "type".into(),
+                    Value::String("ignore".into()),
+                )]),
+                "inherit" => host_api::object(vec![
+                    ("type".into(), Value::String("fd".into())),
+                    ("fd".into(), Value::Number(index as f64)),
+                ]),
+                "ipc" => {
+                    if !matches!(&ipc, Value::Undefined) {
+                        let code = if sync { "ERR_IPC_SYNC_FORK" } else { "ERR_IPC_ONE_PIPE" };
+                        return Err(stdio_error(
+                            if sync { "Error" } else { "Error" },
+                            code,
+                        ));
+                    }
+                    ipc = host_api::object(vec![(
+                        "type".into(),
+                        Value::String("ipc".into()),
+                    )]);
+                    host_api::object(vec![
+                        ("type".into(), Value::String("ipc".into())),
+                        ("ipc".into(), Value::Boolean(true)),
+                    ])
+                }
+                _ => {
+                    let code = if from_array {
+                        "ERR_INVALID_SYNC_FORK_INPUT"
+                    } else {
+                        "ERR_INVALID_ARG_VALUE"
+                    };
+                    return Err(stdio_error("TypeError", code));
+                }
+            },
+            Value::Object(_) | Value::ObjectAlias(_) => {
+                let fd = execute::get_property(&value, "fd");
+                match fd {
+                    Value::Number(fd) if fd.is_finite() && fd.fract() == 0.0 && fd >= 0.0 => {
+                        host_api::object(vec![
+                            ("type".into(), Value::String("fd".into())),
+                            ("fd".into(), Value::Number(fd)),
+                        ])
+                    }
+                    _ => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+                }
+            }
+            _ => return Err(stdio_error("TypeError", "ERR_INVALID_ARG_VALUE")),
+        };
+        normalized.push(descriptor);
+    }
+    let ipc_fd = normalized
+        .iter()
+        .position(|descriptor| {
+            matches!(
+                execute::get_property(descriptor, "type"),
+                Value::String(kind) if kind == "ipc"
+            )
+        })
+        .map(|index| Value::Number(index as f64))
+        .unwrap_or(Value::Undefined);
+    Ok(host_api::object(vec![
+        ("stdio".into(), host_api::array(normalized)),
+        ("ipc".into(), ipc),
+        ("ipcFd".into(), ipc_fd),
+    ]))
+}
+
+fn stdio_error(name: &str, code: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String(name.into())),
+        ("code".into(), Value::String(code.into())),
+    ]))
+}
+
 fn stdio_inherit(options: &Value) -> bool {
     match execute::get_property_result(options, "stdio").ok() {
         Some(Value::String(value)) => value == "inherit",
