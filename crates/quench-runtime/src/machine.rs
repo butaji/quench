@@ -3008,7 +3008,6 @@ impl NativeAddChainPlan {
             }
         }
         let key = crate::stencil_select::add_chain_region_key();
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if self.lifecycle.observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
@@ -3027,6 +3026,7 @@ impl NativeAddChainPlan {
                 Err(_) => self.shared_entry = None,
             }
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
             let rendered = (|| -> Result<
                 (usize, extern "C" fn(f64, f64, f64) -> f64),
