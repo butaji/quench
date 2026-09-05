@@ -1,13 +1,13 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `ea179a5b1` (cleanup files remain
+Evidence below is bound to source revision `2b56f0689` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
 functional commits.
 
-Current source revision is `ea179a5b1`. The generated ABI invocation is now
+Current source revision is `2b56f0689`. The generated ABI invocation is now
 derived from `build.rs::REGION_DECLARATIONS` rather than a second handwritten
 ABI table. Native owner-mismatch paths clear every typed capability, cache and
 lifecycle token across scalar, unary, constant, nullish, fused, local and
@@ -27,6 +27,15 @@ options; its owner-eviction rebuild is exercised through the normal plan
 driver (`/tmp/quench-native-constant-state-20260905.log`, 1 passed). Other
 plans retain ABI-specific alternatives while sharing the generated typed
 capability constructors and common invalidation transition.
+
+`NativeMovePlan` now follows the same single installed capability state, with
+normal-driver owner reuse and eviction/rebuild coverage in
+`/tmp/quench-native-move-state-20260905.log` (2 passed). Same-tree full
+runtime is **736 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-move-state.log`), trace runtime is
+**751 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-trace-20260905-move-state.log`), and host tests are
+**4 passed, 0 failed** (`/tmp/quench-node-full-20260905-move-state.log`).
 
 The region ABI now distinguishes a `CommittedError` received before entry
 from one received after entry; the former remains a safe ordinary fallback,
