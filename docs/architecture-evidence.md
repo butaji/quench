@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `01ee8b776` (cleanup files remain
+Evidence below is bound to source revision `ee3c4f439` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -51,6 +51,13 @@ cache and lifecycle after a publication-owner failure. Focused unary coverage
 passes at `/tmp/quench-unary-owner-tests-20260905.log` (1 passed); full runtime
 is **736 passed, 0 failed, 1 ignored** at
 `/tmp/quench-runtime-full-20260905-unary-owner.log`.
+
+The constant-word plan now records a test-only witness on its actual typed
+entry; the normal driver test asserts emitted-byte execution rather than a
+fallback-only result. Focused coverage is
+`/tmp/quench-const-native-witness-20260905.log` (1 passed); full runtime is
+**736 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-constant-witness.log`.
 
 Latest source-only cache-hit refinement is at `43c8b2da0`: fused Add-chain
 cache hits now defer `PatchValues` construction until a render is required,
