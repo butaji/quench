@@ -20,6 +20,57 @@ pub enum RegionAbi {
     ArrayNumericLoop,
 }
 
+/// Physical boundary properties shared by selection, validation, and the
+/// invocation wrappers.  These are consequences of the declared ABI, not a
+/// second semantic implementation of the operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbiContract {
+    /// Number of machine words in the erased context argument. Scalar leaves
+    /// use typed FP/word arguments and therefore have no context pointer.
+    pub context_words: u8,
+    /// Whether VM register state is preserved by the physical entry itself.
+    /// Raw kernels write only their explicit context/live-out fields.
+    pub preserves_vm_registers: bool,
+    /// Whether an interior operation may call a Rust helper that can allocate,
+    /// throw, call JS, or re-enter. Raw kernels must keep this false.
+    pub may_call_helper: bool,
+    /// Whether a native backedge contains a runtime interruption checkpoint.
+    /// The current bounded array loop is false and is admitted only in finite
+    /// chunks; larger/unknown spans use the ordinary interruptible loop.
+    pub interruptible_backedge: bool,
+}
+
+impl RegionAbi {
+    pub const fn contract(self) -> AbiContract {
+        match self {
+            Self::Scalar => AbiContract {
+                context_words: 0,
+                preserves_vm_registers: true,
+                may_call_helper: false,
+                interruptible_backedge: false,
+            },
+            Self::Bridge => AbiContract {
+                context_words: 1,
+                preserves_vm_registers: false,
+                may_call_helper: true,
+                interruptible_backedge: true,
+            },
+            Self::ArrayKernel => AbiContract {
+                context_words: 1,
+                preserves_vm_registers: false,
+                may_call_helper: false,
+                interruptible_backedge: false,
+            },
+            Self::ArrayNumericLoop => AbiContract {
+                context_words: 1,
+                preserves_vm_registers: false,
+                may_call_helper: false,
+                interruptible_backedge: false,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegionRecord {
     pub key: RegionKey,
@@ -76,6 +127,10 @@ impl RegionContract {
         self.has_effect(OperationEffect::Allocate)
             || self.has_effect(OperationEffect::MayThrow)
             || self.has_effect(OperationEffect::Observable)
+    }
+
+    pub const fn abi_contract(self) -> AbiContract {
+        self.abi.contract()
     }
 
     pub const fn has_single_entry(self) -> bool {
@@ -328,6 +383,20 @@ mod generated_region_admission_tests {
         assert!(array.has_effect(crate::facts::OperationEffect::Control));
         assert!(array.requires_semantic_boundary());
         assert!(array.has_single_entry());
+    }
+
+    #[test]
+    fn abi_contracts_keep_scalar_bridge_and_raw_entries_distinct() {
+        assert_eq!(RegionAbi::Scalar.contract().context_words, 0);
+        assert!(RegionAbi::Scalar.contract().preserves_vm_registers);
+        assert!(RegionAbi::Bridge.contract().may_call_helper);
+        assert_eq!(RegionAbi::ArrayKernel.contract().context_words, 1);
+        assert!(!RegionAbi::ArrayKernel.contract().may_call_helper);
+        assert!(
+            !RegionAbi::ArrayNumericLoop
+                .contract()
+                .interruptible_backedge
+        );
     }
 }
 
