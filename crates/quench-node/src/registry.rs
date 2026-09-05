@@ -768,6 +768,9 @@ pub const SPEC_STREAM_DUPLEX: NodeSpec = NodeSpec::new("stream:Duplex", 0x0C02);
 pub const SPEC_STREAM_TRANSFORM: NodeSpec = NodeSpec::new("stream:Transform", 0x0C03);
 pub const SPEC_STREAM_PIPELINE: NodeSpec = NodeSpec::new("stream:pipeline", 0x0C04);
 pub const SPEC_STREAM_FINISHED: NodeSpec = NodeSpec::new("stream:finished", 0x0C05);
+pub const SPEC_STREAM_WRITABLE_WRITE_ADAPTER: NodeSpec =
+    NodeSpec::new("stream:Writable.writeAdapter", 2517);
+pub const CAP_STREAM_WRITABLE_WRITE_ADAPTER: CapId = SPEC_STREAM_WRITABLE_WRITE_ADAPTER.cap;
 node_api! {
     (SPEC_STREAM_FINISHED_EVENT, "stream:finished:event", 0x0C06),
     (SPEC_STREAM_FINISHED_ABORT, "stream:finished:abort", 0x0C07),
@@ -1119,8 +1122,7 @@ pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
-pub const SPEC_CP_GET_VALID_STDIO: NodeSpec =
-    NodeSpec::new("child_process:getValidStdio", 0x1e18);
+pub const SPEC_CP_GET_VALID_STDIO: NodeSpec = NodeSpec::new("child_process:getValidStdio", 0x1e18);
 node_api! {
     (SPEC_URL_PATH_TO_FILE_URL, CAP_URL_PATH_TO_FILE_URL, "url:pathToFileURL", 0x0505),
     (SPEC_URL_GET_HREF, CAP_URL_GET_HREF, "url:get:href", 0x0506),
