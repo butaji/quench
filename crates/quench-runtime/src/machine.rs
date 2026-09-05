@@ -1776,7 +1776,10 @@ impl NativeBinaryPlan {
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             let address = {
                 let mut slab = shared.borrow_mut();
-                let stencil = crate::stencil_select::select_stencil(key)
+                let stencil = crate::stencil_select::select_stencil_for_abi(
+                    key,
+                    crate::stencil_select::RegionAbi::ScalarWordPairBool,
+                )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
                     slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
@@ -1805,7 +1808,10 @@ impl NativeBinaryPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let stencil = crate::stencil_select::select_stencil(key)
+        let stencil = crate::stencil_select::select_stencil_for_abi(
+            key,
+            crate::stencil_select::RegionAbi::ScalarWordPairBool,
+        )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let address = arena.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
         arena.make_executable()?;
@@ -1892,7 +1898,10 @@ impl NativeBinaryPlan {
                 if self.is_unsigned_integer() {
                     let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                         let mut slab = shared.borrow_mut();
-                        let stencil = crate::stencil_select::select_stencil(self.key)
+                        let stencil = crate::stencil_select::select_stencil_for_abi(
+                            self.key,
+                            crate::stencil_select::RegionAbi::ScalarU32,
+                        )
                             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                         let address = slab.render_or_get(
                             &mut self.physical.cache,
@@ -1927,7 +1936,10 @@ impl NativeBinaryPlan {
                 }
                 let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                     let mut slab = shared.borrow_mut();
-                    let stencil = crate::stencil_select::select_stencil(self.key)
+                    let stencil = crate::stencil_select::select_stencil_for_abi(
+                        self.key,
+                        crate::stencil_select::RegionAbi::ScalarI32,
+                    )
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                     let address =
                         slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
@@ -2076,7 +2088,10 @@ impl NativeBinaryPlan {
             if self.returns_boolean() {
                 let rendered = (|| {
                     let mut slab = shared.borrow_mut();
-                    let stencil = crate::stencil_select::select_stencil(key)
+                    let stencil = crate::stencil_select::select_stencil_for_abi(
+                        key,
+                        crate::stencil_select::RegionAbi::ScalarBool,
+                    )
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                     let address =
                         slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
@@ -2109,7 +2124,10 @@ impl NativeBinaryPlan {
             }
             let rendered = (|| {
                 let mut slab = shared.borrow_mut();
-                let stencil = crate::stencil_select::select_stencil(key)
+                let stencil = crate::stencil_select::select_stencil_for_abi(
+                    key,
+                    crate::stencil_select::RegionAbi::Scalar,
+                )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
                     slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
@@ -2368,7 +2386,10 @@ impl NativeTruthinessPlan {
             let address = {
                 let values = crate::stencil_fact::PatchValues::from_site(&self.site);
                 let mut slab = shared.borrow_mut();
-                let stencil = crate::stencil_select::select_stencil(self.key)
+                let stencil = crate::stencil_select::select_stencil_for_abi(
+                    self.key,
+                    crate::stencil_select::RegionAbi::ScalarBool,
+                )
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address =
                     slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
@@ -2411,7 +2432,10 @@ impl NativeTruthinessPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let stencil = crate::stencil_select::select_stencil(self.key)
+        let stencil = crate::stencil_select::select_stencil_for_abi(
+            self.key,
+            crate::stencil_select::RegionAbi::ScalarBool,
+        )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let address = arena.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
@@ -2443,7 +2467,10 @@ impl NativeTruthinessPlan {
                 self.installed = InstalledTruthinessEntry::Unpublished;
             }
             let mut slab = shared.borrow_mut();
-            let stencil = crate::stencil_select::select_stencil(self.word_key)
+            let stencil = crate::stencil_select::select_stencil_for_abi(
+                self.word_key,
+                crate::stencil_select::RegionAbi::ScalarWordBool,
+            )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
                 slab.render_or_get(&mut self.physical.cache, self.word_key, stencil, &values)?;
@@ -2484,7 +2511,10 @@ impl NativeTruthinessPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let stencil = crate::stencil_select::select_stencil(self.word_key)
+        let stencil = crate::stencil_select::select_stencil_for_abi(
+            self.word_key,
+            crate::stencil_select::RegionAbi::ScalarWordBool,
+        )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let address =
             arena.render_or_get(&mut self.physical.cache, self.word_key, stencil, &values)?;
@@ -2513,7 +2543,10 @@ impl NativeTruthinessPlan {
                 self.installed = InstalledTruthinessEntry::Unpublished;
             }
             let mut slab = shared.borrow_mut();
-            let stencil = crate::stencil_select::select_stencil(self.pointer_key)
+            let stencil = crate::stencil_select::select_stencil_for_abi(
+                self.pointer_key,
+                crate::stencil_select::RegionAbi::ScalarWordBool,
+            )
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             let address =
                 slab.render_or_get(&mut self.physical.cache, self.pointer_key, stencil, &values)?;
@@ -2548,7 +2581,10 @@ impl NativeTruthinessPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let stencil = crate::stencil_select::select_stencil(self.pointer_key)
+        let stencil = crate::stencil_select::select_stencil_for_abi(
+            self.pointer_key,
+            crate::stencil_select::RegionAbi::ScalarWordBool,
+        )
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         let address =
             arena.render_or_get(&mut self.physical.cache, self.pointer_key, stencil, &values)?;
