@@ -1170,6 +1170,65 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn ordinary_source_lowering_executes_tagged_identity_inequality() {
+    let program = crate::reduce::reduce_source("var x = true; x !== false;")
+        .expect("identity inequality source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Binary
+                    && crate::ir::compact_binary_operator(instruction.flags)
+                        == Some(crate::ops::BinaryOp::StrictNotEqual)
+            })
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let Some(native) = plan.native_binary_at(pc) else {
+            return;
+        };
+        let instruction = view.instruction(pc).expect("identity inequality instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Boolean(true));
+        registers.write(usize::from(instruction.c), crate::value::Value::Boolean(false));
+        let environment = crate::environment::Environment::new();
+        let context = crate::vm::current_context_or_default();
+        let result = crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            std::rc::Rc::clone(&environment),
+        );
+        assert!(result.is_ok(), "tagged identity inequality should execute");
+        assert_eq!(
+            registers.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+        assert!(native.borrow().native_entry_count > 0, "inequality bytes must execute");
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must reach and execute inequality bytes");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_add_chain_executes_two_ops_with_one_entry() {
     let mut plan = super::NativeAddChainPlan {
         arena: None,
