@@ -12201,11 +12201,11 @@ fn cp_spawn_script_has_runtime_branch(args: &Value) -> bool {
             .ok()
             .and_then(|value| execute::to_js_string(&value).ok())
             .and_then(|path| std::fs::read_to_string(path).ok())
-            .is_some_and(|source| {
-                source.contains("process.argv")
-                    && (source.contains("child_process") || source.contains("childProcess"))
-                    && source.contains("process.send")
-            })
+            // A source-backed child that observes argv can select a distinct
+            // execution branch for the child entry.  Keep it on the real
+            // runner path; deriving only top-level console output would
+            // otherwise replay the parent's branch.
+            .is_some_and(|source| source.contains("process.argv"))
     })
 }
 

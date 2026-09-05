@@ -547,6 +547,14 @@ fn std_stream(is_error: bool) -> Value {
             )),
         ),
         (
+            "end".to_string(),
+            crate::host::capability(if is_error {
+                crate::registry::SPEC_STDERR_END
+            } else {
+                crate::registry::SPEC_STDOUT_END
+            }),
+        ),
+        (
             "ref".to_string(),
             crate::host::capability(crate::registry::SPEC_PROCESS_REF),
         ),
@@ -1207,6 +1215,31 @@ pub fn stream_write(
         sink(&chunk);
     }
     Ok(Value::Boolean(true))
+}
+
+/// `process.stdout.end(chunk)` / `process.stderr.end(chunk)` — write an
+/// optional final chunk and complete the process-owned stream.  The process
+/// streams are host-owned and do not expose a separately closable descriptor;
+/// completion therefore records the public writable state while preserving
+/// the ordinary output boundary.
+pub fn stream_end(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    is_error: bool,
+) -> Result<Value, VmError> {
+    if let Some(chunk) = args.first().filter(|value| !quench_runtime::is_callable(value)) {
+        stream_write(state, std::slice::from_ref(chunk), is_error)?;
+    }
+    if let Some(stream) = receiver {
+        let _ = quench_runtime::execute::set_property_in_place(
+            stream,
+            "writable",
+            Value::Boolean(false),
+        );
+        return Ok(stream.clone());
+    }
+    Ok(Value::Undefined)
 }
 
 /// `process._rawDebug(...args)` — low-level stderr formatting that bypasses
