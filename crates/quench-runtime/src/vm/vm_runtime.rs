@@ -265,6 +265,20 @@ fn try_native_word_truthiness(
     }
 }
 
+fn try_native_logical_not(
+    native: &std::cell::RefCell<crate::machine::NativeTruthinessPlan>,
+    registers: &crate::register_file::RegisterFile,
+    index: usize,
+) -> Option<bool> {
+    if let Some(truthy) = try_native_word_truthiness(native, registers, index) {
+        return Some(!truthy);
+    }
+    registers
+        .read_number(index)
+        .and_then(|value| native.borrow_mut().execute(value).ok())
+        .map(|truthy| !truthy)
+}
+
 fn identity_word(bits: u64) -> bool {
     matches!(
         crate::tagged_value::TaggedValue::from_bits(bits).decode(),
@@ -1787,6 +1801,24 @@ pub(crate) fn execute_optimized_code_step_from(
         }
         _ => {}
     }
+    if instruction.opcode == crate::ir::Opcode::Unary
+        && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not)
+    {
+        if let Some(native) = entry.native_truthiness.as_ref() {
+            if let Some(result) = try_native_logical_not(
+                native,
+                registers,
+                usize::from(instruction.b),
+            ) {
+                crate::execution_trace::stencil_observation(code, start, "logical_not", true);
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                write_value(registers, instruction.a, Value::Boolean(result));
+                return Ok((crate::completion::Completion::Normal, start + 1));
+            }
+            crate::execution_trace::stencil_observation(code, start, "logical_not", false);
+            crate::execution_trace::leaf_rejection("optimizing_native_logical_not");
+        }
+    }
     if instruction.opcode == crate::ir::Opcode::LoadLocal {
         if let Some(native) = entry.native_load_local.as_ref() {
             let source = crate::locals::with_current_ref(|environment| {
@@ -2354,6 +2386,27 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 }
                 crate::execution_trace::stencil_observation(code, pc, "truthy_number", false);
                 crate::execution_trace::leaf_rejection("native_truthy_number");
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::Unary
+            && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not)
+        {
+            if let Some(native) = plan.native_truthiness_at(pc) {
+                if let Some(result) = try_native_logical_not(
+                    native,
+                    registers,
+                    usize::from(instruction.b),
+                ) {
+                    registers.write_boolean(usize::from(instruction.a), result);
+                    crate::execution_trace::stencil_observation(
+                        code, pc, "logical_not", true,
+                    );
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    pc += 1;
+                    continue;
+                }
+                crate::execution_trace::stencil_observation(code, pc, "logical_not", false);
+                crate::execution_trace::leaf_rejection("native_logical_not");
             }
         }
         if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
