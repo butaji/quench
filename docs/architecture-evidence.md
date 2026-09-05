@@ -37,3 +37,5 @@ coverage; its native-byte witness remains the separate direct normal-driver test
 The prototype-property G path now has a normal baseline-driver witness in
 `/tmp/quench-prototype-native-20260905.log`; shadowing/accessor/dictionary cases
 stop the chain proof and remain on complete canonical property semantics.
+Latest post-guard runtime regression: **701 passed, 0 failed, 1 ignored** at
+`80d00a941` (`/tmp/quench-runtime-full-20260905-prototype-guard.log`).
