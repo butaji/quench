@@ -4466,6 +4466,10 @@ pub fn internal_binding(
                 "getProxyDetails".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
             ));
+            binding.push((
+                "arrayBufferViewHasBuffer".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
+            ));
         }
         return Ok(crate::host::namespace_object_from_pairs(binding));
     }
