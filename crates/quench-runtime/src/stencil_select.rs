@@ -44,13 +44,17 @@ pub struct AbiContract {
 }
 
 macro_rules! region_abi_catalog {
-    ($( $name:ident => $region_context:expr ),+ $(,)?) => {
+    ($( $name:ident => ($region_context:expr, $priority:expr) ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub enum RegionAbi { $( $name ),+ }
 
         impl RegionAbi {
             pub const fn accepts_region_context(self) -> bool {
                 match self { $(Self::$name => $region_context),+ }
+            }
+
+            pub const fn priority(self) -> u8 {
+                match self { $(Self::$name => $priority),+ }
             }
 
             pub const fn contract(self) -> AbiContract {
@@ -61,17 +65,17 @@ macro_rules! region_abi_catalog {
 }
 
 region_abi_catalog! {
-    Scalar => false,
-    TaggedWord => false,
-    ConstantWord => false,
-    ScalarBool => false,
-    ScalarWordBool => false,
-    ScalarWordPairBool => false,
-    ScalarI32 => false,
-    ScalarU32 => false,
-    Bridge => true,
-    ArrayKernel => true,
-    ArrayNumericLoop => true,
+    Scalar => (false, 0),
+    TaggedWord => (false, 0),
+    ConstantWord => (false, 0),
+    ScalarBool => (false, 0),
+    ScalarWordBool => (false, 0),
+    ScalarWordPairBool => (false, 0),
+    ScalarI32 => (false, 0),
+    ScalarU32 => (false, 0),
+    Bridge => (true, 1),
+    ArrayKernel => (true, 2),
+    ArrayNumericLoop => (true, 3),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
