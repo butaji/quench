@@ -498,9 +498,14 @@ fn try_push_frame(
 
 fn resume_machine_frame(
     generator: &GeneratorData,
-    state: &GeneratorState,
+    state: &mut GeneratorState,
     completion: crate::completion::Completion,
 ) -> Result<Value, VmError> {
+    // A resumed structured frame may suspend again at a different operation.
+    // Replace the old point before handing the promise back to the host; the
+    // next settlement must install the continuation that actually executed,
+    // not the point that caused the previous await.
+    state.suspension = completion.suspension_point().cloned();
     generator
         .machine
         .borrow_mut()

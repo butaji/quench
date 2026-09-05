@@ -299,6 +299,7 @@ fn process_async_continuation(
     if yielding {
         *generator.pending_yield.borrow_mut() = false;
         finish_async_yield(&generator, &result, state, value);
+        crate::cycle_collector::release_suspended_generator(&generator);
         return;
     }
     let resume = if matches!(state, PromiseState::Rejected(_)) {
@@ -306,6 +307,7 @@ fn process_async_continuation(
     } else {
         crate::generator::resume_async_after_await(&generator, false, value)
     };
+    let suspended_again = matches!(&resume, Err(VmError::Suspended(_)));
     match resume {
         Ok(value) => settle_async_result(
             &result,
@@ -313,10 +315,14 @@ fn process_async_continuation(
             async_function,
         ),
         Err(VmError::Suspended(awaited)) => {
-            register_async_generator(&awaited, generator, result, async_function);
+            crate::cycle_collector::release_suspended_generator(&generator);
+            register_async_generator(&awaited, Rc::clone(&generator), result, async_function);
         }
         Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
         Err(_) => reject_promise(&result, Value::Undefined),
+    }
+    if !suspended_again {
+        crate::cycle_collector::release_suspended_generator(&generator);
     }
 }
 
@@ -439,6 +445,7 @@ pub(crate) fn register_async_generator(
     result: Rc<PromiseData>,
     async_function: bool,
 ) {
+    crate::cycle_collector::retain_suspended_generator(&generator);
     awaited
         .continuations
         .borrow_mut()
