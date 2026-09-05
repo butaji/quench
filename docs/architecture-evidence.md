@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `615f20ef2` (cleanup files remain
+Evidence below is bound to source revision `a9f05d385` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -42,6 +42,10 @@ Scalar baseline owner eviction/rebuild now has an actual plan-driver test
 (1 passed, `/tmp/quench-scalar-owner-eviction-20260905.log`), and the full
 runtime at `615f20ef2` is **720 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-owner-eviction.log`).
+The composed indexed-update plan also evicts and rebuilds its shared owner in
+the normal-driver test (1 passed, `/tmp/quench-composed-owner-eviction-20260905.log`);
+its full runtime remains **720 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-composed-owner.log`).
 The fused indexed-update declaration also matches ordinary frontend lowering:
 `ordinary_source_lowering_executes_fused_indexed_numeric_update` passed at
 `375445281` (`/tmp/quench-array-update-source-20260905.log`), while its
