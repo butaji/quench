@@ -1518,12 +1518,11 @@ pub(crate) struct NativeBinaryPlan {
 }
 
 #[inline]
-fn exact_i32(value: f64) -> Option<i32> {
-    value.is_finite()
-        .then_some(value)
-        .filter(|value| value.trunc() == *value)
-        .filter(|value| *value >= f64::from(i32::MIN) && *value <= f64::from(i32::MAX))
-        .map(|value| value as i32)
+fn number_to_int32(value: f64) -> i32 {
+    // The canonical ToInt32 conversion is shared with the ordinary handler;
+    // native bitwise entries therefore preserve NaN/infinity, truncation and
+    // modulo-2^32 behavior instead of rejecting those Number values.
+    crate::intl::tolocale::value::to_int32(value)
 }
 
 impl NativeBinaryPlan {
@@ -1681,8 +1680,8 @@ impl NativeBinaryPlan {
         rhs: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         if self.integer_op.is_some() {
-            let left = exact_i32(lhs).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let right = exact_i32(rhs).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let left = number_to_int32(lhs);
+            let right = number_to_int32(rhs);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(entry) = self.int_entry {
                 if !self.integer_unsigned {
