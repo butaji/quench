@@ -1773,8 +1773,8 @@ impl NativeBinaryPlan {
             }
             self.tagged_shared_entry = None;
         }
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
+            let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             let (address, entry) = {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(key)
@@ -1783,6 +1783,7 @@ impl NativeBinaryPlan {
                 slab.make_executable(address)?;
                 (address, slab.word_pair_bool_entry(address)?)
             };
+            drop(values);
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.tagged_shared_entry = Some(owned);
             return match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
@@ -1799,6 +1800,7 @@ impl NativeBinaryPlan {
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         let arena = self
             .arena
             .as_mut()
@@ -1843,8 +1845,7 @@ impl NativeBinaryPlan {
                                 return Ok(f64::from(result));
                             }
                             Err(_) => {
-                                self.uint_entry = None;
-                                self.shared_uint_entry = None;
+                                self.clear_physical_capabilities();
                             }
                         }
                     }
@@ -1855,8 +1856,7 @@ impl NativeBinaryPlan {
                             return Ok(f64::from(result));
                         }
                         Err(_) => {
-                            self.int_entry = None;
-                            self.shared_int_entry = None;
+                            self.clear_physical_capabilities();
                         }
                     }
                 }
@@ -2011,8 +2011,7 @@ impl NativeBinaryPlan {
                         return Ok(result);
                     }
                     Err(_) => {
-                        self.entry = None;
-                        self.shared_entry = None;
+                        self.clear_physical_capabilities();
                     }
                 }
             }
@@ -2027,7 +2026,7 @@ impl NativeBinaryPlan {
                         self.note_native_entry();
                         return Ok(if result != 0 { 1.0 } else { 0.0 });
                     }
-                    Err(_) => self.shared_bool_entry = None,
+                    Err(_) => self.clear_physical_capabilities(),
                 }
             }
         }
@@ -2341,9 +2340,10 @@ impl NativeTruthinessPlan {
                     }
                     return Ok(result != 0);
                 }
-                self.shared_entry = None;
+                self.clear_shared_capabilities();
             }
             let (address, entry) = {
+                let values = crate::stencil_fact::PatchValues::from_site(&self.site);
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
@@ -2377,6 +2377,7 @@ impl NativeTruthinessPlan {
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         let arena = self
             .arena
             .as_mut()
@@ -2552,6 +2553,13 @@ pub(crate) struct NativeNullishPlan {
 }
 
 impl NativeNullishPlan {
+    #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.shared_entry = None;
+        self.entry = None;
+        self.cache.clear();
+    }
+
     fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -2601,8 +2609,6 @@ impl NativeNullishPlan {
         &mut self,
         bits: u64,
     ) -> Result<bool, crate::stencil_arena::ArenaError> {
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
-            .with_constant_bits(0x7ff8_4000_0000_0003);
         if let Some(shared) = self.shared_arena.clone() {
             if let Some(owned) = self.shared_entry {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(bits)) {
@@ -2612,9 +2618,11 @@ impl NativeNullishPlan {
                     }
                     return Ok(result != 0);
                 }
-                self.shared_entry = None;
+                self.clear_shared_capabilities();
             }
             let (address, entry) = {
+                let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+                    .with_constant_bits(0x7ff8_4000_0000_0003);
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
@@ -2634,8 +2642,7 @@ impl NativeNullishPlan {
                     self.native_entry_count = self.native_entry_count.saturating_add(1);
                 }
             } else {
-                self.shared_entry = None;
-                self.cache.clear();
+                self.clear_shared_capabilities();
             }
             return result;
         }
@@ -2649,6 +2656,8 @@ impl NativeNullishPlan {
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_constant_bits(0x7ff8_4000_0000_0003);
         let arena = self
             .arena
             .as_mut()
@@ -2714,6 +2723,13 @@ impl std::fmt::Debug for NativeLoadConstPlan {
 }
 
 impl NativeLoadConstPlan {
+    #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.shared_entry = None;
+        self.entry = None;
+        self.cache.clear();
+    }
+
     fn new_with_shared(
         bits: u64,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -2750,8 +2766,6 @@ impl NativeLoadConstPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
-            .with_constant_bits(self.bits);
         if let Some(shared) = self.shared_arena.clone() {
             if let Some(owned) = self.shared_entry {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry()) {
@@ -2761,8 +2775,10 @@ impl NativeLoadConstPlan {
                     }
                     return Ok(result);
                 }
-                self.shared_entry = None;
+                self.clear_shared_capabilities();
             }
+            let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+                .with_constant_bits(self.bits);
             let (address, entry) = {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
@@ -2782,8 +2798,7 @@ impl NativeLoadConstPlan {
                     Ok(result)
                 }
                 Err(error) => {
-                    self.shared_entry = None;
-                    self.cache.clear();
+                    self.clear_shared_capabilities();
                     Err(error)
                 }
             };
@@ -2798,6 +2813,8 @@ impl NativeLoadConstPlan {
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_constant_bits(self.bits);
         let arena = self
             .arena
             .as_mut()
@@ -2860,6 +2877,16 @@ impl std::fmt::Debug for NativeUnaryPlan {
 }
 
 impl NativeUnaryPlan {
+    #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.shared_entry = None;
+        self.shared_number_entry = None;
+        self.entry = None;
+        self.number_entry = None;
+        self.cache.clear();
+        self.lifecycle.reset();
+    }
+
     fn new_with_shared(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -3006,7 +3033,6 @@ impl NativeUnaryPlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         let operand = number_to_int32(value);
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(owned) = self.shared_entry {
@@ -3015,9 +3041,10 @@ impl NativeUnaryPlan {
                         self.note_entry();
                         return Ok(f64::from(result));
                     }
-                    Err(_) => self.shared_entry = None,
+                    Err(_) => self.clear_shared_capabilities(),
                 }
             }
+            let values = crate::stencil_fact::PatchValues::from_site(&self.site);
             let rendered = (|| {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
@@ -3051,6 +3078,7 @@ impl NativeUnaryPlan {
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         let arena = self.arena.as_mut().ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
@@ -3079,6 +3107,14 @@ pub(crate) struct NativeAddChainPlan {
 }
 
 impl NativeAddChainPlan {
+    #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.shared_entry = None;
+        self.entry = None;
+        self.cache.clear();
+        self.lifecycle.reset();
+    }
+
     fn new_with_arena(
         policy: crate::stencil_policy::ExecutionPolicy,
         shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
@@ -3143,7 +3179,7 @@ impl NativeAddChainPlan {
                 Ok(Some(value))
             }
             Err(_) => {
-                self.shared_entry = None;
+                self.clear_shared_capabilities();
                 Ok(None)
             }
         }
@@ -3210,7 +3246,7 @@ impl NativeAddChainPlan {
                 // before invocation. Drop every capability derived from that
                 // generation so the next attempt must revalidate and render;
                 // never retain a callable pointer after an ownership miss.
-                self.shared_entry = None;
+                self.clear_shared_capabilities();
                 self.cache.clear();
                 self.lifecycle.reset();
                 Err(error)
@@ -3320,6 +3356,14 @@ pub(crate) struct NativeMovePlan {
 }
 
 impl NativeMovePlan {
+    #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.shared_entry = None;
+        self.entry = None;
+        self.cache.clear();
+        self.lifecycle.reset();
+    }
+
     fn new_with_arena(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -3412,7 +3456,7 @@ impl NativeMovePlan {
                     self.note_entry();
                     return Ok(value);
                 }
-                Err(_) => self.shared_entry = None,
+                Err(_) => self.clear_shared_capabilities(),
             }
         }
         let key = match self.opcode {
@@ -3456,8 +3500,7 @@ impl NativeMovePlan {
                     Ok(value)
                 }
                 Err(error) => {
-                    self.shared_entry = None;
-                    self.cache.clear();
+                    self.clear_shared_capabilities();
                     self.lifecycle.reset();
                     Err(error)
                 }
@@ -3547,6 +3590,14 @@ pub(crate) struct NativePropertyPlan {
 }
 
 impl NativePropertyPlan {
+    #[inline]
+    fn clear_shared_capabilities(&mut self) {
+        self.shared_entry = None;
+        self.entry = None;
+        self.cache.clear();
+        self.lifecycle.reset();
+    }
+
     fn new_with_arena(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -3625,7 +3676,7 @@ impl NativePropertyPlan {
                         }
                         return Ok(bits);
                     }
-                    Err(_) => self.shared_entry = None,
+                    Err(_) => self.clear_shared_capabilities(),
                 }
             }
             let rendered = (|| -> Result<
