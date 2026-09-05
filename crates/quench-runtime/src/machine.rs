@@ -2965,6 +2965,7 @@ impl NativeMovePlan {
             crate::ir::Opcode::Move
                 | crate::ir::Opcode::LoadLocal
                 | crate::ir::Opcode::StoreLocal
+                | crate::ir::Opcode::SetN
         ) || instruction.flags != 0
         {
             return None;
@@ -2972,6 +2973,7 @@ impl NativeMovePlan {
         let key = match instruction.opcode {
             crate::ir::Opcode::LoadLocal => crate::stencil_select::load_local_region_key(),
             crate::ir::Opcode::StoreLocal => crate::stencil_select::store_local_region_key(),
+            crate::ir::Opcode::SetN => crate::stencil_select::store_property_region_key(),
             _ => crate::stencil_select::move_region_key(),
         };
         crate::stencil_select::select_region(key).filter(|record| {
@@ -3039,6 +3041,7 @@ impl NativeMovePlan {
         let key = match self.opcode {
             crate::ir::Opcode::LoadLocal => crate::stencil_select::load_local_region_key(),
             crate::ir::Opcode::StoreLocal => crate::stencil_select::store_local_region_key(),
+            crate::ir::Opcode::SetN => crate::stencil_select::store_property_region_key(),
             _ => crate::stencil_select::move_region_key(),
         };
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
@@ -4074,6 +4077,7 @@ pub(crate) struct BaselinePlan {
     native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
     native_load_local: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
     native_store_local: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
+    native_store_property: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
     native_property: Rc<[Option<Rc<RefCell<NativePropertyPlan>>>]>,
     native_dispatch: Rc<[Option<Rc<RefCell<NativeDispatchPlan>>>]>,
     native_regions: Rc<[Option<Rc<RefCell<NativeRegionPlan>>>]>,
@@ -4352,6 +4356,19 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let native_store_property = entries
+            .iter()
+            .map(|entry| {
+                NativeMovePlan::new_with_arena(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
+                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::SetN)
+                .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
         let native_dispatch = entries
             .iter()
             .map(|entry| {
@@ -4419,6 +4436,7 @@ impl BaselinePlan {
             native_move,
             native_load_local,
             native_store_local,
+            native_store_property,
             native_property,
             native_dispatch,
             native_regions,
@@ -4485,6 +4503,13 @@ impl BaselinePlan {
         self.native_store_local.get(pc).and_then(Option::as_deref)
     }
 
+    pub(crate) fn native_store_property_at(
+        &self,
+        pc: usize,
+    ) -> Option<&RefCell<NativeMovePlan>> {
+        self.native_store_property.get(pc).and_then(Option::as_deref)
+    }
+
     pub(crate) fn native_property_at(&self, pc: usize) -> Option<&RefCell<NativePropertyPlan>> {
         self.native_property.get(pc).and_then(Option::as_deref)
     }
@@ -4526,6 +4551,7 @@ pub(crate) struct OptimizingEntry {
     pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_load_local: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_store_local: Option<Rc<RefCell<NativeMovePlan>>>,
+    pub(crate) native_store_property: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_property: Option<Rc<RefCell<NativePropertyPlan>>>,
     pub(crate) native_dispatch: Option<Rc<RefCell<NativeDispatchPlan>>>,
     pub(crate) native_region: Option<Rc<RefCell<NativeRegionPlan>>>,
@@ -4556,6 +4582,10 @@ impl OptimizingPlan {
                 native_move: baseline.native_move.get(pc).and_then(Clone::clone),
                 native_load_local: baseline.native_load_local.get(pc).and_then(Clone::clone),
                 native_store_local: baseline.native_store_local.get(pc).and_then(Clone::clone),
+                native_store_property: baseline
+                    .native_store_property
+                    .get(pc)
+                    .and_then(Clone::clone),
                 native_property: baseline.native_property.get(pc).and_then(Clone::clone),
                 native_dispatch: baseline.native_dispatch.get(pc).and_then(Clone::clone),
                 native_region: (policy.fused_regions || policy.composed_regions)
