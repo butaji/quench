@@ -202,13 +202,13 @@ fn assert_single_text_section<'data>(file: &object::File<'data>) {
 }
 
 fn assert_target_architecture<'data>(file: &object::File<'data>, target: Option<&str>) {
-    let expected = target.and_then(|triple| {
+    let expected = target.map(|triple| {
         if triple.starts_with("aarch64") {
-            Some(object::Architecture::Aarch64)
+            object::Architecture::Aarch64
         } else if triple.starts_with("x86_64") {
-            Some(object::Architecture::X86_64)
+            object::Architecture::X86_64
         } else {
-            None
+            panic!("unsupported stencil artifact target {triple}");
         }
     });
     if let Some(expected) = expected {
