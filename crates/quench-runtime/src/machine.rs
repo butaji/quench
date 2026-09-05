@@ -3364,8 +3364,7 @@ enum InstalledWordEntry {
 pub(crate) struct NativeMovePlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
-    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
     installed: InstalledWordEntry,
@@ -3377,8 +3376,7 @@ impl NativeMovePlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
         self.installed = InstalledWordEntry::Unpublished;
-        self.cache.clear();
-        self.lifecycle.reset();
+        self.physical.clear();
     }
 
     fn new_with_arena(
@@ -3422,8 +3420,7 @@ impl NativeMovePlan {
         Some(Self {
             arena: None,
             shared_arena: None,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3487,27 +3484,23 @@ impl NativeMovePlan {
         };
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
-            || self.lifecycle.observe(key, true) == crate::stencil_lifecycle::StencilState::Retired
+            || self.physical.lifecycle.observe(key, true) == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         if let Some(shared) = self.shared_arena.clone() {
-            let rendered = (|| -> Result<
-                (usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
-                crate::stencil_arena::ArenaError,
-            > {
+            let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
-                Ok((address, slab.tagged_word_entry(address)?))
+                Ok(address)
             })();
-            let (address, entry) = match rendered {
+            let address = match rendered {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    self.cache.clear();
-                    self.lifecycle.reset();
+                    self.physical.clear();
                     return Err(error);
                 }
             };
@@ -3521,7 +3514,6 @@ impl NativeMovePlan {
                 }
                 Err(error) => {
                     self.clear_shared_capabilities();
-                    self.lifecycle.reset();
                     Err(error)
                 }
             };
@@ -3530,7 +3522,7 @@ impl NativeMovePlan {
             match crate::stencil_arena::StencilArena::new(4096) {
                 Ok(arena) => self.arena = Some(arena),
                 Err(error) => {
-                    self.lifecycle.reset();
+                    self.physical.lifecycle.reset();
                     return Err(error);
                 }
             }
@@ -3542,7 +3534,7 @@ impl NativeMovePlan {
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
             let record = crate::stencil_select::select_region(key)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address = arena.render_or_get(&mut self.cache, key, &record.stencil, &values)?;
+            let address = arena.render_or_get(&mut self.physical.cache, key, &record.stencil, &values)?;
             arena.make_executable()?;
             arena.execute_tagged_word(address, source)
         })();
@@ -3552,7 +3544,7 @@ impl NativeMovePlan {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
             if let Some(arena) = self.arena.as_ref() {
-                if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
+                if let Some(address) = self.physical.cache.get_owned(key, 0, arena.id()) {
                     self.installed = arena
                         .tagged_word_entry(address)
                         .map(|_| InstalledWordEntry::Local(address))
@@ -3562,8 +3554,7 @@ impl NativeMovePlan {
         }
         if result.is_err() {
             self.arena.take();
-            self.cache.clear();
-            self.lifecycle.reset();
+            self.physical.clear();
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 self.installed = InstalledWordEntry::Unpublished;
@@ -3587,7 +3578,7 @@ impl std::fmt::Debug for NativeMovePlan {
                     .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
                     .unwrap_or(0),
             )
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
