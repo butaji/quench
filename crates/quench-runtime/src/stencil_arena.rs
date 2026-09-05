@@ -96,13 +96,25 @@ pub struct SharedStencilSlab {
 /// execution fails closed if the owner changed.
 #[derive(Clone, Copy)]
 pub(crate) struct OwnedEntry<F: Copy> {
-    pub(crate) address: usize,
-    pub(crate) owner: u64,
-    pub(crate) entry: F,
+    address: usize,
+    owner: u64,
+    entry: F,
 }
 
 struct ActiveUse<'a> {
     owner: &'a SharedStencilSlab,
+}
+
+macro_rules! typed_owned_entry {
+    ($name:ident, $entry:ident, $ty:ty) => {
+        pub(crate) fn $name(
+            &self,
+            address: usize,
+        ) -> Result<OwnedEntry<$ty>, ArenaError> {
+            let entry = self.$entry(address)?;
+            self.owned_entry(address, entry)
+        }
+    };
 }
 
 impl Drop for ActiveUse<'_> {
@@ -222,7 +234,7 @@ impl SharedStencilSlab {
         self.slab_for(address).map(StencilArena::id)
     }
 
-    pub(crate) fn owned_entry<F: Copy>(
+    fn owned_entry<F: Copy>(
         &self,
         address: usize,
         entry: F,
@@ -230,6 +242,19 @@ impl SharedStencilSlab {
         let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
         Ok(OwnedEntry { address, owner, entry })
     }
+
+    typed_owned_entry!(owned_f64_entry, f64_entry, extern "C" fn(f64, f64) -> f64);
+    typed_owned_entry!(owned_f64x3_entry, f64x3_entry, extern "C" fn(f64, f64, f64) -> f64);
+    typed_owned_entry!(owned_bool_entry, bool_entry, extern "C" fn(f64, f64) -> u64);
+    typed_owned_entry!(owned_i32_entry, i32_entry, extern "C" fn(i32, i32) -> i32);
+    typed_owned_entry!(owned_u32_entry, u32_entry, extern "C" fn(u32, u32) -> u32);
+    typed_owned_entry!(owned_f64_unary_entry, f64_unary_entry, extern "C" fn(f64) -> f64);
+    typed_owned_entry!(owned_i32_unary_entry, i32_unary_entry, extern "C" fn(i32) -> i32);
+    typed_owned_entry!(owned_bool_unary_entry, bool_unary_entry, extern "C" fn(f64) -> u64);
+    typed_owned_entry!(owned_word_bool_entry, word_bool_entry, extern "C" fn(u64) -> u64);
+    typed_owned_entry!(owned_word_pair_bool_entry, word_pair_bool_entry, extern "C" fn(u64, u64) -> u64);
+    typed_owned_entry!(owned_constant_word_entry, constant_word_entry, extern "C" fn() -> u64);
+    typed_owned_entry!(owned_tagged_word_entry, tagged_word_entry, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64);
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
