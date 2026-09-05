@@ -3777,8 +3777,7 @@ impl std::fmt::Debug for NativePropertyPlan {
 pub(crate) struct NativeDispatchPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
-    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
 }
@@ -3828,8 +3827,7 @@ impl NativeDispatchPlan {
         Some(Self {
             arena: None,
             shared_arena: None,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
         })
@@ -3847,7 +3845,7 @@ impl NativeDispatchPlan {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_pointer_bits(crate::vm::native_dispatch_bridge as *const () as usize);
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
-            || self.lifecycle.observe_site(&self.site, key, true)
+            || self.physical.lifecycle.observe_site(&self.site, key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(NativeDispatchError::Physical(
@@ -3861,7 +3859,7 @@ impl NativeDispatchPlan {
                     NativeDispatchError::Physical("native baseline stencil missing".into())
                 })?;
                 let address = slab
-                    .render_or_get(&mut self.cache, key, &record.stencil, &values)
+                    .render_or_get(&mut self.physical.cache, key, &record.stencil, &values)
                     .map_err(|error| {
                         NativeDispatchError::Physical(format!(
                             "native baseline render failed: {error:?}"
@@ -3889,8 +3887,7 @@ impl NativeDispatchPlan {
                 dispatch.finish(status)
             })();
             if matches!(result, Err(NativeDispatchError::Physical(_))) {
-                self.cache.clear();
-                self.lifecycle.reset();
+                self.physical.clear();
             }
             return result;
         }
@@ -3898,7 +3895,7 @@ impl NativeDispatchPlan {
             match crate::stencil_arena::StencilArena::new(4096) {
                 Ok(arena) => self.arena = Some(arena),
                 Err(error) => {
-                    self.lifecycle.reset();
+                    self.physical.lifecycle.reset();
                     return Err(NativeDispatchError::Physical(format!(
                         "native baseline mapping failed: {error:?}"
                     )));
@@ -3913,7 +3910,7 @@ impl NativeDispatchPlan {
                 NativeDispatchError::Physical("native baseline stencil missing".into())
             })?;
             let address = arena
-                .render_or_get(&mut self.cache, key, &record.stencil, &values)
+                .render_or_get(&mut self.physical.cache, key, &record.stencil, &values)
                 .map_err(|error| {
                     NativeDispatchError::Physical(format!(
                         "native baseline render failed: {error:?}"
@@ -3944,8 +3941,7 @@ impl NativeDispatchPlan {
             // protection, or the bridge fails, discard the physical view and
             // make the caller use the complete ordinary path next time.
             self.arena.take();
-            self.cache.clear();
-            self.lifecycle.reset();
+            self.physical.clear();
         }
         result
     }
@@ -3965,7 +3961,7 @@ impl std::fmt::Debug for NativeDispatchPlan {
                     .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
                     .unwrap_or(0),
             )
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
