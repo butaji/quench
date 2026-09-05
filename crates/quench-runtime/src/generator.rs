@@ -18,6 +18,19 @@ thread_local! {
     // of exhausting the Rust thread stack.
     static RESUME_DEPTH: Cell<usize> = const { Cell::new(0) };
     static ASYNC_CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static LAST_AWAIT_DESTINATION: Cell<Option<u16>> = const { Cell::new(None) };
+}
+
+pub(crate) fn record_await_destination(destination: u16) {
+    LAST_AWAIT_DESTINATION.with(|slot| slot.set(Some(destination)));
+}
+
+pub(crate) fn take_await_destination() -> Option<u16> {
+    LAST_AWAIT_DESTINATION.with(Cell::take)
+}
+
+pub(crate) fn peek_await_destination() -> Option<u16> {
+    LAST_AWAIT_DESTINATION.with(Cell::get)
 }
 
 pub(crate) struct AsyncCallGuard;
@@ -676,6 +689,21 @@ fn resume_suspended_contexts(
                 crate::machine::Frame::Loop { .. } | crate::machine::Frame::Iterator { .. }
             )
         })
+    {
+        generator.machine.borrow_mut().pop_await_frame();
+    }
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Await { .. })
+    ) && generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .iter()
+        .rev()
+        .nth(1)
+        .is_some_and(|frame| matches!(frame, crate::machine::Frame::Try { .. }))
     {
         generator.machine.borrow_mut().pop_await_frame();
     }
