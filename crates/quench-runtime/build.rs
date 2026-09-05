@@ -69,6 +69,14 @@ const fn aarch64_b() -> u32 {
     0x1400_0000
 }
 
+const fn aarch64_b_imm26(words: i32) -> u32 {
+    0x1400_0000 | (words as u32 & 0x03FF_FFFF)
+}
+
+const fn aarch64_b_cond(words: i32, condition: u8) -> u32 {
+    0x5400_0000 | ((words as u32 & 0x7_FFFF) << 5) | (condition as u32 & 0xF)
+}
+
 /// AArch64 scalar double literal load, ARM ARM C6.2.167. The immediate is
 /// measured in bytes from the instruction's PC and must be 4-byte aligned.
 const fn aarch64_ldr_d_literal(rt: u8, byte_offset: i32) -> u32 {
@@ -392,9 +400,9 @@ const AARCH64_ARRAY_LOOP_BYTES: [u8; 100] = {
     put32(&mut out, 4, 0xF940_0C02); // ldr x2, [x0, #24] (end)
     put32(&mut out, 8, 0xFD40_1400); // ldr d0, [x0, #40] (initial result)
     put32(&mut out, 12, 0x1E60_4001); // fmov d1, d0 (zero-iteration result)
-    put32(&mut out, 16, 0x1400_0001); // b loop header (skip one instruction)
+    put32(&mut out, 16, aarch64_b_imm26(1)); // b loop header (skip one instruction)
     put32(&mut out, 20, 0xEB02_003F); // cmp x1, x2
-    put32(&mut out, 24, 0x5400_01A2); // b.hs done (to result publication)
+    put32(&mut out, 24, aarch64_b_cond(13, 2)); // b.hs done (to result publication)
     put32(&mut out, 28, 0xF940_0003); // ldr x3, [x0]
     put32(&mut out, 32, 0x8B01_0C64); // add x4, x3, x1, lsl #3
     put32(&mut out, 36, 0xFD40_0081); // ldr d1, [x4]
@@ -406,7 +414,7 @@ const AARCH64_ARRAY_LOOP_BYTES: [u8; 100] = {
     put32(&mut out, 60, 0xF940_1805); // ldr x5, [x0, #48] (interrupt flag)
     put32(&mut out, 64, 0x3940_00A6); // ldrb w6, [x5]
     put32(&mut out, 68, 0x3500_00A6); // cbnz w6, interrupted
-    put32(&mut out, 72, 0x17FF_FFF3); // b loop header (13 instructions backwards)
+    put32(&mut out, 72, aarch64_b_imm26(-13)); // b loop header (13 instructions backwards)
     put32(&mut out, 76, 0xFD00_1401); // str d1, [x0, #40]
     put32(&mut out, 80, 0x5280_0020); // mov w0, #1
     put32(&mut out, 84, aarch64_ret());
@@ -1068,7 +1076,7 @@ fn verify_stencil_encodings() {
         0x1E60_4001,
         0x1400_0001,
         0xEB02_003F,
-        0x5400_0142,
+        aarch64_b_cond(10, 2),
         0xF940_0003,
         0x8B01_0C64,
         0xFD40_0081,
@@ -1077,8 +1085,8 @@ fn verify_stencil_encodings() {
         0xFD00_0081,
         0x9100_0421,
         0xF900_0801,
-        0x17FF_FFF8,
-        0x17FF_FFF6,
+        aarch64_b_imm26(-8),
+        aarch64_b_imm26(-10),
         0xFD00_1401,
         aarch64_ldr_d_literal(1, 16),
         aarch64_ldr_x0_x0(),
@@ -1098,7 +1106,7 @@ fn verify_stencil_encodings() {
                 .try_into()
                 .unwrap(),
         ),
-        0x1400_0001,
+        aarch64_b_imm26(1),
         "numeric loop entry branch must skip one-time initialization"
     );
     assert_eq!(
@@ -1107,7 +1115,7 @@ fn verify_stencil_encodings() {
                 .try_into()
                 .unwrap(),
         ),
-        0x17FF_FFF3,
+        aarch64_b_imm26(-13),
         "numeric loop backedge must target the condition header"
     );
     fs::remove_file(&arm_source).ok();
