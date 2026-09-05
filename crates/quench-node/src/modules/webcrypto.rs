@@ -733,7 +733,16 @@ pub fn generate_key(
             .unwrap_or_else(|| host_api::array(Vec::new()));
         let bits = match execute::get_property(&algorithm, "length") {
             Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
-            Value::Undefined => hmac_default_length(&algorithm).unwrap_or(256),
+            Value::Undefined => {
+                let Some(length) = hmac_default_length(&algorithm) else {
+                    return Ok(settled(Err(error(
+                        Builtin::TypeError,
+                        Some("ERR_MISSING_OPTION"),
+                        "The \"hash\" option is required",
+                    ))));
+                };
+                length
+            }
             _ => 256,
         };
         let data = vec![0_u8; bits.div_ceil(8)];
@@ -1170,8 +1179,12 @@ fn signature_bytes(algorithm: &Value, key: &Value, data: &[u8]) -> Result<Vec<u8
             .replace('-', "");
         let hash = match hash.as_str() {
             "sha1" => "sha1",
+            "sha224" => "sha224",
             "sha384" => "sha384",
             "sha512" => "sha512",
+            "sha3256" => "sha3-256",
+            "sha3384" => "sha3-384",
+            "sha3512" => "sha3-512",
             _ => "sha256",
         };
         let key_data = execute::get_property(key, KEY_DATA_PROP);
