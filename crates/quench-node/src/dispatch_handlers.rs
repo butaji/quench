@@ -7533,6 +7533,34 @@ pub fn cp_spawn_sync(
                     }
                 };
                 let is_windows = platform == "win32";
+                let shell_enabled = matches!(shell, Value::Boolean(true) | Value::String(_));
+                if !shell_enabled {
+                    let mut internal_options = execute::own_enumerable_keys(options)
+                        .into_iter()
+                        .filter(|key| key != "file" && key != "args")
+                        .map(|key| {
+                            let value = execute::get_property(options, &key);
+                            let value = if key == "killSignal" {
+                                match value {
+                                    Value::String(ref signal) => {
+                                        signal_number(signal).map_or(value, Value::Number)
+                                    }
+                                    _ => value,
+                                }
+                            } else {
+                                value
+                            };
+                            (key.clone(), value)
+                        })
+                        .collect::<Vec<_>>();
+                    internal_options.push(("file".into(), command.clone()));
+                    internal_options.push(("args".into(), child_args.clone()));
+                    return execute::call(
+                        &spawn_sync,
+                        &Value::Undefined,
+                        &[host_api::object(internal_options)],
+                    );
+                }
                 let shell_file = match shell.clone() {
                     Value::String(value) => value,
                     Value::Boolean(true) if is_windows => {
@@ -7631,6 +7659,19 @@ pub fn cp_spawn_sync(
         return crate::modules::child_process::spawn_sync(state, &[file, child_args, options]);
     }
     crate::modules::child_process::spawn_sync(state, args)
+}
+
+fn signal_number(signal: &str) -> Option<f64> {
+    Some(match signal.to_ascii_uppercase().as_str() {
+        "SIGHUP" => 1.0,
+        "SIGINT" => 2.0,
+        "SIGQUIT" => 3.0,
+        "SIGKILL" => 9.0,
+        "SIGTERM" => 15.0,
+        "SIGUSR1" => 30.0,
+        "SIGUSR2" => 31.0,
+        _ => return None,
+    })
 }
 
 pub fn cp_spawn(
