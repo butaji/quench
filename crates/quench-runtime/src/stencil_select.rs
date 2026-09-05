@@ -393,10 +393,11 @@ mod generated_region_admission_tests {
                 }
                 RegionAbi::ScalarI32 => {
                     assert!(matches!(record.stencil.bytes.len(), 5 | 8));
-                    assert!(record.operations.starts_with(&[
-                        crate::ir::Opcode::Binary,
-                        crate::ir::Opcode::Return
-                    ]));
+                    assert!(matches!(
+                        record.operations,
+                        [crate::ir::Opcode::Binary, crate::ir::Opcode::Return]
+                            | [crate::ir::Opcode::Unary, crate::ir::Opcode::Return]
+                    ));
                 }
                 RegionAbi::ScalarU32 => {
                     assert!(matches!(record.stencil.bytes.len(), 7 | 8));

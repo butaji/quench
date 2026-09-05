@@ -293,6 +293,7 @@ vm_op! {
     GetPropertyQuickened = 29 / 3 => [ReadHeap, MayThrow, Observable] / get_property / Value / Next / [] / run_compact_get_property,
     GetNQuickened = 30 / 3 => [ReadHeap, MayThrow, Observable] / get_named / Value / Next / [] / run_compact_get_named,
     AGetIQuickened = 31 / 3 => [ReadHeap, MayThrow, Observable] / get_element / Value / Next / [] / run_compact_get_index,
+    Unary = 32 / 3 => [MayThrow] / unary / Value / Next / [] / run_unary_instruction,
 }
 
 macro_rules! compact_binary_operators {
@@ -333,6 +334,31 @@ compact_binary_operators! {
     Instanceof = 22,
 }
 
+macro_rules! compact_unary_operators {
+    ($($operator:ident = $id:literal),+ $(,)?) => {
+        pub const fn compact_unary_id(operator: crate::ops::UnaryOp) -> u8 {
+            match operator { $(crate::ops::UnaryOp::$operator => $id),+ }
+        }
+
+        pub const fn compact_unary_operator(id: u8) -> Option<crate::ops::UnaryOp> {
+            match id { $($id => Some(crate::ops::UnaryOp::$operator),)+ _ => None }
+        }
+    };
+}
+
+compact_unary_operators! {
+    Plus = 0,
+    Minus = 1,
+    Not = 2,
+    BitwiseNot = 3,
+    Void = 4,
+    Typeof = 5,
+    ToString = 6,
+    ToNumeric = 7,
+    Delete = 8,
+    IsNullish = 9,
+}
+
 impl Opcode {
     pub const fn is_compact(self) -> bool {
         (self as u8) <= Self::COUNT
@@ -356,10 +382,19 @@ pub struct Instruction {
 ///
 /// Counters are derived directly from the existing instruction data and do
 /// not participate in dispatch or duplicate runtime semantics.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpcodeMetrics {
     pub frequency: [u64; Opcode::COUNT as usize + 1],
     pub operand_words: [u64; Opcode::COUNT as usize + 1],
+}
+
+impl Default for OpcodeMetrics {
+    fn default() -> Self {
+        Self {
+            frequency: [0; Opcode::COUNT as usize + 1],
+            operand_words: [0; Opcode::COUNT as usize + 1],
+        }
+    }
 }
 
 impl OpcodeMetrics {
@@ -568,6 +603,17 @@ impl Instruction {
             c: rhs,
         }
     }
+
+    pub const fn unary_operator(dst: Register, operator: crate::ops::UnaryOp, src: Register) -> Self {
+        Self {
+            opcode: Opcode::Unary,
+            flags: compact_unary_id(operator),
+            a: dst,
+            b: src,
+            c: 0,
+        }
+    }
+
     pub const fn load_local_checked(dst: Register, slot: u16) -> Self {
         Self {
             opcode: Opcode::LoadLocalChecked,
@@ -910,6 +956,9 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
         Op::Move { dst, src } => Some(Instruction::move_(*dst, *src)),
         Op::LoadLocal { dst, slot } => Some(Instruction::load_local(*dst, *slot)),
         Op::StoreLocal { slot, src } => Some(Instruction::store_local(*slot, *src)),
+        Op::Unary { dst, operator, src } => {
+            Some(Instruction::unary_operator(*dst, *operator, *src))
+        }
         Op::LoadBinding {
             dst,
             slot,
@@ -1393,7 +1442,8 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::AGetIQuickened as u8);
+        assert_eq!(Opcode::COUNT, Opcode::Unary as u8);
+        assert!(Opcode::AGetIQuickened.is_compact());
         assert!(Opcode::Slow.is_compact());
     }
 

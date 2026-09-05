@@ -243,6 +243,16 @@ impl SharedStencilSlab {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn i32_unary_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(i32) -> i32, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .i32_unary_entry(address)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn u32_entry(
         &self,
         address: usize,
@@ -458,6 +468,19 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(i32, i32) -> i32, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn i32_unary_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(i32) -> i32, ArenaError> {
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {

@@ -1372,6 +1372,7 @@ fn register_count_for(instructions: &[crate::ir::Instruction]) -> u16 {
                 usize::from(instruction.a.max(instruction.b))
             }
             crate::ir::Opcode::Move
+            | crate::ir::Opcode::Unary
             | crate::ir::Opcode::Add
             | crate::ir::Opcode::Sub
             | crate::ir::Opcode::Mul
@@ -1983,6 +1984,105 @@ impl std::fmt::Debug for NativeBinaryPlan {
             )
             .field("cache_len", &self.cache.len())
             .finish()
+    }
+}
+
+/// Typed unary leaf for the exact Number-to-Int32 bitwise-not subset. Other
+/// unary operators retain the canonical residual handler and coercion order.
+pub(crate) struct NativeUnaryPlan {
+    arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    site: crate::quickening::QuickeningSite<4>,
+    key: crate::stencil_fact::RegionKey,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    entry: Option<extern "C" fn(i32) -> i32>,
+    #[cfg(test)]
+    native_entry_count: u64,
+}
+
+impl std::fmt::Debug for NativeUnaryPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeUnaryPlan")
+            .field("key", &self.key)
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
+impl NativeUnaryPlan {
+    fn new_with_shared(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(instruction, policy)?;
+        plan.shared_arena = Some(shared);
+        Some(plan)
+    }
+
+    fn new(instruction: crate::ir::Instruction, policy: crate::stencil_policy::ExecutionPolicy) -> Option<Self> {
+        let key = crate::stencil_select::bitwise_not_region_key();
+        (policy.native_leaves
+            && instruction.opcode == crate::ir::Opcode::Unary
+            && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::BitwiseNot)
+            && crate::stencil_select::select_region(key).is_some_and(|record| {
+                record.executable && record.abi == crate::stencil_select::RegionAbi::ScalarI32
+            }))
+            .then_some(Self {
+                arena: None,
+                shared_arena: None,
+                cache: crate::stencil_select::RenderedRegionCache::new(),
+                lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+                site: crate::quickening::QuickeningSite::new(instruction.opcode),
+                key,
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                entry: None,
+                #[cfg(test)]
+                native_entry_count: 0,
+            })
+    }
+
+    #[inline]
+    fn note_entry(&mut self) {
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn execute(&mut self, value: f64) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let operand = number_to_int32(value);
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        if let Some(shared) = self.shared_arena.clone() {
+            let rendered = (|| {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(self.key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                slab.make_executable(address)?;
+                Ok((address, slab.i32_unary_entry(address)?))
+            })();
+            let (address, entry) = rendered.map_err(|error| {
+                self.cache.clear();
+                self.lifecycle.reset();
+                error
+            })?;
+            let result = shared.borrow().with_active(address, || entry(operand))?;
+            self.note_entry();
+            return Ok(f64::from(result));
+        }
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let arena = self.arena.as_mut().ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
+        arena.make_executable()?;
+        let result = (arena.i32_unary_entry(address)?)(operand);
+        self.note_entry();
+        Ok(f64::from(result))
     }
 }
 
@@ -3130,6 +3230,7 @@ pub(crate) struct BaselinePlan {
     /// is an admission map only; each leaf still executes through the same
     /// complete handler on a failed numeric guard or unsupported platform.
     native_binary: Rc<[Option<Rc<RefCell<NativeBinaryPlan>>>]>,
+    native_unary: Rc<[Option<Rc<RefCell<NativeUnaryPlan>>>]>,
     native_add_chains: Rc<[Option<Rc<RefCell<NativeAddChainPlan>>>]>,
     native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
     native_property: Rc<[Option<Rc<RefCell<NativePropertyPlan>>>]>,
@@ -3278,6 +3379,18 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let native_unary = entries
+            .iter()
+            .map(|entry| {
+                NativeUnaryPlan::new_with_shared(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
+                .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
         let native_add_chains = entries
             .iter()
             .enumerate()
@@ -3382,6 +3495,7 @@ impl BaselinePlan {
             entries,
             osr_entries,
             native_binary,
+            native_unary,
             native_add_chains,
             native_move,
             native_property,
@@ -3401,6 +3515,10 @@ impl BaselinePlan {
 
     pub(crate) fn native_binary_at(&self, pc: usize) -> Option<&RefCell<NativeBinaryPlan>> {
         self.native_binary.get(pc).and_then(Option::as_deref)
+    }
+
+    pub(crate) fn native_unary_at(&self, pc: usize) -> Option<&RefCell<NativeUnaryPlan>> {
+        self.native_unary.get(pc).and_then(Option::as_deref)
     }
 
     pub(crate) fn native_add_chain_at(&self, pc: usize) -> Option<&RefCell<NativeAddChainPlan>> {
@@ -3445,6 +3563,7 @@ pub(crate) struct OptimizingPlan {
 pub(crate) struct OptimizingEntry {
     pub(crate) baseline: BaselineEntry,
     pub(crate) native_binary: Option<Rc<RefCell<NativeBinaryPlan>>>,
+    pub(crate) native_unary: Option<Rc<RefCell<NativeUnaryPlan>>>,
     pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_property: Option<Rc<RefCell<NativePropertyPlan>>>,
     pub(crate) native_dispatch: Option<Rc<RefCell<NativeDispatchPlan>>>,
@@ -3469,6 +3588,7 @@ impl OptimizingPlan {
             .map(|(pc, entry)| OptimizingEntry {
                 baseline: *entry,
                 native_binary: baseline.native_binary.get(pc).and_then(Clone::clone),
+                native_unary: baseline.native_unary.get(pc).and_then(Clone::clone),
                 native_move: baseline.native_move.get(pc).and_then(Clone::clone),
                 native_property: baseline.native_property.get(pc).and_then(Clone::clone),
                 native_dispatch: baseline.native_dispatch.get(pc).and_then(Clone::clone),
