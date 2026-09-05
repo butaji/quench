@@ -8682,8 +8682,10 @@ pub fn cp_spawn_output_emit(
             execute::get_property(child, "\0childSpawnIpc"),
             Value::Boolean(true)
         )
-            || cp_spawn_script_stdout(&child_args).is_some()
+            || (cp_spawn_script_stdout(&child_args).is_some()
+                && !cp_spawn_script_has_runtime_branch(&child_args))
             || cp_spawn_script_requires_in_process(&child_args)
+            || cp_spawn_script_uses_stdin(&child_args)
             || cp_spawn_eval_requires_in_process(&child_args));
     let real_child = if source_driven {
         None
@@ -8746,12 +8748,15 @@ pub fn cp_spawn_output_emit(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
     ) {
-        match &command {
-            Value::String(filename) => std::fs::read_to_string(filename)
-                .ok()
-                .and_then(|source| cp_script_write_output(&source, "process.stderr.write"))
-                .unwrap_or_default(),
-            _ => String::new(),
+        match execute::get_property(&stderr, "\0childPendingOutput") {
+            Value::String(value) => value,
+            _ => match &command {
+                Value::String(filename) => std::fs::read_to_string(filename)
+                    .ok()
+                    .and_then(|source| cp_script_write_output(&source, "process.stderr.write"))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            },
         }
     } else if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
@@ -9044,11 +9049,19 @@ pub fn cp_spawn_output_emit(
             emit(&stdout, "readable", Vec::new())?;
         }
     } else {
-        emit(
-            &stdout,
-            "data",
-            vec![cp_stream_output_value(&stdout, &stdout_text)?],
-        )?;
+        if !stdout_text.is_empty() {
+            emit(
+                &stdout,
+                "data",
+                vec![cp_stream_output_value(&stdout, &stdout_text)?],
+            )?;
+        }
+        if matches!(
+            execute::get_property(child, "\0childForkIpc"),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(&stdout, "\0childPendingOutput", Value::Undefined);
+        }
     }
     let stderr_target = execute::get_property(&stderr, "\0childOutputTarget");
     if matches!(stderr_target, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -9065,6 +9078,12 @@ pub fn cp_spawn_output_emit(
             "data",
             vec![cp_stream_output_value(&stderr, &stderr_text)?],
         )?;
+        if matches!(
+            execute::get_property(child, "\0childForkIpc"),
+            Value::Boolean(true)
+        ) {
+            execute::set_property_in_place(&stderr, "\0childPendingOutput", Value::Undefined);
+        }
     }
     emit(&stdout, "end", Vec::new())?;
     emit(&stderr, "end", Vec::new())?;
@@ -9309,6 +9328,22 @@ pub fn cp_stdin_write(
     // the data just as they do for an out-of-process child.
     if matches!(
         execute::get_property(receiver, "\0forkStdoutTarget"),
+        Value::Boolean(true)
+    ) {
+        let previous = execute::get_property(receiver, "\0childPendingOutput");
+        let chunk = args
+            .first()
+            .and_then(|value| execute::to_js_string(value).ok())
+            .unwrap_or_default();
+        let output = match previous {
+            Value::String(previous) => format!("{previous}{chunk}"),
+            _ => chunk,
+        };
+        execute::set_property_in_place(receiver, "\0childPendingOutput", Value::String(output));
+        return Ok(Value::Boolean(true));
+    }
+    if matches!(
+        execute::get_property(receiver, "\0forkStderrTarget"),
         Value::Boolean(true)
     ) {
         let previous = execute::get_property(receiver, "\0childPendingOutput");
@@ -9843,6 +9878,25 @@ pub fn cp_fork(
         };
         (fork_args, options)
     };
+    // Node's `fork(..., { silent: true })` is the named shorthand for piped
+    // stdin/stdout/stderr plus the mandatory IPC channel. Normalize that
+    // semantic fact before the shared spawn machinery derives stream
+    // identities, so silent children cannot leak their output to the parent
+    // while still retaining ordinary IPC behavior.
+    if matches!(execute::get_property(&options, "silent"), Value::Boolean(true))
+        && matches!(execute::get_property(&options, "stdio"), Value::Undefined)
+    {
+        options = execute::set_property(
+            options,
+            "stdio",
+            host_api::array(vec![
+                Value::String("pipe".into()),
+                Value::String("pipe".into()),
+                Value::String("pipe".into()),
+                Value::String("ipc".into()),
+            ]),
+        );
+    }
     if let Value::Array(array) = &fork_args {
         let has_nul = (0..array.logical_len()).any(|index| {
             execute::to_js_string(
@@ -10017,9 +10071,11 @@ fn fork_child_start(
     let previous_env = execute::get_property(&process, "env");
     let previous_exec_path = execute::get_property(&process, "execPath");
     let previous_stdout = execute::get_property(&process, "stdout");
+    let previous_stderr = execute::get_property(&process, "stderr");
     let previous_stdin = execute::get_property(&process, "stdin");
     let console = execute::get_property(&global, "console");
     let previous_console_stdout = execute::get_property(&console, "_stdout");
+    let previous_console_stderr = execute::get_property(&console, "_stderr");
     let argv0 = execute::get_property_result(&previous_argv, "0")
         .unwrap_or_else(|_| Value::String("quench-node".into()));
     let mut child_argv = vec![argv0, Value::String(filename.clone())];
@@ -10072,6 +10128,17 @@ fn fork_child_start(
             "_stdout",
             execute::get_property(&process, "stdout"),
         );
+    }
+    let child_stderr = execute::get_property(child, "stderr");
+    if matches!(child_stderr, Value::Object(_) | Value::ObjectAlias(_)) {
+        execute::set_property_in_place(&child_stderr, "\0forkStderrTarget", Value::Boolean(true));
+        execute::set_property_in_place(
+            &child_stderr,
+            "write",
+            crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+        );
+        execute::set_property_in_place(&process, "stderr", child_stderr.clone());
+        execute::set_property_in_place(&console, "_stderr", child_stderr);
     }
     let child_stdin = execute::get_property(child, "stdin");
     if matches!(child_stdin, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -10129,8 +10196,10 @@ fn fork_child_start(
     execute::set_property_in_place(&process, "env", previous_env);
     execute::set_property_in_place(&process, "execPath", previous_exec_path);
     execute::set_property_in_place(&process, "stdout", previous_stdout);
+    execute::set_property_in_place(&process, "stderr", previous_stderr);
     execute::set_property_in_place(&process, "stdin", previous_stdin);
     execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
+    execute::set_property_in_place(&console, "_stderr", previous_console_stderr);
     let timers_after = state
         .borrow()
         .timers
@@ -10272,12 +10341,6 @@ pub fn cp_disconnect(
     }
     execute::set_property_in_place(&child, "connected", Value::Boolean(false));
     execute::set_property_in_place(receiver, "connected", Value::Boolean(false));
-    let stdout = execute::get_property(&child, "stdout");
-    crate::modules::events::method_emit(
-        state,
-        Some(&stdout),
-        &[Value::String("data".into()), Value::String("3".into())],
-    )?;
     let process = if matches!(
         execute::get_property(&child, "\0forkProcess"),
         Value::Object(_) | Value::ObjectAlias(_)
@@ -10315,6 +10378,7 @@ pub fn cp_disconnect_emit(
         )?;
     }
     if matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_))) {
+        let child = args.first().expect("checked child object");
         let process = args.get(1).expect("checked process object");
         let previous_scope = state.borrow().cluster.process_scope();
         let previous_event_scope = state.borrow().event_loop.process_scope();
@@ -10328,13 +10392,46 @@ pub fn cp_disconnect_emit(
             state.borrow_mut().cluster.set_process_scope(scope);
             state.borrow().event_loop.set_process_scope(scope);
         }
+        let previous_stdout = execute::get_property(process, "stdout");
+        let previous_stderr = execute::get_property(process, "stderr");
+        let global = quench_runtime::vm::current_global_object();
+        let console = execute::get_property(&global, "console");
+        let previous_console_stdout = execute::get_property(&console, "_stdout");
+        let previous_console_stderr = execute::get_property(&console, "_stderr");
+        let child_stdout = execute::get_property(child, "stdout");
+        let child_stderr = execute::get_property(child, "stderr");
+        execute::set_property_in_place(process, "stdout", child_stdout.clone());
+        execute::set_property_in_place(process, "stderr", child_stderr.clone());
+        execute::set_property_in_place(&console, "_stdout", child_stdout);
+        execute::set_property_in_place(&console, "_stderr", child_stderr);
         execute::set_property_in_place(process, "connected", Value::Boolean(false));
         crate::modules::process::emit(state, &[Value::String("disconnect".into())])?;
+        execute::set_property_in_place(process, "stdout", previous_stdout);
+        execute::set_property_in_place(process, "stderr", previous_stderr);
+        execute::set_property_in_place(&console, "_stdout", previous_console_stdout);
+        execute::set_property_in_place(&console, "_stderr", previous_console_stderr);
         state.borrow_mut().cluster.set_process_scope(previous_scope);
         state
             .borrow()
             .event_loop
             .set_process_scope(previous_event_scope);
+        for stream_name in ["stdout", "stderr"] {
+            let stream = execute::get_property(child, stream_name);
+            let pending = execute::get_property(&stream, "\0childPendingOutput");
+            if let Value::String(text) = pending {
+                if !text.is_empty() {
+                    crate::modules::events::method_emit(
+                        state,
+                        Some(&stream),
+                        &[
+                            Value::String("data".into()),
+                            cp_stream_output_value(&stream, &text)?,
+                        ],
+                    )?;
+                }
+                execute::set_property_in_place(&stream, "\0childPendingOutput", Value::Undefined);
+            }
+        }
     }
     if let Some(child) = args.first() {
         for event in ["exit", "close"] {
@@ -12087,6 +12184,23 @@ fn cp_spawn_script_requires_in_process(args: &Value) -> bool {
     })
 }
 
+fn cp_spawn_script_has_runtime_branch(args: &Value) -> bool {
+    let Value::Array(array) = args else {
+        return false;
+    };
+    (0..array.logical_len()).any(|index| {
+        execute::get_property_result(args, &index.to_string())
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|source| {
+                source.contains("process.argv")
+                    && (source.contains("child_process") || source.contains("childProcess"))
+                    && source.contains("process.send")
+            })
+    })
+}
+
 fn cp_args_have_abort_policy(args: &Value) -> bool {
     let Value::Array(array) = args else {
         return false;
@@ -12139,7 +12253,9 @@ fn cp_spawn_script_uses_stdin(args: &Value) -> bool {
         .iter()
         .find(|path| path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".cjs"))
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .is_some_and(|source| source.contains("process.stdin"))
+        .is_some_and(|source| {
+            source.contains("process.stdin") || source.contains("process.openStdin")
+        })
 }
 
 fn cp_spawn_module_uses_stdin(args: &Value) -> bool {
