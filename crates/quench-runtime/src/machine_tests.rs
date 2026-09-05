@@ -893,6 +893,7 @@ fn native_property_uses_rendered_address_without_remapping() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         opcode: crate::ir::Opcode::GetN,
         entry: None,
+        shared_entry: None,
         native_entry_count: 0,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
@@ -904,6 +905,34 @@ fn native_property_uses_rendered_address_without_remapping() {
     assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
     assert_eq!(plan.native_entry_count, 2);
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_property_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::GetN,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativePropertyPlan::new_with_arena(instruction, policy, shared.clone())
+        .expect("shared property plan");
+    let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
+    let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
+    assert!(plan.execute(&slot, &site).is_ok());
+    let used = shared.borrow().used();
+    assert!(plan.shared_entry.is_some());
+    assert!(plan.execute(&slot, &site).is_ok());
+    assert_eq!(shared.borrow().used(), used);
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert!(plan.execute(&slot, &site).is_ok());
+    assert!(plan.shared_entry.is_some(), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
