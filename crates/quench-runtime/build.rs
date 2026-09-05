@@ -1556,9 +1556,12 @@ fn main() {
 /// Set `QUENCH_VERIFY_STENCIL_ENCODINGS=1` to compare Rust global_asm output
 /// with the generated words.
 fn verify_stencil_encodings() {
-    let root = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR for stencil verification"))
-        .join(format!("verify-{}", std::process::id()));
-    fs::create_dir_all(&root).expect("create stencil verification directory");
+    let target = env::var("TARGET").unwrap_or_default();
+    if !target.starts_with("aarch64") {
+        println!("cargo:warning=skipping AArch64 stencil verification for target {target}");
+        return;
+    }
+    let root = unique_verification_directory();
     let arm_source = root.join("arm.rs");
     let arm_object = root.join("arm.o");
     fs::write(
@@ -1584,7 +1587,6 @@ fn verify_stencil_encodings() {
             .expect("append ARM numeric-loop verification source");
         source.write_all(b"\n\"#);\n").expect("close global_asm source");
     }
-    let target = env::var("TARGET").unwrap_or_else(|_| "aarch64-apple-darwin".to_owned());
     run_tool(
         Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())).args([
             "--target", target.as_str(), "--crate-type=lib", "--emit=obj", "-Cpanic=abort",
@@ -1658,6 +1660,21 @@ fn verify_stencil_encodings() {
     fs::remove_file(&arm_source).ok();
     fs::remove_file(&arm_object).ok();
     fs::remove_dir(&root).ok();
+}
+
+fn unique_verification_directory() -> PathBuf {
+    let base = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR for stencil verification"));
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_nanos();
+    for attempt in 0..8u8 {
+        let root = base.join(format!("stencil-verify-{stamp}-{}-{attempt}", std::process::id()));
+        if fs::create_dir(&root).is_ok() {
+            return root;
+        }
+    }
+    panic!("cannot create unique stencil verification directory");
 }
 
 fn strip_global_asm_terminator(path: &std::path::Path) {
