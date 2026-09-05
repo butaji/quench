@@ -987,40 +987,58 @@ impl NativeArrayLoopContext {
 /// complete canonical region and may not invoke the bytes.  A physical error
 /// is distinct because the kernel was entered and cannot be safely retried.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+fn region_matches_generated_array_decl(
+    region: &NativeRegionContext<'_>,
+    key: crate::stencil_fact::RegionKey,
+) -> bool {
+    crate::stencil_select::select_region(key).is_some_and(|record| {
+        matches!(
+            record.abi,
+            crate::stencil_select::RegionAbi::ArrayKernel
+                | crate::stencil_select::RegionAbi::ArrayNumericLoop
+        ) && record.operations == region.operations
+    })
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn execute_composed_array_kernel(
     region: &mut NativeRegionContext<'_>,
     invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     #[cfg(target_arch = "aarch64")]
-    if region.operations == [crate::ir::Opcode::AGetI] {
+    if region_matches_generated_array_decl(
+        region,
+        crate::stencil_select::array_get_number_region_key(),
+    ) {
         return execute_composed_array_get(region, invoke);
     }
     #[cfg(target_arch = "aarch64")]
-    if region.operations == [crate::ir::Opcode::AGetIInc] {
+    if region_matches_generated_array_decl(
+        region,
+        crate::stencil_select::array_get_inc_number_region_key(),
+    ) {
         return execute_composed_array_get_inc(region, invoke);
     }
     #[cfg(target_arch = "aarch64")]
-    if region.operations == [crate::ir::Opcode::ASetI] {
+    if region_matches_generated_array_decl(
+        region,
+        crate::stencil_select::array_set_number_region_key(),
+    ) {
         return execute_composed_array_set(region, invoke);
     }
     #[cfg(target_arch = "aarch64")]
-    if region.operations
-        == [
-            crate::ir::Opcode::AGetI,
-            crate::ir::Opcode::Add,
-            crate::ir::Opcode::ASetI,
-        ]
-    {
+    if region_matches_generated_array_decl(
+        region,
+        crate::stencil_select::array_numeric_update_region_key(),
+    ) {
         return execute_composed_array_update(region, invoke);
     }
     #[cfg(target_arch = "aarch64")]
-    if region.operations
-        == [
-            crate::ir::Opcode::AGetI,
-            crate::ir::Opcode::AddConst,
-            crate::ir::Opcode::ASetI,
-        ]
-    {
+    if region_matches_generated_array_decl(
+        region,
+        crate::stencil_select::array_numeric_update_const_region_key(),
+    ) {
         return execute_composed_array_update(region, invoke);
     }
     let code = region.code;
