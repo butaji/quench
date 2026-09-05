@@ -109,8 +109,14 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let root = unique_directory();
     let mut constants = Vec::new();
     let mut rows = Vec::new();
-    for declaration in declarations.iter().filter(|item| extractable(item)) {
-        let artifact = compile_one(&root.path, &target, &compiler, &flags, declaration);
+    for declaration in declarations {
+        if !declaration.holes.is_empty() || !declaration.aarch64_holes.is_empty() {
+            continue;
+        }
+        let Some(recipe) = super::rust_leaf_recipe(declaration.operations) else {
+            continue;
+        };
+        let artifact = compile_one(&root.path, &target, &compiler, &flags, declaration, recipe);
         let (constant, row) = render_artifact(declaration.name, &target, &compiler, &fingerprint, &artifact);
         constants.push(constant);
         rows.push(row);
@@ -124,26 +130,26 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     generated
 }
 
-fn extractable(declaration: &RegionDeclaration) -> bool {
-    declaration.holes.is_empty()
-        && declaration.aarch64_holes.is_empty()
-        && super::rust_leaf_recipe(declaration.operations).is_some()
-}
-
-fn rust_source(declaration: &RegionDeclaration) -> String {
-    let recipe = super::rust_leaf_recipe(declaration.operations).expect("extractable recipe");
+fn rust_source(name: &str, recipe: super::RustLeafRecipe) -> String {
     format!(
         "#![no_std]\n#[no_mangle]\n#[inline(never)]\npub extern \"C\" fn q_{}({}) -> f64 {{ {} }}\n",
-        declaration.name,
+        name,
         recipe.parameters(),
         recipe.expression()
     )
 }
 
-fn compile_one(root: &Path, target: &str, compiler: &str, flags: &[&str], declaration: &RegionDeclaration) -> Vec<u8> {
+fn compile_one(
+    root: &Path,
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    declaration: &RegionDeclaration,
+    recipe: super::RustLeafRecipe,
+) -> Vec<u8> {
     let source = root.join(format!("{}.rs", declaration.name));
     let object = root.join(format!("{}.o", declaration.name));
-    fs::write(&source, rust_source(declaration)).expect("write Rust stencil source");
+    fs::write(&source, rust_source(declaration.name, recipe)).expect("write Rust stencil source");
     let mut command = Command::new(compiler);
     command.args(["--target", target]).args(flags).args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
     run(&mut command, "compile Rust stencil object");
