@@ -3463,11 +3463,19 @@ pub fn build() -> Value {
         "prototype",
         execute::get_property(&read_stream, "prototype"),
     );
+    let write_stream = crate::host::capability(SPEC_FS_WRITESTREAM);
+    let write_stream_proto = host_api::object(Vec::new());
+    let _ = execute::set_property_in_place(
+        &write_stream_proto,
+        "constructor",
+        write_stream.clone(),
+    );
+    let _ = execute::set_property_in_place(&write_stream, "prototype", write_stream_proto);
     props.extend([
         ("createReadStream", create_read_stream),
-        ("createWriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
+        ("createWriteStream", write_stream.clone()),
         ("ReadStream", read_stream),
-        ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
+        ("WriteStream", write_stream),
     ]);
     props.extend(sync_props());
     props.extend([
@@ -3607,7 +3615,7 @@ pub fn open(
 
 pub fn create_read_stream(
     state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args
@@ -3624,6 +3632,20 @@ pub fn create_read_stream(
         }
         value => Some(path_arg(value)?),
     };
+    // `ReadStream` is callable as well as constructable.  In the callable
+    // form Node initializes the supplied receiver (not a fresh return value),
+    // which is required by old-style subclasses that invoke
+    // `fs.ReadStream.call(this, ...)`.
+    let module_receiver = state
+        .borrow()
+        .module_cache
+        .get("fs")
+        .is_some_and(|module| receiver.is_some_and(|value| execute::same_value(value, module)));
+    let supplied_receiver = receiver
+        .filter(|value| {
+            !module_receiver && matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+        })
+        .cloned();
     let mut stream = readable_stream(state, &options)?;
     // ReadStream instances inherit the public constructor prototype (which is
     // patchable by user code) while retaining the ordinary Readable methods.
@@ -3639,9 +3661,24 @@ pub fn create_read_stream(
         if matches!(current_proto, Value::Object(_) | Value::ObjectAlias(_)) {
             let _ = execute::set_prototype_of(&read_proto, &current_proto);
         }
-        if let Ok(updated) = execute::set_prototype_of(&stream, &read_proto) {
-            stream = updated;
+        if supplied_receiver.is_none() {
+            if let Ok(updated) = execute::set_prototype_of(&stream, &read_proto) {
+                stream = updated;
+            }
         }
+    }
+    if let Some(receiver) = supplied_receiver {
+        // Copy the freshly-created Readable instance's own state into the
+        // caller-owned receiver.  Keep its existing prototype so a subclass
+        // retains overrides installed on its own prototype.
+        for key in execute::own_keys(&stream) {
+            let Value::String(key) = key else {
+                continue;
+            };
+            let value = execute::get_property(&stream, &key);
+            let _ = execute::set_property_in_place(&receiver, &key, value);
+        }
+        stream = receiver;
     }
     execute::set_property_in_place(
         &stream,
@@ -3696,6 +3733,16 @@ pub fn create_read_stream(
     } else {
         crate::host::capability(crate::registry::SPEC_FS_READSTREAM_OPEN)
     };
+    // Event-loop callbacks run with an undefined receiver.  Bind `open` to
+    // the stream so user-overridden ReadStream.prototype.open observes the
+    // same `this` as Node; host capabilities still receive the existing
+    // stream argument unchanged.
+    let open = execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::FunctionBind),
+        &open,
+        &[stream.clone()],
+    )
+    .unwrap_or(open);
     defer(
         state,
         &open,
@@ -3720,6 +3767,17 @@ fn readable_stream(state: &Rc<RefCell<HostState>>, _options: &Value) -> Result<V
 /// so both forms share option validation and lifecycle state.
 pub fn construct_read_stream(
     state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    create_read_stream(state, None, args)
+}
+
+/// `createReadStream()` is an ordinary factory call.  Keep it on a separate
+/// dispatch entry so its module receiver is not mistaken for the legacy
+/// callable `ReadStream` constructor's user-supplied `this`.
+pub fn create_read_stream_factory(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     create_read_stream(state, None, args)
@@ -4006,7 +4064,31 @@ pub fn validate_write_stream_options(
         .or_else(|| state.borrow().module_cache.get("fs").cloned())
         .or_else(|| receiver.cloned())
         .unwrap_or_else(build);
-    let stream = crate::modules::events::new_emitter_object(state)?;
+    let module_receiver = state
+        .borrow()
+        .module_cache
+        .get("fs")
+        .is_some_and(|module| receiver.is_some_and(|value| execute::same_value(value, module)));
+    let supplied_receiver = receiver
+        .filter(|value| {
+            !module_receiver && matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+        })
+        .cloned();
+    let mut stream = crate::modules::events::new_emitter_object(state)?;
+    if let Some(write_ctor) = state
+        .borrow()
+        .module_cache
+        .get("fs")
+        .map(|module| execute::get_property(module, "WriteStream"))
+    {
+        let write_proto = execute::get_property(&write_ctor, "prototype");
+        if matches!(write_proto, Value::Object(_) | Value::ObjectAlias(_)) {
+            let current_proto = execute::get_prototype_of(&stream).unwrap_or(Value::Undefined);
+            if matches!(current_proto, Value::Object(_) | Value::ObjectAlias(_)) {
+                let _ = execute::set_prototype_of(&write_proto, &current_proto);
+            }
+        }
+    }
     for (name, value) in [
         ("fd", fd),
         ("path", Value::String(path)),
@@ -4035,7 +4117,30 @@ pub fn validate_write_stream_options(
     ] {
         let _ = execute::set_property_in_place(&stream, name, value);
     }
-    let open = crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_OPEN);
+    if let Some(receiver) = supplied_receiver {
+        for key in execute::own_keys(&stream) {
+            let Value::String(key) = key else {
+                continue;
+            };
+            let value = execute::get_property(&stream, &key);
+            let _ = execute::set_property_in_place(&receiver, &key, value);
+        }
+        stream = receiver;
+    }
+    let open = {
+        let candidate = execute::get_property(&stream, "open");
+        if quench_runtime::is_callable(&candidate) {
+            candidate
+        } else {
+            crate::host::capability(crate::registry::SPEC_FS_WRITE_STREAM_OPEN)
+        }
+    };
+    let open = execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::FunctionBind),
+        &open,
+        &[stream.clone()],
+    )
+    .unwrap_or(open);
     defer(
         state,
         &open,
