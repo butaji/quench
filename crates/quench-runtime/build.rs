@@ -212,6 +212,19 @@ const fn x86_nullish_word_bytes() -> [u8; 27] {
     ]
 }
 
+const fn x86_truthy_word_bytes() -> [u8; 20] {
+    // A guarded word entry admits only Bool/Null/Undefined tags.  Comparing
+    // with the canonical true payload therefore implements ToBoolean without
+    // decoding or allocating; numbers and heap values stay on the VM path.
+    [
+        0x48, 0xB9, 0, 0, 0, 0, 0, 0, 0, 0, // mov rcx, true bits
+        0x48, 0x39, 0xCF, // cmp rdi, rcx
+        0x0F, 0x94, 0xC0, // sete al
+        0x0F, 0xB6, 0xC0, // movzx eax, al
+        0xC3,
+    ]
+}
+
 const NULLISH_UNDEFINED_BITS: u64 = 0x7ff8_4000_0000_0003;
 
 const fn x86_compare_not_equal_bytes() -> [u8; 11] {
@@ -296,6 +309,7 @@ const X86_SHIFT_RIGHT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xFF, 0x89, 0xF8, 0xC3
 const X86_SHIFT_RIGHT_ZERO_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xEF, 0x89, 0xF8, 0xC3];
 const X86_BITWISE_NOT_BYTES: [u8; 5] = x86_i32_unary_not();
 const X86_NULLISH_WORD_BYTES: [u8; 27] = x86_nullish_word_bytes();
+const X86_TRUTHY_WORD_BYTES: [u8; 20] = x86_truthy_word_bytes();
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -353,6 +367,15 @@ const fn aarch64_nullish_word_bytes() -> [u8; 32] {
     out
 }
 
+const fn aarch64_truthy_word_bytes() -> [u8; 24] {
+    let mut out = [0; 24];
+    put32(&mut out, 0, aarch64_ldr_x1_literal(16));
+    put32(&mut out, 4, aarch64_cmp_x0_x1());
+    put32(&mut out, 8, aarch64_cset_eq_w0());
+    put32(&mut out, 12, aarch64_ret());
+    out
+}
+
 const fn aarch64_and_w0_w0_w1() -> u32 {
     0x0A01_0000
 }
@@ -400,6 +423,7 @@ const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
     aarch64_pair(0x1AC1_2400, aarch64_ret());
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
 const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
+const AARCH64_TRUTHY_WORD_BYTES: [u8; 24] = aarch64_truthy_word_bytes();
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -1154,6 +1178,21 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         portable_bytes: &[0xC3],
         holes: &[(9, 8, "Literal64")],
         aarch64_holes: &[(24, 8, "Literal64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "truthy_word",
+        // The caller guards this entry to canonical Bool/Null/Undefined
+        // words.  Only the true Bool payload is truthy; all other admitted
+        // payloads are false.  Number and heap words use ordinary semantics.
+        operations: &["JumpIfFalse"],
+        abi: DeclAbi::ScalarWordBool,
+        x86_bytes: &X86_TRUTHY_WORD_BYTES,
+        aarch64_bytes: &AARCH64_TRUTHY_WORD_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(2, 8, "Literal64")],
+        aarch64_holes: &[(16, 8, "Literal64")],
         entry: 0,
         external_entries: &[0],
     },
