@@ -4032,15 +4032,25 @@ impl NativeRegionPlan {
                 })?;
             region.finish(status)
         })();
-        if matches!(result, Err(NativeDispatchError::Physical(_))) {
-            // The arena is shared by every composed entry in this baseline
-            // plan. Retiring one region must discard only its cache/lifecycle
-            // metadata; dropping the shared owner here would invalidate other
-            // still-active entry pointers.
-            self.cache.clear();
-            self.lifecycle.reset();
-        }
+        self.retire_on_failure(&result);
         result
+    }
+
+    fn retire_on_failure(
+        &mut self,
+        result: &Result<crate::vm::DispatchTransition, NativeDispatchError>,
+    ) {
+        if !matches!(
+            result,
+            Err(NativeDispatchError::Physical(_) | NativeDispatchError::Committed(_))
+        ) {
+            return;
+        }
+        // Both pre-entry rejection and post-entry failure retire this
+        // physical version. A committed failure is never retried through the
+        // same bytes; the shared owner remains live for other regions.
+        self.cache.clear();
+        self.lifecycle.reset();
     }
 }
 
