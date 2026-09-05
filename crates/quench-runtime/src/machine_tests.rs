@@ -524,7 +524,7 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
 
 #[test]
 fn ordinary_source_lowering_admits_guarded_bitwise_region() {
-    let program = crate::reduce::reduce_source("var x = 240; x = x & 15; x;")
+    let program = crate::reduce::reduce_source("var x = 240; x = (x & 15) << 1; x;")
         .expect("bitwise source lowers");
     let code = program.code();
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
@@ -559,6 +559,13 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
             }) else {
                 return;
             };
+            let shift_pc = (0..view.len()).find(|pc| {
+                view.instruction(*pc).is_some_and(|instruction| {
+                    instruction.opcode == crate::ir::Opcode::Binary
+                        && crate::ir::compact_binary_operator(instruction.flags)
+                            == Some(crate::ops::BinaryOp::ShiftLeft)
+                })
+            });
             let plan = super::BaselinePlan::compile_for_test(view, policy);
             let run = |input: f64, expected: f64| {
                 let mut registers = crate::register_file::RegisterFile::with_undefined(
@@ -579,14 +586,18 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
                 assert_eq!(environment.get(5), crate::value::Value::Number(expected));
             };
             run(240.0, 0.0);
-            run(1.5, 1.0);
+            run(1.5, 2.0);
             run(f64::NAN, 0.0);
             run(f64::INFINITY, 0.0);
-            run(4_294_967_297.0, 1.0);
+            run(4_294_967_297.0, 2.0);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert!(plan
                 .native_binary_at(binary_pc)
                 .is_some_and(|native| native.borrow().int_entry.is_some()));
+            assert!(shift_pc.is_some_and(|pc| {
+                plan.native_binary_at(pc)
+                    .is_some_and(|native| native.borrow().int_entry.is_some())
+            }));
             executed = true;
         });
     });
