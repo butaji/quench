@@ -32,6 +32,15 @@ pub struct AbiContract {
     /// The bounded array loop polls its context flag; larger/unknown spans use
     /// the ordinary interruptible loop.
     pub interruptible_backedge: bool,
+    /// Hardware registers the template may clobber. A preserving leaf must
+    /// declare an empty mask; bridge/raw entries name their bounded scratch
+    /// set so exit materialization can be audited separately.
+    pub hardware_clobber_mask: u16,
+    /// Canonical live-out slots published by the physical entry. Bit zero is
+    /// the ordinary result slot; wider masks are reserved for region exits.
+    pub live_out_mask: u16,
+    /// Whether the caller must expose VM roots before a helper-capable entry.
+    pub root_materialization_required: bool,
 }
 
 macro_rules! region_abi_catalog {
@@ -39,7 +48,10 @@ macro_rules! region_abi_catalog {
         context_arg_words: $words:literal,
         preserves_vm_registers: $preserves:literal,
         may_call_helper: $helpers:literal,
-        interruptible_backedge: $interruptible:literal
+        interruptible_backedge: $interruptible:literal,
+        hardware_clobber_mask: $clobbers:literal,
+        live_out_mask: $live_out:literal,
+        root_materialization_required: $roots:literal
     }),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub enum RegionAbi { $( $name ),+ }
@@ -52,6 +64,9 @@ macro_rules! region_abi_catalog {
                         preserves_vm_registers: $preserves,
                         may_call_helper: $helpers,
                         interruptible_backedge: $interruptible,
+                        hardware_clobber_mask: $clobbers,
+                        live_out_mask: $live_out,
+                        root_materialization_required: $roots,
                     }, )+
                 }
             }
@@ -64,43 +79,64 @@ region_abi_catalog! {
         context_arg_words: 0,
         preserves_vm_registers: true,
         may_call_helper: false,
-        interruptible_backedge: false
+        interruptible_backedge: false,
+        hardware_clobber_mask: 0,
+        live_out_mask: 1,
+        root_materialization_required: false
     },
     TaggedWord {
         context_arg_words: 0,
         preserves_vm_registers: true,
         may_call_helper: false,
-        interruptible_backedge: false
+        interruptible_backedge: false,
+        hardware_clobber_mask: 0,
+        live_out_mask: 1,
+        root_materialization_required: false
     },
     ScalarI32 {
         context_arg_words: 0,
         preserves_vm_registers: true,
         may_call_helper: false,
-        interruptible_backedge: false
+        interruptible_backedge: false,
+        hardware_clobber_mask: 0,
+        live_out_mask: 1,
+        root_materialization_required: false
     },
     ScalarU32 {
         context_arg_words: 0,
         preserves_vm_registers: true,
         may_call_helper: false,
-        interruptible_backedge: false
+        interruptible_backedge: false,
+        hardware_clobber_mask: 0,
+        live_out_mask: 1,
+        root_materialization_required: false
     },
     Bridge {
         context_arg_words: 1,
         preserves_vm_registers: false,
         may_call_helper: true,
-        interruptible_backedge: false
+        interruptible_backedge: false,
+        hardware_clobber_mask: 0xffff,
+        live_out_mask: 0xffff,
+        root_materialization_required: true
     },
     ArrayKernel {
         context_arg_words: 1,
         preserves_vm_registers: false,
         may_call_helper: false,
-        interruptible_backedge: false
+        interruptible_backedge: false,
+        hardware_clobber_mask: 0x0003,
+        live_out_mask: 1,
+        root_materialization_required: false
     },
     ArrayNumericLoop {
         context_arg_words: 1,
         preserves_vm_registers: false,
         may_call_helper: false,
-        interruptible_backedge: true
+        interruptible_backedge: true,
+        hardware_clobber_mask: 0x0007,
+        live_out_mask: 0x0003,
+        root_materialization_required: false
     }
 }
 
@@ -156,6 +192,17 @@ impl RegionContract {
             .any(|opcode| opcode.has_effect(effect))
     }
 
+    pub const fn has_control_effect(self) -> bool {
+        let mut index = 0;
+        while index < self.operations.len() {
+            if self.operations[index].has_effect(OperationEffect::Control) {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
     pub fn requires_semantic_boundary(self) -> bool {
         self.has_effect(OperationEffect::Allocate)
             || self.has_effect(OperationEffect::MayThrow)
@@ -168,6 +215,15 @@ impl RegionContract {
 
     pub const fn has_single_entry(self) -> bool {
         self.external_entries.len() == 1 && self.external_entries[0] == self.entry
+    }
+
+    pub const fn abi_is_well_formed(self) -> bool {
+        let abi = self.abi_contract();
+        (!abi.preserves_vm_registers || abi.hardware_clobber_mask == 0)
+            && (abi.preserves_vm_registers || abi.hardware_clobber_mask != 0)
+            && (!self.operations.is_empty() || abi.live_out_mask == 0)
+            && (!abi.may_call_helper || abi.root_materialization_required)
+            && (!abi.interruptible_backedge || self.has_control_effect())
     }
 }
 
@@ -463,6 +519,12 @@ mod generated_region_admission_tests {
         assert!(!RegionAbi::ArrayKernel.contract().may_call_helper);
         assert!(!RegionAbi::Bridge.contract().interruptible_backedge);
         assert!(RegionAbi::ArrayNumericLoop.contract().interruptible_backedge);
+        for record in CANONICAL_REGION_TABLE {
+            assert!(record.contract().abi_is_well_formed());
+        }
+        assert_eq!(RegionAbi::Scalar.contract().hardware_clobber_mask, 0);
+        assert_eq!(RegionAbi::ArrayNumericLoop.contract().live_out_mask, 0x0003);
+        assert!(RegionAbi::Bridge.contract().root_materialization_required);
     }
 }
 
