@@ -60,6 +60,24 @@ struct ExpectedRelocation {
     addend: i64,
 }
 
+fn expected_relocation_index(
+    expected: &[ExpectedRelocation],
+    consumed: &[bool],
+    section: SectionKind,
+    offset: u64,
+    kind: &str,
+    target: &str,
+) -> Option<usize> {
+    expected.iter().enumerate().find_map(|(index, item)| {
+        (!consumed[index]
+            && item.section == section
+            && u64::from(item.offset) == offset
+            && item.kind == kind
+            && item.target == target)
+            .then_some(index)
+    })
+}
+
 struct ParsedFragment {
     bytes: Vec<u8>,
     relocations: Vec<ExtractedRelocation>,
@@ -595,18 +613,15 @@ fn validate_fragment_relocations(
                     info.r_extern,
                     "Mach-O fragment relocation must name a symbol"
                 );
-                let expected_index = expected
-                    .iter()
-                    .enumerate()
-                    .find(|(index, item)| {
-                        !consumed[*index]
-                            && item.section == section.kind()
-                            && item.offset == info.r_address as u16
-                            && item.target == target
-                            && item.kind == "Branch26"
-                    })
-                    .map(|(index, _)| index)
-                    .expect("undeclared or duplicate Mach-O fragment relocation");
+                let expected_index = expected_relocation_index(
+                    expected,
+                    &consumed,
+                    section.kind(),
+                    u64::from(info.r_address),
+                    "Branch26",
+                    target,
+                )
+                .expect("undeclared or duplicate Mach-O fragment relocation");
                 let item = expected[expected_index];
                 assert_eq!(item.addend, 0, "Mach-O branch addend must be zero");
                 assert_eq!(item.width, 4, "Mach-O branch hole width must be four bytes");
@@ -633,6 +648,7 @@ fn validate_fragment_relocations(
         .sections()
         .find(|section| section.kind() == SectionKind::Text)
         .map(|section| section.index());
+    let mut consumed = vec![false; expected.len()];
     for (relocation_section, offset, relocation) in file.sections().flat_map(|section| {
         section
             .relocations()
@@ -655,17 +671,17 @@ fn validate_fragment_relocations(
                 .to_owned(),
             _ => panic!("{context} relocation does not name a declared symbol"),
         };
-        let Some(item) = expected
-            .iter()
-            .find(|item| {
-                !records.iter().any(|record| record.offset == item.offset)
-                    && item.section == SectionKind::Text
-                    && u64::from(item.offset) == offset
-                    && item.target == target_name
-            })
-        else {
-            panic!("{context} relocation at {offset:#x} is undeclared")
-        };
+        let expected_index = expected_relocation_index(
+            expected,
+            &consumed,
+            SectionKind::Text,
+            offset,
+            "Branch26",
+            &target_name,
+        )
+        .unwrap_or_else(|| panic!("{context} relocation at {offset:#x} is undeclared"));
+        let item = expected[expected_index];
+        consumed[expected_index] = true;
         assert_eq!(item.kind, "Branch26");
         assert_eq!(item.width, 4, "branch hole width must be four bytes");
         assert_eq!(item.addend, relocation.addend());
@@ -688,7 +704,7 @@ fn validate_fragment_relocations(
         expected.len(),
         "{context} relocation count mismatch"
     );
-    assert_eq!(records.len(), expected.len(), "{context} missing relocation");
+    assert!(consumed.into_iter().all(|matched| matched), "{context} missing relocation");
     records
 }
 
@@ -1008,4 +1024,88 @@ fn command_output(command: &mut Command, description: &str) -> String {
         output.status
     );
     String::from_utf8(output.stdout).expect("Rust tool output is UTF-8")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expected(offset: u16, target: &'static str) -> ExpectedRelocation {
+        ExpectedRelocation {
+            section: SectionKind::Text,
+            offset,
+            width: 4,
+            kind: "Branch26",
+            target,
+            addend: 0,
+        }
+    }
+
+    #[test]
+    fn relocation_identity_matching_is_order_independent() {
+        let records = [expected(12, "tail"), expected(4, "helper")];
+        let mut consumed = [false; 2];
+        let second = expected_relocation_index(
+            &records,
+            &consumed,
+            SectionKind::Text,
+            4,
+            "Branch26",
+            "helper",
+        )
+        .expect("second record");
+        consumed[second] = true;
+        let first = expected_relocation_index(
+            &records,
+            &consumed,
+            SectionKind::Text,
+            12,
+            "Branch26",
+            "tail",
+        )
+        .expect("first record");
+        assert_eq!(first, 0);
+        assert!(expected_relocation_index(
+            &records,
+            &consumed,
+            SectionKind::Text,
+            4,
+            "Branch26",
+            "helper",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn relocation_identity_matching_rejects_wrong_target_or_kind() {
+        let records = [expected(8, "tail")];
+        let consumed = [false];
+        assert!(expected_relocation_index(
+            &records,
+            &consumed,
+            SectionKind::Text,
+            8,
+            "Branch26",
+            "other",
+        )
+        .is_none());
+        assert!(expected_relocation_index(
+            &records,
+            &consumed,
+            SectionKind::Text,
+            8,
+            "Page21",
+            "tail",
+        )
+        .is_none());
+        assert!(expected_relocation_index(
+            &records,
+            &consumed,
+            SectionKind::Data,
+            8,
+            "Branch26",
+            "tail",
+        )
+        .is_none());
+    }
 }
