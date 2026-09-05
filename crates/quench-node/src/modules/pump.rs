@@ -349,10 +349,9 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             continue;
         }
         let promise_value = Value::Promise(promise.clone());
-        if let Some((domain, handler)) = crate::modules::domain::promise_domain(
-            state,
-            &promise_value,
-        ) {
+        if let Some((domain, handler)) =
+            crate::modules::domain::promise_domain(state, &promise_value)
+        {
             crate::modules::domain::call_error_handler(state, &domain, &handler, &reason)?;
             continue;
         }
@@ -495,12 +494,18 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     let previous_scope = state.borrow().cluster.process_scope();
     let previous_event_scope = state.borrow().event_loop.process_scope();
     let global = quench_runtime::vm::current_global_object();
-    let previous_resource = quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let previous_fork_child = quench_runtime::execute::get_property(&process, "\0forkChild");
+    let previous_resource =
+        quench_runtime::execute::get_property(&global, "__nodeCurrentAsyncResource");
     if task.process_scope != 0 {
         state
             .borrow_mut()
             .cluster
             .set_process_scope(task.process_scope);
+        if let Some(child) = state.borrow().cluster.fork_process(task.process_scope) {
+            quench_runtime::execute::set_property_in_place(&process, "\0forkChild", child);
+        }
     }
     state
         .borrow()
@@ -546,14 +551,14 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     }
     let result = match result {
         Err(error) if task.process_scope != 0 => {
-            if crate::modules::cluster::fail_fork_process(state, task.process_scope, 1)? {
-                Ok(())
-            } else {
-                Err(error)
-            }
+            let handled = crate::modules::pump::handle_uncaught(state, error)
+                .and_then(|_| crate::modules::pump::run_uncaught(state));
+            let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, 1)?;
+            handled.map(|_| ())
         }
         result => result,
     };
+    quench_runtime::execute::set_property_in_place(&process, "\0forkChild", previous_fork_child);
     state.borrow_mut().cluster.set_process_scope(previous_scope);
     state
         .borrow()
@@ -610,7 +615,7 @@ fn cleanup_retired_timers(state: &Rc<RefCell<HostState>>) {
 }
 
 fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(), VmError> {
-    let (cb, receiver, args, resource, destroy, domain) = {
+    let (cb, receiver, args, resource, destroy, domain, process_scope) = {
         let mut guard = state.borrow_mut();
         let registry = &mut guard.timers;
         let Some(timer) = registry.timers.get_mut(&id) else {
@@ -626,6 +631,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.async_resource.clone(),
                     true,
                     timer.domain.clone(),
+                    timer.process_scope,
                 )
             }
             _ => {
@@ -637,13 +643,40 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.async_resource.clone(),
                     false,
                     timer.domain.clone(),
+                    timer.process_scope,
                 )
             }
         }
     };
+    let previous_scope = state.borrow().cluster.process_scope();
+    let previous_event_scope = state.borrow().event_loop.process_scope();
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let previous_fork_child = quench_runtime::execute::get_property(&process, "\0forkChild");
+    if process_scope != 0 {
+        state.borrow_mut().cluster.set_process_scope(process_scope);
+        state.borrow().event_loop.set_process_scope(process_scope);
+        if let Some(child) = state.borrow().cluster.fork_process(process_scope) {
+            quench_runtime::execute::set_property_in_place(&process, "\0forkChild", child);
+        }
+    }
     crate::modules::async_hooks::resource_before(state, Some(&resource), &[])?;
     let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
     crate::modules::async_hooks::resource_after(state, None, &[])?;
+    let result = match result {
+        Err(error) if process_scope != 0 => {
+            let handled = crate::modules::pump::handle_uncaught(state, error)
+                .and_then(|_| crate::modules::pump::run_uncaught(state));
+            let _ = crate::modules::cluster::fail_fork_process(state, process_scope, 1)?;
+            handled.map(|_| ())
+        }
+        result => result,
+    };
+    if process_scope != 0 {
+        state.borrow_mut().cluster.set_process_scope(previous_scope);
+        state.borrow().event_loop.set_process_scope(previous_event_scope);
+    }
+    quench_runtime::execute::set_property_in_place(&process, "\0forkChild", previous_fork_child);
     let converted = destroy
         && result.is_ok()
         && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
