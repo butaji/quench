@@ -1634,6 +1634,7 @@ fn verify_stencil_encodings() {
         aarch64_ret(),
         ],
     );
+    build_stencil_artifacts::verify_symbols(&arm_object, &["verify", "numeric_loop"]);
     const LOOP_ENTRY_BRANCH_OFFSET: usize = 16;
     const LOOP_BACKEDGE_OFFSET: usize = 72;
     assert_eq!(
