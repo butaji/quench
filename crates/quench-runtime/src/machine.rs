@@ -2388,6 +2388,7 @@ impl std::fmt::Debug for NativePropertyPlan {
 /// `run_baseline_instruction`.
 pub(crate) struct NativeDispatchPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
@@ -2416,6 +2417,16 @@ pub(crate) enum NativeDispatchError {
 }
 
 impl NativeDispatchPlan {
+    fn new_with_arena(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared_arena: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(instruction, policy)?;
+        plan.shared_arena = Some(shared_arena);
+        Some(plan)
+    }
+
     fn new(
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
@@ -2427,6 +2438,7 @@ impl NativeDispatchPlan {
         crate::stencil_select::select_region(key).filter(|record| record.executable)?;
         Some(Self {
             arena: None,
+            shared_arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
@@ -2452,6 +2464,46 @@ impl NativeDispatchPlan {
             return Err(NativeDispatchError::Physical(
                 "native baseline entry unavailable".into(),
             ));
+        }
+        if let Some(shared) = self.shared_arena.clone() {
+            let result = (|| {
+                let mut slab = shared.borrow_mut();
+                let record = crate::stencil_select::select_region(key).ok_or_else(|| {
+                    NativeDispatchError::Physical("native baseline stencil missing".into())
+                })?;
+                let address = slab
+                    .render_or_get(&mut self.cache, key, &record.stencil, &values)
+                    .map_err(|error| {
+                        NativeDispatchError::Physical(format!(
+                            "native baseline render failed: {error:?}"
+                        ))
+                    })?;
+                slab.make_executable(address).map_err(|error| {
+                    NativeDispatchError::Physical(format!(
+                        "native baseline protection failed: {error:?}"
+                    ))
+                })?;
+                let mut dispatch = crate::vm::NativeDispatchContext::new(
+                    code, pc, entry, registers, context,
+                );
+                let status = slab
+                    .execute_dispatch(
+                        address,
+                        (&mut dispatch as *mut crate::vm::NativeDispatchContext<'_>)
+                            .cast::<std::ffi::c_void>(),
+                    )
+                    .map_err(|error| {
+                        NativeDispatchError::Physical(format!(
+                            "native baseline execution failed: {error:?}"
+                        ))
+                    })?;
+                dispatch.finish(status)
+            })();
+            if matches!(result, Err(NativeDispatchError::Physical(_))) {
+                self.cache.clear();
+                self.lifecycle.reset();
+            }
+            return result;
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2517,7 +2569,12 @@ impl std::fmt::Debug for NativeDispatchPlan {
             .field("opcode", &self.opcode)
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+                &self
+                    .shared_arena
+                    .as_ref()
+                    .map(|arena| arena.borrow().used())
+                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
+                    .unwrap_or(0),
             )
             .field("cache_len", &self.cache.len())
             .finish()
@@ -3131,7 +3188,11 @@ impl BaselinePlan {
         let native_dispatch = entries
             .iter()
             .map(|entry| {
-                NativeDispatchPlan::new(entry.instruction, policy)
+                NativeDispatchPlan::new_with_arena(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
                     .map(|native| Rc::new(RefCell::new(native)))
             })
             .collect::<Vec<_>>()
