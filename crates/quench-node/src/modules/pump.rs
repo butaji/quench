@@ -363,6 +363,12 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             .unhandled_rejection_handlers
             .is_empty();
         if matches!(mode, crate::modules::process::UnhandledRejectionMode::None) {
+            if matches!(
+                quench_runtime::execute::get_property(&reason, "\0quench:async_stack_overflow"),
+                Value::Boolean(true)
+            ) {
+                emit_async_stack_overflow(state, &reason)?;
+            }
             if has_handlers {
                 emit_unhandled_event(state, &promise, &reason)?;
             }
@@ -392,6 +398,17 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
         }
     }
     Ok(())
+}
+
+fn emit_async_stack_overflow(
+    state: &Rc<RefCell<HostState>>,
+    reason: &Value,
+) -> Result<(), VmError> {
+    let stack = match quench_runtime::execute::get_property(reason, "stack") {
+        Value::String(stack) => format!("{stack}\n"),
+        _ => "RangeError: Maximum call stack size exceeded\n".to_string(),
+    };
+    crate::modules::process::stream_write(state, &[Value::String(stack)], true).map(|_| ())
 }
 
 fn emit_unhandled_event(

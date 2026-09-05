@@ -111,6 +111,13 @@ pub(crate) fn try_execute_specialized(
         return crate::generator::create(function, &receiver, arguments).map(Some);
     }
     if function.is_async {
+        let _async_call_guard = match crate::generator::AsyncCallGuard::enter() {
+            Ok(guard) => guard,
+            Err(error) => {
+                mark_async_stack_overflow(&error);
+                return Ok(Some(crate::promise::from_async_completion(Err(error))));
+            }
+        };
         // Parameter evaluation belongs to the async call's completion. A
         // direct-eval SyntaxError in a default parameter rejects the promise
         // instead of escaping as a synchronous host error.
@@ -136,6 +143,17 @@ pub(crate) fn try_execute_specialized(
         }
     }
     Ok(None)
+}
+
+fn mark_async_stack_overflow(error: &crate::execute::VmError) {
+    let crate::execute::VmError::Thrown(reason) = error else {
+        return;
+    };
+    let _ = crate::execute::set_property_in_place(
+        reason,
+        "\0quench:async_stack_overflow",
+        crate::value::Value::Boolean(true),
+    );
 }
 
 #[inline(never)]
@@ -174,7 +192,13 @@ fn execute_interpreter(
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
     let mut arguments = std::borrow::Cow::Borrowed(arguments);
+    let mut tail_depth = 0usize;
     loop {
+        if tail_depth >= 512 {
+            return Err(crate::value::error::throw_range_error(
+                "Maximum call stack size exceeded",
+            ));
+        }
         let (mut registers, environment) =
             build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
@@ -201,9 +225,22 @@ fn execute_interpreter(
                 &request.arguments,
             );
         };
+        // Tail-call promotion is only an ordinary-function frame
+        // replacement. Async and generator calls must retain their wrapper
+        // protocol (Promise/generator creation) instead of executing the raw
+        // body in this loop.
+        if next.is_async || matches!(next.kind, crate::ops::FunctionKind::Generator) {
+            let callee = crate::value::Value::Function(next);
+            return crate::functions::execute_target(
+                &callee,
+                &request.receiver,
+                &request.arguments,
+            );
+        }
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
         arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
+        tail_depth += 1;
     }
 }
 
@@ -215,7 +252,13 @@ fn execute_with_dynamic_scope(
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
     let mut arguments = std::borrow::Cow::Borrowed(arguments);
+    let mut tail_depth = 0usize;
     loop {
+        if tail_depth >= 512 {
+            return Err(crate::value::error::throw_range_error(
+                "Maximum call stack size exceeded",
+            ));
+        }
         let (registers, environment) =
             crate::functions::build_registers(&function, &receiver, arguments.as_ref());
         let _private_environment = crate::private_environment::Guard::install_environment(
@@ -243,8 +286,17 @@ fn execute_with_dynamic_scope(
                 &request.arguments,
             );
         };
+        if next.is_async || matches!(next.kind, crate::ops::FunctionKind::Generator) {
+            let callee = crate::value::Value::Function(next);
+            return crate::functions::execute_target(
+                &callee,
+                &request.receiver,
+                &request.arguments,
+            );
+        }
         function = next;
         receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
         arguments = std::borrow::Cow::Owned(request.arguments.into_vec());
+        tail_depth += 1;
     }
 }
