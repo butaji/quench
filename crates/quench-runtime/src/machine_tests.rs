@@ -1127,6 +1127,26 @@ fn native_load_local_uses_declared_tagged_word_entry() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_store_local_uses_declared_tagged_word_entry() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::StoreLocal,
+        flags: 0,
+        a: 1,
+        b: 0,
+        c: 0,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let mut plan = super::NativeMovePlan::new_with_arena(instruction, policy, shared)
+        .expect("declared StoreLocal body");
+    let source = crate::tagged_value::TaggedValue::from_bits(0x2468_ACED);
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_property_uses_rendered_address_without_remapping() {
     let mut plan = super::NativePropertyPlan {
         arena: None,

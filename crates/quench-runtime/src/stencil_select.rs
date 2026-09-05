@@ -375,6 +375,7 @@ mod generated_region_admission_tests {
                         Some(
                             crate::ir::Opcode::Move
                                 | crate::ir::Opcode::LoadLocal
+                                | crate::ir::Opcode::StoreLocal
                                 | crate::ir::Opcode::GetN,
                         )
                     ));

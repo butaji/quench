@@ -1076,6 +1076,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "store_local",
+        // The physical entry reads the source register word; the canonical
+        // ownership-aware commit happens after the typed leaf returns.
+        operations: &["StoreLocal"],
+        abi: DeclAbi::TaggedWord,
+        x86_bytes: &X86_MOVE_BYTES,
+        aarch64_bytes: &AARCH64_MOVE_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
