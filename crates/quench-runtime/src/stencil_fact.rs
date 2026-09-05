@@ -100,14 +100,11 @@ impl Stencil {
                 HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
                 HoleKind::Ptr64 => 8,
             };
-            let aligned = !matches!(hole.kind, HoleKind::Branch26)
-                || usize::from(hole.offset) % 4 == 0;
+            let aligned =
+                !matches!(hole.kind, HoleKind::Branch26) || usize::from(hole.offset) % 4 == 0;
             let disjoint = self.holes[..index].iter().all(|prior| {
                 let prior_width = match prior.kind {
-                    HoleKind::Imm32
-                    | HoleKind::Disp32
-                    | HoleKind::Rel32
-                    | HoleKind::Branch26 => 4,
+                    HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
                     HoleKind::Ptr64 => 8,
                 };
                 let start = usize::from(hole.offset);
@@ -115,7 +112,9 @@ impl Stencil {
                 start.saturating_add(width) <= prior_start
                     || prior_start.saturating_add(prior_width) <= start
             });
-            aligned && disjoint && usize::from(hole.offset).saturating_add(width) <= self.bytes.len()
+            aligned
+                && disjoint
+                && usize::from(hole.offset).saturating_add(width) <= self.bytes.len()
         })
     }
 }
