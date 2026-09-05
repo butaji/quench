@@ -641,6 +641,41 @@ pub(crate) fn transfer_handle_scope(state: &Rc<RefCell<HostState>>, receiver: &V
     }
 }
 
+/// A child process remains alive while its logical scope owns a referenced
+/// listener or socket.  This is derived from the host resource registry so
+/// IPC children and ordinary children share one lifecycle rule.
+pub(crate) fn has_live_scope(state: &Rc<RefCell<HostState>>, scope: u64) -> bool {
+    let host = state.borrow();
+    let live = host.net.servers.values().any(|server| {
+        let server = server.borrow();
+        server.process_scope == scope && server.listening && server.refed && !server.closed
+    }) || host.net.sockets.values().any(|socket| {
+        let socket = socket.borrow();
+        socket.process_scope == scope && socket.refed && socket.state != SocketState::Closed
+    });
+    live
+}
+
+/// Terminate all host handles owned by a killed logical child process.
+pub(crate) fn terminate_scope(state: &Rc<RefCell<HostState>>, scope: u64) {
+    let host = state.borrow();
+    for server in host.net.servers.values() {
+        let mut server = server.borrow_mut();
+        if server.process_scope == scope {
+            server.listener.take();
+            server.listening = false;
+            server.closed = true;
+        }
+    }
+    for socket in host.net.sockets.values() {
+        let mut socket = socket.borrow_mut();
+        if socket.process_scope == scope {
+            socket.stream.take();
+            socket.state = SocketState::Closed;
+        }
+    }
+}
+
 /// Return the Rust-backed async iterator for a server or socket.
 pub fn async_iterator(
     state: &Rc<RefCell<HostState>>,
