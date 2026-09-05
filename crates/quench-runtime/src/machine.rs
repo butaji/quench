@@ -1810,6 +1810,7 @@ impl NativeBinaryPlan {
                             Err(_) => {
                                 self.uint_entry = None;
                                 self.shared_entry_address = None;
+                                self.shared_entry_owner = None;
                             }
                         }
                     }
