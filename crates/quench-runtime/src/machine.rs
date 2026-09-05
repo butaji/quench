@@ -4587,6 +4587,16 @@ fn region_admission_matches(
         return false;
     }
     let end = start + contract.operations.len();
+    if entries[..start].iter().any(|entry| {
+        matches!(
+            entry.instruction.opcode.control_operands(entry.instruction),
+            crate::ir::ControlOperands::Branch { target, .. }
+                | crate::ir::ControlOperands::Jump { target }
+                if usize::from(target) > start && usize::from(target) < end
+        )
+    }) {
+        return false;
+    }
     contract.operations.iter().enumerate().all(|(offset, expected)| {
         let entry = &entries[start + offset];
         if entry.instruction.opcode != *expected
