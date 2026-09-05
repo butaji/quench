@@ -116,11 +116,36 @@ pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), String
             if !known_aarch64_raw_instruction(encoded) {
                 return Err(format!("raw stencil contains unknown instruction {encoded:08x} at {index}"));
             }
+            if !branch_target_is_local(encoded, index, bytes.len()) {
+                return Err(format!("raw stencil branch leaves region at {index}"));
+            }
         }
     }
     #[cfg(not(target_arch = "aarch64"))]
     let _ = bytes;
     Ok(())
+}
+
+#[cfg(target_arch = "aarch64")]
+fn branch_target_is_local(encoded: u32, index: usize, length: usize) -> bool {
+    let (immediate, bits) = if encoded & 0xFC00_0000 == 0x1400_0000 {
+        (encoded & 0x03FF_FFFF, 26)
+    } else if encoded & 0xFF00_0010 == 0x5400_0000
+        || encoded & 0x7F00_0000 == 0x3500_0000
+    {
+        ((encoded >> 5) & 0x7_FFFF, 19)
+    } else {
+        return true;
+    };
+    let sign_bit = 1_i64 << (bits - 1);
+    let signed = i64::from(immediate);
+    let signed = if signed & sign_bit != 0 {
+        signed - (1_i64 << bits)
+    } else {
+        signed
+    };
+    let target = index as i64 * 4 + signed * 4;
+    target >= 0 && target < length as i64
 }
 
 /// Validate a hole-free AArch64 template before trusting its declared effect.
@@ -182,4 +207,23 @@ fn known_aarch64_instruction(encoded: u32) -> bool {
         || encoded & 0xFFE0_FC00 == 0x1AC0_2800
         || encoded & 0xFF20_FC00 == 0x1E20_4000
         || encoded & 0xFFE0_FC1F == 0xEB00_001F
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn raw_validator_rejects_unknown_register_writer() {
+        let orr_x0_x0_x0 = 0xAA00_0000u32.to_le_bytes();
+        assert!(validate_raw_instruction_stream(&orr_x0_x0_x0).is_err());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn raw_validator_rejects_direct_branch_outside_region() {
+        let branch_past_end = 0x1400_0001u32.to_le_bytes();
+        assert!(validate_raw_instruction_stream(&branch_past_end).is_err());
+    }
 }
