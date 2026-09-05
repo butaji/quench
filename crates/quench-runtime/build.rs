@@ -1827,16 +1827,7 @@ fn generate_stencil_catalog() {
         .join("\n");
     let numeric_keys = REGION_DECLARATIONS
         .iter()
-        .filter(|declaration| {
-            // Standalone scalar Add must terminate.  The `fallthrough`
-            // declaration is a head fragment for explicit composition and
-            // intentionally has no return instruction.
-            declaration.name == "loop"
-                || matches!(
-                    declaration.name,
-                    "subtract" | "multiply" | "divide" | "add_const"
-                )
-        })
+        .filter(|declaration| is_numeric_scalar_leaf(declaration))
         .map(|declaration| {
             format!(
                 "    (crate::ir::Opcode::{}, CANONICAL_{}_KEY),",
@@ -1895,6 +1886,14 @@ fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_stencil_artifacts.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
+}
+
+fn is_numeric_scalar_leaf(declaration: &RegionDeclaration) -> bool {
+    declaration.abi == DeclAbi::Scalar
+        && declaration.operations.last() == Some(&"Return")
+        && declaration.operations.first().is_some_and(|opcode| {
+            matches!(*opcode, "Add" | "Sub" | "Mul" | "Div" | "AddConst")
+        })
 }
 
 /// Derive the helper boundary from the canonical ABI declaration.  A branch
