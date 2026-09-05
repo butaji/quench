@@ -1359,11 +1359,18 @@ fn register_count_for(instructions: &[crate::ir::Instruction]) -> u16 {
             | crate::ir::Opcode::AGetI
             | crate::ir::Opcode::ASetI
             | crate::ir::Opcode::AGetIInc
-            | crate::ir::Opcode::CallN
             | crate::ir::Opcode::GetPropertyQuickened
             | crate::ir::Opcode::GetNQuickened
             | crate::ir::Opcode::AGetIQuickened => {
                 usize::from(instruction.a.max(instruction.b).max(instruction.c))
+            }
+            crate::ir::Opcode::CallN => {
+                // c is a sentinel for a zero-argument named call, not a
+                // register. It must not widen the callee frame to 65,536
+                // words.
+                usize::from(instruction.a.max(instruction.b).max(
+                    (instruction.flags != 0).then_some(instruction.c).unwrap_or(0),
+                ))
             }
             crate::ir::Opcode::Jump | crate::ir::Opcode::Slow => 0,
         };
@@ -5980,7 +5987,7 @@ impl FunctionCode {
         };
         let mut count = code.register_count();
         for (_, op) in code.cold_ops() {
-            op.visit_bodies(&mut |body| {
+            op.visit_frame_fragments(&mut |body| {
                 count = count.max(body.required_register_count());
             });
         }
@@ -6647,6 +6654,14 @@ mod tests {
         assert!(range.contains(6));
         assert!(!range.contains(7));
         assert!(super::CodeRange::new(super::CodeId(2), 8, 7).is_none());
+    }
+
+    #[test]
+    fn zero_argument_named_call_does_not_use_sentinel_as_register() {
+        let zero = crate::ir::Instruction::call_named(1, 2, None);
+        let one = crate::ir::Instruction::call_named(1, 2, Some(9));
+        assert_eq!(super::register_count_for(&[zero]), 3);
+        assert_eq!(super::register_count_for(&[one]), 10);
     }
 
     #[test]
