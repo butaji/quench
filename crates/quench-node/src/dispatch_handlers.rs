@@ -8271,13 +8271,14 @@ pub fn cp_spawn(
                 .map(|source| {
                     source.contains("process.on('message'")
                         || source.contains("process.on(\"message\"")
+                        || source.contains("process.send")
                         || source.contains("process.stdin")
                 })
                 .unwrap_or(false);
             if !execute_source {
                 return Ok(child);
             }
-            execute::set_property_in_place(&child, "\0childForkIpc", Value::Boolean(true));
+            execute::set_property_in_place(&child, "\0childSpawnIpc", Value::Boolean(true));
             let fork_args = host_api::array(
                 values
                     .iter()
@@ -8537,7 +8538,11 @@ pub fn cp_spawn_output_emit(
     // present, so a self-reexec observes the actual OS status/signal.
     let abort_policy = cp_args_have_abort_policy(&child_args);
     let source_driven = !abort_policy
-        && (cp_spawn_script_stdout(&child_args).is_some()
+        && (matches!(
+            execute::get_property(child, "\0childSpawnIpc"),
+            Value::Boolean(true)
+        )
+            || cp_spawn_script_stdout(&child_args).is_some()
             || cp_spawn_script_requires_in_process(&child_args)
             || cp_spawn_eval_requires_in_process(&child_args));
     let real_child = if source_driven {
