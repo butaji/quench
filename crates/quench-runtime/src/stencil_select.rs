@@ -82,7 +82,7 @@ region_abi_catalog! {
         context_arg_words: 1,
         preserves_vm_registers: false,
         may_call_helper: true,
-        interruptible_backedge: true
+        interruptible_backedge: false
     },
     ArrayKernel {
         context_arg_words: 1,
@@ -437,6 +437,7 @@ mod generated_region_admission_tests {
         assert!(RegionAbi::Bridge.contract().may_call_helper);
         assert_eq!(RegionAbi::ArrayKernel.contract().context_arg_words, 1);
         assert!(!RegionAbi::ArrayKernel.contract().may_call_helper);
+        assert!(!RegionAbi::Bridge.contract().interruptible_backedge);
         assert!(RegionAbi::ArrayNumericLoop.contract().interruptible_backedge);
     }
 }
