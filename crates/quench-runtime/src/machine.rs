@@ -2230,7 +2230,7 @@ impl NativeTruthinessPlan {
                 arena: None,
                 shared_arena: None,
                 cache: crate::stencil_select::RenderedRegionCache::new(),
-                site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::JumpIfFalse),
+                site: crate::quickening::QuickeningSite::new(instruction.opcode),
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 entry: None,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
