@@ -1051,6 +1051,26 @@ fn native_increment_uses_add_const_template_for_number_subset() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_nullish_word_matches_canonical_tagged_values() {
+    let instruction = crate::ir::Instruction::unary_operator(
+        0,
+        crate::ops::UnaryOp::IsNullish,
+        1,
+    );
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeNullishPlan::new(instruction, policy)
+        .expect("declared nullish word body");
+    assert_eq!(plan.execute(crate::tagged_value::TaggedValue::null().bits()), Ok(true));
+    assert_eq!(
+        plan.execute(crate::tagged_value::TaggedValue::undefined().bits()),
+        Ok(true)
+    );
+    assert_eq!(plan.execute(crate::tagged_value::TaggedValue::bool(true).bits()), Ok(false));
+    assert_eq!(plan.execute(crate::tagged_value::TaggedValue::number(0.0).bits()), Ok(false));
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
     let shared = std::rc::Rc::new(std::cell::RefCell::new(
         crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),

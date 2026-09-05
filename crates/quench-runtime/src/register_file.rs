@@ -900,6 +900,11 @@ impl RegisterFile {
         self.words.get(index).map(|word| word as *const TaggedValue)
     }
 
+    #[inline(always)]
+    pub(crate) fn word_bits(&self, index: usize) -> Option<u64> {
+        self.words.get(index).copied().map(TaggedValue::bits)
+    }
+
     /// Decide ToBoolean directly when the execute word contains the complete
     /// semantic fact. Heap-backed primitives retain the canonical slow path.
     #[inline(always)]

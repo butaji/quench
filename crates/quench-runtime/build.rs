@@ -20,6 +20,7 @@ enum DeclAbi {
     TaggedWord,
     ConstantWord,
     ScalarBool,
+    ScalarWordBool,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -197,6 +198,22 @@ const fn x86_i32_unary_not() -> [u8; 5] {
     [0x89, 0xF8, 0xF7, 0xD0, 0xC3]
 }
 
+const fn x86_nullish_word_bytes() -> [u8; 27] {
+    // OR the primitive payload's low bit, then compare against Undefined;
+    // this recognizes exactly Null (payload 2) and Undefined (payload 3).
+    [
+        0x48, 0x89, 0xF8, // mov rax, rdi
+        0x48, 0x83, 0xC8, 0x01, // or rax, 1
+        0x48, 0xB9, 0, 0, 0, 0, 0, 0, 0, 0, // mov rcx, imm64
+        0x48, 0x39, 0xC8, // cmp rax, rcx
+        0x0F, 0x94, 0xC0, // sete al
+        0x0F, 0xB6, 0xC0, // movzx eax, al
+        0xC3,
+    ]
+}
+
+const NULLISH_UNDEFINED_BITS: u64 = 0x7ff8_4000_0000_0003;
+
 const fn x86_compare_not_equal_bytes() -> [u8; 11] {
     [
         0x66, 0x0F, 0x2E, 0xC1, // ucomisd xmm0, xmm1
@@ -278,6 +295,7 @@ const X86_SHIFT_LEFT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xE7, 0x89, 0xF8, 0xC3]
 const X86_SHIFT_RIGHT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xFF, 0x89, 0xF8, 0xC3];
 const X86_SHIFT_RIGHT_ZERO_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xEF, 0x89, 0xF8, 0xC3];
 const X86_BITWISE_NOT_BYTES: [u8; 5] = x86_i32_unary_not();
+const X86_NULLISH_WORD_BYTES: [u8; 27] = x86_nullish_word_bytes();
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -311,6 +329,28 @@ const fn aarch64_mvn_w0() -> u32 {
 
 const fn aarch64_cset_vc_w1() -> u32 {
     0x1A9F_67E1
+}
+
+const fn aarch64_orr_x0_x0_1() -> u32 {
+    0xB240_0000
+}
+
+const fn aarch64_cmp_x0_x1() -> u32 {
+    0xEB01_001F
+}
+
+const fn aarch64_ldr_x1_literal(byte_offset: i32) -> u32 {
+    0x5800_0000 | ((((byte_offset >> 2) as u32) & 0x7_FFFF) << 5) | 1
+}
+
+const fn aarch64_nullish_word_bytes() -> [u8; 32] {
+    let mut out = [0; 32];
+    put32(&mut out, 0, aarch64_ldr_x1_literal(24));
+    put32(&mut out, 4, aarch64_orr_x0_x0_1());
+    put32(&mut out, 8, aarch64_cmp_x0_x1());
+    put32(&mut out, 12, aarch64_cset_eq_w0());
+    put32(&mut out, 16, aarch64_ret());
+    out
 }
 
 const fn aarch64_and_w0_w0_w1() -> u32 {
@@ -359,6 +399,7 @@ const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] =
 const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
     aarch64_pair(0x1AC1_2400, aarch64_ret());
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
+const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -1104,6 +1145,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "nullish_word",
+        operations: &["Unary", "Return"],
+        abi: DeclAbi::ScalarWordBool,
+        x86_bytes: &X86_NULLISH_WORD_BYTES,
+        aarch64_bytes: &AARCH64_NULLISH_WORD_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[(9, 8, "Literal64")],
+        aarch64_holes: &[(24, 8, "Literal64")],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {
@@ -1412,6 +1465,7 @@ const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate:
         | crate::stencil_select::RegionAbi::TaggedWord
         | crate::stencil_select::RegionAbi::ConstantWord
         | crate::stencil_select::RegionAbi::ScalarBool
+        | crate::stencil_select::RegionAbi::ScalarWordBool
         | crate::stencil_select::RegionAbi::ScalarI32
         | crate::stencil_select::RegionAbi::ScalarU32 => crate::stencil_select::AbiContract {
             context_arg_words: 0,
@@ -1534,6 +1588,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::TaggedWord => "crate::stencil_select::RegionAbi::TaggedWord",
         DeclAbi::ConstantWord => "crate::stencil_select::RegionAbi::ConstantWord",
         DeclAbi::ScalarBool => "crate::stencil_select::RegionAbi::ScalarBool",
+        DeclAbi::ScalarWordBool => "crate::stencil_select::RegionAbi::ScalarWordBool",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
