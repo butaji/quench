@@ -6393,14 +6393,38 @@ pub fn process_cwd(
     crate::modules::process::cwd(state, args)
 }
 pub fn process_permission_has(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    let scope = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(scope, Value::String(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"scope\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(&scope)
+        )));
+    }
+    let permission = permission_diagnostic_name(&scope);
+    let resource = args.get(1).cloned().unwrap_or_else(|| Value::String("".into()));
+    if !matches!(resource, Value::String(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"reference\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(&resource)
+        )));
+    }
+    let message = host_api::object(vec![
+        ("permission".into(), Value::String(permission.to_owned())),
+        ("resource".into(), resource),
+    ]);
+    crate::modules::diagnostics_channel::publish_named(
+        state,
+        &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
+        message,
+    )?;
     Ok(Value::Boolean(false))
 }
 pub fn process_permission_drop(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -6419,7 +6443,54 @@ pub fn process_permission_drop(
             )));
         }
     }
+    let permission = permission_diagnostic_name(&scope);
+    let resource = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| Value::String("".into()));
+    let message = host_api::object(vec![
+        ("permission".into(), Value::String(permission.to_owned())),
+        ("resource".into(), resource),
+        ("drop".into(), Value::Boolean(true)),
+    ]);
+    crate::modules::diagnostics_channel::publish_named(
+        state,
+        &format!("node:permission-model:{}", permission_channel_suffix(&scope)),
+        message,
+    )?;
     Ok(Value::Undefined)
+}
+
+fn permission_diagnostic_name(scope: &Value) -> &'static str {
+    match scope {
+        Value::String(scope) if scope.starts_with("fs.") || scope == "fs" => {
+            if scope.ends_with("write") {
+                "FileSystemWrite"
+            } else {
+                "FileSystemRead"
+            }
+        }
+        Value::String(scope) if scope == "child" => "ChildProcess",
+        Value::String(scope) if scope == "net" => "Net",
+        Value::String(scope) if scope == "worker" => "Worker",
+        Value::String(scope) if scope == "openssl.store" => "OpenSSLStore",
+        Value::String(scope) if scope == "inspector" => "Inspector",
+        Value::String(scope) if scope == "wasi" => "WASI",
+        _ => "Unknown",
+    }
+}
+
+fn permission_channel_suffix(scope: &Value) -> &'static str {
+    match scope {
+        Value::String(scope) if scope.starts_with("fs.") || scope == "fs" => "fs",
+        Value::String(scope) if scope == "child" => "child",
+        Value::String(scope) if scope == "net" => "net",
+        Value::String(scope) if scope == "worker" => "worker",
+        Value::String(scope) if scope == "openssl.store" => "openssl-store",
+        Value::String(scope) if scope == "inspector" => "inspector",
+        Value::String(scope) if scope == "wasi" => "wasi",
+        _ => "unknown",
+    }
 }
 pub fn process_chdir(
     state: &Rc<RefCell<HostState>>,
