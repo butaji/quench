@@ -1531,6 +1531,23 @@ impl NativeBinaryPlan {
                 == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual)
         {
             (crate::stencil_select::compare_not_equal_region_key(), true)
+        } else if opcode == crate::ir::Opcode::Binary {
+            let key = match crate::ir::compact_binary_operator(instruction.flags) {
+                Some(crate::ops::BinaryOp::LessThan) => {
+                    crate::stencil_select::compare_less_region_key()
+                }
+                Some(crate::ops::BinaryOp::LessEqual) => {
+                    crate::stencil_select::compare_less_equal_region_key()
+                }
+                Some(crate::ops::BinaryOp::GreaterThan) => {
+                    crate::stencil_select::compare_greater_region_key()
+                }
+                Some(crate::ops::BinaryOp::GreaterEqual) => {
+                    crate::stencil_select::compare_greater_equal_region_key()
+                }
+                _ => return None,
+            };
+            (key, true)
         } else {
             return None;
         };
