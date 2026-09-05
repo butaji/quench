@@ -166,6 +166,7 @@ pub fn run_script_with_exec_argv(
         },
         ok => ok.map(|_| ()),
     };
+    crate::modules::process::flush_trace_events(&host.state());
     sync_process_exit_code(&host);
     classify(result, host.exit_code())
 }
@@ -180,13 +181,35 @@ pub fn eval_script_with_input_type(
     sink: OutputSink,
     module_mode: bool,
 ) -> RunOutcome {
+    let exec_argv = std::env::var("QUENCH_EXEC_ARGV")
+        .ok()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .unwrap_or_default();
+    eval_script_with_exec_argv(source, sink, module_mode, &exec_argv)
+}
+
+/// Run `node -e` source with explicit invocation flags. Flags before `-e`
+/// belong to `process.execArgv`; child re-execs use this path for the same
+/// distinction as file-backed scripts.
+pub fn eval_script_with_exec_argv(
+    source: &str,
+    sink: OutputSink,
+    module_mode: bool,
+    exec_argv: &[String],
+) -> RunOutcome {
     let argv = vec![
         std::env::current_exe()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "quench-node".to_string()),
         "<eval>".to_string(),
     ];
-    let (host, context) = crate::host::install_with_argv(RealmId::ROOT, sink, argv);
+    let (host, context) = crate::host::install_with_argv_and_title_and_exec_argv(
+        RealmId::ROOT,
+        sink,
+        argv,
+        "quench-node",
+        exec_argv,
+    );
     let context = context
         .with_source_text(source.to_owned())
         .with_source_name("<eval>");
@@ -259,6 +282,7 @@ pub fn eval_script_with_input_type(
         }
         Ok(_) => Ok(()),
     };
+    crate::modules::process::flush_trace_events(&host.state());
     sync_process_exit_code(&host);
     classify(result, host.exit_code())
 }

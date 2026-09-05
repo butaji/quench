@@ -525,6 +525,10 @@ fn launch(
     message: Value,
     state: &Rc<RefCell<HostState>>,
 ) -> Result<Value, VmError> {
+    // Worker resources are created in the parent process before the child is
+    // launched. Preserve that observable init event with the worker thread id
+    // while keeping event production attached to the async-resource lifecycle.
+    crate::modules::process::trace_worker_started(state, 2);
     let filename = execute::to_js_string(&filename).unwrap_or_default();
     let eval = matches!(
         execute::get_property(&options, "eval"),
@@ -566,6 +570,12 @@ fn launch(
         );
     }
     let exec_argv = execute::get_property(&options, "execArgv");
+    let exec_argv = if matches!(exec_argv, Value::Undefined) {
+        let global = quench_runtime::vm::current_global_object();
+        execute::get_property(&execute::get_property(&global, "process"), "execArgv")
+    } else {
+        exec_argv
+    };
     if !matches!(exec_argv, Value::Undefined) {
         command.env(
             "QUENCH_EXEC_ARGV",

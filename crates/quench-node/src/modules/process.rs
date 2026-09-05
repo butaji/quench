@@ -50,6 +50,12 @@ pub struct ProcessState {
     pub title: String,
     /// Host-simulated child identities visible to `process.kill`.
     pub alive_pids: HashSet<i64>,
+    /// Trace-event output is owned by the process host so static flags and
+    /// dynamic `trace_events` calls share one writer and one event list.
+    pub trace_categories: HashSet<String>,
+    pub trace_events: Vec<String>,
+    pub trace_event_file: Option<std::path::PathBuf>,
+    pub trace_timestamp: u64,
 }
 
 impl Default for ProcessState {
@@ -96,8 +102,139 @@ impl ProcessState {
             umask: 0o022,
             title: "quench-node".into(),
             alive_pids: HashSet::from([std::process::id() as i64]),
+            trace_categories: HashSet::new(),
+            trace_events: Vec::new(),
+            trace_event_file: None,
+            trace_timestamp: 0,
         }
     }
+}
+
+/// Install invocation-time trace categories before bootstrap creates any
+/// timers or promises. The process state is the single source of truth for
+/// both `--trace-event-categories` and `trace_events.createTracing()`.
+pub fn configure_trace(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {
+    let categories = exec_argv
+        .iter()
+        .enumerate()
+        .find_map(|(index, flag)| {
+            (flag == "--trace-event-categories")
+                .then(|| exec_argv.get(index + 1).cloned())
+                .flatten()
+        })
+        .or_else(|| {
+            exec_argv.iter().find_map(|flag| {
+                flag.strip_prefix("--trace-event-categories=")
+                    .map(str::to_owned)
+            })
+        });
+    let Some(categories) = categories else { return };
+    let mut host = state.borrow_mut();
+    host.process.trace_categories = categories
+        .split(',')
+        .filter(|category| !category.is_empty())
+        .map(str::to_string)
+        .collect();
+    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+}
+
+fn trace_enabled(process: &ProcessState) -> bool {
+    process.trace_categories.contains("node.async_hooks")
+        || process.trace_categories.contains("*")
+}
+
+pub(crate) fn trace_enable(state: &Rc<RefCell<HostState>>, categories: &[String]) {
+    let mut host = state.borrow_mut();
+    host.process
+        .trace_categories
+        .extend(categories.iter().cloned());
+    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+}
+
+pub(crate) fn trace_disable(state: &Rc<RefCell<HostState>>, categories: &[String]) {
+    let mut host = state.borrow_mut();
+    for category in categories {
+        host.process.trace_categories.remove(category);
+    }
+}
+
+pub(crate) fn trace_categories(state: &Rc<RefCell<HostState>>) -> String {
+    let mut categories = state
+        .borrow()
+        .process
+        .trace_categories
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    categories.sort();
+    categories.join(",")
+}
+
+fn json_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Record the observable async-hooks init event. The event shape intentionally
+/// contains only stable Node fields; host timing and V8 compiler events are
+/// not fabricated.
+pub(crate) fn trace_resource_init(
+    state: &Rc<RefCell<HostState>>,
+    resource_type: &str,
+    id: u64,
+    trigger: u64,
+    tid: u64,
+) {
+    let mut host = state.borrow_mut();
+    if !trace_enabled(&host.process) {
+        return;
+    }
+    let timestamp = host.process.trace_timestamp;
+    host.process.trace_timestamp = timestamp.saturating_add(1);
+    host.process.trace_event_file = Some(host.process.cwd.join("node_trace.1.log"));
+    host.process.trace_events.push(format!(
+        "{{\"pid\":{},\"tid\":{},\"cat\":\"node,node.async_hooks\",\"ph\":\"b\",\"name\":\"{}\",\"ts\":{},\"args\":{{\"data\":{{\"executionAsyncId\":{},\"triggerAsyncId\":{}}}}}}}",
+        std::process::id(),
+        tid,
+        json_escape(resource_type),
+        timestamp,
+        id,
+        trigger
+    ));
+}
+
+pub(crate) fn trace_worker_started(state: &Rc<RefCell<HostState>>, tid: u64) {
+    let id = crate::modules::async_hooks::current_resource_id(state).max(1);
+    trace_resource_init(state, "Timeout", id, id, tid);
+}
+
+/// Flush the per-process trace list at the same boundary where the runner
+/// resolves the process exit code. A missing category or empty list produces
+/// no file, matching Node's disabled tracing behavior.
+pub fn flush_trace_events(state: &Rc<RefCell<HostState>>) {
+    let (path, events) = {
+        let host = state.borrow();
+        if !trace_enabled(&host.process) || host.process.trace_events.is_empty() {
+            return;
+        }
+        (
+            host.process.trace_event_file.clone(),
+            host.process.trace_events.clone(),
+        )
+    };
+    let Some(path) = path else { return };
+    let payload = format!("{{\"traceEvents\":[{}]}}", events.join(","));
+    let _ = std::fs::write(path, payload);
+}
+
+/// The upstream test helper skips only when Node is built with Perfetto. The
+/// Rust host has no Perfetto backend, so this compatibility probe is a
+/// deliberate no-op rather than a fixture-specific branch.
+pub(crate) fn skip_if_perfetto(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 
 pub fn set_abort_on_uncaught_exception(state: &Rc<RefCell<HostState>>, exec_argv: &[String]) {

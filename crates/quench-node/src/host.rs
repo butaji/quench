@@ -433,6 +433,7 @@ pub fn install_with_argv_and_title_and_exec_argv(
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
     host.state.borrow_mut().process.title = title.to_string();
     crate::modules::process::set_abort_on_uncaught_exception(&host.state, exec_argv);
+    crate::modules::process::configure_trace(&host.state, exec_argv);
     let host_state = host.state.clone();
     quench_runtime::install_host_job_pump(Rc::new(move || {
         crate::modules::pump::drain_one_tick(&host_state)
