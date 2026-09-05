@@ -1404,4 +1404,5 @@ mod tests {
             .expect("scalar catalog row");
         assert!(select_physical_for_abi(scalar.key, RegionAbi::TaggedWord).is_none());
     }
+
 }
