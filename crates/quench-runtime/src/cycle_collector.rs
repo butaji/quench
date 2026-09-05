@@ -26,6 +26,12 @@ thread_local! {
     static ROOTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static ENV_ROOTS: RefCell<Vec<Rc<crate::environment::Environment>>> = const { RefCell::new(Vec::new()) };
     static FRAME_ROOTS: RefCell<Vec<FrameRoot>> = const { RefCell::new(Vec::new()) };
+    // A pending async continuation owns its GeneratorData through the
+    // PromiseContinuation, but that owner is not itself a trial-deletion
+    // graph node. Keep only a weak registration here and root the generator's
+    // live environment/registers while the promise is pending.
+    static SUSPENDED_GENERATORS: RefCell<HashMap<usize, Weak<crate::value::GeneratorData>>> =
+        RefCell::new(HashMap::new());
 }
 
 struct FrameRoot {
@@ -106,6 +112,25 @@ pub(crate) fn retain_active_function(value: &Value) {
 
 pub(crate) fn retain_active_environment(environment: &Rc<crate::environment::Environment>) {
     ENV_ROOTS.with(|roots| roots.borrow_mut().push(Rc::clone(environment)));
+}
+
+pub(crate) fn retain_suspended_generator(
+    generator: &Rc<crate::value::GeneratorData>,
+) {
+    SUSPENDED_GENERATORS.with(|roots| {
+        roots
+            .borrow_mut()
+            .insert(Rc::as_ptr(generator) as usize, Rc::downgrade(generator));
+    });
+}
+
+pub(crate) fn release_suspended_generator(
+    generator: &Rc<crate::value::GeneratorData>,
+) {
+    let key = Rc::as_ptr(generator) as usize;
+    SUSPENDED_GENERATORS.with(|roots| {
+        roots.borrow_mut().remove(&key);
+    });
 }
 
 pub(crate) fn protect_environment(environment: &Rc<crate::environment::Environment>) -> RootGuard {
@@ -359,14 +384,17 @@ pub(crate) fn collect_cycles() {
             // SAFETY: a FrameRoot is installed only while the synchronous
             // caller owns the RegisterFile; RootGuard removes it before that
             // owner can leave or be relocated.
-            unsafe { (&*frame.registers).visit_values(|value| {
-                mark_direct_root_value(&value, &ids, &mut external);
-            }) };
+            unsafe {
+                (&*frame.registers).visit_values(|value| {
+                    mark_direct_root_value(&value, &ids, &mut external);
+                })
+            };
             for value in frame.environment.cycle_values() {
                 mark_direct_root_value(&value, &ids, &mut external);
             }
         }
     });
+    root_suspended_generators(&ids, &mut external);
     // The global object is a host/runtime root even when no VM call frame is
     // active (for example, between repeated benchmark runs). Marking its
     // registry node lets the normal graph walk preserve globally reachable
@@ -421,6 +449,40 @@ pub(crate) fn collect_cycles() {
         // Keep a floor so small programs do not turn collection into a tax.
         state.threshold = (live.max(1) * 256).max(INITIAL_THRESHOLD);
         state.collecting = false;
+    });
+}
+
+fn root_suspended_generators(
+    ids: &HashMap<usize, usize>,
+    external: &mut [bool],
+) {
+    SUSPENDED_GENERATORS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        roots.retain(|_, entry| {
+            let Some(generator) = entry.upgrade() else {
+                return false;
+            };
+            mark_direct_root_value(
+                &Value::Function(Rc::clone(&generator.function)),
+                ids,
+                external,
+            );
+            mark_direct_root_value(&generator.receiver, ids, external);
+            for value in &generator.arguments {
+                mark_direct_root_value(value, ids, external);
+            }
+            let machine = generator.machine.borrow();
+            if let Some(environment) = machine.environment() {
+                for value in environment.cycle_values() {
+                    mark_direct_root_value(&value, ids, external);
+                }
+            }
+            machine
+                .registers
+                .values
+                .visit_values(|value| mark_direct_root_value(&value, ids, external));
+            true
+        });
     });
 }
 
@@ -667,9 +729,9 @@ mod tests {
         let object = Rc::new(ObjectData::new(Vec::new()));
         track_object(&object);
         let weak = Rc::downgrade(&object);
-        let registers = crate::register_file::RegisterFile::from_values(vec![
-            Value::Object(Rc::clone(&object)),
-        ]);
+        let registers = crate::register_file::RegisterFile::from_values(vec![Value::Object(
+            Rc::clone(&object),
+        )]);
         let environment = Environment::new();
         let before_frames = FRAME_ROOTS.with(|frames| frames.borrow().len());
         let guard = protect_frame(&registers, &environment);
@@ -679,12 +741,21 @@ mod tests {
         );
         drop(object);
         collect_cycles();
-        assert!(weak.upgrade().is_some(), "frame root was collected during bridge");
+        assert!(
+            weak.upgrade().is_some(),
+            "frame root was collected during bridge"
+        );
         drop(guard);
-        assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), before_frames);
+        assert_eq!(
+            FRAME_ROOTS.with(|frames| frames.borrow().len()),
+            before_frames
+        );
         drop(registers);
         collect_cycles();
-        assert!(weak.upgrade().is_none(), "temporary frame root leaked past bridge exit");
+        assert!(
+            weak.upgrade().is_none(),
+            "temporary frame root leaked past bridge exit"
+        );
     }
 
     #[test]
@@ -694,7 +765,10 @@ mod tests {
         let guards = (0..=MAX_FRAME_ROOTS)
             .map(|_| protect_frame(&registers, &environment))
             .collect::<Vec<_>>();
-        assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), MAX_FRAME_ROOTS);
+        assert_eq!(
+            FRAME_ROOTS.with(|frames| frames.borrow().len()),
+            MAX_FRAME_ROOTS
+        );
         drop(guards);
         assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), 0);
     }
