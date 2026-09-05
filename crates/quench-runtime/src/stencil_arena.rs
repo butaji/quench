@@ -290,6 +290,17 @@ impl StencilArena {
         Ok(entry(lhs, rhs))
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub fn execute_u32(&self, address: usize, lhs: u32, rhs: u32) -> Result<u32, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let entry: extern "C" fn(u32, u32) -> u32 = unsafe { std::mem::transmute(address) };
+        Ok(entry(lhs, rhs))
+    }
+
     /// Validate an installed numeric entry once, then hand the caller the
     /// typed code pointer for its steady-state loop.  The arena is immutable
     /// after `make_executable`, so a pointer returned here remains valid until
@@ -312,6 +323,19 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(i32, i32) -> i32, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(unsafe { std::mem::transmute(address) })
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn u32_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(u32, u32) -> u32, ArenaError> {
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -645,6 +669,28 @@ impl StencilArena {
         self.execute_i32(address, lhs, rhs)
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub fn render_selected_u32<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        values: &PatchValues<'_, N>,
+        lhs: u32,
+        rhs: u32,
+    ) -> Result<u32, ArenaError> {
+        let Some(record) = select_region(key).filter(|record| record.executable) else {
+            return Err(ArenaError::ProtectionFailed);
+        };
+        if record.abi != crate::stencil_select::RegionAbi::ScalarU32
+            || record.fallthrough.is_some()
+        {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        self.make_executable()?;
+        self.execute_u32(address, lhs, rhs)
+    }
+
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn render_selected_i32<const N: usize>(
         &mut self,
@@ -654,6 +700,18 @@ impl StencilArena {
         _lhs: i32,
         _rhs: i32,
     ) -> Result<i32, ArenaError> {
+        Err(ArenaError::ProtectionFailed)
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub fn render_selected_u32<const N: usize>(
+        &mut self,
+        _cache: &mut RenderedRegionCache,
+        _key: crate::stencil_fact::RegionKey,
+        _values: &PatchValues<'_, N>,
+        _lhs: u32,
+        _rhs: u32,
+    ) -> Result<u32, ArenaError> {
         Err(ArenaError::ProtectionFailed)
     }
 
@@ -1273,6 +1331,35 @@ mod tests {
             };
             assert_eq!(arena.execute_i32(address, lhs, rhs).unwrap(), expected);
         }
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_shift_regions_mask_counts_and_preserve_unsigned_result() {
+        let site = QuickeningSite::<2>::new(Opcode::Binary);
+        let values = PatchValues::from_site(&site);
+        for (key, lhs, rhs, expected) in [
+            (crate::stencil_select::shift_left_region_key(), 1_i32, 32_i32, 1_i32),
+            (crate::stencil_select::shift_right_region_key(), -8_i32, 1_i32, -4_i32),
+        ] {
+            let record = crate::stencil_select::select_region(key).expect("shift declaration");
+            let mut arena = StencilArena::new(4096).unwrap();
+            let mut cache = RenderedRegionCache::new();
+            let address = arena
+                .render_or_get(&mut cache, key, &record.stencil, &values)
+                .unwrap();
+            arena.make_executable().unwrap();
+            assert_eq!(arena.execute_i32(address, lhs, rhs).unwrap(), expected);
+        }
+        let key = crate::stencil_select::shift_right_zero_region_key();
+        let record = crate::stencil_select::select_region(key).expect("unsigned shift declaration");
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        assert_eq!(arena.execute_u32(address, u32::MAX, 1), Ok(2_147_483_647));
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
