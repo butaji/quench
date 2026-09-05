@@ -4152,6 +4152,9 @@ fn validate_physical_template(
     if raw_region_declares_allocation(contract) {
         return Err("raw array region declares an allocating operation".into());
     }
+    if cfg!(target_arch = "aarch64") && record.stencil.holes.is_empty() {
+        crate::stencil_physical::validate_aarch64_instruction_stream(record.stencil.bytes)?;
+    }
     if matches!(
         contract.abi,
         crate::stencil_select::RegionAbi::ArrayKernel
@@ -6262,13 +6265,15 @@ mod tests {
     fn physical_templates_match_declared_abi_before_entry() {
         for record in crate::stencil_select::region_records() {
             if record.executable {
+                let validation = super::validate_physical_template(record);
                 assert!(
-                    super::validate_physical_template(record).is_ok(),
-                    "generated ABI/template mismatch for {:?} abi={:?} ops={:?} holes={:?}",
+                    validation.is_ok(),
+                    "generated ABI/template mismatch for {:?} abi={:?} ops={:?} holes={:?} error={:?}",
                     record.key,
                     record.abi,
                     record.operations,
-                    record.stencil.holes
+                    record.stencil.holes,
+                    validation.err()
                 );
             }
         }
