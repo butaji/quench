@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `875e90f49` (cleanup files remain
+Evidence below is bound to source revision `09b780289` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -41,6 +41,13 @@ The separate execution-trace runtime also remains green at **746 passed, 0
 failed, 1 ignored** (`/tmp/quench-runtime-trace-20260905-array-fault-pc.log`).
 The host/API boundary still compiles cleanly with this source at
 `/tmp/quench-node-check-20260905-array-fault-pc.log`.
+
+Trace diagnostics now record identity-keyed stencil rejection reasons
+separately from native/fallback outcomes; the profile unit passes at
+`/tmp/quench-stencil-rejection-trace-20260905.log`, and the normal runtime
+remains **734 passed, 0 failed, 1 ignored** while the trace suite is
+**747 passed, 0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-stencil-rejections.log`,
+`/tmp/quench-runtime-trace-20260905-stencil-rejections.log`).
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
