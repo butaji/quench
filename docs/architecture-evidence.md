@@ -1,7 +1,7 @@
 # Task 075 — current stencil infrastructure matrix
 
 Status: **gate CLOSED / NOT COMPLETE**. Source evidence is bound to commit
-`04de706b1` (documentation/task cleanup remains user-owned and dirty). Micros
+`f5169b8a3` (documentation/task cleanup remains user-owned and dirty). Micros
 and task 073 remain deferred until every required row passes with normal-source
 and non-vacuous native evidence.
 
@@ -16,7 +16,7 @@ and non-vacuous native evidence.
 | Guards/fallback | Admission checks declared ABI/opcode/effects; Unknown/unsupported cases use canonical handlers. Physical, semantic and committed statuses preserve fault PCs. Raw AArch64 streams now fail closed on unknown instructions before entry, and all hole-free ARM templates pass the same vocabulary validator. | Runtime/trace suites pass at the current source; `cargo test -p quench-runtime raw_template_rejects -- --nocapture` — 3 passed (`/tmp/quench-native-validator.log`); `physical_templates_match_declared_abi_before_entry` — 1 passed (`/tmp/quench-aarch64-stream-validator7.log`); ordinary-source backedge test — 1 passed (`/tmp/quench-loop-validator.log`); prior post-entry no-replay bridge test is `/tmp/quench-array-fault-pc-bridge-20260905.log`. | Alias/live-out proof, helper throws/reentry, GC roots, interruptible backedges and finally/suspension boundaries need outer-driver tests. |
 | B families | Existing VM machinery remains semantic owner; native plans reject unsupported interiors and return to ordinary execution. | Full runtime and host suites pass at this revision. | Dedicated allocating/reentrant/rooting/exception boundary matrix is still missing. |
 | Diagnostics/budgets | `execution_trace.rs` has bounded stencil identities/rejection/outcome counters; slab/cache paths expose usage. | Trace runtime: 754 passed, 0 failed, 1 ignored (`/tmp/quench-runtime-trace-20260905-entrytoken.log`). | Native-vs-modeled witnesses, render/lease bytes and global variant/eviction budgets need integrated reporting. |
-| Verification | `machine_tests.rs` and `stencil_arena.rs` cover emitted arithmetic, owner eviction/rebuild, ABI-checked dispatch, status transport, array execution and ordinary-source admission. | Focused generated native 2; AArch64 relocation validation 2; native ARM loop zero/one/many (including nonzero zero-iteration state) 1; full generated runtime 741 and trace 756 with zero failures (`/tmp/quench-runtime-full-20260905-rustonly-final.log`, `/tmp/quench-runtime-trace-20260905-rustonly-final.log`, `/tmp/quench-native-loop-cases-20260905.log`). | Native hostile exits, root survival, and resource-lifetime integration remain before closing gate. |
+| Verification | `machine_tests.rs` and `stencil_arena.rs` cover emitted arithmetic, owner eviction/rebuild, ABI-checked dispatch, status transport, array execution and ordinary-source admission. | Focused generated native 2; AArch64 relocation validation 2; native ARM loop zero/one/many (including nonzero zero-iteration state) 1; owner/address pairing 2; full generated runtime 742 and trace 757 with zero failures (`/tmp/quench-runtime-full-20260905-entry-address.log`, `/tmp/quench-runtime-trace-20260905-entry-address.log`, `/tmp/quench-native-loop-cases-20260905.log`). | Native hostile exits, root survival, and resource-lifetime integration remain before closing gate. |
 
 Safe exclusions remain explicit: allocating/reentrant helpers, proxies/accessors,
 sparse/typed-memory arrays, suspension and exotic coercions stay on complete
