@@ -19,6 +19,8 @@ use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
 use quench_runtime::value::{ArrayBufferData, PromiseData, PromiseState, Value};
 use rand::RngCore;
+use p384::{ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey, SecretKey as P384SecretKey};
+use p521::{ecdh::diffie_hellman as p521_diffie_hellman, PublicKey as P521PublicKey, SecretKey as P521SecretKey};
 use sha3::{
     digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, TurboShake128,
     TurboShake128Core, TurboShake256, TurboShake256Core,
@@ -596,6 +598,144 @@ fn cfrg_derive_bits(
         let mask = 0xff_u8 << (8 - remainder);
         if let Some(last) = output.last_mut() {
             *last &= mask;
+        }
+    }
+    Ok(output)
+}
+
+fn ec_key_bytes(key: &Value, private: bool, size: usize) -> Option<Vec<u8>> {
+    let data = bytes(&execute::get_property(key, KEY_DATA_PROP))?;
+    if private {
+        // PKCS#8 wraps an ECPrivateKey in an OCTET STRING.  The scalar is
+        // the first OCTET STRING with the curve's field width; looking for
+        // that typed value also keeps the parser independent of DER length
+        // encoding details used by P-384 and P-521.
+        let marker = u8::try_from(size).ok()?;
+        for position in 0..data.len().saturating_sub(size + 1) {
+            if data[position] == 0x04 && data[position + 1] == marker {
+                return Some(data[position + 2..position + 2 + size].to_vec());
+            }
+        }
+        None
+    } else {
+        // SPKI's BIT STRING contains an uncompressed SEC1 point: 00 04 X Y.
+        // Return the complete SEC1 point expected by the RustCrypto parser.
+        let point_size = 1 + size * 2;
+        data.windows(point_size)
+            .enumerate()
+            .position(|(position, window)| {
+                position > 0 && data[position - 1] == 0 && window[0] == 0x04
+            })
+            .map(|position| data[position..position + point_size].to_vec())
+    }
+}
+
+fn ecdh_derive_bits(
+    algorithm: &Value,
+    base_key: &Value,
+    length: Option<&Value>,
+) -> Result<Vec<u8>, VmError> {
+    let public = execute::get_property(algorithm, "public");
+    if matches!(public, Value::Undefined) {
+        return Err(error(
+            Builtin::TypeError,
+            Some("ERR_MISSING_OPTION"),
+            "The \"public\" option is required",
+        ));
+    }
+    if invalid_key_this(&public).is_some() {
+        return Err(error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The public key must be a CryptoKey",
+        ));
+    }
+    let public_type = execute::to_js_string(&key_slot(&public, "type")).unwrap_or_default();
+    if public_type != "public" {
+        return Err(invalid_access_error("Unable to use this key to deriveBits"));
+    }
+    let requested_name = algorithm_name(algorithm);
+    let public_algorithm = key_slot(&public, "algorithm");
+    let public_name = algorithm_name(&public_algorithm);
+    if !requested_name.eq_ignore_ascii_case(&public_name) {
+        return Err(operation_error("key algorithm mismatch"));
+    }
+    let base_algorithm = key_slot(base_key, "algorithm");
+    let curve_value = execute::get_property(algorithm, "namedCurve");
+    let curve_value = if matches!(curve_value, Value::Undefined) {
+        execute::get_property(&base_algorithm, "namedCurve")
+    } else {
+        curve_value
+    };
+    let curve = execute::to_js_string(&curve_value)
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let public_curve = execute::to_js_string(&execute::get_property(&public_algorithm, "namedCurve"))
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    if curve != public_curve {
+        return Err(operation_error("Named curve mismatch"));
+    }
+    let size = match curve.as_str() {
+        "P-384" => 48,
+        "P-521" => 66,
+        _ => return Err(not_supported("Unrecognized named curve")),
+    };
+    let length = match length {
+        Some(Value::Number(value))
+            if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 =>
+        {
+            if *value > i32::MAX as f64 {
+                return Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_OUT_OF_RANGE"),
+                    "The requested length is outside the supported range",
+                ));
+            }
+            *value as usize
+        }
+        Some(Value::Null | Value::Undefined) | None => size * 8,
+        Some(_) => {
+            return Err(error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "The length must be a number",
+            ))
+        }
+    };
+    if length > size * 8 {
+        return Err(operation_error("derived bit length is too small"));
+    }
+    let private = ec_key_bytes(base_key, true, size)
+        .ok_or_else(|| operation_error("Invalid private key data"))?;
+    let public = ec_key_bytes(&public, false, size)
+        .ok_or_else(|| operation_error("Invalid public key data"))?;
+    let secret = match curve.as_str() {
+        "P-384" => {
+            let private = P384SecretKey::from_slice(&private)
+                .map_err(|_| operation_error("Invalid private key data"))?;
+            let public = P384PublicKey::from_sec1_bytes(&public)
+                .map_err(|_| operation_error("Invalid public key data"))?;
+            p384_diffie_hellman(private.to_nonzero_scalar(), public.as_affine())
+                .raw_secret_bytes()
+                .to_vec()
+        }
+        "P-521" => {
+            let private = P521SecretKey::from_slice(&private)
+                .map_err(|_| operation_error("Invalid private key data"))?;
+            let public = P521PublicKey::from_sec1_bytes(&public)
+                .map_err(|_| operation_error("Invalid public key data"))?;
+            p521_diffie_hellman(private.to_nonzero_scalar(), public.as_affine())
+                .raw_secret_bytes()
+                .to_vec()
+        }
+        _ => unreachable!(),
+    };
+    let output_length = length.div_ceil(8);
+    let mut output = secret[..output_length].to_vec();
+    if let Some(remainder @ 1..=7) = length.checked_rem(8) {
+        if let Some(last) = output.last_mut() {
+            *last &= 0xff_u8 << (8 - remainder);
         }
     }
     Ok(output)
@@ -1496,7 +1636,10 @@ pub fn derive_bits(
     };
     let base_name = algorithm_name(algorithm);
     let base_name_upper = base_name.to_ascii_uppercase();
-    if !matches!(base_name_upper.as_str(), "HKDF" | "PBKDF2" | "X25519" | "X448") {
+    if !matches!(
+        base_name_upper.as_str(),
+        "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448"
+    ) {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveBits") {
@@ -1506,6 +1649,16 @@ pub fn derive_bits(
         return Ok(settled(
             cfrg_derive_bits(algorithm, args.get(1).unwrap_or(&Value::Undefined), args.get(2))
                 .map(|bytes| array_buffer(&bytes)),
+        ));
+    }
+    if base_name_upper == "ECDH" {
+        return Ok(settled(
+            ecdh_derive_bits(
+                algorithm,
+                args.get(1).unwrap_or(&Value::Undefined),
+                args.get(2),
+            )
+            .map(|bytes| array_buffer(&bytes)),
         ));
     }
     let length = match args.get(2) {
@@ -1597,7 +1750,10 @@ pub fn derive_key(
     };
     let base_name = algorithm_name(algorithm);
     let base_name_upper = base_name.to_ascii_uppercase();
-    if !matches!(base_name_upper.as_str(), "HKDF" | "PBKDF2" | "X25519" | "X448") {
+    if !matches!(
+        base_name_upper.as_str(),
+        "HKDF" | "PBKDF2" | "ECDH" | "X25519" | "X448"
+    ) {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveKey") {
@@ -1682,6 +1838,32 @@ pub fn derive_key(
                 *last &= 0xff_u8 << (8 - remainder);
             }
         }
+        let prototype = execute::get_prototype_of(args.get(1).unwrap_or(&Value::Undefined))
+            .unwrap_or(Value::Undefined);
+        let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
+        let usages = args
+            .get(4)
+            .cloned()
+            .unwrap_or_else(|| host_api::array(Vec::new()));
+        let derived = key(
+            &prototype,
+            normalized_derived_algorithm,
+            extractable,
+            usages,
+            Some(data),
+        );
+        return Ok(settled(Ok(key_metadata(derived, "secret", "raw"))));
+    }
+    if base_name_upper == "ECDH" {
+        let requested_length = Value::Number(length as f64);
+        let data = match ecdh_derive_bits(
+            algorithm,
+            args.get(1).unwrap_or(&Value::Undefined),
+            Some(&requested_length),
+        ) {
+            Ok(data) => data,
+            Err(error) => return Ok(settled(Err(error))),
+        };
         let prototype = execute::get_prototype_of(args.get(1).unwrap_or(&Value::Undefined))
             .unwrap_or(Value::Undefined);
         let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
@@ -2159,7 +2341,7 @@ fn validate_key_use(
             .is_ok_and(|value| value == usage)
     });
     if !allowed {
-        let message = format!("Unable to use this key to {usage}");
+        let message = format!("baseKey does not have {usage} usage");
         return Some(invalid_access_error(&message));
     }
     let key_type = execute::to_js_string(&execute::get_property(key, "type")).ok()?;
