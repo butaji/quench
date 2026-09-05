@@ -943,6 +943,99 @@ fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn ordinary_source_lowering_executes_numeric_negate_and_preserves_signed_zero() {
+    let program = crate::reduce::reduce_source("var x = 3; x = -x; x;")
+        .expect("numeric negate source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Unary
+                    && crate::ir::compact_unary_operator(instruction.flags)
+                        == Some(crate::ops::UnaryOp::Minus)
+            })
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let native = plan.native_unary_at(pc).expect("numeric negate leaf");
+        let instruction = view.instruction(pc).expect("negate instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Number(3.0));
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            std::rc::Rc::clone(&environment),
+        )
+        .expect("numeric negate execution");
+        assert_eq!(
+            registers.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Number(-3.0))
+        );
+        let before = native.borrow().native_entry_count;
+        assert!(before > 0, "numeric negate must execute emitted bytes");
+
+        let mut hostile = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        hostile.write(
+            usize::from(instruction.b),
+            crate::value::Value::String("3".into()),
+        );
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .expect("coercive negate fallback");
+        assert_eq!(
+            hostile.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Number(-3.0))
+        );
+        assert_eq!(native.borrow().native_entry_count, before);
+
+        let mut signed_zero = super::NativeUnaryPlan::new(
+            crate::ir::Instruction {
+                opcode: crate::ir::Opcode::Unary,
+                flags: crate::ir::compact_unary_id(crate::ops::UnaryOp::Minus),
+                a: 0,
+                b: 1,
+                c: 0,
+            },
+            policy,
+        )
+        .expect("direct numeric negate leaf");
+        assert_eq!(signed_zero.execute(0.0), Ok(-0.0));
+        assert_eq!(signed_zero.execute(-0.0), Ok(0.0));
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must reach numeric negate");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn ordinary_source_lowering_executes_numeric_truthiness_and_falls_back_for_string() {
     let program = crate::reduce::reduce_source("var x = 0; if (x) { x = 1; } x;")
         .expect("conditional source lowers");
