@@ -53,7 +53,6 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_target_format(&file, env::var("TARGET").ok().as_deref());
-    assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
     validate_relocations(&file, "assembly verifier");
     let mut sections = file.sections().filter(|section| {
@@ -252,29 +251,34 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
             );
         }
     }
-    let mut sections = file.sections().filter(|section| {
-        section
-            .name()
-            .ok()
-            .is_some_and(|name| name == ".text" || name == "__text")
-    });
-    let section = sections.next().expect("Rust stencil text section");
-    assert!(
-        sections.next().is_none(),
-        "Rust stencil has multiple text sections"
+    let symbol = file
+        .symbols()
+        .find(|symbol| {
+            symbol
+                .name()
+                .ok()
+                .is_some_and(|value| value.trim_start_matches('_') == name)
+        })
+        .expect("Rust stencil entry symbol must exist");
+    let section_index = symbol.section_index().expect("stencil symbol section");
+    let section = file
+        .sections()
+        .find(|section| section.index() == section_index)
+        .expect("Rust stencil symbol section must exist");
+    assert_eq!(
+        section.kind(),
+        SectionKind::Text,
+        "Rust stencil entry must point into executable text"
     );
-    let section_index = section.index();
     let bytes = section.uncompressed_data().expect("read Rust stencil text");
     assert_eq!(
         section.size() as usize,
         bytes.len(),
         "Rust stencil text size is ambiguous"
     );
-    assert_eq!(
-        section.align() % 4,
-        0,
-        "Rust stencil text alignment is invalid"
-    );
+    if matches!(file.architecture(), object::Architecture::Aarch64) {
+        assert_eq!(section.align() % 4, 0, "AArch64 text alignment is invalid");
+    }
     let symbols = file
         .symbols()
         .filter(|symbol| symbol.section_index() == Some(section_index))
@@ -300,9 +304,16 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     );
     let output = bytes.to_vec();
     assert!(
-        !output.is_empty() && output.len() % 4 == 0,
-        "Rust stencil has invalid instruction bounds"
+        !output.is_empty(),
+        "Rust stencil has empty instruction bounds"
     );
+    if matches!(file.architecture(), object::Architecture::Aarch64) {
+        assert_eq!(
+            output.len() % 4,
+            0,
+            "AArch64 instruction bounds are invalid"
+        );
+    }
     output
 }
 
