@@ -1731,6 +1731,24 @@ impl NativeBinaryPlan {
         self.native_entry_count
     }
 
+    #[inline]
+    fn clear_physical_capabilities(&mut self) {
+        self.cache.clear();
+        self.lifecycle.reset();
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            self.entry = None;
+            self.int_entry = None;
+            self.tagged_entry = None;
+            self.uint_entry = None;
+            self.shared_entry = None;
+            self.shared_bool_entry = None;
+            self.shared_int_entry = None;
+            self.shared_uint_entry = None;
+            self.tagged_shared_entry = None;
+        }
+    }
+
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute_tagged(
         &mut self,
@@ -1767,9 +1785,16 @@ impl NativeBinaryPlan {
             };
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.tagged_shared_entry = Some(owned);
-            let result = shared.borrow().with_owned(owned, |entry| entry(lhs, rhs))?;
-            self.note_native_entry();
-            return Ok(result != 0);
+            return match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
+                Ok(result) => {
+                    self.note_native_entry();
+                    Ok(result != 0)
+                }
+                Err(error) => {
+                    self.clear_physical_capabilities();
+                    Err(error)
+                }
+            };
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -1872,9 +1897,16 @@ impl NativeBinaryPlan {
                         }
                     };
                     let owned = shared.borrow().owned_entry(address, entry)?;
-                    let result = shared
+                    let result = match shared
                         .borrow()
-                        .with_owned(owned, |entry| entry(left as u32, right as u32))?;
+                        .with_owned(owned, |entry| entry(left as u32, right as u32))
+                    {
+                        Ok(result) => result,
+                        Err(error) => {
+                            self.clear_physical_capabilities();
+                            return Err(error);
+                        }
+                    };
                     self.uint_entry = Some(entry);
                     self.shared_uint_entry = Some(owned);
                     self.note_native_entry();
@@ -1900,7 +1932,13 @@ impl NativeBinaryPlan {
                     }
                 };
                 let owned = shared.borrow().owned_entry(address, entry)?;
-                let result = shared.borrow().with_owned(owned, |entry| entry(left, right))?;
+                let result = match shared.borrow().with_owned(owned, |entry| entry(left, right)) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.clear_physical_capabilities();
+                        return Err(error);
+                    }
+                };
                 self.int_entry = Some(entry);
                 self.shared_int_entry = Some(owned);
                 self.note_native_entry();
@@ -2026,9 +2064,16 @@ impl NativeBinaryPlan {
                     Ok((address, entry)) => {
                         let owned = shared.borrow().owned_entry(address, entry)?;
                         self.shared_bool_entry = Some(owned);
-                        let value = shared.borrow().with_owned(owned, |entry| entry(lhs, rhs) != 0)?;
-                        self.note_native_entry();
-                        Ok(if value { 1.0 } else { 0.0 })
+                        match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs) != 0) {
+                            Ok(value) => {
+                                self.note_native_entry();
+                                Ok(if value { 1.0 } else { 0.0 })
+                            }
+                            Err(error) => {
+                                self.clear_physical_capabilities();
+                                Err(error)
+                            }
+                        }
                     }
                     Err(error) => {
                         self.cache.clear();
@@ -2056,11 +2101,19 @@ impl NativeBinaryPlan {
             self.entry = Some(entry);
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_entry = Some(owned);
-            let result = shared
+            return match shared
                 .borrow()
-                .with_owned(owned, |entry| unsafe { invoke_f64x2_entry(entry, lhs, rhs) })?;
-            self.note_native_entry();
-            return Ok(result);
+                .with_owned(owned, |entry| unsafe { invoke_f64x2_entry(entry, lhs, rhs) })
+            {
+                Ok(result) => {
+                    self.note_native_entry();
+                    Ok(result)
+                }
+                Err(error) => {
+                    self.clear_physical_capabilities();
+                    Err(error)
+                }
+            };
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
