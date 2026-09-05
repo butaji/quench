@@ -532,10 +532,12 @@ fn validate_fragment_relocations(
     if let object::File::MachO64(macho) = file {
         let mut relocation_count = 0;
         for section in macho.sections() {
+            let text_section = section.kind() == SectionKind::Text;
             for relocation in section
                 .macho_relocations()
                 .expect("read Mach-O fragment relocations")
             {
+                assert!(text_section, "Mach-O fragment relocation targets non-text data");
                 let info = relocation.info(Endianness::Little);
                 let expected_target = target_symbol.expect("declared Mach-O relocation target");
                 let (expected_offset, _, expected_kind) = expected
