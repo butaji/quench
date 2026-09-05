@@ -717,7 +717,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
         Some(words) if end <= words.len() => words,
         _ => return Ok(None),
     };
-    let interrupt = std::sync::atomic::AtomicBool::new(false);
+    let vm_context = unsafe { &*region.context };
     let mut kernel = NativeArrayLoopContext {
         data: words.as_mut_ptr(),
         len: words.len(),
@@ -725,7 +725,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
         end,
         addend,
         result: 0.0,
-        interrupt: &interrupt,
+        interrupt: vm_context.interrupt_flag(),
     };
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
@@ -736,6 +736,7 @@ pub(crate) fn execute_composed_array_numeric_loop(
         ))
     })?;
     if status == NATIVE_DISPATCH_INTERRUPT && kernel.index < end {
+        vm_context.clear_interrupt();
         crate::locals::write(store_index.b, crate::value::Value::Number(kernel.index as f64));
         registers.write(usize::from(set.a), array_value);
         registers.write_number(usize::from(add_value.a), kernel.result);
