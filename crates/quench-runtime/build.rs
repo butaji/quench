@@ -4,6 +4,7 @@ use std::{env, fs, path::PathBuf, process::Command};
 struct RegionDeclaration {
     name: &'static str,
     operations: &'static [&'static str],
+    abi: DeclAbi,
     x86_bytes: &'static [u8],
     aarch64_bytes: &'static [u8],
     portable_bytes: &'static [u8],
@@ -11,6 +12,14 @@ struct RegionDeclaration {
     aarch64_holes: &'static [(u16, usize, &'static str)],
     entry: u32,
     external_entries: &'static [u32],
+}
+
+#[derive(Clone, Copy)]
+enum DeclAbi {
+    Scalar,
+    Bridge,
+    ArrayKernel,
+    ArrayNumericLoop,
 }
 
 const fn le32(word: u32) -> [u8; 4] {
@@ -272,6 +281,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "loop",
         operations: &["Add", "Return"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_LOOP_BYTES,
         aarch64_bytes: &AARCH64_LOOP_BYTES,
         portable_bytes: &[0xC3],
@@ -283,6 +293,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "property",
         operations: &["GetN"],
+        abi: DeclAbi::Scalar,
         // The property leaf only loads a word from a slot that the complete
         // shape/accessor validator has already proven.  Ownership is retained
         // by the Rust register writer after the leaf returns the raw word.
@@ -297,6 +308,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "move",
         operations: &["Move"],
+        abi: DeclAbi::Scalar,
         // A pure Move leaf copies one canonical tagged word.  RegisterFile
         // performs the retain/release edge after this raw load returns.
         x86_bytes: &X86_MOVE_BYTES,
@@ -310,6 +322,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "fallthrough",
         operations: &["Add", "Return"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_FALLTHROUGH_BYTES,
         // AArch64 uses a direct B/imm26 branch to the aligned return tail;
         // x86 keeps its rel32 form. Both are patched only after the two pieces
@@ -324,6 +337,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "subtract",
         operations: &["Sub", "Return"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_SUBTRACT_BYTES,
         aarch64_bytes: &AARCH64_SUBTRACT_BYTES,
         portable_bytes: &[0xC3],
@@ -335,6 +349,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "multiply",
         operations: &["Mul", "Return"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_MULTIPLY_BYTES,
         aarch64_bytes: &AARCH64_MULTIPLY_BYTES,
         portable_bytes: &[0xC3],
@@ -346,6 +361,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "divide",
         operations: &["Div", "Return"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_DIVIDE_BYTES,
         aarch64_bytes: &AARCH64_DIVIDE_BYTES,
         portable_bytes: &[0xC3],
@@ -357,6 +373,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "add_const",
         operations: &["AddConst", "Return"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_ADD_CONST_BYTES,
         // ldr d1, #16; fadd d0, d0, d1; ret; padding; <literal f64>
         aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
@@ -405,6 +422,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "GetNQuickened",
             "AGetIQuickened",
         ],
+        abi: DeclAbi::Bridge,
         // movabs rax, <bridge>; jmp rax. The context pointer remains the
         // platform ABI's first argument and is supplied for every invocation.
         x86_bytes: &X86_DISPATCH_BYTES,
@@ -429,6 +447,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "StoreLocal",
             "Move",
         ],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -452,6 +471,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "UpdateLocal",
             "Return",
         ],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -463,6 +483,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "binary_glue",
         operations: &["LoadLocal", "LoadConst", "Binary", "Return"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -474,6 +495,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "update_return",
         operations: &["UpdateLocal", "Return"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -488,6 +510,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // this bounded leaf only removes the dispatch wrapper when its
         // callable fact is still valid.
         operations: &["Call"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -499,6 +522,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "call_n",
         operations: &["CallN"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -519,6 +543,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "UpdateLocal",
             "StoreLocal",
         ],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -530,6 +555,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "get_property",
         operations: &["GetProperty"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -541,6 +567,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "set_named",
         operations: &["SetN"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -552,6 +579,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "get_index",
         operations: &["AGetI"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -563,6 +591,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "set_index",
         operations: &["ASetI"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -574,6 +603,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "get_index_inc",
         operations: &["AGetIInc"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -587,6 +617,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // Structured ForI has no bytecode back-edge, so this is a bounded
         // admission row only; the canonical loop handler remains complete.
         operations: &["ForI"],
+        abi: DeclAbi::Bridge,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_DISPATCH_BYTES,
         portable_bytes: &[0xC3],
@@ -601,6 +632,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // runtime admits this row only when the second add consumes the first
         // result; all other shapes use canonical handlers.
         operations: &["Add", "Add"],
+        abi: DeclAbi::Scalar,
         x86_bytes: &X86_ADD_CHAIN_BYTES,
         aarch64_bytes: &AARCH64_ADD_CHAIN_BYTES,
         portable_bytes: &[0xC3],
@@ -615,6 +647,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // kernel; Rust performs the semantic admission and exact exit
         // materialization before/after this physical body.
         operations: &["LoadLocalChecked", "AGetI", "Add", "ASetI", "Return"],
+        abi: DeclAbi::ArrayKernel,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_ARRAY_KERNEL_BYTES,
         portable_bytes: &[0xC3],
@@ -646,6 +679,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "StoreLocal",
             "Jump",
         ],
+        abi: DeclAbi::ArrayNumericLoop,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_ARRAY_LOOP_BYTES,
         portable_bytes: &[0xC3],
@@ -1008,11 +1042,8 @@ fn key_name(name: &str) -> String {
     }
 }
 
-/// Derive the physical calling convention from the declared bytes.  Direct
-/// scalar rows and the two raw array kernels have distinct machine layouts;
-/// all rows whose bytes are the generated dispatch trampoline use the erased
-/// `NativeRegionContext` bridge.  This keeps ABI classification mechanical
-/// without a second hand-maintained key list.
+/// Derive the target view from the declaration's typed ABI family.  The bytes
+/// are a physical consequence of this fact, never the source used to infer it.
 fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
     let target_is_aarch64 = env::var("CARGO_CFG_TARGET_ARCH")
         .ok()
@@ -1020,16 +1051,20 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         || env::var("TARGET")
             .ok()
             .is_some_and(|target| target.starts_with("aarch64"));
-    if !target_is_aarch64 && declaration.x86_bytes == X86_DISPATCH_BYTES {
-        "crate::stencil_select::RegionAbi::Bridge"
-    } else if target_is_aarch64 && declaration.aarch64_bytes == AARCH64_ARRAY_KERNEL_BYTES {
-        "crate::stencil_select::RegionAbi::ArrayKernel"
-    } else if target_is_aarch64 && declaration.aarch64_bytes == AARCH64_ARRAY_LOOP_BYTES {
-        "crate::stencil_select::RegionAbi::ArrayNumericLoop"
-    } else if declaration.aarch64_bytes == AARCH64_DISPATCH_BYTES {
-        "crate::stencil_select::RegionAbi::Bridge"
-    } else {
-        "crate::stencil_select::RegionAbi::Scalar"
+    match declaration.abi {
+        DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
+        DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
+        DeclAbi::ArrayKernel if target_is_aarch64 => {
+            "crate::stencil_select::RegionAbi::ArrayKernel"
+        }
+        DeclAbi::ArrayNumericLoop if target_is_aarch64 => {
+            "crate::stencil_select::RegionAbi::ArrayNumericLoop"
+        }
+        // The raw array ABI is only implemented on ARM64. Other targets keep
+        // the same semantic declaration but route through the typed bridge.
+        DeclAbi::ArrayKernel | DeclAbi::ArrayNumericLoop => {
+            "crate::stencil_select::RegionAbi::Bridge"
+        }
     }
 }
 
