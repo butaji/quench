@@ -230,6 +230,15 @@ pub struct PhysicalStencilView {
     pub record: &'static RegionRecord,
     pub stencil: &'static Stencil,
     pub generated: bool,
+    /// Identity and physical boundary facts travel with the selected bytes.
+    /// Callers must not pair an artifact with independently looked-up record
+    /// metadata after this point.
+    pub abi: RegionAbi,
+    pub entry: u16,
+    pub external_entries: &'static [u16],
+    pub fallthrough: Option<(&'static Stencil, u16)>,
+    pub target: Option<&'static str>,
+    pub fingerprint: Option<&'static str>,
 }
 
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
@@ -358,29 +367,54 @@ pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
             && artifact.abi == record.abi
             && artifact_target_matches_host(artifact.target)
     }) else {
-        return Some(PhysicalStencilView {
-            key,
-            record,
-            stencil: &record.stencil,
-            generated: false,
-        });
+        return Some(legacy_physical_view(key, record));
     };
-    // Generated whole-function leaves cannot inherit a legacy continuation
-    // layout.  A fallthrough record therefore remains on its canonical bytes
-    // until the generated artifact carries matching continuation metadata.
-    if record.fallthrough.is_some() || !artifact.stencil.validate() {
-        return Some(PhysicalStencilView {
-            key,
-            record,
-            stencil: &record.stencil,
-            generated: false,
-        });
+    if let Some(view) = generated_physical_view(key, record, artifact) {
+        return Some(view);
+    }
+    Some(legacy_physical_view(key, record))
+}
+
+fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> PhysicalStencilView {
+    PhysicalStencilView {
+        key,
+        record,
+        stencil: &record.stencil,
+        generated: false,
+        abi: record.abi,
+        entry: record.entry,
+        external_entries: record.external_entries,
+        fallthrough: record.fallthrough,
+        target: None,
+        fingerprint: None,
+    }
+}
+
+fn generated_physical_view(
+    key: RegionKey,
+    record: &'static RegionRecord,
+    artifact: &'static BuildStencilArtifact,
+) -> Option<PhysicalStencilView> {
+    let metadata_matches = artifact.name == record.name
+        && artifact.abi == record.abi
+        && artifact.entry == record.entry
+        && artifact.external_entries == record.external_entries
+        && !artifact.has_fallthrough
+        && record.fallthrough.is_none();
+    if !metadata_matches || !artifact.stencil.validate() {
+        return None;
     }
     Some(PhysicalStencilView {
         key,
         record,
         stencil: &artifact.stencil,
         generated: true,
+        abi: artifact.abi,
+        entry: artifact.entry,
+        external_entries: artifact.external_entries,
+        fallthrough: None,
+        target: Some(artifact.target),
+        fingerprint: Some(artifact.fingerprint),
     })
 }
 
@@ -1112,5 +1146,41 @@ mod tests {
                 "normal selection must use the generated chain artifact"
             );
         }
+    }
+
+    #[test]
+    fn physical_view_rejects_layout_mismatch_before_entry() {
+        static BYTES: &[u8] = &[0xC3];
+        static WRONG_ENTRIES: &[u16] = &[1];
+        static BAD_ENTRY: BuildStencilArtifact = BuildStencilArtifact {
+            name: "add_const",
+            target: "test",
+            compiler: "test",
+            fingerprint: "test",
+            abi: RegionAbi::Scalar,
+            entry: 1,
+            external_entries: &[0],
+            has_fallthrough: false,
+            bytes: BYTES,
+            stencil: Stencil { bytes: BYTES, holes: &[] },
+        };
+        static BAD_ENTRIES: BuildStencilArtifact = BuildStencilArtifact {
+            name: "add_const",
+            target: "test",
+            compiler: "test",
+            fingerprint: "test",
+            abi: RegionAbi::Scalar,
+            entry: 0,
+            external_entries: WRONG_ENTRIES,
+            has_fallthrough: false,
+            bytes: BYTES,
+            stencil: Stencil { bytes: BYTES, holes: &[] },
+        };
+        let record = CANONICAL_REGION_TABLE
+            .iter()
+            .find(|record| record.name == "add_const")
+            .expect("add_const row");
+        assert!(generated_physical_view(record.key, record, &BAD_ENTRY).is_none());
+        assert!(generated_physical_view(record.key, record, &BAD_ENTRIES).is_none());
     }
 }
