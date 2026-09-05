@@ -51,6 +51,32 @@ pub(crate) fn protect_call(continuation: &crate::completion::CallContinuation) -
     })
 }
 
+/// Keep a live residual frame visible while a helper-capable native bridge
+/// runs.  The frame may allocate, throw, or re-enter JavaScript before the
+/// bridge publishes its completion; cloning the current words here is the
+/// existing collector's root representation and is balanced by `RootGuard`.
+pub(crate) fn protect_frame(
+    registers: &crate::register_file::RegisterFile,
+    environment: &Rc<crate::environment::Environment>,
+) -> RootGuard {
+    let value_length = ROOTS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        let length = roots.len();
+        registers.visit_values(|value| roots.push(value));
+        length
+    });
+    let environment_length = ENV_ROOTS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        let length = roots.len();
+        roots.push(Rc::clone(environment));
+        length
+    });
+    RootGuard {
+        value_length,
+        environment_length,
+    }
+}
+
 /// Retain a nested active callee in the same root set. The packed call-frame
 /// driver advances nested calls iteratively, so their `FunctionValue`s live in
 /// Rust-owned `ActiveCall` records rather than in the JS graph.
@@ -597,5 +623,24 @@ mod tests {
         assert!(values.iter().any(
             |value| matches!(value, Value::Object(candidate) if Rc::ptr_eq(candidate, &object))
         ));
+    }
+
+    #[test]
+    fn protected_frame_roots_live_register_words_until_bridge_exit() {
+        let object = Rc::new(ObjectData::new(Vec::new()));
+        track_object(&object);
+        let weak = Rc::downgrade(&object);
+        let registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Object(Rc::clone(&object)),
+        ]);
+        let environment = Environment::new();
+        let guard = protect_frame(&registers, &environment);
+        drop(registers);
+        drop(object);
+        collect_cycles();
+        assert!(weak.upgrade().is_some(), "frame root was collected during bridge");
+        drop(guard);
+        collect_cycles();
+        assert!(weak.upgrade().is_none(), "temporary frame root leaked past bridge exit");
     }
 }

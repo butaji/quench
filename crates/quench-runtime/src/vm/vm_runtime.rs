@@ -268,6 +268,13 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
     }
     // From this point on a handler or physical kernel may have committed
     // effects. Any failure is therefore an exit, never a retryable miss.
+    let _frame_roots = if region.abi.contract().may_call_helper {
+        let registers = unsafe { &*region.registers };
+        let environment = crate::locals::current();
+        Some(crate::cycle_collector::protect_frame(registers, &environment))
+    } else {
+        None
+    };
     region.entry_started = true;
 
     // Physical dispatch is selected from the generated declaration's ABI.
