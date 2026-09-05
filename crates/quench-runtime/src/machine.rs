@@ -3682,7 +3682,46 @@ fn validate_physical_template(
     if raw_region_declares_allocation(contract) {
         return Err("raw array region declares an allocating operation".into());
     }
+    if matches!(
+        contract.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::ArrayNumericLoop
+    ) {
+        let actual = physical_template_clobber_mask(record.stencil.bytes);
+        if actual & !abi.hardware_clobber_mask != 0 {
+            return Err(format!(
+                "raw ABI declares clobber mask {:04x}, template uses undeclared {:04x}",
+                abi.hardware_clobber_mask,
+                actual & !abi.hardware_clobber_mask
+            ));
+        }
+    }
     Ok(())
+}
+
+/// Derive the SIMD scratch set used by the raw ARM templates from their
+/// encoded destination registers.  Scalar leaves intentionally skip this
+/// check: their C ABI treats caller-saved SIMD registers as non-VM state.
+fn physical_template_clobber_mask(bytes: &[u8]) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return bytes
+            .chunks_exact(4)
+            .filter_map(|word| {
+                let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+                let fp_load = encoded & 0xFFC0_0000 == 0xFD40_0000;
+                let fp_arith = encoded & 0xFF20_FC00 == 0x1E20_2800;
+                let fp_move = encoded & 0xFF20_FC00 == 0x1E20_4000;
+                (fp_load || fp_arith || fp_move).then_some(encoded & 0x1f)
+            })
+            .filter(|register| *register < 16)
+            .fold(0u16, |mask, register| mask | (1u16 << register));
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = bytes;
+        0
+    }
 }
 
 fn abi_pointer_hole_contract(abi: crate::stencil_select::RegionAbi) -> usize {
@@ -5837,6 +5876,31 @@ mod tests {
             executable: true,
         };
         assert!(super::validate_physical_template(&scalar_with_pointer).is_err());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn raw_template_rejects_undeclared_simd_clobber() {
+        static BYTES: [u8; 4] = 0xFD40_0003u32.to_le_bytes(); // ldr d3, [x0]
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::AGetI];
+        static ENTRIES: [u16; 1] = [0];
+        let record = crate::stencil_select::RegionRecord {
+            name: "test_raw_clobber",
+            key: crate::stencil_fact::RegionKey(3),
+            stencil: crate::stencil_fact::Stencil {
+                bytes: &BYTES,
+                holes: &[],
+            },
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::ArrayKernel,
+            executable: true,
+        };
+        assert!(super::validate_physical_template(&record)
+            .expect_err("d3 is outside the ArrayKernel scratch contract")
+            .contains("undeclared"));
     }
 
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
