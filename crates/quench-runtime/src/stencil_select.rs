@@ -29,8 +29,8 @@ pub struct AbiContract {
     /// throw, call JS, or re-enter. Raw kernels must keep this false.
     pub may_call_helper: bool,
     /// Whether a native backedge contains a runtime interruption checkpoint.
-    /// The current bounded array loop is false and is admitted only in finite
-    /// chunks; larger/unknown spans use the ordinary interruptible loop.
+    /// The bounded array loop polls its context flag; larger/unknown spans use
+    /// the ordinary interruptible loop.
     pub interruptible_backedge: bool,
 }
 
@@ -94,7 +94,7 @@ region_abi_catalog! {
         context_arg_words: 1,
         preserves_vm_registers: false,
         may_call_helper: false,
-        interruptible_backedge: false
+        interruptible_backedge: true
     }
 }
 
@@ -437,11 +437,7 @@ mod generated_region_admission_tests {
         assert!(RegionAbi::Bridge.contract().may_call_helper);
         assert_eq!(RegionAbi::ArrayKernel.contract().context_arg_words, 1);
         assert!(!RegionAbi::ArrayKernel.contract().may_call_helper);
-        assert!(
-            !RegionAbi::ArrayNumericLoop
-                .contract()
-                .interruptible_backedge
-        );
+        assert!(RegionAbi::ArrayNumericLoop.contract().interruptible_backedge);
     }
 }
 
