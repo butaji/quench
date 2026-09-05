@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `06c4d1308` (cleanup files remain
+Evidence below is bound to source revision `079635d56` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -45,5 +45,5 @@ covered by `ordinary_source_prototype_property_lookup_preserves_semantics`
 (`/tmp/quench-prototype-source-20260905.log`).
 Latest post-guard runtime regression: **701 passed, 0 failed, 1 ignored** at
 `80d00a941` (`/tmp/quench-runtime-full-20260905-prototype-guard.log`).
-The same suite at current source `6e8530bb2` is **706 passed, 0 failed, 1
+The same suite at current source `079635d56` is **706 passed, 0 failed, 1
 ignored** (`/tmp/quench-runtime-full-20260905-identity-word.log`).
