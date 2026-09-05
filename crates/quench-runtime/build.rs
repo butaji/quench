@@ -1151,6 +1151,21 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "array_numeric_update_const",
+        // The frontend commonly lowers a constant add as AddConst.  Keep its
+        // pool operand in the canonical residual stream while reusing the
+        // same physical load/add/store body.
+        operations: &["AGetI", "AddConst", "ASetI"],
+        abi: DeclAbi::ArrayKernel,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_KERNEL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "set_index",
         operations: &["ASetI"],
         abi: DeclAbi::Bridge,
