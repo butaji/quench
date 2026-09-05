@@ -932,6 +932,11 @@ impl StencilArena {
         stencil: &Stencil,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
+        if let Some(view) = crate::stencil_select::select_physical(key) {
+            if view.stencil.bytes != stencil.bytes || view.stencil.holes != stencil.holes {
+                return Err(ArenaError::ProtectionFailed);
+            }
+        }
         let signature = cache_signature(stencil, values);
         if let Some(address) = cache
             .get_owned(key, signature, self.id)

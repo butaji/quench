@@ -3610,10 +3610,10 @@ impl NativeMovePlan {
                 .arena
                 .as_mut()
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-            let record = crate::stencil_select::select_region(key)
-                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address =
-                arena.render_or_get(&mut self.physical.cache, key, &record.stencil, &values)?;
+            let stencil = crate::stencil_select::select_physical(key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?
+                .stencil;
+            let address = arena.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
             arena.make_executable()?;
             arena.execute_tagged_word(address, source)
         })();
@@ -3828,10 +3828,10 @@ impl NativePropertyPlan {
                 .arena
                 .as_mut()
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-            let record = crate::stencil_select::select_region(key)
-                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address =
-                arena.render_or_get(&mut self.physical.cache, key, &record.stencil, &values)?;
+            let stencil = crate::stencil_select::select_physical(key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?
+                .stencil;
+            let address = arena.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
             arena.make_executable()?;
             arena.execute_word(address, slot)
         })();
@@ -3969,11 +3969,13 @@ impl NativeDispatchPlan {
         if let Some(shared) = self.shared_arena.clone() {
             let result = (|| {
                 let mut slab = shared.borrow_mut();
-                let record = crate::stencil_select::select_region(key).ok_or_else(|| {
-                    NativeDispatchError::Physical("native baseline stencil missing".into())
-                })?;
+                let stencil = crate::stencil_select::select_physical(key)
+                    .ok_or_else(|| {
+                        NativeDispatchError::Physical("native baseline stencil missing".into())
+                    })?
+                    .stencil;
                 let address = slab
-                    .render_or_get(&mut self.physical.cache, key, &record.stencil, &values)
+                    .render_or_get(&mut self.physical.cache, key, stencil, &values)
                     .map_err(|error| {
                         NativeDispatchError::Physical(format!(
                             "native baseline render failed: {error:?}"
@@ -4019,11 +4021,13 @@ impl NativeDispatchPlan {
             let arena = self.arena.as_mut().ok_or_else(|| {
                 NativeDispatchError::Physical("native baseline arena missing".into())
             })?;
-            let record = crate::stencil_select::select_region(key).ok_or_else(|| {
-                NativeDispatchError::Physical("native baseline stencil missing".into())
-            })?;
+            let stencil = crate::stencil_select::select_physical(key)
+                .ok_or_else(|| {
+                    NativeDispatchError::Physical("native baseline stencil missing".into())
+                })?
+                .stencil;
             let address = arena
-                .render_or_get(&mut self.physical.cache, key, &record.stencil, &values)
+                .render_or_get(&mut self.physical.cache, key, stencil, &values)
                 .map_err(|error| {
                     NativeDispatchError::Physical(format!(
                         "native baseline render failed: {error:?}"
