@@ -2852,6 +2852,15 @@ enum NativeUnaryKind {
 
 /// Typed unary leaves for exact numeric subsets. Other unary operators retain
 /// the canonical residual handler and coercion order.
+#[derive(Clone, Copy)]
+enum InstalledUnaryEntry {
+    Unpublished,
+    IntegerLocal(extern "C" fn(i32) -> i32),
+    IntegerShared(crate::stencil_arena::OwnedEntry<extern "C" fn(i32) -> i32>),
+    NumberLocal(extern "C" fn(f64) -> f64),
+    NumberShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> f64>),
+}
+
 pub(crate) struct NativeUnaryPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
@@ -2860,16 +2869,7 @@ pub(crate) struct NativeUnaryPlan {
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
     kind: NativeUnaryKind,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(i32) -> i32>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(i32) -> i32>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    number_entry: Option<extern "C" fn(f64) -> f64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_number_entry: Option<
-        crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> f64>,
-    >,
+    installed: InstalledUnaryEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2887,10 +2887,7 @@ impl std::fmt::Debug for NativeUnaryPlan {
 impl NativeUnaryPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.shared_entry = None;
-        self.shared_number_entry = None;
-        self.entry = None;
-        self.number_entry = None;
+        self.installed = InstalledUnaryEntry::Unpublished;
         self.cache.clear();
         self.lifecycle.reset();
     }
@@ -2935,13 +2932,7 @@ impl NativeUnaryPlan {
                 key,
                 kind,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                shared_entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                number_entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                shared_number_entry: None,
+                installed: InstalledUnaryEntry::Unpublished,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2961,15 +2952,15 @@ impl NativeUnaryPlan {
         shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
         value: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
-            .with_constant_bits(0x8000_0000_0000_0000);
-        if let Some(owned) = self.shared_number_entry {
+        if let InstalledUnaryEntry::NumberShared(owned) = self.installed {
             if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
                 self.note_entry();
                 return Ok(result);
             }
-            self.shared_number_entry = None;
+            self.clear_shared_capabilities();
         }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_constant_bits(0x8000_0000_0000_0000);
         let (address, entry) = {
             let mut slab = shared.borrow_mut();
             let stencil = crate::stencil_select::select_stencil(self.key)
@@ -2979,16 +2970,14 @@ impl NativeUnaryPlan {
             (address, slab.f64_unary_entry(address)?)
         };
         let owned = shared.borrow().owned_f64_unary_entry(address)?;
-        self.shared_number_entry = Some(owned);
+        self.installed = InstalledUnaryEntry::NumberShared(owned);
         match shared.borrow().with_owned(owned, |entry| entry(value)) {
             Ok(result) => {
                 self.note_entry();
                 Ok(result)
             }
             Err(error) => {
-                self.shared_number_entry = None;
-                self.cache.clear();
-                self.lifecycle.reset();
+                self.clear_shared_capabilities();
                 Err(error)
             }
         }
@@ -3001,7 +2990,7 @@ impl NativeUnaryPlan {
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x8000_0000_0000_0000);
-        if let Some(entry) = self.number_entry {
+        if let InstalledUnaryEntry::NumberLocal(entry) = self.installed {
             self.note_entry();
             return Ok(entry(value));
         }
@@ -3017,7 +3006,7 @@ impl NativeUnaryPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.f64_unary_entry(address)?;
-        self.number_entry = Some(entry);
+        self.installed = InstalledUnaryEntry::NumberLocal(entry);
         self.note_entry();
         Ok(entry(value))
     }
@@ -3043,7 +3032,7 @@ impl NativeUnaryPlan {
         let operand = number_to_int32(value);
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some(owned) = self.shared_entry {
+            if let InstalledUnaryEntry::IntegerShared(owned) = self.installed {
                 match shared.borrow().with_owned(owned, |entry| entry(operand)) {
                     Ok(result) => {
                         self.note_entry();
@@ -3070,7 +3059,7 @@ impl NativeUnaryPlan {
             let result = match shared.borrow().with_owned(owned, |entry| entry(operand)) {
                 Ok(result) => result,
                 Err(error) => {
-                    self.shared_entry = None;
+                    self.clear_shared_capabilities();
                     self.cache.clear();
                     self.lifecycle.reset();
                     return Err(error);
@@ -3078,7 +3067,7 @@ impl NativeUnaryPlan {
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.shared_entry = Some(owned);
+                self.installed = InstalledUnaryEntry::IntegerShared(owned);
             }
             self.note_entry();
             return Ok(f64::from(result));
@@ -3090,7 +3079,9 @@ impl NativeUnaryPlan {
         let arena = self.arena.as_mut().ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
-        let result = (arena.i32_unary_entry(address)?)(operand);
+        let entry = arena.i32_unary_entry(address)?;
+        self.installed = InstalledUnaryEntry::IntegerLocal(entry);
+        let result = entry(operand);
         self.note_entry();
         Ok(f64::from(result))
     }
