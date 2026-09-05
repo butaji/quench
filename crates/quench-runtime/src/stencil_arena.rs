@@ -73,6 +73,20 @@ fn cache_signature<const N: usize>(stencil: &Stencil, values: &PatchValues<'_, N
     }
 }
 
+fn selected_chain_matches(key: crate::stencil_fact::RegionKey, head: &Stencil, tail: &Stencil) -> bool {
+    let Some(view) = crate::stencil_select::select_physical(key) else {
+        return true;
+    };
+    let Some((expected_tail, _)) = view.fallthrough else {
+        return false;
+    };
+    view.abi == crate::stencil_select::RegionAbi::Scalar
+        && view.stencil.bytes == head.bytes
+        && view.stencil.holes == head.holes
+        && expected_tail.bytes == tail.bytes
+        && expected_tail.holes == tail.holes
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArenaError {
     InvalidCapacity,
@@ -1300,6 +1314,9 @@ impl StencilArena {
         rhs: f64,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
+        if !selected_chain_matches(key, head, tail) {
+            return fallback();
+        }
         let signature = cache_signature(head, values);
         if let Some(address) = cache
             .get_owned(key, signature, self.id)
@@ -1434,6 +1451,9 @@ impl StencilArena {
         rhs: f64,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
+        if !selected_chain_matches(key, head, tail) {
+            return fallback();
+        }
         let signature = cache_signature(head, values);
         if let Some(address) = cache
             .get_owned(key, signature, self.id)
@@ -2423,6 +2443,37 @@ mod tests {
         assert_eq!(witness.byte_len, view.stencil.bytes.len());
         #[cfg(quench_generated_stencil_artifacts)]
         assert!(witness.generated);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn selected_chain_rejects_substituted_tail_before_publication() {
+        let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
+        let (tail, branch_offset) = view.fallthrough.expect("declared successor");
+        let bad_tail = Stencil {
+            bytes: &[0xC3, 0xC3],
+            holes: &[],
+        };
+        let mut arena = StencilArena::new(4096).expect("arena");
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let result = arena.render_fallthrough_f64(
+            &mut cache,
+            key,
+            view.stencil,
+            &bad_tail,
+            &values,
+            branch_offset,
+            1.0,
+            2.0,
+            || Ok(-1.0),
+        );
+        assert_eq!(result, Ok(-1.0));
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
+        assert_eq!(tail.bytes, view.fallthrough.unwrap().0.bytes);
     }
 
     #[cfg(all(quench_generated_stencil_artifacts, target_arch = "aarch64"))]
