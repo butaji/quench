@@ -1,0 +1,91 @@
+//! Small, target-specific decoders used to verify published stencil effects.
+//!
+//! These routines inspect bytes only; semantic admission and ABI facts remain
+//! in the generated catalog and `machine` verifier.
+
+pub(crate) fn contains_call(bytes: &[u8]) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return bytes.chunks_exact(4).any(|word| {
+            let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+            encoded & 0xFC00_0000 == 0x9400_0000
+                || encoded & 0xFFFF_FC1F == 0xD63F_0000
+                || encoded & 0xFFFF_FC1F == 0xD61F_0000
+        });
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        return bytes.first().is_some_and(|byte| *byte == 0xE8)
+            || bytes.windows(2).any(|window| {
+                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18 | 0x20 | 0x28)
+            });
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = bytes;
+        false
+    }
+}
+
+pub(crate) fn contains_interrupt_checkpoint(bytes: &[u8]) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let words: Vec<u32> = bytes
+            .chunks_exact(4)
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .collect();
+        return words.windows(3).any(|window| {
+            window[0] == 0xF940_1805
+                && window[1] == 0x3940_00A6
+                && window[2] & 0xFF00_001F == 0x3500_0006
+        });
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = bytes;
+        false
+    }
+}
+
+pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return bytes
+            .chunks_exact(4)
+            .filter_map(|word| {
+                let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+                let fp_load = encoded & 0xFFC0_0000 == 0xFD40_0000;
+                let fp_arith = encoded & 0xFF20_FC00 == 0x1E20_2800;
+                let fp_move = encoded & 0xFF20_FC00 == 0x1E20_4000;
+                (fp_load || fp_arith || fp_move).then_some((encoded & 0x1f) as u16)
+            })
+            .fold(0u16, |mask, register| {
+                if register < 16 { mask | (1u16 << register) } else { u16::MAX }
+            });
+    }
+    let _ = bytes;
+    0
+}
+
+pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return bytes
+            .chunks_exact(4)
+            .filter_map(|word| {
+                let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+                let load = encoded & 0xFFC0_0000 == 0xF940_0000;
+                let writes_rt = load
+                    || encoded & 0xFFE0_0000 == 0x8B00_0000
+                    || encoded & 0xFFC0_0000 == 0x9100_0000
+                    || encoded & 0xFFE0_0000 == 0x5280_0000
+                    || encoded & 0xFFC0_0000 == 0x3940_0000;
+                writes_rt.then_some((encoded & 0x1f) as u16)
+            })
+            .fold(0u16, |mask, register| {
+                if register < 16 { mask | (1u16 << register) } else { u16::MAX }
+            });
+    }
+    let _ = bytes;
+    0
+}
