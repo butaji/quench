@@ -2843,6 +2843,9 @@ fn validate_physical_template(
 ) -> Result<(), String> {
     let contract = record.contract();
     let abi = contract.abi_contract();
+    if !contract.abi_is_well_formed() {
+        return Err("region ABI has inconsistent clobber/live-out/root contract".into());
+    }
     if !record.stencil.validate() {
         return Err("native region stencil layout or relocation is invalid".into());
     }
