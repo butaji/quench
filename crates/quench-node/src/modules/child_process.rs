@@ -887,11 +887,40 @@ fn invalid_arg_type() -> VmError {
 }
 
 fn value_to_bytes(value: Value) -> Result<Vec<u8>, ()> {
+    fn view_bytes(
+        buffer: std::rc::Rc<quench_runtime::value::ArrayBufferData>,
+        offset: usize,
+        length: usize,
+    ) -> Vec<u8> {
+        buffer.bytes.borrow()[offset..offset + length].to_vec()
+    }
+    macro_rules! typed_view {
+        ($view:expr) => {
+            Ok(view_bytes(
+                $view.buffer.clone(),
+                $view.byte_offset,
+                $view.byte_length(),
+            ))
+        };
+    }
     match value {
         Value::String(value) => Ok(value.into_bytes()),
-        Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
+        Value::Uint8Array(view) => typed_view!(view),
+        Value::Int8Array(view) => typed_view!(view),
+        Value::Uint8ClampedArray(view) => typed_view!(view),
+        Value::Int16Array(view) => typed_view!(view),
+        Value::Uint16Array(view) => typed_view!(view),
+        Value::Int32Array(view) => typed_view!(view),
+        Value::Uint32Array(view) => typed_view!(view),
+        Value::Float32Array(view) => typed_view!(view),
+        Value::Float64Array(view) => typed_view!(view),
+        Value::BigInt64Array(view) => typed_view!(view),
+        Value::BigUint64Array(view) => typed_view!(view),
+        Value::DataView(view) => Ok(view_bytes(
+            view.buffer.clone(),
+            view.byte_offset,
+            view.byte_length,
+        )),
         _ => Err(()),
     }
 }
