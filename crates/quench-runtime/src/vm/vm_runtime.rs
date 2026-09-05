@@ -1649,6 +1649,20 @@ pub(crate) fn execute_baseline_code_step_from_with_owner(
     context: &VmContext,
     owner: &crate::machine::FunctionCode,
 ) -> Result<(crate::completion::Completion, usize), VmError> {
+    execute_baseline_completion_step_from_with_owner(
+        code, plan, start, registers, context, owner,
+    )
+    .map(|step| (step.completion, step.next))
+}
+
+pub(crate) fn execute_baseline_completion_step_from_with_owner(
+    code: crate::machine::CodeView<'_>,
+    plan: &crate::machine::BaselinePlan,
+    start: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+    owner: &crate::machine::FunctionCode,
+) -> Result<crate::vm::CompletionStep, VmError> {
     // Count locally while the baseline body is executing.  Publishing an
     // optimizing plan from inside the body would change the tier observed by
     // the still-running baseline loop and can make a one-step fragment spin.
@@ -1670,8 +1684,7 @@ pub(crate) fn execute_baseline_code_step_from_with_owner(
         )
     });
     owner.retire(retired);
-    let step = result?;
-    Ok((step.completion, step.next))
+    result
 }
 
 /// Execute through the Rust optimizing view.  The optimized view specializes
