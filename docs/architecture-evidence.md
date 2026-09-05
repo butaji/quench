@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `18826b4a7` (cleanup files remain
+Evidence below is bound to source revision `9da93e5e4` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -13,6 +13,13 @@ while the latter is non-retryable. Focused bridge/status evidence is
 `/tmp/quench-committed-status-tests-20260905.log` (53 passed), and the full
 runtime library is **735 passed, 0 failed, 1 ignored** at
 `/tmp/quench-runtime-full-20260905-committed-status.log`.
+
+Shared scalar Move/Property and fused Add-chain plans now clear typed entry
+capabilities, caches and lifecycle state if owner validation fails after
+publication. Focused owner-capability coverage is
+`/tmp/quench-owner-capability-tests-20260905.log` (45 passed); full runtime is
+**735 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-owner-capability.log`.
 
 Latest source-only cache-hit refinement is at `43c8b2da0`: fused Add-chain
 cache hits now defer `PatchValues` construction until a render is required,
