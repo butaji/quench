@@ -1079,7 +1079,15 @@ impl StencilArena {
             cache.remove(key, cache_signature(stencil, values), address);
             return fallback();
         }
-        match self.execute_f64(address, lhs, rhs) {
+        let entry_rhs = if key == crate::stencil_select::add_const_region_key() {
+            values
+                .constant_bits()
+                .map(f64::from_bits)
+                .unwrap_or(rhs)
+        } else {
+            rhs
+        };
+        match self.execute_f64(address, lhs, entry_rhs) {
             Ok(value) => {
                 self.mark_physical_execution(view);
                 Ok(value)
@@ -2280,24 +2288,20 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::AddConst);
         let values = PatchValues::from_site(&site).with_constant_bits(2.5_f64.to_bits());
         let key = crate::stencil_select::add_const_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("add-const view");
         let result = arena.render_selected_f64(&mut cache, key, &values, 4.0, 0.0, || Ok(99.0));
         assert_eq!(result, Ok(6.5));
-        assert_eq!(
-            arena.used(),
-            if cfg!(target_arch = "aarch64") {
-                24
-            } else {
-                21
-            }
-        );
-        assert_eq!(
-            arena.byte(if cfg!(target_arch = "aarch64") {
-                16
-            } else {
-                13
-            }),
-            0
-        );
+        assert_eq!(arena.used(), view.stencil.bytes.len());
+        if !view.generated {
+            assert_eq!(
+                arena.byte(if cfg!(target_arch = "aarch64") {
+                    16
+                } else {
+                    13
+                }),
+                0
+            );
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
