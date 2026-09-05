@@ -1073,6 +1073,10 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             ("spawnSync".into(), spawn_sync.clone()),
             ("\0originalSpawnSync".into(), spawn_sync),
             (
+                "getValidStdio".into(),
+                crate::host::capability(crate::registry::SPEC_CP_GET_VALID_STDIO),
+            ),
+            (
                 "kChannelHandle".into(),
                 Value::String("Symbol.kChannelHandle\0".into()),
             ),
@@ -3222,7 +3226,9 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             ]);
             let constructor =
                 quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
-            state.borrow_mut().child_process_prototype = Some(prototype);
+            if let Ok(mut host) = state.try_borrow_mut() {
+                host.child_process_prototype = Some(prototype);
+            }
             Some(crate::host::namespace_object_from_pairs(vec![
                 (
                     "fork".to_string(),
