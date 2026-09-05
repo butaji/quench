@@ -760,6 +760,90 @@ fn execute_composed_array_set(
     Ok(Some(handler_transition(pc, None)))
 }
 
+#[cfg(target_arch = "aarch64")]
+fn execute_composed_array_update(
+    region: &mut NativeRegionContext<'_>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    let code = region.code;
+    let pc = region.pc;
+    if region.registers.is_null() || region.operations.len() != 3 {
+        return Ok(None);
+    }
+    let registers = unsafe { &mut *region.registers };
+    let Some(load) = code.instruction(pc) else { return Ok(None) };
+    let Some(add) = code.instruction(pc + 1) else { return Ok(None) };
+    let Some(store) = code.instruction(pc + 2) else { return Ok(None) };
+    if load.opcode != crate::ir::Opcode::AGetI
+        || add.opcode != crate::ir::Opcode::Add
+        || store.opcode != crate::ir::Opcode::ASetI
+        || load.flags != 0
+        || add.flags != 0
+        || store.flags != 0
+        || store.a != load.b
+        || store.b != load.c
+        || add.b != load.a
+        || store.c != add.a
+        || add.c == load.a
+        || add.a == load.c
+        || add.a == load.b
+    {
+        return Ok(None);
+    }
+    let Some(index) = registers.read_array_index(usize::from(load.c)) else {
+        return Ok(None);
+    };
+    let Some(addend) = registers.read_number(usize::from(add.c)) else {
+        return Ok(None);
+    };
+    let Some(array) = registers
+        .read_array(usize::from(load.b))
+        .filter(|array| crate::locals::array_word_is_current(array))
+        .filter(|array| array.is_plain_dense_access())
+    else {
+        return Ok(None);
+    };
+    if !array.has_kernel_numeric_index(index) {
+        return Ok(None);
+    }
+    let mut words = array.numeric_kernel_words_mut().ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array update storage missing".into())
+    })?;
+    if index >= words.len() {
+        return Ok(None);
+    }
+    let element = unsafe { words.as_mut_ptr().add(index) };
+    let initial = unsafe { *element };
+    let mut kernel = NativeArrayKernelContext {
+        data: words.as_mut_ptr(),
+        len: words.len(),
+        index,
+        addend,
+        result: initial,
+    };
+    if !kernel.is_valid() {
+        return Ok(None);
+    }
+    region.native_entered = true;
+    let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast())
+        .map_err(|error| {
+            crate::machine::NativeDispatchError::Committed(format!(
+                "array update execution failed after entry: {error:?}"
+            ))
+        })?;
+    let written = unsafe { *element };
+    drop(words);
+    if status != NATIVE_DISPATCH_OK || written.to_bits() != kernel.result.to_bits() {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array update returned invalid committed state".into(),
+        ));
+    }
+    registers.write_number(usize::from(load.a), initial);
+    registers.write_number(usize::from(add.a), kernel.result);
+    crate::execution_trace::stencil_iterations(code, pc, "composed_array_update", 1);
+    Ok(Some(handler_transition(pc + 2, None)))
+}
+
 #[repr(C)]
 pub(crate) struct NativeArrayLoopContext {
     pub data: *mut f64,
@@ -799,6 +883,16 @@ pub(crate) fn execute_composed_array_kernel(
     #[cfg(target_arch = "aarch64")]
     if region.operations == [crate::ir::Opcode::ASetI] {
         return execute_composed_array_set(region, invoke);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if region.operations
+        == [
+            crate::ir::Opcode::AGetI,
+            crate::ir::Opcode::Add,
+            crate::ir::Opcode::ASetI,
+        ]
+    {
+        return execute_composed_array_update(region, invoke);
     }
     let code = region.code;
     let pc = region.pc;
@@ -4624,6 +4718,131 @@ mod compact_handler_tests {
         )
         .expect("ordinary out-of-bounds array store");
         assert!(!region.borrow().last_native_execution());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn baseline_driver_composes_indexed_load_add_store_once() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![
+            Op::GetPropertyDynamic {
+                dst: 3,
+                object: 0,
+                key: 1,
+            },
+            Op::Binary {
+                dst: 4,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 3,
+                rhs: 2,
+            },
+            Op::SetPropertyDynamic {
+                object: 0,
+                key: 1,
+                src: 4,
+                strict: false,
+            },
+        ]);
+        let code = executable.code();
+        code.quicken_instruction(0, crate::ir::Opcode::AGetI, 0, 0, 0);
+        code.quicken_instruction(2, crate::ir::Opcode::ASetI, 0, 0, 0);
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let region = plan.native_region_at(0).expect("composed update admission");
+        assert_eq!(
+            region.borrow().key_for_test(),
+            crate::stencil_select::array_numeric_update_region_key()
+        );
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(3.0),
+        ])));
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            array,
+            Value::Number(0.0),
+            Value::Number(2.5),
+            Value::Undefined,
+            Value::Undefined,
+        ]);
+        let context = crate::vm::current_context_or_default();
+        crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("composed indexed update");
+        assert_eq!(
+            registers.read(3),
+            Some(Value::Number(3.0)),
+            "load live-out is preserved"
+        );
+        assert_eq!(registers.read(4), Some(Value::Number(5.5)));
+        assert_eq!(
+            registers
+                .read_array(0)
+                .and_then(|array| array.dense_number_at(0)),
+            Some(5.5)
+        );
+        assert!(region.borrow().last_native_execution());
+
+        // A destructive operand alias rejects the raw body and executes the
+        // same residual sequence canonically, without a partial native write.
+        let alias_code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::GetPropertyDynamic {
+                dst: 3,
+                object: 0,
+                key: 1,
+            },
+            Op::Binary {
+                dst: 4,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 3,
+                rhs: 3,
+            },
+            Op::SetPropertyDynamic {
+                object: 0,
+                key: 1,
+                src: 4,
+                strict: false,
+            },
+        ]);
+        let alias_view = alias_code.code();
+        alias_view.quicken_instruction(0, crate::ir::Opcode::AGetI, 0, 0, 0);
+        alias_view.quicken_instruction(2, crate::ir::Opcode::ASetI, 0, 0, 0);
+        let alias_plan = crate::machine::BaselinePlan::compile_for_test(
+            alias_view,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let alias_region = alias_plan.native_region_at(0).expect("alias region candidate");
+        let alias_array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(3.0),
+        ])));
+        let mut alias_registers = crate::register_file::RegisterFile::from_values(vec![
+            alias_array,
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Undefined,
+        ]);
+        crate::vm::execute_baseline_code_from(
+            alias_view,
+            &alias_plan,
+            0,
+            &mut alias_registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("aliased residual update");
+        assert_eq!(
+            alias_registers
+                .read_array(0)
+                .and_then(|array| array.dense_number_at(0)),
+            Some(6.0)
+        );
+        assert!(!alias_region.borrow().last_native_execution());
     }
 
     #[test]

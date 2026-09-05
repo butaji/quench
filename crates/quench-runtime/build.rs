@@ -1137,6 +1137,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "array_numeric_update",
+        // The existing raw kernel composes indexed load, numeric add, and
+        // indexed store while preserving the caller's register roles.
+        operations: &["AGetI", "Add", "ASetI"],
+        abi: DeclAbi::ArrayKernel,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_KERNEL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "set_index",
         operations: &["ASetI"],
         abi: DeclAbi::Bridge,
