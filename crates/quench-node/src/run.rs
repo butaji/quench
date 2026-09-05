@@ -338,6 +338,40 @@ mod tests {
     }
 
     #[test]
+    fn suspended_shared_bindings_survive_collection_with_dead_siblings() {
+        let output = Arc::new(Mutex::new(String::new()));
+        let sink_output = Arc::clone(&output);
+        let sink: OutputSink = Arc::new(move |chunk| {
+            sink_output.lock().unwrap().push_str(chunk);
+        });
+        let source = r#"
+          async function worker() {
+            const signature = function(value) { return value + 1; };
+            const operation = async function() { return 41; };
+            await Promise.resolve(0);
+            for (let i = 0; i < 4096; i++) {
+              const dead = { i: i, payload: [i, i + 1, i + 2, i + 3] };
+              if (dead.i < 0) console.log(dead);
+            }
+            return [typeof signature, typeof operation, signature(await operation())];
+          }
+          worker().then(function(result) { console.log(result.join(':')); });
+        "#;
+        let outcome = run_script_with_sink(
+            Path::new("/tmp/quench-suspended-binding-gc.js"),
+            &[],
+            source,
+            sink,
+        );
+        assert!(
+            outcome.error.is_none(),
+            "suspended binding run failed: {:?}",
+            outcome.error
+        );
+        assert_eq!(output.lock().unwrap().trim(), "function:function:42");
+    }
+
+    #[test]
     fn polymorphic_method_dispatch_preserves_semantics() {
         let output = Arc::new(Mutex::new(String::new()));
         let sink_output = Arc::clone(&output);
