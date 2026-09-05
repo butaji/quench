@@ -229,6 +229,12 @@ const NATIVE_DISPATCH_INTERRUPT: u64 = 4;
 /// region from monopolizing the VM thread; larger spans remain semantically
 /// complete through the ordinary residual loop.
 const MAX_NATIVE_ARRAY_LOOP_ITERATIONS: usize = 4096;
+const FRAME_ROOT_EFFECTS: &[crate::facts::OperationEffect] = &[
+    crate::facts::OperationEffect::Allocate,
+    crate::facts::OperationEffect::MayThrow,
+    crate::facts::OperationEffect::Observable,
+    crate::facts::OperationEffect::WriteHeap,
+];
 
 // Keep the CPS fast path shallow enough that the large transition frame does
 // not accumulate on long-running ARM64 loops. The stack-safe segment takes
@@ -410,12 +416,14 @@ pub(crate) fn execute_region_fallback(
     // Both bridge regions and guarded raw-region misses can execute canonical
     // handlers that allocate, throw, or re-enter. Root the live frame for the
     // whole semantic span; helper-free native entries do not take this path.
-    let _frame_roots = if region
-        .operations
-        .iter()
-        .copied()
-        .any(|opcode| opcode.has_effect(crate::facts::OperationEffect::MayThrow))
-    {
+    let needs_roots = region.abi.contract().may_call_helper
+        || region.operations.iter().copied().any(|opcode| {
+            FRAME_ROOT_EFFECTS
+                .iter()
+                .copied()
+            .any(|effect| opcode.has_effect(effect))
+        });
+    let _frame_roots = if needs_roots {
         let registers = unsafe { &*region.registers };
         let environment = crate::locals::current();
         Some(crate::cycle_collector::protect_frame(registers, &environment))
