@@ -40,7 +40,19 @@ struct OwnedDirectory {
 struct ExtractedObject {
     bytes: Vec<u8>,
     fallthrough: Option<Vec<u8>>,
-    relocations: Vec<(u16, &'static str, &'static str)>,
+    relocations: Vec<ExtractedRelocation>,
+}
+
+#[derive(Clone, Copy)]
+struct ExtractedRelocation {
+    offset: u16,
+    kind: &'static str,
+    target: &'static str,
+}
+
+struct ParsedFragment {
+    bytes: Vec<u8>,
+    relocations: Vec<ExtractedRelocation>,
 }
 
 impl Drop for OwnedDirectory {
@@ -194,7 +206,8 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     aarch64_array_loop_source(),
                     &[],
                     None,
-                ),
+                )
+                .bytes,
                 fallthrough: None,
                 relocations: Vec::new(),
             }
@@ -313,9 +326,9 @@ fn compile_fragment_pair(
         None,
     );
     ExtractedObject {
-        bytes: head,
-        fallthrough: Some(tail),
-        relocations: vec![(4, "Branch26", "q_fallthrough_tail")],
+        bytes: head.bytes,
+        fallthrough: Some(tail.bytes),
+        relocations: head.relocations,
     }
 }
 
@@ -328,8 +341,8 @@ fn compile_assembly_fragment(
     name: &str,
     source_text: &str,
     expected_relocations: &[(u16, usize, &'static str)],
-    target_symbol: Option<&str>,
-) -> Vec<u8> {
+    target_symbol: Option<&'static str>,
+) -> ParsedFragment {
     let source = root.join(format!("{name}.rs"));
     let object = root.join(format!("{name}.o"));
     fs::write(&source, source_text).expect("write Rust assembly fragment");
@@ -485,14 +498,19 @@ fn parse_object_range(
     name: &str,
     end_name: &str,
     expected_relocations: &[(u16, usize, &'static str)],
-    target_symbol: Option<&str>,
-) -> Vec<u8> {
+    target_symbol: Option<&'static str>,
+) -> ParsedFragment {
     let data = fs::read(path).expect("read Rust fragment object");
     let file = object::File::parse(&*data).expect("parse Rust fragment object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_target_format(&file, env::var("TARGET").ok().as_deref());
     reject_unwind_or_tls_sections(&file);
-    validate_fragment_relocations(&file, expected_relocations, target_symbol, "Rust fragment");
+    let relocations = validate_fragment_relocations(
+        &file,
+        expected_relocations,
+        target_symbol,
+        "Rust fragment",
+    );
     let (start_section, start_address) = find_text_symbol(&file, name);
     let (end_section, end_address) = find_text_symbol(&file, end_name);
     assert_eq!(start_section, end_section, "fragment bounds cross sections");
@@ -525,15 +543,16 @@ fn parse_object_range(
         assert_eq!(output.len() % 4, 0, "AArch64 fragment bounds are invalid");
     }
     assert_no_other_global_text_symbols(&file, section_index, name);
-    output
+    ParsedFragment { bytes: output, relocations }
 }
 
 fn validate_fragment_relocations(
     file: &object::File<'_>,
     expected: &[(u16, usize, &'static str)],
-    target_symbol: Option<&str>,
+    target_symbol: Option<&'static str>,
     context: &str,
-) {
+) -> Vec<ExtractedRelocation> {
+    let mut records = Vec::new();
     if let object::File::MachO64(macho) = file {
         let mut relocation_count = 0;
         for section in macho.sections() {
@@ -567,6 +586,11 @@ fn validate_fragment_relocations(
                 assert_eq!(info.r_type, object::macho::ARM64_RELOC_BRANCH26);
                 assert!(info.r_pcrel && info.r_length == 2);
                 assert_eq!(expected_kind, "Branch26");
+                records.push(ExtractedRelocation {
+                    offset: expected_offset,
+                    kind: expected_kind,
+                    target: target_symbol.expect("declared relocation target"),
+                });
                 relocation_count += 1;
             }
         }
@@ -575,7 +599,7 @@ fn validate_fragment_relocations(
             expected.len(),
             "{context} relocation count mismatch"
         );
-        return;
+        return records;
     }
     let text_index = file
         .sections()
@@ -615,6 +639,11 @@ fn validate_fragment_relocations(
         assert_eq!(relocation.kind(), RelocationKind::PltRelative);
         assert_eq!(relocation.encoding(), RelocationEncoding::AArch64Call);
         assert_eq!(relocation.size(), 26);
+        records.push(ExtractedRelocation {
+            offset: *expected_offset as u16,
+            kind: *expected_kind,
+            target: target_symbol.expect("declared relocation target"),
+        });
     }
     let relocation_count = file
         .sections()
@@ -625,6 +654,7 @@ fn validate_fragment_relocations(
         expected.len(),
         "{context} relocation count mismatch"
     );
+    records
 }
 
 fn find_text_symbol<'data>(
@@ -801,9 +831,10 @@ fn relocation_expr(extracted: &ExtractedObject) -> String {
     let entries = extracted
         .relocations
         .iter()
-        .map(|(offset, kind, target)| {
+        .map(|relocation| {
             format!(
-                "crate::stencil_select::PhysicalRelocation {{ offset: {offset}, kind: crate::stencil_fact::HoleKind::{kind}, target: {target:?} }}"
+                "crate::stencil_select::PhysicalRelocation {{ offset: {}, kind: crate::stencil_fact::HoleKind::{}, target: {:?} }}",
+                relocation.offset, relocation.kind, relocation.target
             )
         })
         .collect::<Vec<_>>()
