@@ -59,8 +59,11 @@ impl RustLeafRecipe {
     }
 }
 
-fn rust_leaf_recipe(operations: &[&str]) -> Option<RustLeafRecipe> {
-    match operations {
+fn rust_leaf_recipe(declaration: &RegionDeclaration) -> Option<RustLeafRecipe> {
+    if !matches!(declaration.abi, DeclAbi::Scalar) {
+        return None;
+    }
+    match declaration.operations {
         ["Add", "Return"] => Some(RustLeafRecipe::Add),
         ["Sub", "Return"] => Some(RustLeafRecipe::Sub),
         ["Mul", "Return"] => Some(RustLeafRecipe::Mul),
@@ -566,12 +569,10 @@ const AARCH64_COMPARE_EQUAL_BYTES: [u8; 12] =
     aarch64_triple(aarch64_fcmp_d(), aarch64_cset_eq_w0(), aarch64_ret());
 const AARCH64_COMPARE_NOT_EQUAL_BYTES: [u8; 12] =
     aarch64_triple(aarch64_fcmp_d(), aarch64_cset_ne_w0(), aarch64_ret());
-const AARCH64_COMPARE_LESS_BYTES: [u8; 20] =
-    aarch64_ordered_compare_bytes(aarch64_cset_lt_w0());
+const AARCH64_COMPARE_LESS_BYTES: [u8; 20] = aarch64_ordered_compare_bytes(aarch64_cset_lt_w0());
 const AARCH64_COMPARE_LESS_EQUAL_BYTES: [u8; 20] =
     aarch64_ordered_compare_bytes(aarch64_cset_le_w0());
-const AARCH64_COMPARE_GREATER_BYTES: [u8; 20] =
-    aarch64_ordered_compare_bytes(aarch64_cset_gt_w0());
+const AARCH64_COMPARE_GREATER_BYTES: [u8; 20] = aarch64_ordered_compare_bytes(aarch64_cset_gt_w0());
 const AARCH64_COMPARE_GREATER_EQUAL_BYTES: [u8; 20] =
     aarch64_ordered_compare_bytes(aarch64_cset_ge_w0());
 const AARCH64_BITWISE_AND_BYTES: [u8; 8] =
@@ -592,16 +593,10 @@ const X86_NEGATE_BYTES: [u8; 24] = x86_negate_bytes();
 const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
 const AARCH64_TRUTHY_WORD_BYTES: [u8; 24] = aarch64_truthy_word_bytes();
 const AARCH64_TRUTHY_POINTER_BYTES: [u8; 8] = aarch64_pair(0x5280_0020, aarch64_ret());
-const AARCH64_WORD_EQUAL_BYTES: [u8; 12] = aarch64_triple(
-    aarch64_cmp_x0_x1(),
-    aarch64_cset_eq_w0(),
-    aarch64_ret(),
-);
-const AARCH64_WORD_NOT_EQUAL_BYTES: [u8; 12] = aarch64_triple(
-    aarch64_cmp_x0_x1(),
-    aarch64_cset_ne_w0(),
-    aarch64_ret(),
-);
+const AARCH64_WORD_EQUAL_BYTES: [u8; 12] =
+    aarch64_triple(aarch64_cmp_x0_x1(), aarch64_cset_eq_w0(), aarch64_ret());
+const AARCH64_WORD_NOT_EQUAL_BYTES: [u8; 12] =
+    aarch64_triple(aarch64_cmp_x0_x1(), aarch64_cset_ne_w0(), aarch64_ret());
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -622,9 +617,7 @@ const AARCH64_ADD_CHAIN_BYTES: [u8; 12] = aarch64_triple(
     aarch64_fadd_d(0, 0, 2),
     aarch64_ret(),
 );
-const X86_LOAD_CONST_BYTES: [u8; 11] = [
-    0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xC3,
-];
+const X86_LOAD_CONST_BYTES: [u8; 11] = [0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xC3];
 const X86_TRUTHY_NUMBER_BYTES: [u8; 23] = [
     0x0F, 0x57, 0xC9, // xorps xmm1, xmm1
     0x66, 0x0F, 0x2E, 0xC1, // ucomisd xmm0, xmm1
@@ -1585,7 +1578,9 @@ fn verify_stencil_encodings() {
                 b"\n.globl _numeric_loop\n_numeric_loop:\n  ldr x1, [x0, #16]\n  ldr x2, [x0, #24]\n  ldr d0, [x0, #40]\n  fmov d1, d0\n  b 3f\n3:\n  cmp x1, x2\n  b.hs 4f\n  ldr x3, [x0]\n  add x4, x3, x1, lsl #3\n  ldr d1, [x4]\n  ldr d2, [x0, #32]\n  fadd d1, d1, d2\n  str d1, [x4]\n  add x1, x1, #1\n  str x1, [x0, #16]\n  b 3b\n4:\n  str d1, [x0, #40]\n  mov w0, #1\n  ret\n",
             )
             .expect("append ARM numeric-loop verification source");
-        source.write_all(b"\n\"#);\n").expect("close global_asm source");
+        source
+            .write_all(b"\n\"#);\n")
+            .expect("close global_asm source");
     }
     run_tool(
         Command::new(
@@ -1594,7 +1589,11 @@ fn verify_stencil_encodings() {
                 .unwrap_or_else(|| "rustc".into()),
         )
         .args([
-            "--target", target.as_str(), "--crate-type=lib", "--emit=obj", "-Cpanic=abort",
+            "--target",
+            target.as_str(),
+            "--crate-type=lib",
+            "--emit=obj",
+            "-Cpanic=abort",
             arm_source.to_str().expect("ARM source path"),
             "-o",
             arm_object.to_str().expect("ARM object path"),
@@ -1604,41 +1603,41 @@ fn verify_stencil_encodings() {
     build_stencil_artifacts::verify_words(
         &arm_object,
         &[
-        aarch64_fadd_d(0, 0, 1),
-        aarch64_fsub_d(0, 0, 1),
-        aarch64_fmul_d(0, 0, 1),
-        aarch64_fdiv_d(0, 0, 1),
-        0xF940_0001,
-        0xF940_0402,
-        0xF940_0803,
-        0x8B03_0C24,
-        0xFD40_0080,
-        0xFD40_0C01,
-        0xFD00_0080,
-        0xFD00_1000,
-        0x5280_0020,
-        0xF940_0801,
-        0xF940_0C02,
-        0xFD40_1400,
-        0x1E60_4001,
-        0x1400_0001,
-        0xEB02_003F,
-        aarch64_b_cond(10, 2),
-        0xF940_0003,
-        0x8B01_0C64,
-        0xFD40_0081,
-        0xFD40_1002,
-        0x1E62_2821,
-        0xFD00_0081,
-        0x9100_0421,
-        0xF900_0801,
-        aarch64_b_imm26(-8),
-        aarch64_b_imm26(-10),
-        0xFD00_1401,
-        aarch64_ldr_d_literal(1, 16),
-        aarch64_ldr_x0_x0(),
-        aarch64_br_x16(),
-        aarch64_ret(),
+            aarch64_fadd_d(0, 0, 1),
+            aarch64_fsub_d(0, 0, 1),
+            aarch64_fmul_d(0, 0, 1),
+            aarch64_fdiv_d(0, 0, 1),
+            0xF940_0001,
+            0xF940_0402,
+            0xF940_0803,
+            0x8B03_0C24,
+            0xFD40_0080,
+            0xFD40_0C01,
+            0xFD00_0080,
+            0xFD00_1000,
+            0x5280_0020,
+            0xF940_0801,
+            0xF940_0C02,
+            0xFD40_1400,
+            0x1E60_4001,
+            0x1400_0001,
+            0xEB02_003F,
+            aarch64_b_cond(10, 2),
+            0xF940_0003,
+            0x8B01_0C64,
+            0xFD40_0081,
+            0xFD40_1002,
+            0x1E62_2821,
+            0xFD00_0081,
+            0x9100_0421,
+            0xF900_0801,
+            aarch64_b_imm26(-8),
+            aarch64_b_imm26(-10),
+            0xFD00_1401,
+            aarch64_ldr_d_literal(1, 16),
+            aarch64_ldr_x0_x0(),
+            aarch64_br_x16(),
+            aarch64_ret(),
         ],
     );
     build_stencil_artifacts::verify_symbols(&arm_object, &["verify", "numeric_loop"]);
@@ -1674,7 +1673,10 @@ fn unique_verification_directory() -> PathBuf {
         .expect("system clock before epoch")
         .as_nanos();
     for attempt in 0..8u8 {
-        let root = base.join(format!("stencil-verify-{stamp}-{}-{attempt}", std::process::id()));
+        let root = base.join(format!(
+            "stencil-verify-{stamp}-{}-{attempt}",
+            std::process::id()
+        ));
         if fs::create_dir(&root).is_ok() {
             return root;
         }
@@ -1891,9 +1893,10 @@ fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
 fn is_numeric_scalar_leaf(declaration: &RegionDeclaration) -> bool {
     declaration.abi == DeclAbi::Scalar
         && declaration.operations.last() == Some(&"Return")
-        && declaration.operations.first().is_some_and(|opcode| {
-            matches!(*opcode, "Add" | "Sub" | "Mul" | "Div" | "AddConst")
-        })
+        && declaration
+            .operations
+            .first()
+            .is_some_and(|opcode| matches!(*opcode, "Add" | "Sub" | "Mul" | "Div" | "AddConst"))
 }
 
 /// Derive the helper boundary from the canonical ABI declaration.  A branch
@@ -1968,9 +1971,7 @@ fn generated_abi_catalog() -> String {
         .into_iter()
         .map(|abi| {
             let (name, context, priority, fields) = abi_contract_fields(abi);
-            format!(
-                "    {name} => {{ context: {context}, priority: {priority}, {fields} }}"
-            )
+            format!("    {name} => {{ context: {context}, priority: {priority}, {fields} }}")
         })
         .collect::<Vec<_>>()
         .join(",\n");
