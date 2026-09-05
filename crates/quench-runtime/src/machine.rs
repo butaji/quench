@@ -2265,6 +2265,8 @@ pub(crate) struct NativePropertyPlan {
     opcode: crate::ir::Opcode,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
+    #[cfg(test)]
+    native_entry_count: u64,
 }
 
 impl NativePropertyPlan {
@@ -2297,6 +2299,8 @@ impl NativePropertyPlan {
             opcode,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
+            #[cfg(test)]
+            native_entry_count: 0,
         })
     }
 
@@ -2312,6 +2316,10 @@ impl NativePropertyPlan {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
             if let Some(entry) = self.entry {
+                #[cfg(test)]
+                {
+                    self.native_entry_count = self.native_entry_count.saturating_add(1);
+                }
                 return Ok(entry(slot.cast()));
             }
         }
@@ -2343,7 +2351,12 @@ impl NativePropertyPlan {
                     return Err(error);
                 }
             };
-            return Ok(entry(slot.cast()));
+            let bits = entry(slot.cast());
+            #[cfg(test)]
+            {
+                self.native_entry_count = self.native_entry_count.saturating_add(1);
+            }
+            return Ok(bits);
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2367,6 +2380,10 @@ impl NativePropertyPlan {
         })();
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
+            #[cfg(test)]
+            {
+                self.native_entry_count = self.native_entry_count.saturating_add(1);
+            }
             if let Some(arena) = self.arena.as_ref() {
                 if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
                     self.entry = arena.tagged_word_entry(address).ok();

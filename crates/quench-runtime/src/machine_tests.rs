@@ -704,14 +704,65 @@ fn native_property_uses_rendered_address_without_remapping() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         opcode: crate::ir::Opcode::GetN,
         entry: None,
+        native_entry_count: 0,
     };
     let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::GetN);
     let slot = crate::register_file::SlotWord::new(super::Value::Number(42.5));
     assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert_eq!(plan.native_entry_count, 1);
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert!(used > 0);
     assert_eq!(plan.execute(&slot, &site), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert_eq!(plan.native_entry_count, 2);
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_residual_named_get_executes_guarded_property_stencil() {
+    let function = crate::machine::FunctionCode::from_ops(vec![
+        crate::ops::Op::GetProperty {
+            dst: 0,
+            object: 1,
+            key: "value".into(),
+        },
+        crate::ops::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("lowered named get");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let plan = super::BaselinePlan::compile_for_test(code, policy);
+    let object = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![("value".into(), crate::value::Value::Number(7.0))],
+    )));
+    let mut registers = crate::register_file::RegisterFile::from_values(vec![
+        crate::value::Value::Undefined,
+        object,
+    ]);
+    let context = crate::vm::current_context_or_default();
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .expect("ordinary named get execution");
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
+    registers.write(0, crate::value::Value::Undefined);
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .expect("guarded named get execution");
+    assert_eq!(completion, crate::completion::Completion::Return(crate::value::Value::Number(7.0)));
+    assert!(plan
+        .native_property_at(0)
+        .is_some_and(|native| native.borrow().native_entry_count > 0));
 }
 
 #[test]
