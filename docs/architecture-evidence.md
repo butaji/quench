@@ -1,13 +1,13 @@
 # Task 075 — current stencil infrastructure matrix
 
 Status: **gate CLOSED / NOT COMPLETE**. Source evidence is bound to commit
-`a09e9274b` (documentation/task cleanup remains user-owned and dirty). Micros
+`dc27672aa` (documentation/task cleanup remains user-owned and dirty). Micros
 and task 073 remain deferred until every required row passes with normal-source
 and non-vacuous native evidence.
 
 | Area / required family | Implementation and normal wiring | Executed evidence at this revision | Support and remaining gap |
 | --- | --- | --- | --- |
-| Canonical declarations | `build.rs::REGION_DECLARATIONS` generates `region_abi_catalog!`; `stencil_select.rs` derives ABI contracts, selection and validation. | `cargo test -p quench-runtime native_ -- --nocapture` — 45 passed. | Generated catalog is active; build-time object extraction is not yet complete. |
+| Canonical declarations | `build.rs::REGION_DECLARATIONS` generates `region_abi_catalog!`; `stencil_select.rs` derives ABI contracts, selection and validation. Opt-in encoder checks now discover configured/system Clang and objdump tools. | `cargo test -p quench-runtime native_ -- --nocapture` — 45 passed; `QUENCH_VERIFY_STENCIL_ENCODINGS=1 cargo check -p quench-runtime` passed. | Generated catalog is active; build-time object extraction is not yet complete. |
 | Typed capability publication/lifetime | `stencil_arena.rs` keeps `OwnedEntry` private, records the generated `RegionAbi` at publication, and rechecks that ABI in every typed accessor, retained entry and dispatch call. Local plans retain only an address token and revalidate through their arena. Constant, Move, Unary, Nullish, Truthiness, AddChain, Property and Binary use one installed enum (Binary alternatives remain explicitly typed). | Wrong-ABI, stale-generation, and dispatch ABI mismatch/interior-address tests pass; focused native 45 and full runtime 738 (`/tmp/quench-native-address-validated-20260905.log`, `/tmp/quench-runtime-full-20260905-address-validated.log`). | Shared-slab eviction tests pass for migrated plans; aggregate active-lease accounting remains. |
 | Residual CFG/admission | `machine.rs::BaselinePlan` and `vm_runtime.rs` route lowered residual operations and existing region records; ordinary-source tests exercise admission. | Existing ordinary-source admission/native tests are included in the 45-test native run. | General build-time CFG region admission with legal entries, liveness and reusable loop dataflow is incomplete. |
 | Region ABI and exits | `stencil_select.rs::RegionAbi/RegionContract`, `vm_runtime.rs` typed status/fault-PC paths, and `native_region_bridge` provide bounded scalar/word/array contracts. | Native run includes status, fault-PC and array native-path tests. | Full root maps, helper/reentry/safepoint contracts and all post-effect outer-driver cases remain. |
