@@ -17,6 +17,7 @@ struct RegionDeclaration {
 #[derive(Clone, Copy)]
 enum DeclAbi {
     Scalar,
+    ScalarI32,
     Bridge,
     ArrayKernel,
     ArrayNumericLoop,
@@ -174,6 +175,12 @@ const fn x86_compare_equal_bytes() -> [u8; 11] {
     ]
 }
 
+const fn x86_i32_bitop(opcode: u8) -> [u8; 5] {
+    // `op edi, esi; mov eax, edi; ret`.  The narrow entry is only admitted
+    // after both Number operands have passed the exact int32 guard.
+    [opcode, 0xF7, 0x89, 0xF8, 0xC3]
+}
+
 const fn x86_compare_not_equal_bytes() -> [u8; 11] {
     [
         0x66, 0x0F, 0x2E, 0xC1, // ucomisd xmm0, xmm1
@@ -248,6 +255,9 @@ const X86_COMPARE_LESS_BYTES: [u8; 16] = x86_compare_ordered_bytes(0x92);
 const X86_COMPARE_LESS_EQUAL_BYTES: [u8; 16] = x86_compare_ordered_bytes(0x96);
 const X86_COMPARE_GREATER_BYTES: [u8; 16] = x86_compare_ordered_bytes(0x97);
 const X86_COMPARE_GREATER_EQUAL_BYTES: [u8; 16] = x86_compare_ordered_bytes(0x93);
+const X86_BITWISE_AND_BYTES: [u8; 5] = x86_i32_bitop(0x21);
+const X86_BITWISE_OR_BYTES: [u8; 5] = x86_i32_bitop(0x09);
+const X86_BITWISE_XOR_BYTES: [u8; 5] = x86_i32_bitop(0x31);
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -312,6 +322,12 @@ const AARCH64_COMPARE_GREATER_BYTES: [u8; 20] =
     aarch64_ordered_compare_bytes(aarch64_cset_gt_w0());
 const AARCH64_COMPARE_GREATER_EQUAL_BYTES: [u8; 20] =
     aarch64_ordered_compare_bytes(aarch64_cset_ge_w0());
+const AARCH64_BITWISE_AND_BYTES: [u8; 8] =
+    aarch64_pair(0x0A01_0000, aarch64_ret());
+const AARCH64_BITWISE_OR_BYTES: [u8; 8] =
+    aarch64_pair(0x2A01_0000, aarch64_ret());
+const AARCH64_BITWISE_XOR_BYTES: [u8; 8] =
+    aarch64_pair(0x4A01_0000, aarch64_ret());
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -558,6 +574,42 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         abi: DeclAbi::Scalar,
         x86_bytes: &X86_COMPARE_GREATER_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_GREATER_EQUAL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "bitwise_and",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarI32,
+        x86_bytes: &X86_BITWISE_AND_BYTES,
+        aarch64_bytes: &AARCH64_BITWISE_AND_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "bitwise_or",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarI32,
+        x86_bytes: &X86_BITWISE_OR_BYTES,
+        aarch64_bytes: &AARCH64_BITWISE_OR_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "bitwise_xor",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarI32,
+        x86_bytes: &X86_BITWISE_XOR_BYTES,
+        aarch64_bytes: &AARCH64_BITWISE_XOR_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
@@ -1234,6 +1286,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
             .is_some_and(|target| target.starts_with("aarch64"));
     match declaration.abi {
         DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
+        DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
         DeclAbi::ArrayKernel if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::ArrayKernel"
