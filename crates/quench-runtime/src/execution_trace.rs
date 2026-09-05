@@ -147,6 +147,22 @@ struct StencilKey {
     kind: &'static str,
 }
 
+const MAX_STENCIL_REJECTIONS: usize = 256;
+
+#[cfg(feature = "execution-trace")]
+fn record_stencil_rejection(
+    counters: &mut Counters,
+    key: StencilKey,
+    reason: &'static str,
+) {
+    let key = (key, reason);
+    if counters.stencil_rejections.len() < MAX_STENCIL_REJECTIONS
+        || counters.stencil_rejections.contains_key(&key)
+    {
+        *counters.stencil_rejections.entry(key).or_default() += 1;
+    }
+}
+
 #[cfg(feature = "execution-trace")]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -1683,11 +1699,16 @@ pub(crate) fn stencil_rejection(
     if enabled() {
         let (_, code_id) = code.trace_identity();
         COUNTERS.with(|counters| {
-            *counters
-                .borrow_mut()
-                .stencil_rejections
-                .entry((StencilKey { code: code_id, pc: pc as u32, kind }, reason))
-                .or_default() += 1;
+            let mut counters = counters.borrow_mut();
+            record_stencil_rejection(
+                &mut counters,
+                StencilKey {
+                    code: code_id,
+                    pc: pc as u32,
+                    kind,
+                },
+                reason,
+            );
         });
     }
     let _ = (code, pc, kind, reason);
@@ -2059,6 +2080,23 @@ mod lane_profile_tests {
             .insert((key, "window_validation"), 2);
         let profile = stencil_rejection_profile(&counters);
         assert_eq!(profile["code=5:pc=8:composed_region:window_validation"], 2);
+    }
+
+    #[test]
+    fn stencil_rejection_facts_have_a_fixed_capacity() {
+        let mut counters = Counters::default();
+        for code in 0..MAX_STENCIL_REJECTIONS as u32 {
+            record_stencil_rejection(
+                &mut counters,
+                StencilKey {
+                    code,
+                    pc: 0,
+                    kind: "region",
+                },
+                "guard",
+            );
+        }
+        assert_eq!(counters.stencil_rejections.len(), MAX_STENCIL_REJECTIONS);
     }
 
     #[test]
