@@ -19,7 +19,7 @@ use std::{cell::RefCell, rc::Rc, sync::OnceLock};
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn invoke_f64x2_preserve_none(
+unsafe fn invoke_f64x2_entry(
     entry: extern "C" fn(f64, f64) -> f64,
     lhs: f64,
     rhs: f64,
@@ -33,13 +33,13 @@ unsafe fn invoke_f64x2_preserve_none(
 
 #[cfg(not(target_arch = "aarch64"))]
 #[inline(always)]
-fn invoke_f64x2_preserve_none(entry: extern "C" fn(f64, f64) -> f64, lhs: f64, rhs: f64) -> f64 {
+fn invoke_f64x2_entry(entry: extern "C" fn(f64, f64) -> f64, lhs: f64, rhs: f64) -> f64 {
     entry(lhs, rhs)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn invoke_f64x3_preserve_none(
+unsafe fn invoke_f64x3_entry(
     entry: extern "C" fn(f64, f64, f64) -> f64,
     lhs: f64,
     rhs: f64,
@@ -53,7 +53,7 @@ unsafe fn invoke_f64x3_preserve_none(
 
 #[cfg(not(target_arch = "aarch64"))]
 #[inline(always)]
-fn invoke_f64x3_preserve_none(
+fn invoke_f64x3_entry(
     entry: extern "C" fn(f64, f64, f64) -> f64,
     lhs: f64,
     rhs: f64,
@@ -1855,7 +1855,7 @@ impl NativeBinaryPlan {
         if self.shared_arena.is_none() && !self.returns_boolean {
             if let Some(entry) = self.entry {
                 self.note_native_entry();
-                return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
+                return Ok(unsafe { invoke_f64x2_entry(entry, lhs, rhs) });
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1866,7 +1866,7 @@ impl NativeBinaryPlan {
                 self.entry,
             ) {
                 match shared.borrow().with_active(address, || unsafe {
-                    invoke_f64x2_preserve_none(entry, lhs, rhs)
+                    invoke_f64x2_entry(entry, lhs, rhs)
                 }) {
                     Ok(result) => {
                         self.note_native_entry();
@@ -1940,7 +1940,7 @@ impl NativeBinaryPlan {
             self.shared_entry_address = Some(address);
             let result = shared
                 .borrow()
-                .with_active(address, || unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) })?;
+                .with_active(address, || unsafe { invoke_f64x2_entry(entry, lhs, rhs) })?;
             self.note_native_entry();
             return Ok(result);
         }
@@ -2207,7 +2207,7 @@ impl NativeAddChainPlan {
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         if self.shared_arena.is_none() {
             if let Some(entry) = self.entry {
-                return Ok(unsafe { invoke_f64x3_preserve_none(entry, lhs, rhs, third) });
+                return Ok(unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) });
             }
         }
         let key = crate::stencil_select::add_chain_region_key();
@@ -2221,7 +2221,7 @@ impl NativeAddChainPlan {
             (self.shared_arena.clone(), self.shared_entry)
         {
             match shared.borrow().with_active(address, || unsafe {
-                invoke_f64x3_preserve_none(entry, lhs, rhs, third)
+                invoke_f64x3_entry(entry, lhs, rhs, third)
             }) {
                 Ok(value) => return Ok(value),
                 Err(_) => self.shared_entry = None,
@@ -2249,7 +2249,7 @@ impl NativeAddChainPlan {
             };
             self.shared_entry = Some((address, entry));
             return shared.borrow().with_active(address, || unsafe {
-                invoke_f64x3_preserve_none(entry, lhs, rhs, third)
+                invoke_f64x3_entry(entry, lhs, rhs, third)
             });
         }
         if self.arena.is_none() {
