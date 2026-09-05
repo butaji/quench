@@ -582,7 +582,7 @@ fn validate_fragment_relocations(
                 );
                 let info = relocation.info(Endianness::Little);
                 assert!(
-                    info.r_address >= 0 && info.r_address <= i64::from(u16::MAX),
+                    info.r_address <= u32::from(u16::MAX),
                     "Mach-O relocation offset is outside the declared range"
                 );
                 let target = macho
