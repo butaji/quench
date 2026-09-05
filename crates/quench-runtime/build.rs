@@ -1579,6 +1579,12 @@ fn generate_stencil_catalog() {
             };
             let executable = if declaration.name == "dispatch" {
                 "DISPATCH_EXECUTABLE"
+            } else if matches!(declaration.abi, DeclAbi::ArrayKernel) {
+                // Raw element contexts have a real body only on ARM64.  The
+                // other targets keep the bridge declaration for auditing but
+                // must reject it before publication rather than invoking a
+                // pointer ABI with trampoline bytes.
+                "cfg!(target_arch = \"aarch64\")"
             } else {
                 "EXECUTABLE"
             };
