@@ -167,6 +167,18 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
         Err(super::NativeDispatchError::Committed("post-entry".into()));
     plan.retire_on_failure(&committed);
     assert_eq!(plan.cache.len(), 0, "committed bytes must not remain callable");
+
+    plan.cache.insert(
+        crate::stencil_fact::RegionKey(901),
+        0,
+        0x2000,
+    );
+    let semantic: Result<crate::vm::DispatchTransition, super::NativeDispatchError> =
+        Err(super::NativeDispatchError::Semantic(crate::vm::VmError::EvalError(
+            "ordinary throw".into(),
+        )));
+    plan.retire_on_failure(&semantic);
+    assert_eq!(plan.cache.len(), 1, "semantic errors do not invalidate physical code");
 }
 
 #[test]
