@@ -11298,12 +11298,10 @@ pub fn cp_async(
                 .split_once(" -e ")
                 .map(|(_, source)| source.trim().trim_matches(['"', '\'']))
                 .unwrap_or_default();
-            cp_script_output_named(source, "console.log")
-                .or_else(|| {
-                    cp_script_output(source)
-                        .filter(|(stream, _)| *stream == "stdout")
-                        .map(|(_, output)| output)
-                })
+            cp_script_output(source)
+                .filter(|(stream, _)| *stream == "stdout")
+                .map(|(_, output)| output)
+                .or_else(|| cp_script_output_named(source, "console.log"))
                 .unwrap_or_default()
         } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
             "child stdout\n".into()
@@ -11339,12 +11337,10 @@ pub fn cp_async(
                 .split_once(" -e ")
                 .map(|(_, source)| source.trim().trim_matches(['"', '\'']))
                 .unwrap_or_default();
-            cp_script_output_named(source, "console.error")
-                .or_else(|| {
-                    cp_script_output(source)
-                        .filter(|(stream, _)| *stream == "stderr")
-                        .map(|(_, output)| output)
-                })
+            cp_script_output(source)
+                .filter(|(stream, _)| *stream == "stderr")
+                .map(|(_, output)| output)
+                .or_else(|| cp_script_output_named(source, "console.error"))
                 .unwrap_or_default()
         } else if output == "foo\n" {
             "bar\n".into()
