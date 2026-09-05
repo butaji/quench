@@ -123,6 +123,32 @@ fn baseline_admissions_use_sparse_indexed_storage() {
     );
 }
 
+#[test]
+fn optimizing_entries_reuse_sparse_admission_storage() {
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let code = function.code().expect("compact code");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let baseline = super::BaselinePlan::compile_for_test(code, policy);
+    let optimizing = super::OptimizingPlan::compile(&baseline, policy);
+    assert_eq!(optimizing.entries.len(), baseline.entries.len());
+    assert!(optimizing
+        .entries
+        .iter()
+        .all(|entry| std::rc::Rc::ptr_eq(&entry.admissions, &baseline.admissions)));
+    assert!(optimizing
+        .entries
+        .iter()
+        .all(|entry| entry.admission_at().len() <= 13));
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn baseline_scalar_entry_rebuilds_after_shared_owner_eviction() {

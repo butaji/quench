@@ -4917,6 +4917,17 @@ macro_rules! typed_admission_accessors {
     };
 }
 
+macro_rules! optimizing_admission_accessors {
+    ($name:ident, $variant:ident, $ty:ty) => {
+        pub(crate) fn $name(&self) -> Option<&RefCell<$ty>> {
+            self.native_handle(|admission| match admission {
+                NativeAdmission::$variant(plan) => Some(plan),
+                _ => None,
+            })
+        }
+    };
+}
+
 impl PartialEq for BaselineEntry {
     fn eq(&self, other: &Self) -> bool {
         self.instruction == other.instruction && self.control == other.control
@@ -5342,18 +5353,36 @@ pub(crate) struct OptimizingPlan {
 #[derive(Clone)]
 pub(crate) struct OptimizingEntry {
     pub(crate) baseline: BaselineEntry,
-    pub(crate) native_binary: Option<Rc<RefCell<NativeBinaryPlan>>>,
-    pub(crate) native_load_const: Option<Rc<RefCell<NativeLoadConstPlan>>>,
-    pub(crate) native_truthiness: Option<Rc<RefCell<NativeTruthinessPlan>>>,
-    pub(crate) native_nullish: Option<Rc<RefCell<NativeNullishPlan>>>,
-    pub(crate) native_unary: Option<Rc<RefCell<NativeUnaryPlan>>>,
-    pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
-    pub(crate) native_load_local: Option<Rc<RefCell<NativeMovePlan>>>,
-    pub(crate) native_store_local: Option<Rc<RefCell<NativeMovePlan>>>,
-    pub(crate) native_store_property: Option<Rc<RefCell<NativeMovePlan>>>,
-    pub(crate) native_property: Option<Rc<RefCell<NativePropertyPlan>>>,
-    pub(crate) native_dispatch: Option<Rc<RefCell<NativeDispatchPlan>>>,
-    pub(crate) native_region: Option<Rc<RefCell<NativeRegionPlan>>>,
+    admissions: Rc<[NativeAdmission]>,
+    admission_span: AdmissionSpan,
+}
+
+impl OptimizingEntry {
+    fn admission_at(&self) -> &[NativeAdmission] {
+        let start = self.admission_span.start as usize;
+        let end = start.saturating_add(self.admission_span.len as usize);
+        self.admissions.get(start..end).unwrap_or(&[])
+    }
+
+    fn native_handle<T>(
+        &self,
+        select: impl Fn(&NativeAdmission) -> Option<&Rc<RefCell<T>>>,
+    ) -> Option<&RefCell<T>> {
+        self.admission_at().iter().find_map(select).map(Rc::as_ref)
+    }
+
+    optimizing_admission_accessors!(native_binary, Binary, NativeBinaryPlan);
+    optimizing_admission_accessors!(native_load_const, LoadConst, NativeLoadConstPlan);
+    optimizing_admission_accessors!(native_truthiness, Truthiness, NativeTruthinessPlan);
+    optimizing_admission_accessors!(native_nullish, Nullish, NativeNullishPlan);
+    optimizing_admission_accessors!(native_unary, Unary, NativeUnaryPlan);
+    optimizing_admission_accessors!(native_move, Move, NativeMovePlan);
+    optimizing_admission_accessors!(native_load_local, LoadLocal, NativeMovePlan);
+    optimizing_admission_accessors!(native_store_local, StoreLocal, NativeMovePlan);
+    optimizing_admission_accessors!(native_store_property, StoreProperty, NativeMovePlan);
+    optimizing_admission_accessors!(native_property, Property, NativePropertyPlan);
+    optimizing_admission_accessors!(native_dispatch, Dispatch, NativeDispatchPlan);
+    optimizing_admission_accessors!(native_region, Region, NativeRegionPlan);
 }
 
 impl std::fmt::Debug for OptimizingPlan {
@@ -5366,27 +5395,15 @@ impl std::fmt::Debug for OptimizingPlan {
 }
 
 impl OptimizingPlan {
-    fn compile(baseline: &BaselinePlan, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
+    fn compile(baseline: &BaselinePlan, _policy: crate::stencil_policy::ExecutionPolicy) -> Self {
         let entries = baseline
             .entries
             .iter()
             .enumerate()
             .map(|(pc, entry)| OptimizingEntry {
                 baseline: *entry,
-                native_binary: baseline.binary_handle_at(pc).cloned(),
-                native_load_const: baseline.load_const_handle_at(pc).cloned(),
-                native_truthiness: baseline.truthiness_handle_at(pc).cloned(),
-                native_nullish: baseline.nullish_handle_at(pc).cloned(),
-                native_unary: baseline.unary_handle_at(pc).cloned(),
-                native_move: baseline.move_handle_at(pc).cloned(),
-                native_load_local: baseline.load_local_handle_at(pc).cloned(),
-                native_store_local: baseline.store_local_handle_at(pc).cloned(),
-                native_store_property: baseline.store_property_handle_at(pc).cloned(),
-                native_property: baseline.property_handle_at(pc).cloned(),
-                native_dispatch: baseline.dispatch_handle_at(pc).cloned(),
-                native_region: (policy.fused_regions || policy.composed_regions)
-                    .then(|| baseline.region_handle_at(pc).cloned())
-                    .flatten(),
+                admissions: Rc::clone(&baseline.admissions),
+                admission_span: baseline.admission_index[pc],
             })
             .collect::<Vec<_>>()
             .into();
