@@ -2484,6 +2484,14 @@ mod tests {
         );
         assert_eq!(arena.used(), used);
         assert_eq!(cache.len(), 1);
+        if view.generated {
+            let (tail, branch_offset) = view.fallthrough.expect("generated successor");
+            assert_eq!(arena.used(), view.stencil.bytes.len() + tail.bytes.len());
+            assert_eq!(view.relocations.len(), 1);
+            assert_eq!(view.relocations[0].offset, branch_offset);
+            assert_eq!(view.relocations[0].kind, HoleKind::Branch26);
+            assert!(!view.relocations[0].target.is_empty());
+        }
         let witness = arena
             .last_physical_execution()
             .expect("fallthrough must execute selected bytes");
