@@ -6458,7 +6458,7 @@ mod tests {
         };
         let error = super::validate_physical_template(&record)
             .expect_err("a drifted physical effect must fail closed");
-        assert!(error.contains("effect disagrees"));
+        assert!(error.contains("declared helper boundary"));
     }
 
     #[test]
