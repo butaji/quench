@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `fb7a3924d` (cleanup files remain
+Evidence below is bound to source revision `899e1f043` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -64,3 +64,9 @@ interrupt and malformed statuses (`/tmp/quench-native-status-typed-20260905.log`
 (`/tmp/quench-runtime-full-20260905-typed-status.log`).
 The decoder now lives in the cohesive `vm_native_status.rs` boundary module;
 the source split itself is covered by the same passing suite.
+The ARM loop template now derives its B/B.cond/CBNZ displacements from named
+build-time labels; emitted-loop tests and `QUENCH_VERIFY_STENCIL_ENCODINGS=1`
+both pass (`/tmp/quench-loop-label-encoding-20260905.log`,
+`/tmp/quench-loop-label-assembler-20260905.log`). Full runtime at
+`899e1f043`: **720 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-loop-labels.log`).
