@@ -143,6 +143,21 @@ impl SharedStencilSlab {
         remove
     }
 
+    fn reclaim_for(&mut self, additional: usize) -> bool {
+        if self.active_dispatches.get() != 0 {
+            return false;
+        }
+        while self
+            .total_capacity()
+            .saturating_add(additional)
+            > MAX_SHARED_SLAB_BYTES
+            && self.slabs.len() > 1
+        {
+            self.slabs.remove(0);
+        }
+        self.total_capacity().saturating_add(additional) <= MAX_SHARED_SLAB_BYTES
+    }
+
     pub fn render_or_get<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,
@@ -157,7 +172,7 @@ impl SharedStencilSlab {
                 Err(error) => return Err(error),
             }
         }
-        if self.total_capacity().saturating_add(self.slab_capacity) > MAX_SHARED_SLAB_BYTES {
+        if !self.reclaim_for(self.slab_capacity) {
             return Err(ArenaError::Exhausted);
         }
         let mut slab = StencilArena::new(self.slab_capacity)?;
@@ -1326,6 +1341,26 @@ mod tests {
             .render_or_get(&mut cache, first_key, &stencil, &values)
             .unwrap();
         assert_ne!(pool.owner_for(replacement), Some(first_owner));
+    }
+
+    #[test]
+    fn shared_slab_reclaims_oldest_idle_generation_at_global_cap() {
+        let mut pool = SharedStencilSlab::new(MAX_ARENA_BYTES).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetProperty);
+        let values = PatchValues::from_site(&site);
+        static BYTES: [u8; MAX_ARENA_BYTES] = [0; MAX_ARENA_BYTES];
+        let stencil = Stencil {
+            bytes: &BYTES,
+            holes: &[],
+        };
+        for raw_key in 0..=MAX_SHARED_SLAB_BYTES / MAX_ARENA_BYTES {
+            let key = crate::stencil_fact::RegionKey(200 + raw_key as u64);
+            let address = pool.render_or_get(&mut cache, key, &stencil, &values).unwrap();
+            pool.make_executable(address).unwrap();
+        }
+        assert_eq!(pool.capacity(), MAX_SHARED_SLAB_BYTES);
+        assert_eq!(pool.slab_count(), 4);
     }
 
     #[cfg(target_arch = "aarch64")]
