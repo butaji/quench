@@ -1288,7 +1288,10 @@ fn generate_stencil_catalog() {
     let numeric_keys = REGION_DECLARATIONS
         .iter()
         .filter(|declaration| {
-            declaration.name == "fallthrough"
+            // Standalone scalar Add must terminate.  The `fallthrough`
+            // declaration is a head fragment for explicit composition and
+            // intentionally has no return instruction.
+            declaration.name == "loop"
                 || matches!(
                     declaration.name,
                     "subtract" | "multiply" | "divide" | "add_const"
