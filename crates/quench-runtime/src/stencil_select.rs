@@ -372,7 +372,11 @@ mod generated_region_admission_tests {
                     assert!(matches!(record.stencil.bytes.len(), 4 | 8));
                     assert!(matches!(
                         record.operations.first(),
-                        Some(crate::ir::Opcode::Move | crate::ir::Opcode::GetN)
+                        Some(
+                            crate::ir::Opcode::Move
+                                | crate::ir::Opcode::LoadLocal
+                                | crate::ir::Opcode::GetN,
+                        )
                     ));
                 }
                 RegionAbi::ConstantWord => {
