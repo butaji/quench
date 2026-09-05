@@ -603,6 +603,32 @@ fn native_bitwise_not_i32_entry_preserves_to_int32_rules() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_unary_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Unary,
+        flags: crate::ir::compact_unary_id(crate::ops::UnaryOp::BitwiseNot),
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeUnaryPlan::new_with_shared(instruction, policy, shared.clone())
+        .expect("shared unary plan");
+    assert_eq!(plan.execute(1.5), Ok(-2.0));
+    let used = shared.borrow().used();
+    assert!(plan.shared_entry.is_some());
+    assert_eq!(plan.execute(1.5), Ok(-2.0));
+    assert_eq!(shared.borrow().used(), used);
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(1.5), Ok(-2.0));
+    assert!(plan.shared_entry.is_some(), "eviction must rebuild the entry");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
     let program = crate::reduce::reduce_source("var x = 1; x = ~x; x;")
         .expect("bitwise-not source lowers");

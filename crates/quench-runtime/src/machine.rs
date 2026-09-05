@@ -2000,6 +2000,8 @@ pub(crate) struct NativeUnaryPlan {
     key: crate::stencil_fact::RegionKey,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(i32) -> i32>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_entry: Option<(usize, extern "C" fn(i32) -> i32)>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2044,6 +2046,8 @@ impl NativeUnaryPlan {
                 key,
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 entry: None,
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                shared_entry: None,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2061,6 +2065,16 @@ impl NativeUnaryPlan {
         let operand = number_to_int32(value);
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.shared_arena.clone() {
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some((address, entry)) = self.shared_entry {
+                match shared.borrow().with_active(address, || entry(operand)) {
+                    Ok(result) => {
+                        self.note_entry();
+                        return Ok(f64::from(result));
+                    }
+                    Err(_) => self.shared_entry = None,
+                }
+            }
             let rendered = (|| {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
@@ -2075,6 +2089,10 @@ impl NativeUnaryPlan {
                 error
             })?;
             let result = shared.borrow().with_active(address, || entry(operand))?;
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            {
+                self.shared_entry = Some((address, entry));
+            }
             self.note_entry();
             return Ok(f64::from(result));
         }
