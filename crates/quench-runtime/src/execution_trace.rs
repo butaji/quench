@@ -186,6 +186,7 @@ struct Counters {
     quickening: HashMap<&'static str, (u64, u64)>,
     stencils: HashMap<StencilKey, (u64, u64)>,
     stencil_iterations: HashMap<StencilKey, u64>,
+    stencil_storage: HashMap<StencilKey, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
 }
@@ -1620,6 +1621,36 @@ pub(crate) fn stencil_iterations(
     let _ = (code, pc, kind, iterations);
 }
 
+/// Record the bounded physical storage observed by a selected region.  This
+/// is optional attribution only; uninstrumented execution does not touch the
+/// map.  The pair is `(used_bytes, capacity_bytes)` for the owning shared
+/// slab, which makes code/cache cost visible without treating an entry attempt
+/// as a native hit.
+#[inline(always)]
+pub(crate) fn stencil_storage(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    kind: &'static str,
+    used_bytes: usize,
+    capacity_bytes: usize,
+) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        let (_, code_id) = code.trace_identity();
+        COUNTERS.with(|counters| {
+            counters.borrow_mut().stencil_storage.insert(
+                StencilKey {
+                    code: code_id,
+                    pc: pc as u32,
+                    kind,
+                },
+                (used_bytes as u64, capacity_bytes as u64),
+            );
+        });
+    }
+    let _ = (code, pc, kind, used_bytes, capacity_bytes);
+}
+
 #[cfg(feature = "execution-trace")]
 fn stencil_profile(counters: &Counters) -> serde_json::Map<String, serde_json::Value> {
     counters
@@ -1824,6 +1855,14 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "call_targets": call_targets,
                 "quickening": quickening,
                 "stencil": stencil_profile(&counters),
+                "stencil_storage": counters
+                    .stencil_storage
+                    .iter()
+                    .map(|(key, &(used, capacity))| (
+                        format!("code={}:pc={}:{}", key.code, key.pc, key.kind),
+                        serde_json::json!({"used_bytes": used, "capacity_bytes": capacity}),
+                    ))
+                    .collect::<serde_json::Map<_, _>>(),
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
@@ -1899,6 +1938,23 @@ mod lane_profile_tests {
         let profile = stencil_profile(&counters);
         assert_eq!(profile["code=7:pc=11:array_numeric_loop"]["hits"], 3);
         assert_eq!(profile["code=7:pc=11:array_numeric_loop"]["iterations"], 12);
+    }
+
+    #[test]
+    fn stencil_storage_reports_bounded_code_capacity_separately() {
+        let mut counters = Counters::default();
+        let key = StencilKey {
+            code: 3,
+            pc: 4,
+            kind: "array_numeric_loop",
+        };
+        counters.stencil_storage.insert(key, (76, 4096));
+        let value = counters
+            .stencil_storage
+            .get(&key)
+            .copied()
+            .expect("storage fact");
+        assert_eq!(value, (76, 4096));
     }
 
     #[test]

@@ -2334,6 +2334,23 @@ impl NativeRegionPlan {
                         "native fused region protection failed: {error:?}"
                     ))
                 })?;
+            let storage_kind = match record.abi {
+                crate::stencil_select::RegionAbi::ArrayKernel => "array_kernel",
+                crate::stencil_select::RegionAbi::ArrayNumericLoop => "array_numeric_loop",
+                crate::stencil_select::RegionAbi::Bridge => "bridge",
+                crate::stencil_select::RegionAbi::Scalar => "scalar",
+            };
+            let (used_bytes, capacity_bytes) = {
+                let slab = arena.borrow();
+                (slab.used(), slab.capacity())
+            };
+            crate::execution_trace::stencil_storage(
+                code,
+                pc,
+                storage_kind,
+                used_bytes,
+                capacity_bytes,
+            );
             let mut region =
                 crate::vm::NativeRegionContext::new(code, pc, operations, registers, context);
             // The array block has a direct raw numeric entry on AArch64. Its
