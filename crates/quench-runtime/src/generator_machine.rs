@@ -118,6 +118,8 @@ fn update_await_frame(
         }
         state.async_for_of = Some(iterator);
     }
+    let destination = crate::generator::take_await_destination()
+        .unwrap_or_else(|| await_destination(generator));
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Await {
@@ -125,7 +127,7 @@ fn update_await_frame(
             // Await is a stack marker; resumption continues from the machine
             // PC, while frame validation still needs a canonical code range.
             resume: generator.function.code.range,
-            destination: await_destination(generator),
+            destination,
         },
     )
 }

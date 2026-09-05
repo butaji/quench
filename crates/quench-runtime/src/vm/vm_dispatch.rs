@@ -431,7 +431,12 @@ fn run_await_completion(
         return match vm_ops::execute_await(registers, *dst, *src) {
             Ok(()) => Ok(None),
             Err(error) => match Completion::from_vm_error(error) {
-                Ok(completion) => Ok(Some(completion)),
+                Ok(completion) => {
+                    if completion.is_suspension() {
+                        crate::generator::record_await_destination(*dst);
+                    }
+                    Ok(Some(completion))
+                }
                 Err(error) => Err(error),
             },
         };
