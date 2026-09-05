@@ -81,9 +81,7 @@ impl RenderedRegionCache {
         self.entries
             .iter()
             .flatten()
-            .find(|entry| {
-                entry.key == key && entry.signature == signature && entry.owner == owner
-            })
+            .find(|entry| entry.key == key && entry.signature == signature && entry.owner == owner)
             .map(|entry| entry.address)
     }
 
@@ -98,11 +96,8 @@ impl RenderedRegionCache {
         address: usize,
         owner: u64,
     ) -> usize {
-        if let Some(entry) = self
-            .entries
-            .iter_mut()
-            .flatten()
-            .find(|entry| {
+        if let Some(entry) =
+            self.entries.iter_mut().flatten().find(|entry| {
                 entry.key == key && entry.signature == signature && entry.owner == owner
             })
         {

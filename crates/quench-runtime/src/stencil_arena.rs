@@ -99,10 +99,7 @@ impl SharedStencilSlab {
     }
 
     fn total_capacity(&self) -> usize {
-        self.slabs
-            .iter()
-            .map(StencilArena::capacity)
-            .sum()
+        self.slabs.iter().map(StencilArena::capacity).sum()
     }
 
     pub fn slab_count(&self) -> usize {
@@ -143,11 +140,7 @@ impl SharedStencilSlab {
                 Err(error) => return Err(error),
             }
         }
-        if self
-            .total_capacity()
-            .saturating_add(self.slab_capacity)
-            > MAX_SHARED_SLAB_BYTES
-        {
+        if self.total_capacity().saturating_add(self.slab_capacity) > MAX_SHARED_SLAB_BYTES {
             return Err(ArenaError::Exhausted);
         }
         let mut slab = StencilArena::new(self.slab_capacity)?;
@@ -177,16 +170,13 @@ impl SharedStencilSlab {
         address: usize,
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
-        let slab = self
-            .slab_for(address)
-            .ok_or(ArenaError::ProtectionFailed)?;
+        let slab = self.slab_for(address).ok_or(ArenaError::ProtectionFailed)?;
         let active = self.active_dispatches.get().saturating_add(1);
         self.active_dispatches.set(active);
         self.peak_dispatches
             .set(self.peak_dispatches.get().max(active));
         let result = slab.execute_dispatch(address, context);
-        self.active_dispatches
-            .set(active.saturating_sub(1));
+        self.active_dispatches.set(active.saturating_sub(1));
         result
     }
 }
@@ -1020,11 +1010,21 @@ mod tests {
             holes: &[],
         };
         let first = pool
-            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(101), &stencil, &values)
+            .render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(101),
+                &stencil,
+                &values,
+            )
             .unwrap();
         pool.make_executable(first).unwrap();
         let second = pool
-            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(102), &stencil, &values)
+            .render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(102),
+                &stencil,
+                &values,
+            )
             .unwrap();
         assert_ne!(first, second);
         assert_eq!(pool.slab_count(), 2);
@@ -1044,7 +1044,12 @@ mod tests {
             holes: &[],
         };
         assert_eq!(
-            pool.render_or_get(&mut cache, crate::stencil_fact::RegionKey(103), &stencil, &values),
+            pool.render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(103),
+                &stencil,
+                &values
+            ),
             Err(ArenaError::Exhausted)
         );
         assert_eq!(pool.slab_count(), 0);
