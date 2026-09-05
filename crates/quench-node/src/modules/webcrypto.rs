@@ -8,6 +8,9 @@ use std::rc::Rc;
 
 use base64::Engine;
 use aes_gcm::{aead::{Aead, Payload}, Aes128Gcm, Aes256Gcm, KeyInit, Nonce};
+use aes::{Aes128, Aes192, Aes256};
+use chacha20poly1305::ChaCha20Poly1305;
+use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::ops::Builtin;
@@ -129,6 +132,10 @@ fn key(
 }
 
 fn normalize_usages(value: &Value) -> Value {
+    usage_array(&usage_names(value))
+}
+
+fn usage_names(value: &Value) -> Vec<String> {
     let length = match execute::get_property(value, "length") {
         Value::Number(length) if length.is_finite() && length > 0.0 => length as usize,
         _ => 0,
@@ -139,7 +146,7 @@ fn normalize_usages(value: &Value) -> Value {
             requested.insert(name);
         }
     }
-    let usages = [
+    [
         "encrypt",
         "decrypt",
         "sign",
@@ -151,9 +158,47 @@ fn normalize_usages(value: &Value) -> Value {
     ]
     .into_iter()
     .filter(|name| requested.contains(*name))
-    .map(|name| Value::String(name.into()))
-    .collect::<Vec<_>>();
-    host_api::array(usages)
+    .map(str::to_string)
+    .collect()
+}
+
+fn usage_array(names: &[String]) -> Value {
+    host_api::array(names.iter().cloned().map(Value::String).collect())
+}
+
+fn asymmetric_usages(name: &str, requested: &Value) -> Result<(Value, Value), VmError> {
+    let (private_allowed, public_allowed): (&[&str], &[&str]) = match name {
+        "RSA-OAEP" => (&["decrypt", "unwrapKey"], &["encrypt", "wrapKey"]),
+        "RSASSA-PKCS1-V1_5" | "RSA-PSS" | "ECDSA" | "ED25519" | "ED448" => {
+            (&["sign"], &["verify"])
+        }
+        "ECDH" | "X25519" | "X448" => (&["deriveKey", "deriveBits"], &[]),
+        _ => return Err(not_supported("Unrecognized algorithm name")),
+    };
+    let requested = usage_names(requested);
+    if requested.is_empty() {
+        return Err(usage_error("Usages cannot be empty"));
+    }
+    if requested.iter().any(|usage| {
+        !private_allowed.contains(&usage.as_str()) && !public_allowed.contains(&usage.as_str())
+    }) {
+        return Err(usage_error("Unsupported key usage"));
+    }
+    let private = requested
+        .iter()
+        .filter(|usage| private_allowed.contains(&usage.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let public = requested
+        .iter()
+        .filter(|usage| public_allowed.contains(&usage.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok((usage_array(&private), usage_array(&public)))
+}
+
+fn usage_error(message: &str) -> VmError {
+    error(Builtin::Error, None, message)
 }
 
 fn key_metadata(value: Value, key_type: &str, format: &str) -> Value {
@@ -642,24 +687,28 @@ pub fn generate_key(
             &quench_runtime::vm::current_global_object(),
             "__quench_crypto_key_prototype",
         );
-        let usages = args
+        let requested_usages = args
             .get(2)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
+        let (private_usages, public_usages) = match asymmetric_usages(&name, &requested_usages) {
+            Ok(usages) => usages,
+            Err(error) => return Ok(settled(Err(error))),
+        };
         let extractable = matches!(args.get(1), Some(Value::Boolean(true)));
         let private_key = key_metadata(
             key(
                 &prototype,
                 algorithm.clone(),
                 extractable,
-                usages.clone(),
+                private_usages,
                 None,
             ),
             "private",
             "pkcs8",
         );
         let public_key = key_metadata(
-            key(&prototype, algorithm, extractable, usages, None),
+            key(&prototype, algorithm, extractable, public_usages, None),
             "public",
             "spki",
         );
@@ -743,6 +792,15 @@ fn operation_error(message: &str) -> VmError {
     VmError::Thrown(value)
 }
 
+fn invalid_access_error(message: &str) -> VmError {
+    let value = quench_runtime::builtins::error(Builtin::Error, &[Value::String(message.into())]);
+    VmError::Thrown(execute::set_property(
+        value,
+        "name",
+        Value::String("InvalidAccessError".into()),
+    ))
+}
+
 pub fn derive_bits(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -750,6 +808,9 @@ pub fn derive_bits(
 ) -> Result<Value, VmError> {
     if let Some(result) = invalid_subtle_this(receiver) {
         return Ok(result);
+    }
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveBits") {
+        return Ok(settled(Err(error)));
     }
     let length = match args.get(2) {
         Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value as usize,
@@ -772,6 +833,9 @@ pub fn sign(
 ) -> Result<Value, VmError> {
     if let Some(result) = invalid_subtle_this(receiver) {
         return Ok(result);
+    }
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "sign") {
+        return Ok(settled(Err(error)));
     }
     let algorithm = args.first().unwrap_or(&Value::Undefined);
     let key = args.get(1).unwrap_or(&Value::Undefined);
@@ -797,6 +861,9 @@ pub fn verify(
 ) -> Result<Value, VmError> {
     if let Some(result) = invalid_subtle_this(receiver) {
         return Ok(result);
+    }
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "verify") {
+        return Ok(settled(Err(error)));
     }
     let algorithm = args.first().unwrap_or(&Value::Undefined);
     let key = args.get(1).unwrap_or(&Value::Undefined);
@@ -865,6 +932,54 @@ pub fn encrypt(
     if let Some(error) = validate_key_use(args.first(), args.get(1), "encrypt") {
         return Ok(settled(Err(error)));
     }
+    let requested_name = args.first().map(algorithm_name).unwrap_or_default();
+    if requested_name.eq_ignore_ascii_case("ChaCha20-Poly1305") {
+        let tag_length = match execute::get_property(
+            args.first().unwrap_or(&Value::Undefined),
+            "tagLength",
+        ) {
+            Value::Undefined => 128,
+            Value::Number(value) if value.is_finite() => value as usize,
+            _ => 0,
+        };
+        if tag_length != 128 {
+            return Ok(settled(Err(operation_error(
+                "The provided tagLength is not a valid ChaCha20-Poly1305 tag length",
+            ))));
+        }
+        let Some((iv, aad)) = args.first().and_then(chacha_algorithm) else {
+            return Ok(settled(Err(operation_error("Invalid ChaCha20-Poly1305 parameters"))));
+        };
+        let key = args
+            .get(1)
+            .map(|value| bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default())
+            .unwrap_or_default();
+        let Ok(cipher) = ChaCha20Poly1305::new_from_slice(&key) else {
+            return Ok(settled(Err(operation_error("Invalid key length"))));
+        };
+        let result = cipher.encrypt(
+            chacha20poly1305::Nonce::from_slice(&iv),
+            chacha20poly1305::aead::Payload { msg: &data, aad: &aad },
+        );
+        return Ok(settled(result.map_or_else(
+            |_| Err(operation_error("Encryption failed")),
+            |bytes| Ok(array_buffer(&bytes)),
+        )));
+    }
+    if let Some((name, iv, length)) = args.first().and_then(aes_algorithm) {
+        let key = args
+            .get(1)
+            .map(|value| bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default())
+            .unwrap_or_default();
+        let result = match name.as_str() {
+            "AES-CBC" => Some(aes_cbc(&key, &iv, &data, true)),
+            "AES-CTR" => Some(aes_ctr(&key, &iv, length, &data)),
+            _ => None,
+        };
+        if let Some(result) = result {
+            return Ok(settled(result.map(|bytes| array_buffer(&bytes))));
+        }
+    }
     if let (Some((iv, aad)), Some(key)) = (algorithm, key) {
         let result = match key.len() {
             16 => Aes128Gcm::new_from_slice(&key)
@@ -898,6 +1013,60 @@ pub fn decrypt(
         .to_ascii_uppercase()
         .replace('-', "");
     let data = args.get(2).and_then(bytes).unwrap_or_default();
+    if let Some(error) = validate_key_use(args.first(), args.get(1), "decrypt") {
+        return Ok(settled(Err(error)));
+    }
+    let requested_name = args.first().map(algorithm_name).unwrap_or_default();
+    if requested_name.eq_ignore_ascii_case("ChaCha20-Poly1305") {
+        let tag_length = match execute::get_property(
+            args.first().unwrap_or(&Value::Undefined),
+            "tagLength",
+        ) {
+            Value::Undefined => 128,
+            Value::Number(value) if value.is_finite() => value as usize,
+            _ => 0,
+        };
+        if tag_length != 128 {
+            return Ok(settled(Err(operation_error(
+                "The provided tagLength is not a valid ChaCha20-Poly1305 tag length",
+            ))));
+        }
+        if data.len() < 16 {
+            return Ok(settled(Err(operation_error("The provided data is too small"))));
+        }
+        let Some((iv, aad)) = args.first().and_then(chacha_algorithm) else {
+            return Ok(settled(Err(operation_error("Invalid ChaCha20-Poly1305 parameters"))));
+        };
+        let key = args
+            .get(1)
+            .map(|value| bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default())
+            .unwrap_or_default();
+        let Ok(cipher) = ChaCha20Poly1305::new_from_slice(&key) else {
+            return Ok(settled(Err(operation_error("Invalid key length"))));
+        };
+        let result = cipher.decrypt(
+            chacha20poly1305::Nonce::from_slice(&iv),
+            chacha20poly1305::aead::Payload { msg: &data, aad: &aad },
+        );
+        return Ok(settled(result.map_or_else(
+            |_| Err(operation_error("The operation failed for an operation-specific reason")),
+            |bytes| Ok(array_buffer(&bytes)),
+        )));
+    }
+    if let Some((name, iv, length)) = args.first().and_then(aes_algorithm) {
+        let key = args
+            .get(1)
+            .map(|value| bytes(&execute::get_property(value, KEY_DATA_PROP)).unwrap_or_default())
+            .unwrap_or_default();
+        let result = match name.as_str() {
+            "AES-CBC" => Some(aes_cbc(&key, &iv, &data, false)),
+            "AES-CTR" => Some(aes_ctr(&key, &iv, length, &data)),
+            _ => None,
+        };
+        if let Some(result) = result {
+            return Ok(settled(result.map(|bytes| array_buffer(&bytes))));
+        }
+    }
     if algorithm == "AESGCM" && data.is_empty() {
         let value = quench_runtime::builtins::error(
             Builtin::Error,
@@ -926,9 +1095,6 @@ pub fn decrypt(
             |_| Err(operation_error("The operation failed for an operation-specific reason")),
             |bytes| Ok(array_buffer(&bytes)),
         )));
-    }
-    if let Some(error) = validate_key_use(args.first(), args.get(1), "decrypt") {
-        return Ok(settled(Err(error)));
     }
     Ok(settled(Ok(array_buffer(&data))))
 }
@@ -961,7 +1127,25 @@ fn validate_key_use(
         execute::to_js_string(&execute::get_property(&usages, &index.to_string()))
             .is_ok_and(|value| value == usage)
     });
-    (!allowed).then(|| operation_error(&format!("Unable to use this key to {usage}")))
+    if !allowed {
+        return Some(invalid_access_error(&format!("Unable to use this key to {usage}")));
+    }
+    let key_type = execute::to_js_string(&execute::get_property(key, "type")).ok()?;
+    let required_type = match (key_algorithm.to_ascii_uppercase().as_str(), usage) {
+        ("RSA-OAEP", "encrypt" | "wrapKey") => Some("public"),
+        ("RSA-OAEP", "decrypt" | "unwrapKey")
+        | ("ECDH" | "X25519" | "X448", "deriveBits" | "deriveKey")
+        | ("RSASSA-PKCS1-V1_5" | "RSA-PSS" | "ECDSA" | "ED25519" | "ED448", "sign") => {
+            Some("private")
+        }
+        ("RSASSA-PKCS1-V1_5" | "RSA-PSS" | "ECDSA" | "ED25519" | "ED448", "verify") => {
+            Some("public")
+        }
+        _ => None,
+    };
+    required_type
+        .filter(|required| *required != key_type.as_str())
+        .map(|_| invalid_access_error(&format!("Unable to use this key to {usage}")))
 }
 
 fn aes_gcm_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>)> {
@@ -969,6 +1153,179 @@ fn aes_gcm_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>)> {
     (name.eq_ignore_ascii_case("AES-GCM")).then_some(())?;
     let iv = bytes(&execute::get_property(value, "iv"))?;
     (iv.len() == 12).then_some(())?;
+    let aad = match execute::get_property(value, "additionalData") {
+        Value::Undefined => Vec::new(),
+        value => bytes(&value)?,
+    };
+    Some((iv, aad))
+}
+
+fn cipher_block(key: &[u8], block: &mut [u8; 16], encrypt: bool) -> bool {
+    match key.len() {
+        16 => {
+            let cipher = Aes128::new_from_slice(key).ok();
+            let Some(cipher) = cipher else { return false };
+            let block = GenericArray::from_mut_slice(block);
+            if encrypt {
+                cipher.encrypt_block(block);
+            } else {
+                cipher.decrypt_block(block);
+            }
+            true
+        }
+        24 => {
+            let cipher = Aes192::new_from_slice(key).ok();
+            let Some(cipher) = cipher else { return false };
+            let block = GenericArray::from_mut_slice(block);
+            if encrypt {
+                cipher.encrypt_block(block);
+            } else {
+                cipher.decrypt_block(block);
+            }
+            true
+        }
+        32 => {
+            let cipher = Aes256::new_from_slice(key).ok();
+            let Some(cipher) = cipher else { return false };
+            let block = GenericArray::from_mut_slice(block);
+            if encrypt {
+                cipher.encrypt_block(block);
+            } else {
+                cipher.decrypt_block(block);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn aes_cbc(key: &[u8], iv: &[u8], input: &[u8], encrypt: bool) -> Result<Vec<u8>, VmError> {
+    if iv.len() != 16 || !matches!(key.len(), 16 | 24 | 32) {
+        return Err(operation_error("Invalid AES-CBC key or IV length"));
+    }
+    if encrypt {
+        let padding = 16 - input.len() % 16;
+        let mut output = input.to_vec();
+        output.resize(output.len() + padding, padding as u8);
+        let mut previous = [0_u8; 16];
+        previous.copy_from_slice(iv);
+        for chunk in output.chunks_exact_mut(16) {
+            let mut block = [0_u8; 16];
+            block.copy_from_slice(chunk);
+            for (value, previous) in block.iter_mut().zip(previous) {
+                *value ^= previous;
+            }
+            if !cipher_block(key, &mut block, true) {
+                return Err(operation_error("Encryption failed"));
+            }
+            chunk.copy_from_slice(&block);
+            previous = block;
+        }
+        Ok(output)
+    } else {
+        if input.is_empty() || input.len() % 16 != 0 {
+            return Err(operation_error("The operation failed for an operation-specific reason"));
+        }
+        let mut output = Vec::with_capacity(input.len());
+        let mut previous = [0_u8; 16];
+        previous.copy_from_slice(iv);
+        for chunk in input.chunks_exact(16) {
+            let mut block = [0_u8; 16];
+            block.copy_from_slice(chunk);
+            let ciphertext = block;
+            if !cipher_block(key, &mut block, false) {
+                return Err(operation_error("Decryption failed"));
+            }
+            for (value, previous) in block.iter_mut().zip(previous) {
+                *value ^= previous;
+            }
+            output.extend_from_slice(&block);
+            previous = ciphertext;
+        }
+        let Some(&padding) = output.last() else {
+            return Err(operation_error("The operation failed for an operation-specific reason"));
+        };
+        let padding = usize::from(padding);
+        if !(1..=16).contains(&padding)
+            || output.len() < padding
+            || output[output.len() - padding..]
+                .iter()
+                .any(|value| usize::from(*value) != padding)
+        {
+            return Err(operation_error("The operation failed for an operation-specific reason"));
+        }
+        output.truncate(output.len() - padding);
+        Ok(output)
+    }
+}
+
+fn aes_ctr(key: &[u8], initial_counter: &[u8], length: usize, input: &[u8]) -> Result<Vec<u8>, VmError> {
+    if initial_counter.len() != 16
+        || !matches!(key.len(), 16 | 24 | 32)
+        || !(1..=128).contains(&length)
+    {
+        return Err(operation_error("Invalid AES-CTR parameters"));
+    }
+    let mut counter = [0_u8; 16];
+    counter.copy_from_slice(initial_counter);
+    let mut output = Vec::with_capacity(input.len());
+    for chunk in input.chunks(16) {
+        let mut stream = counter;
+        if !cipher_block(key, &mut stream, true) {
+            return Err(operation_error("Encryption failed"));
+        }
+        output.extend(
+            chunk
+                .iter()
+                .zip(stream)
+                .map(|(value, stream)| value ^ stream),
+        );
+        increment_counter(&mut counter, length);
+    }
+    Ok(output)
+}
+
+fn increment_counter(counter: &mut [u8; 16], length: usize) {
+    let bytes = length.div_ceil(8);
+    let mask = if length % 8 == 0 {
+        u8::MAX
+    } else {
+        (1_u16 << (length % 8)) as u8 - 1
+    };
+    for index in (16 - bytes..16).rev() {
+        let low = counter[index] & mask;
+        let next = low.wrapping_add(1) & mask;
+        counter[index] = (counter[index] & !mask) | next;
+        if next != 0 {
+            break;
+        }
+    }
+}
+
+fn aes_algorithm(value: &Value) -> Option<(String, Vec<u8>, usize)> {
+    let name = execute::to_js_string(&execute::get_property(value, "name")).ok()?;
+    let name = name.to_ascii_uppercase();
+    let iv_name = if name == "AES-CTR" { "counter" } else { "iv" };
+    let iv = bytes(&execute::get_property(value, iv_name))?;
+    let length = match name.as_str() {
+        "AES-CTR" => match execute::get_property(value, "length") {
+            Value::Number(length) if length.is_finite() => length as usize,
+            _ => return None,
+        },
+        _ => 0,
+    };
+    Some((name, iv, length))
+}
+
+fn chacha_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>)> {
+    let name = execute::to_js_string(&execute::get_property(value, "name")).ok()?;
+    if !name.eq_ignore_ascii_case("ChaCha20-Poly1305") {
+        return None;
+    }
+    let iv = bytes(&execute::get_property(value, "iv"))?;
+    if iv.len() != 12 {
+        return None;
+    }
     let aad = match execute::get_property(value, "additionalData") {
         Value::Undefined => Vec::new(),
         value => bytes(&value)?,
