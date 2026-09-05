@@ -12,6 +12,7 @@ fn generated_artifact_target_is_selected_as_one_physical_view() {
         assert_eq!(view.artifact_id, artifact.artifact_id);
         assert_eq!(view.data, artifact.data);
         assert_eq!(view.compiler, Some(artifact.compiler));
+        assert_eq!(view.relocations, artifact.relocations);
         assert_eq!(view.abi, artifact.abi);
         assert_eq!(view.entry, artifact.entry);
         assert_eq!(view.external_entries, artifact.external_entries);
