@@ -8561,7 +8561,8 @@ fn cp_run_host_child(
             let _ = stdin.write_all(input.as_bytes());
         }
     }
-    let output = process.wait_with_output().ok()?;
+    let output = crate::modules::child_process::wait_with_timeout(process, Some(options))
+        .ok()?;
     Some((
         output.stdout,
         output.stderr,
