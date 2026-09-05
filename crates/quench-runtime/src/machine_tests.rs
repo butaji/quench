@@ -1068,6 +1068,7 @@ fn native_move_uses_rendered_address_without_remapping() {
         opcode: crate::ir::Opcode::Move,
         entry: None,
         shared_entry: None,
+        native_entry_count: 0,
     };
     let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
@@ -1102,6 +1103,26 @@ fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     assert!(plan.shared_entry.is_some());
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_load_local_uses_declared_tagged_word_entry() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::LoadLocal,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let mut plan = super::NativeMovePlan::new_with_arena(instruction, policy, shared)
+        .expect("declared LoadLocal body");
+    let source = crate::tagged_value::TaggedValue::from_bits(0x1357_9BDF);
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

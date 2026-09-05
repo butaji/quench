@@ -1061,6 +1061,21 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         entry: 0,
         external_entries: &[0],
     },
+    RegionDeclaration {
+        name: "load_local",
+        // A proven, non-cell lexical slot is the same physical tagged-word
+        // load as Move, but has a distinct declaration so opcode/ABI routing
+        // cannot infer compatibility from bytes alone.
+        operations: &["LoadLocal"],
+        abi: DeclAbi::TaggedWord,
+        x86_bytes: &X86_MOVE_BYTES,
+        aarch64_bytes: &AARCH64_MOVE_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
 ];
 
 fn main() {

@@ -2561,6 +2561,8 @@ pub(crate) struct NativeMovePlan {
     entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_entry: Option<(usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64)>,
+    #[cfg(test)]
+    native_entry_count: u64,
 }
 
 impl NativeMovePlan {
@@ -2581,10 +2583,18 @@ impl NativeMovePlan {
         if !policy.native_leaves {
             return None;
         }
-        if instruction.opcode != crate::ir::Opcode::Move || instruction.flags != 0 {
+        if !matches!(
+            instruction.opcode,
+            crate::ir::Opcode::Move | crate::ir::Opcode::LoadLocal
+        ) || instruction.flags != 0
+        {
             return None;
         }
-        let key = crate::stencil_select::move_region_key();
+        let key = if instruction.opcode == crate::ir::Opcode::LoadLocal {
+            crate::stencil_select::load_local_region_key()
+        } else {
+            crate::stencil_select::move_region_key()
+        };
         crate::stencil_select::select_region(key).filter(|record| {
             record.executable
                 && record.abi == crate::stencil_select::RegionAbi::TaggedWord
@@ -2601,7 +2611,22 @@ impl NativeMovePlan {
             entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             shared_entry: None,
+            #[cfg(test)]
+            native_entry_count: 0,
         })
+    }
+
+    #[inline]
+    fn note_entry(&mut self) {
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
     }
 
     #[inline]
@@ -2615,7 +2640,9 @@ impl NativeMovePlan {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
             if let Some(entry) = self.entry {
-                return Ok(entry(source));
+                let value = entry(source);
+                self.note_entry();
+                return Ok(value);
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2623,11 +2650,18 @@ impl NativeMovePlan {
             (self.shared_arena.clone(), self.shared_entry)
         {
             match shared.borrow().with_active(address, || entry(source)) {
-                Ok(value) => return Ok(value),
+                Ok(value) => {
+                    self.note_entry();
+                    return Ok(value);
+                }
                 Err(_) => self.shared_entry = None,
             }
         }
-        let key = crate::stencil_select::move_region_key();
+        let key = if self.opcode == crate::ir::Opcode::LoadLocal {
+            crate::stencil_select::load_local_region_key()
+        } else {
+            crate::stencil_select::move_region_key()
+        };
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable)
             || self.lifecycle.observe(key, true) == crate::stencil_lifecycle::StencilState::Retired
@@ -2655,7 +2689,11 @@ impl NativeMovePlan {
                 }
             };
             self.shared_entry = Some((address, entry));
-            return shared.borrow().with_active(address, || entry(source));
+            let result = shared.borrow().with_active(address, || entry(source));
+            if result.is_ok() {
+                self.note_entry();
+            }
+            return result;
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2677,6 +2715,9 @@ impl NativeMovePlan {
             arena.make_executable()?;
             arena.execute_tagged_word(address, source)
         })();
+        if result.is_ok() {
+            self.note_entry();
+        }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
             if let Some(arena) = self.arena.as_ref() {
@@ -3631,6 +3672,7 @@ pub(crate) struct BaselinePlan {
     native_unary: Rc<[Option<Rc<RefCell<NativeUnaryPlan>>>]>,
     native_add_chains: Rc<[Option<Rc<RefCell<NativeAddChainPlan>>>]>,
     native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
+    native_load_local: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
     native_property: Rc<[Option<Rc<RefCell<NativePropertyPlan>>>]>,
     native_dispatch: Rc<[Option<Rc<RefCell<NativeDispatchPlan>>>]>,
     native_regions: Rc<[Option<Rc<RefCell<NativeRegionPlan>>>]>,
@@ -3870,6 +3912,19 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let native_load_local = entries
+            .iter()
+            .map(|entry| {
+                NativeMovePlan::new_with_arena(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
+                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::LoadLocal)
+                .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
         let native_dispatch = entries
             .iter()
             .map(|entry| {
@@ -3932,6 +3987,7 @@ impl BaselinePlan {
             native_unary,
             native_add_chains,
             native_move,
+            native_load_local,
             native_property,
             native_dispatch,
             native_regions,
@@ -3977,6 +4033,13 @@ impl BaselinePlan {
         self.native_move.get(pc).and_then(Option::as_deref)
     }
 
+    pub(crate) fn native_load_local_at(
+        &self,
+        pc: usize,
+    ) -> Option<&RefCell<NativeMovePlan>> {
+        self.native_load_local.get(pc).and_then(Option::as_deref)
+    }
+
     pub(crate) fn native_property_at(&self, pc: usize) -> Option<&RefCell<NativePropertyPlan>> {
         self.native_property.get(pc).and_then(Option::as_deref)
     }
@@ -4015,6 +4078,7 @@ pub(crate) struct OptimizingEntry {
     pub(crate) native_truthiness: Option<Rc<RefCell<NativeTruthinessPlan>>>,
     pub(crate) native_unary: Option<Rc<RefCell<NativeUnaryPlan>>>,
     pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
+    pub(crate) native_load_local: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_property: Option<Rc<RefCell<NativePropertyPlan>>>,
     pub(crate) native_dispatch: Option<Rc<RefCell<NativeDispatchPlan>>>,
     pub(crate) native_region: Option<Rc<RefCell<NativeRegionPlan>>>,
@@ -4042,6 +4106,7 @@ impl OptimizingPlan {
                 native_truthiness: baseline.native_truthiness.get(pc).and_then(Clone::clone),
                 native_unary: baseline.native_unary.get(pc).and_then(Clone::clone),
                 native_move: baseline.native_move.get(pc).and_then(Clone::clone),
+                native_load_local: baseline.native_load_local.get(pc).and_then(Clone::clone),
                 native_property: baseline.native_property.get(pc).and_then(Clone::clone),
                 native_dispatch: baseline.native_dispatch.get(pc).and_then(Clone::clone),
                 native_region: (policy.fused_regions || policy.composed_regions)

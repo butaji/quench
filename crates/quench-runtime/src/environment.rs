@@ -961,6 +961,22 @@ impl Environment {
         Some(crate::register_file::ImmediateCopyPlan::new(source, target))
     }
 
+    /// Resolve a proven non-cell lexical slot for a read-only tagged-word
+    /// stencil. Cell-backed, deleted, or missing bindings stay on the
+    /// canonical loader because their indirection/throw semantics are part of
+    /// the ordinary environment machinery.
+    #[inline(always)]
+    pub(crate) fn proven_word_ptr(&self, slot: u16) -> Option<*const crate::tagged_value::TaggedValue> {
+        if self.is_deleted_slot(slot) || self.is_uninitialized(slot) {
+            return None;
+        }
+        self.slots_ref()
+            .with_binding(usize::from(slot), |store, index| {
+                store.immediate_word_ptr(index).map(|ptr| ptr.cast_const())
+            })
+            .flatten()
+    }
+
     pub(crate) fn load_into_fixed<const N: usize>(
         &self,
         registers: &mut crate::register_file::FixedWordFile<N>,
