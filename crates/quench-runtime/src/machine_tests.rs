@@ -1478,6 +1478,12 @@ fn region_verifier_rejects_physical_call_for_raw_abi() {
     assert!(crate::stencil_physical::contains_call(&[0x00, 0x00, 0x3F, 0xD6]));
     #[cfg(target_arch = "x86_64")]
     assert!(crate::stencil_physical::contains_call(&[0xE8, 0, 0, 0, 0]));
+    #[cfg(target_arch = "x86_64")]
+    assert!(crate::stencil_physical::contains_call(&[0x90, 0xE8, 0, 0, 0, 0]));
+    #[cfg(target_arch = "x86_64")]
+    assert!(crate::stencil_physical::contains_call(&[0x41, 0xFF, 0xD2]));
+    #[cfg(target_arch = "x86_64")]
+    assert!(!crate::stencil_physical::contains_call(&[0xFF, 0xE0]));
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     assert!(!crate::stencil_physical::contains_call(&[0xE8]));
     for key in [
