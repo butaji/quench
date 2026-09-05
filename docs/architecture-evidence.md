@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `9d2c80e8c` (cleanup files remain
+Evidence below is bound to source revision `931edbd24` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -63,6 +63,11 @@ Unsigned-right-shift native execution now records the first rendered integer
 entry and preserves the uint32-as-Number result, including masked fractional
 counts (`/tmp/quench-uint32-shift-20260905.log`; focused 1 passed, full runtime
 723 passed, 0 failed, 1 ignored at `9d2c80e8c`).
+The ordinary-source ARM loop driver now resumes at the exact region PC after
+an interruptible native iteration (rather than `pc + 1`), clears the request,
+and completes the remaining iterations without replay; focused execution and
+the full runtime both pass (`/tmp/quench-normal-loop-interrupt-20260905.log`,
+`/tmp/quench-runtime-full-20260905-normal-loop-interrupt.log`; 1 and 723 passed).
 Both baseline and composed finish paths now decode the C status through the
 same typed `NativeStatus` state machine; transport tests pass for committed,
 interrupt and malformed statuses (`/tmp/quench-native-status-typed-20260905.log`,
