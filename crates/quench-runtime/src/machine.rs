@@ -3182,6 +3182,48 @@ fn register_mentioned_after(entries: &[BaselineEntry], start: usize, register: u
     })
 }
 
+/// Admission-time view of the generated region contract.  This keeps static
+/// shape checks out of the hot driver: execution still revalidates the live
+/// code window, but malformed operands or successors are rejected before a
+/// plan can render or publish executable bytes.
+fn region_admission_matches(
+    entries: &[BaselineEntry],
+    start: usize,
+    record: &crate::stencil_select::RegionRecord,
+) -> bool {
+    let contract = record.contract();
+    if !contract.executable
+        || !contract.has_single_entry()
+        || !contract.legal_external_entry(0)
+        || start.checked_add(contract.operations.len()).is_none_or(|end| end > entries.len())
+    {
+        return false;
+    }
+    let end = start + contract.operations.len();
+    contract.operations.iter().enumerate().all(|(offset, expected)| {
+        let entry = &entries[start + offset];
+        if entry.instruction.opcode != *expected
+            || !expected.operands_are_canonical([
+                entry.instruction.a,
+                entry.instruction.b,
+                entry.instruction.c,
+            ])
+        {
+            return false;
+        }
+        match expected.control_operands(entry.instruction) {
+            crate::ir::ControlOperands::Return { .. } => start + offset + 1 == end,
+            crate::ir::ControlOperands::Branch { target, .. }
+            | crate::ir::ControlOperands::Jump { target } => {
+                let target = usize::from(target);
+                target >= start && target <= end
+            }
+            crate::ir::ControlOperands::Loop { .. } => false,
+            crate::ir::ControlOperands::Next => true,
+        }
+    })
+}
+
 impl BaselinePlan {
     #[cfg(test)]
     pub(crate) fn compile_for_test(
@@ -3312,12 +3354,7 @@ impl BaselinePlan {
                             return None;
                         }
                         let key = record.key;
-                        let end = pc.checked_add(record.operations.len())?;
-                        (end <= entries.len()
-                            && entries[pc..end]
-                                .iter()
-                                .zip(record.operations.iter())
-                                .all(|(entry, opcode)| entry.instruction.opcode == *opcode))
+                        region_admission_matches(&entries, pc, record)
                         .then(|| {
                             NativeRegionPlan::new_with_arena(
                                 key,
