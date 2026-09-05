@@ -45,23 +45,10 @@ unsafe fn invoke_f64x3_preserve_none(
     rhs: f64,
     third: f64,
 ) -> f64 {
-    // The generated chain is deliberately a leaf: it only reads/writes v0-v2
-    // and returns in v0.  Calling it through Rust's C function-pointer ABI
-    // would make the compiler preserve the ordinary ABI's callee-saved set.
-    // This raw BLR is the stable-Rust equivalent of the paper's preserve-none
-    // boundary for this proven stencil: all live arguments are in FP registers
-    // and no prologue/epilogue or Rust frame is introduced at the edge.
-    let mut result = lhs;
-    let target = entry as usize;
-    std::arch::asm!(
-        "blr x16",
-        in("x16") target,
-        inout("v0") result,
-        in("v1") rhs,
-        in("v2") third,
-        options(nostack),
-    );
-    result
+    // Keep the typed platform call so arm64e pointer authentication and the
+    // return-address signing sequence remain correct.  A handwritten BLR
+    // here would require target-specific PAC handling at every call site.
+    entry(lhs, rhs, third)
 }
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -2176,6 +2163,8 @@ pub(crate) struct NativeAddChainPlan {
     site: crate::quickening::QuickeningSite<4>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(f64, f64, f64) -> f64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_entry: Option<(usize, extern "C" fn(f64, f64, f64) -> f64)>,
 }
 
 impl NativeAddChainPlan {
@@ -2203,6 +2192,8 @@ impl NativeAddChainPlan {
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            shared_entry: None,
         })
     }
 
@@ -2226,6 +2217,16 @@ impl NativeAddChainPlan {
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
+        if let (Some(shared), Some((address, entry))) =
+            (self.shared_arena.clone(), self.shared_entry)
+        {
+            match shared.borrow().with_active(address, || unsafe {
+                invoke_f64x3_preserve_none(entry, lhs, rhs, third)
+            }) {
+                Ok(value) => return Ok(value),
+                Err(_) => self.shared_entry = None,
+            }
+        }
         if let Some(shared) = self.shared_arena.clone() {
             let rendered = (|| -> Result<
                 (usize, extern "C" fn(f64, f64, f64) -> f64),
@@ -2246,6 +2247,7 @@ impl NativeAddChainPlan {
                     return Err(error);
                 }
             };
+            self.shared_entry = Some((address, entry));
             return shared.borrow().with_active(address, || unsafe {
                 invoke_f64x3_preserve_none(entry, lhs, rhs, third)
             });
@@ -2303,6 +2305,8 @@ pub(crate) struct NativeMovePlan {
     opcode: crate::ir::Opcode,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_entry: Option<(usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64)>,
 }
 
 impl NativeMovePlan {
@@ -2341,6 +2345,8 @@ impl NativeMovePlan {
             opcode: instruction.opcode,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            shared_entry: None,
         })
     }
 
@@ -2356,6 +2362,15 @@ impl NativeMovePlan {
         if self.shared_arena.is_none() {
             if let Some(entry) = self.entry {
                 return Ok(entry(source));
+            }
+        }
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if let (Some(shared), Some((address, entry))) =
+            (self.shared_arena.clone(), self.shared_entry)
+        {
+            match shared.borrow().with_active(address, || entry(source)) {
+                Ok(value) => return Ok(value),
+                Err(_) => self.shared_entry = None,
             }
         }
         let key = crate::stencil_select::move_region_key();
@@ -2385,6 +2400,7 @@ impl NativeMovePlan {
                     return Err(error);
                 }
             };
+            self.shared_entry = Some((address, entry));
             return shared.borrow().with_active(address, || entry(source));
         }
         if self.arena.is_none() {
@@ -2422,6 +2438,7 @@ impl NativeMovePlan {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 self.entry = None;
+                self.shared_entry = None;
             }
         }
         result
