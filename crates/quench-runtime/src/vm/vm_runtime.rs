@@ -535,7 +535,6 @@ fn execute_composed_array_loop(
 /// numeric borrow alive until the call returns; the kernel only touches the
 /// proven backing words and publishes its result here.
 #[repr(C)]
-#[repr(C)]
 pub(crate) struct NativeArrayKernelContext {
     pub(crate) data: *mut f64,
     pub(crate) len: usize,
