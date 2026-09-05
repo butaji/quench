@@ -783,7 +783,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // Numeric equality is safe only after both operands are proven
         // Numbers; all coercive/string/BigInt cases remain canonical Binary.
         operations: &["Binary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarBool,
         x86_bytes: &X86_COMPARE_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_EQUAL_BYTES,
         portable_bytes: &[0xC3],
@@ -795,7 +795,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "compare_not_equal",
         operations: &["Binary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarBool,
         x86_bytes: &X86_COMPARE_NOT_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_NOT_EQUAL_BYTES,
         portable_bytes: &[0xC3],
@@ -834,7 +834,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "compare_less",
         operations: &["Binary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarBool,
         x86_bytes: &X86_COMPARE_LESS_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_LESS_BYTES,
         portable_bytes: &[0xC3],
@@ -846,7 +846,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "compare_less_equal",
         operations: &["Binary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarBool,
         x86_bytes: &X86_COMPARE_LESS_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_LESS_EQUAL_BYTES,
         portable_bytes: &[0xC3],
@@ -858,7 +858,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "compare_greater",
         operations: &["Binary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarBool,
         x86_bytes: &X86_COMPARE_GREATER_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_GREATER_BYTES,
         portable_bytes: &[0xC3],
@@ -870,7 +870,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
     RegionDeclaration {
         name: "compare_greater_equal",
         operations: &["Binary", "Return"],
-        abi: DeclAbi::Scalar,
+        abi: DeclAbi::ScalarBool,
         x86_bytes: &X86_COMPARE_GREATER_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_GREATER_EQUAL_BYTES,
         portable_bytes: &[0xC3],
