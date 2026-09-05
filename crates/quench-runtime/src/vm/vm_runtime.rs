@@ -1187,6 +1187,22 @@ pub(crate) fn execute_optimized_code_step_from(
     // direct optimized step can avoid the baseline handler call entirely.
     match instruction.opcode {
         crate::ir::Opcode::LoadConst => {
+            if let Some(native) = entry.native_load_const.as_ref() {
+                if let Ok(bits) = native.borrow_mut().execute() {
+                    if registers
+                        .write_tagged_bits(usize::from(instruction.a), bits)
+                        .is_some()
+                    {
+                        crate::execution_trace::stencil_observation(
+                            code, start, "load_const", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        return Ok((crate::completion::Completion::Normal, start + 1));
+                    }
+                }
+                crate::execution_trace::stencil_observation(code, start, "load_const", false);
+                crate::execution_trace::leaf_rejection("optimizing_native_load_const");
+            }
             let Some((_, value)) = code.constant_at(start) else {
                 return execute_baseline_code_step_from(code, baseline, start, registers, context);
             };
@@ -1540,6 +1556,25 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         // The lookup is per instruction, so a proven leaf can remain native
         // inside an otherwise ordinary function body rather than requiring a
         // whole-function shape match.
+        if instruction.opcode == crate::ir::Opcode::LoadConst {
+            if let Some(native) = plan.native_load_const_at(pc) {
+                if let Ok(bits) = native.borrow_mut().execute() {
+                    if registers
+                        .write_tagged_bits(usize::from(instruction.a), bits)
+                        .is_some()
+                    {
+                        crate::execution_trace::stencil_observation(
+                            code, pc, "load_const", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        pc += 1;
+                        continue;
+                    }
+                }
+                crate::execution_trace::stencil_observation(code, pc, "load_const", false);
+                crate::execution_trace::leaf_rejection("native_load_const");
+            }
+        }
         if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
             if let Some(native) = plan.native_property_at(pc) {
                 let slot = registers
