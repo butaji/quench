@@ -18,6 +18,7 @@ struct RegionDeclaration {
 enum DeclAbi {
     Scalar,
     ScalarI32,
+    ScalarU32,
     Bridge,
     ArrayKernel,
     ArrayNumericLoop,
@@ -258,6 +259,9 @@ const X86_COMPARE_GREATER_EQUAL_BYTES: [u8; 16] = x86_compare_ordered_bytes(0x93
 const X86_BITWISE_AND_BYTES: [u8; 5] = x86_i32_bitop(0x21);
 const X86_BITWISE_OR_BYTES: [u8; 5] = x86_i32_bitop(0x09);
 const X86_BITWISE_XOR_BYTES: [u8; 5] = x86_i32_bitop(0x31);
+const X86_SHIFT_LEFT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xE7, 0x89, 0xF8, 0xC3];
+const X86_SHIFT_RIGHT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xFF, 0x89, 0xF8, 0xC3];
+const X86_SHIFT_RIGHT_ZERO_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xEF, 0x89, 0xF8, 0xC3];
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -328,6 +332,12 @@ const AARCH64_BITWISE_OR_BYTES: [u8; 8] =
     aarch64_pair(0x2A01_0000, aarch64_ret());
 const AARCH64_BITWISE_XOR_BYTES: [u8; 8] =
     aarch64_pair(0x4A01_0000, aarch64_ret());
+const AARCH64_SHIFT_LEFT_BYTES: [u8; 8] =
+    aarch64_pair(0x1AC1_2000, aarch64_ret());
+const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] =
+    aarch64_pair(0x1AC1_2800, aarch64_ret());
+const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
+    aarch64_pair(0x1AC1_2400, aarch64_ret());
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -610,6 +620,42 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         abi: DeclAbi::ScalarI32,
         x86_bytes: &X86_BITWISE_XOR_BYTES,
         aarch64_bytes: &AARCH64_BITWISE_XOR_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "shift_left",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarI32,
+        x86_bytes: &X86_SHIFT_LEFT_BYTES,
+        aarch64_bytes: &AARCH64_SHIFT_LEFT_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "shift_right",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarI32,
+        x86_bytes: &X86_SHIFT_RIGHT_BYTES,
+        aarch64_bytes: &AARCH64_SHIFT_RIGHT_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "shift_right_zero",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarU32,
+        x86_bytes: &X86_SHIFT_RIGHT_ZERO_BYTES,
+        aarch64_bytes: &AARCH64_SHIFT_RIGHT_ZERO_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
@@ -1287,6 +1333,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
     match declaration.abi {
         DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
+        DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
         DeclAbi::ArrayKernel if target_is_aarch64 => {
             "crate::stencil_select::RegionAbi::ArrayKernel"
