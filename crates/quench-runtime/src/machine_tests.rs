@@ -442,6 +442,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
+        tagged_key: None,
         returns_boolean: false,
         integer_op: None,
         integer_unsigned: false,
@@ -464,13 +465,16 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
+        tagged_key: None,
         returns_boolean: false,
         integer_op: None,
         integer_unsigned: false,
         entry: None,
         int_entry: None,
+        tagged_entry: None,
         uint_entry: None,
         shared_entry_address: None,
+        tagged_shared_entry: None,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
@@ -1082,6 +1086,86 @@ fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conver
         });
     });
     assert!(executed, "ordinary source must reach and execute comparison bytes");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_lowering_executes_tagged_identity_comparison() {
+    let program = crate::reduce::reduce_source("var x = true; x === true;")
+        .expect("identity comparison source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Binary
+                    && crate::ir::compact_binary_operator(instruction.flags)
+                        == Some(crate::ops::BinaryOp::StrictEqual)
+            })
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let Some(native) = plan.native_binary_at(pc) else {
+            return;
+        };
+        let instruction = view.instruction(pc).expect("identity instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Boolean(true));
+        registers.write(usize::from(instruction.c), crate::value::Value::Boolean(true));
+        let environment = crate::environment::Environment::new();
+        let context = crate::vm::current_context_or_default();
+        let result = crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            std::rc::Rc::clone(&environment),
+        );
+        assert!(result.is_ok(), "tagged identity comparison should execute");
+        assert_eq!(
+            registers.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+        assert!(native.borrow().native_entry_count > 0, "identity bytes must execute");
+
+        let before = native.borrow().native_entry_count;
+        let mut hostile = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        hostile.write(usize::from(instruction.b), crate::value::Value::Boolean(true));
+        hostile.write(usize::from(instruction.c), crate::value::Value::Number(1.0));
+        let fallback = crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        );
+        assert!(fallback.is_ok(), "non-identity operand must use fallback");
+        assert_eq!(
+            hostile.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(false))
+        );
+        assert_eq!(native.borrow().native_entry_count, before);
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must reach and execute identity bytes");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
