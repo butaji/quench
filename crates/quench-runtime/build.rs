@@ -1518,6 +1518,8 @@ fn main() {
     generate_op_names();
     generate_stencil_catalog();
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let target = env::var("TARGET").expect("TARGET for stencil catalog");
+    println!("cargo:rustc-env=QUENCH_BUILD_TARGET={target}");
     build_stencil_artifacts::generate(&output, REGION_DECLARATIONS);
     validate_stencil_declarations();
     if env::var_os("QUENCH_VERIFY_STENCIL_ENCODINGS").is_some() {
