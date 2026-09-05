@@ -268,6 +268,17 @@ impl StencilArena {
         Ok(entry(lhs, rhs))
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub fn execute_bool(&self, address: usize, lhs: f64, rhs: f64) -> Result<bool, ArenaError> {
+        let base = self.ptr as usize;
+        let end = base.saturating_add(self.cursor);
+        if !self.executable || address < base || address >= end {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let entry: extern "C" fn(f64, f64) -> u64 = unsafe { std::mem::transmute(address) };
+        Ok(entry(lhs, rhs) != 0)
+    }
+
     /// Validate an installed numeric entry once, then hand the caller the
     /// typed code pointer for its steady-state loop.  The arena is immutable
     /// after `make_executable`, so a pointer returned here remains valid until
@@ -567,6 +578,25 @@ impl StencilArena {
             return fallback();
         }
         self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
+    }
+
+    pub fn render_selected_bool<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        key: crate::stencil_fact::RegionKey,
+        values: &PatchValues<'_, N>,
+        lhs: f64,
+        rhs: f64,
+    ) -> Result<bool, ArenaError> {
+        let Some(record) = select_region(key).filter(|record| record.executable) else {
+            return Err(ArenaError::ProtectionFailed);
+        };
+        if record.fallthrough.is_some() {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        self.make_executable()?;
+        self.execute_bool(address, lhs, rhs)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1115,6 +1145,24 @@ mod tests {
             .render_selected_f64(&mut cache, key, &values, f64::NAN, 1.0, || Ok(1.0))
             .unwrap();
         assert!(nan.is_nan());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn executable_equality_region_matches_numeric_semantics() {
+        let key = crate::stencil_select::compare_equal_region_key();
+        let record = crate::stencil_select::select_region(key).expect("equality declaration");
+        let site = QuickeningSite::<2>::new(Opcode::Binary);
+        let values = PatchValues::from_site(&site);
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        assert!(arena.execute_bool(address, 4.0, 4.0).unwrap());
+        assert!(!arena.execute_bool(address, 4.0, 5.0).unwrap());
+        assert!(!arena.execute_bool(address, f64::NAN, f64::NAN).unwrap());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
