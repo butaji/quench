@@ -697,6 +697,24 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn native_unsigned_shift_preserves_uint32_number_representation() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Binary,
+        flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::ShiftRightZeroFill),
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeBinaryPlan::new(instruction, policy).expect("unsigned shift");
+    assert_eq!(plan.execute(-1.0, 0.0), Ok(4_294_967_295.0));
+    assert_eq!(plan.execute(-1.0, 1.0), Ok(2_147_483_647.0));
+    assert_eq!(plan.execute(-1.0, 33.5), Ok(2_147_483_647.0));
+    assert!(plan.native_entry_count >= 3);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn native_bitwise_not_i32_entry_preserves_to_int32_rules() {
     let instruction = crate::ir::Instruction {
         opcode: crate::ir::Opcode::Unary,
