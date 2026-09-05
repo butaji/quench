@@ -852,18 +852,6 @@ fn generate_stencil_catalog() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let key_defs = REGION_DECLARATIONS
-        .iter()
-        .enumerate()
-        .map(|(index, declaration)| {
-            let name = key_name(declaration.name);
-            format!(
-                "const {name}_KEY: crate::stencil_fact::RegionKey = crate::stencil_fact::RegionKey::from_opcodes(crate::stencil_fact::RegionId({}), {name}_OPS);",
-                index + 1
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     let region_rows = REGION_DECLARATIONS
         .iter()
         .enumerate()
@@ -936,304 +924,28 @@ fn generate_stencil_catalog() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let lookup_arms = REGION_DECLARATIONS
+    let numeric_keys = REGION_DECLARATIONS
         .iter()
-        .enumerate()
-        .map(|(index, declaration)| {
+        .filter(|declaration| {
+            declaration.name == "fallthrough"
+                || matches!(
+                    declaration.name,
+                    "subtract" | "multiply" | "divide" | "add_const"
+                )
+        })
+        .map(|declaration| {
             format!(
-                "        {}_KEY => Some(&REGION_TABLE[{index}]),",
+                "    (crate::ir::Opcode::{}, CANONICAL_{}_KEY),",
+                declaration.operations[0],
                 key_name(declaration.name)
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let generated = r#"
-/* BEGIN LEGACY EXPANDED CATALOG. Runtime selection below is generated from
-   REGION_DECLARATIONS; this block remains only to ease source migration.
-// The generated rows carry real x86-64 and AArch64 encodings. Unsupported
-// targets receive a return-only fragment and must use the ordinary fallback.
-__LOOP_BYTES__
-// Property access is admitted only after the Rust shape/accessor validator;
-// the leaf loads a tagged slot word and returns ownership to the Rust writer.
-__PROPERTY_BYTES__
-// Pure Move copies one canonical tagged word; the Rust register writer owns
-// the retain/release edge after the leaf returns.
-__MOVE_BYTES__
-__FALLTHROUGH_BYTES__
-__SUBTRACT_BYTES__
-__MULTIPLY_BYTES__
-__DIVIDE_BYTES__
-__ADD_CONST_BYTES__
-__DISPATCH_BYTES__
-__LOOP_GLUE_BYTES__
-__LOOP_BODY_BYTES__
-__BINARY_GLUE_BYTES__
-__UPDATE_RETURN_BYTES__
-__CALL_BYTES__
-__CALL_N_BYTES__
-__ARITHMETIC_GLUE_BYTES__
-__GET_PROPERTY_BYTES__
-__SET_N_BYTES__
-__GET_INDEX_BYTES__
-__SET_INDEX_BYTES__
-__GET_INDEX_INC_BYTES__
-__FOR_I_BYTES__
-__ADD_CHAIN_BYTES__
-__ARRAY_LOOP_BODY_BYTES__
-__ARRAY_NUMERIC_LOOP_BYTES__
-#[cfg(target_arch = "aarch64")]
-const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC0, 0x03, 0x5F, 0xD6];
-#[cfg(not(target_arch = "aarch64"))]
-const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC3];
-// The catalog remains present on every target for deterministic admission,
-// but only the ISA whose bytes are actually defined may cross the executable
-// boundary. Unsupported targets must take the complete Rust fallback.
-const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
-// The generic all-opcode bridge is not one of the eight specialized leaves in
-// this task. Keep its x86 implementation available, but leave ARM on the
-// direct Rust baseline path until a separately audited ARM bridge exists.
-const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
-__LOOP_HOLES__
-__PROPERTY_HOLES__
-__MOVE_HOLES__
-__FALLTHROUGH_HOLES__
-__SUBTRACT_HOLES__
-__MULTIPLY_HOLES__
-__DIVIDE_HOLES__
-__ADD_CONST_HOLES__
-__DISPATCH_HOLES__
-__LOOP_GLUE_HOLES__
-__LOOP_BODY_HOLES__
-__BINARY_GLUE_HOLES__
-__UPDATE_RETURN_HOLES__
-__CALL_HOLES__
-__CALL_N_HOLES__
-__ARITHMETIC_GLUE_HOLES__
-__GET_PROPERTY_HOLES__
-__SET_N_HOLES__
-__GET_INDEX_HOLES__
-__SET_INDEX_HOLES__
-__GET_INDEX_INC_HOLES__
-__FOR_I_HOLES__
-__ADD_CHAIN_HOLES__
-__ARRAY_LOOP_BODY_HOLES__
-__ARRAY_NUMERIC_LOOP_HOLES__
-const FALLTHROUGH_TAIL_HOLES: &[crate::stencil_fact::Hole] = &[];
-const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Stencil {
-    bytes: FALLTHROUGH_TAIL_BYTES,
-    holes: FALLTHROUGH_TAIL_HOLES,
-};
-const SUBTRACT_OPS: &[crate::ir::Opcode] = &[__SUBTRACT_OPS__];
-const MULTIPLY_OPS: &[crate::ir::Opcode] = &[__MULTIPLY_OPS__];
-const DIVIDE_OPS: &[crate::ir::Opcode] = &[__DIVIDE_OPS__];
-const ADD_CONST_OPS: &[crate::ir::Opcode] = &[__ADD_CONST_OPS__];
-const LOOP_OPS: &[crate::ir::Opcode] = &[__LOOP_OPS__];
-const PROPERTY_OPS: &[crate::ir::Opcode] = &[__PROPERTY_OPS__];
-const MOVE_OPS: &[crate::ir::Opcode] = &[__MOVE_OPS__];
-const DISPATCH_OPS: &[crate::ir::Opcode] = crate::ir::Opcode::ALL;
-const _: () = assert!(DISPATCH_OPS.len() == crate::ir::Opcode::COUNT as usize);
-const FALLTHROUGH_OPS: &[crate::ir::Opcode] = &[__FALLTHROUGH_OPS__];
-const LOOP_GLUE_OPS: &[crate::ir::Opcode] = &[__LOOP_GLUE_OPS__];
-const LOOP_BODY_OPS: &[crate::ir::Opcode] = &[__LOOP_BODY_OPS__];
-const BINARY_GLUE_OPS: &[crate::ir::Opcode] = &[__BINARY_GLUE_OPS__];
-const UPDATE_RETURN_OPS: &[crate::ir::Opcode] = &[__UPDATE_RETURN_OPS__];
-const CALL_OPS: &[crate::ir::Opcode] = &[__CALL_OPS__];
-const CALL_N_OPS: &[crate::ir::Opcode] = &[__CALL_N_OPS__];
-const ARITHMETIC_GLUE_OPS: &[crate::ir::Opcode] = &[__ARITHMETIC_GLUE_OPS__];
-const GET_PROPERTY_OPS: &[crate::ir::Opcode] = &[__GET_PROPERTY_OPS__];
-const SET_N_OPS: &[crate::ir::Opcode] = &[__SET_N_OPS__];
-const GET_INDEX_OPS: &[crate::ir::Opcode] = &[__GET_INDEX_OPS__];
-const SET_INDEX_OPS: &[crate::ir::Opcode] = &[__SET_INDEX_OPS__];
-const GET_INDEX_INC_OPS: &[crate::ir::Opcode] = &[__GET_INDEX_INC_OPS__];
-const FOR_I_OPS: &[crate::ir::Opcode] = &[__FOR_I_OPS__];
-const ADD_CHAIN_OPS: &[crate::ir::Opcode] = &[__ADD_CHAIN_OPS__];
-const ARRAY_LOOP_BODY_OPS: &[crate::ir::Opcode] = &[__ARRAY_LOOP_BODY_OPS__];
-const ARRAY_NUMERIC_LOOP_OPS: &[crate::ir::Opcode] = &[__ARRAY_NUMERIC_LOOP_OPS__];
-__KEY_DEFS__
-static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
-    (crate::ir::Opcode::Add, CANONICAL_FALLTHROUGH_KEY),
-    (crate::ir::Opcode::Sub, CANONICAL_SUBTRACT_KEY),
-    (crate::ir::Opcode::Mul, CANONICAL_MULTIPLY_KEY),
-    (crate::ir::Opcode::Div, CANONICAL_DIVIDE_KEY),
-    (crate::ir::Opcode::AddConst, CANONICAL_ADD_CONST_KEY),
-];
-// Legacy hand-expanded table retained as source text during migration; the
-// runtime never references it. Canonical rows below are declaration-derived.
-static REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
-    (crate::stencil_select::RegionRecord {
-        key: LOOP_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: LOOP_BYTES, holes: LOOP_HOLES },
-        operations: LOOP_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: MOVE_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: MOVE_BYTES, holes: MOVE_HOLES },
-        operations: MOVE_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: PROPERTY_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: PROPERTY_BYTES, holes: PROPERTY_HOLES },
-        operations: PROPERTY_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: FALLTHROUGH_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: FALLTHROUGH_BYTES, holes: FALLTHROUGH_HOLES },
-        operations: FALLTHROUGH_OPS,
-        entry: 0,
-        fallthrough: Some((&FALLTHROUGH_TAIL, if cfg!(target_arch = "aarch64") { 4 } else { 5 })),
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: SUBTRACT_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: SUBTRACT_BYTES, holes: SUBTRACT_HOLES },
-        operations: SUBTRACT_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: MULTIPLY_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: MULTIPLY_BYTES, holes: MULTIPLY_HOLES },
-        operations: MULTIPLY_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: DIVIDE_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: DIVIDE_BYTES, holes: DIVIDE_HOLES },
-        operations: DIVIDE_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: ADD_CONST_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: ADD_CONST_BYTES, holes: ADD_CONST_HOLES },
-        operations: ADD_CONST_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: DISPATCH_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: DISPATCH_BYTES, holes: DISPATCH_HOLES },
-        operations: DISPATCH_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: DISPATCH_EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: LOOP_GLUE_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: LOOP_GLUE_BYTES, holes: LOOP_GLUE_HOLES },
-        operations: LOOP_GLUE_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: LOOP_BODY_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: LOOP_BODY_BYTES, holes: LOOP_BODY_HOLES },
-        operations: LOOP_BODY_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: BINARY_GLUE_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: BINARY_GLUE_BYTES, holes: BINARY_GLUE_HOLES },
-        operations: BINARY_GLUE_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: UPDATE_RETURN_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: UPDATE_RETURN_BYTES, holes: UPDATE_RETURN_HOLES },
-        operations: UPDATE_RETURN_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: CALL_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: CALL_BYTES, holes: CALL_HOLES },
-        operations: CALL_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: CALL_N_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: CALL_N_BYTES, holes: CALL_N_HOLES },
-        operations: CALL_N_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord {
-        key: ARITHMETIC_GLUE_KEY,
-        stencil: crate::stencil_fact::Stencil { bytes: ARITHMETIC_GLUE_BYTES, holes: ARITHMETIC_GLUE_HOLES },
-        operations: ARITHMETIC_GLUE_OPS,
-        entry: 0,
-        fallthrough: None,
-        executable: EXECUTABLE,
-    }),
-    (crate::stencil_select::RegionRecord { key: GET_PROPERTY_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_PROPERTY_BYTES, holes: GET_PROPERTY_HOLES }, operations: GET_PROPERTY_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: SET_N_KEY, stencil: crate::stencil_fact::Stencil { bytes: SET_N_BYTES, holes: SET_N_HOLES }, operations: SET_N_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: GET_INDEX_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_INDEX_BYTES, holes: GET_INDEX_HOLES }, operations: GET_INDEX_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: SET_INDEX_KEY, stencil: crate::stencil_fact::Stencil { bytes: SET_INDEX_BYTES, holes: SET_INDEX_HOLES }, operations: SET_INDEX_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: GET_INDEX_INC_KEY, stencil: crate::stencil_fact::Stencil { bytes: GET_INDEX_INC_BYTES, holes: GET_INDEX_INC_HOLES }, operations: GET_INDEX_INC_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: FOR_I_KEY, stencil: crate::stencil_fact::Stencil { bytes: FOR_I_BYTES, holes: FOR_I_HOLES }, operations: FOR_I_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: ADD_CHAIN_KEY, stencil: crate::stencil_fact::Stencil { bytes: ADD_CHAIN_BYTES, holes: ADD_CHAIN_HOLES }, operations: ADD_CHAIN_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: ARRAY_LOOP_BODY_KEY, stencil: crate::stencil_fact::Stencil { bytes: ARRAY_LOOP_BODY_BYTES, holes: ARRAY_LOOP_BODY_HOLES }, operations: ARRAY_LOOP_BODY_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-    (crate::stencil_select::RegionRecord { key: ARRAY_NUMERIC_LOOP_KEY, stencil: crate::stencil_fact::Stencil { bytes: ARRAY_NUMERIC_LOOP_BYTES, holes: ARRAY_NUMERIC_LOOP_HOLES }, operations: ARRAY_NUMERIC_LOOP_OPS, entry: 0, fallthrough: None, executable: EXECUTABLE }),
-];
-// Generated direct key dispatch keeps selection independent of the number of
-// unrelated catalog rows; the ordinary fallback remains the `_` arm.
-fn generated_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'static crate::stencil_select::RegionRecord> {
-    match key {
-        LOOP_KEY => Some(&REGION_TABLE[0]),
-        MOVE_KEY => Some(&REGION_TABLE[1]),
-        PROPERTY_KEY => Some(&REGION_TABLE[2]),
-        FALLTHROUGH_KEY => Some(&REGION_TABLE[3]),
-        SUBTRACT_KEY => Some(&REGION_TABLE[4]),
-        MULTIPLY_KEY => Some(&REGION_TABLE[5]),
-        DIVIDE_KEY => Some(&REGION_TABLE[6]),
-        ADD_CONST_KEY => Some(&REGION_TABLE[7]),
-        DISPATCH_KEY => Some(&REGION_TABLE[8]),
-        LOOP_GLUE_KEY => Some(&REGION_TABLE[9]),
-        LOOP_BODY_KEY => Some(&REGION_TABLE[10]),
-        BINARY_GLUE_KEY => Some(&REGION_TABLE[11]),
-        UPDATE_RETURN_KEY => Some(&REGION_TABLE[12]),
-        CALL_KEY => Some(&REGION_TABLE[13]),
-        CALL_N_KEY => Some(&REGION_TABLE[14]),
-        ARITHMETIC_GLUE_KEY => Some(&REGION_TABLE[15]),
-        GET_PROPERTY_KEY => Some(&REGION_TABLE[16]),
-        SET_N_KEY => Some(&REGION_TABLE[17]),
-        GET_INDEX_KEY => Some(&REGION_TABLE[18]),
-        SET_INDEX_KEY => Some(&REGION_TABLE[19]),
-        GET_INDEX_INC_KEY => Some(&REGION_TABLE[20]),
-        FOR_I_KEY => Some(&REGION_TABLE[21]),
-        ADD_CHAIN_KEY => Some(&REGION_TABLE[22]),
-        ARRAY_LOOP_BODY_KEY => Some(&REGION_TABLE[23]),
-        ARRAY_NUMERIC_LOOP_KEY => Some(&REGION_TABLE[24]),
-        _ => None,
-    }
-}
-END LEGACY TABLE */
-// Canonical declaration-derived table.  The legacy rows above remain only
-// as a compatibility artifact while downstream users migrate; all runtime
-// selection and length queries use this generated table.
+    let mut generated = String::from(
+        r#"
+// Generated from REGION_DECLARATIONS.  The declaration is the sole source of
+// bytes, holes, operation contracts, keys, rows and accessors.
 #[cfg(target_arch = "aarch64")]
 const FALLTHROUGH_TAIL_BYTES: &[u8] = &[0xC0, 0x03, 0x5F, 0xD6];
 #[cfg(not(target_arch = "aarch64"))]
@@ -1245,119 +957,34 @@ const FALLTHROUGH_TAIL: crate::stencil_fact::Stencil = crate::stencil_fact::Sten
 };
 const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
 const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
-__CANONICAL_BYTES__
-__CANONICAL_HOLES__
-__CANONICAL_OPS__
-__CANONICAL_KEYS__
-static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[
-    (crate::ir::Opcode::Add, CANONICAL_FALLTHROUGH_KEY),
-    (crate::ir::Opcode::Sub, CANONICAL_SUBTRACT_KEY),
-    (crate::ir::Opcode::Mul, CANONICAL_MULTIPLY_KEY),
-    (crate::ir::Opcode::Div, CANONICAL_DIVIDE_KEY),
-    (crate::ir::Opcode::AddConst, CANONICAL_ADD_CONST_KEY),
+"#,
+    );
+    generated.push_str(&canonical_bytes);
+    generated.push('\n');
+    generated.push_str(&canonical_holes);
+    generated.push('\n');
+    generated.push_str(&canonical_ops);
+    generated.push('\n');
+    generated.push_str(&canonical_keys);
+    generated.push_str("\nstatic NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[\n");
+    generated.push_str(&numeric_keys);
+    generated.push_str(
+        r#"
 ];
 static CANONICAL_REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[
-__REGION_ROWS__
+"#,
+    );
+    generated.push_str(&region_rows);
+    generated.push_str(
+        r#"
 ];
 fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'static crate::stencil_select::RegionRecord> {
     CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)
 }
-__ACCESSORS__
-"#
-    .replace("__LOOP_BYTES__", &byte_decl("LOOP", &REGION_DECLARATIONS[0]))
-    .replace("__PROPERTY_BYTES__", &byte_decl("PROPERTY", &REGION_DECLARATIONS[1]))
-    .replace("__MOVE_BYTES__", &byte_decl("MOVE", &REGION_DECLARATIONS[2]))
-    .replace(
-        "__FALLTHROUGH_BYTES__",
-        &byte_decl("FALLTHROUGH", &REGION_DECLARATIONS[3]),
-    )
-    .replace("__SUBTRACT_BYTES__", &byte_decl("SUBTRACT", &REGION_DECLARATIONS[4]))
-    .replace("__MULTIPLY_BYTES__", &byte_decl("MULTIPLY", &REGION_DECLARATIONS[5]))
-    .replace("__DIVIDE_BYTES__", &byte_decl("DIVIDE", &REGION_DECLARATIONS[6]))
-    .replace(
-        "__ADD_CONST_BYTES__",
-        &byte_decl("ADD_CONST", &REGION_DECLARATIONS[7]),
-    )
-    .replace("__DISPATCH_BYTES__", &byte_decl("DISPATCH", &REGION_DECLARATIONS[8]))
-    .replace("__LOOP_GLUE_BYTES__", &byte_decl("LOOP_GLUE", &REGION_DECLARATIONS[9]))
-    .replace("__LOOP_BODY_BYTES__", &byte_decl("LOOP_BODY", &REGION_DECLARATIONS[10]))
-    .replace("__BINARY_GLUE_BYTES__", &byte_decl("BINARY_GLUE", &REGION_DECLARATIONS[11]))
-    .replace("__UPDATE_RETURN_BYTES__", &byte_decl("UPDATE_RETURN", &REGION_DECLARATIONS[12]))
-    .replace("__CALL_BYTES__", &byte_decl("CALL", &REGION_DECLARATIONS[13]))
-    .replace("__CALL_N_BYTES__", &byte_decl("CALL_N", &REGION_DECLARATIONS[14]))
-    .replace("__ARITHMETIC_GLUE_BYTES__", &byte_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[15]))
-    .replace("__GET_PROPERTY_BYTES__", &byte_decl("GET_PROPERTY", &REGION_DECLARATIONS[16]))
-    .replace("__SET_N_BYTES__", &byte_decl("SET_N", &REGION_DECLARATIONS[17]))
-    .replace("__GET_INDEX_BYTES__", &byte_decl("GET_INDEX", &REGION_DECLARATIONS[18]))
-    .replace("__SET_INDEX_BYTES__", &byte_decl("SET_INDEX", &REGION_DECLARATIONS[19]))
-    .replace("__GET_INDEX_INC_BYTES__", &byte_decl("GET_INDEX_INC", &REGION_DECLARATIONS[20]))
-    .replace("__FOR_I_BYTES__", &byte_decl("FOR_I", &REGION_DECLARATIONS[21]))
-    .replace("__ADD_CHAIN_BYTES__", &byte_decl("ADD_CHAIN", &REGION_DECLARATIONS[22]))
-    .replace("__ARRAY_LOOP_BODY_BYTES__", &byte_decl("ARRAY_LOOP_BODY", &REGION_DECLARATIONS[23]))
-    .replace("__ARRAY_NUMERIC_LOOP_BYTES__", &byte_decl("ARRAY_NUMERIC_LOOP", &REGION_DECLARATIONS[24]))
-    .replace("__LOOP_HOLES__", &hole_decl("LOOP", &REGION_DECLARATIONS[0]))
-    .replace("__PROPERTY_HOLES__", &hole_decl("PROPERTY", &REGION_DECLARATIONS[1]))
-    .replace("__MOVE_HOLES__", &hole_decl("MOVE", &REGION_DECLARATIONS[2]))
-    .replace(
-        "__FALLTHROUGH_HOLES__",
-        &hole_decl("FALLTHROUGH", &REGION_DECLARATIONS[3]),
-    )
-    .replace("__SUBTRACT_HOLES__", &hole_decl("SUBTRACT", &REGION_DECLARATIONS[4]))
-    .replace("__MULTIPLY_HOLES__", &hole_decl("MULTIPLY", &REGION_DECLARATIONS[5]))
-    .replace("__DIVIDE_HOLES__", &hole_decl("DIVIDE", &REGION_DECLARATIONS[6]))
-    .replace(
-        "__ADD_CONST_HOLES__",
-        &hole_decl("ADD_CONST", &REGION_DECLARATIONS[7]),
-    )
-    .replace("__DISPATCH_HOLES__", &hole_decl("DISPATCH", &REGION_DECLARATIONS[8]))
-    .replace("__LOOP_GLUE_HOLES__", &hole_decl("LOOP_GLUE", &REGION_DECLARATIONS[9]))
-    .replace("__LOOP_BODY_HOLES__", &hole_decl("LOOP_BODY", &REGION_DECLARATIONS[10]))
-    .replace("__BINARY_GLUE_HOLES__", &hole_decl("BINARY_GLUE", &REGION_DECLARATIONS[11]))
-    .replace("__UPDATE_RETURN_HOLES__", &hole_decl("UPDATE_RETURN", &REGION_DECLARATIONS[12]))
-    .replace("__CALL_HOLES__", &hole_decl("CALL", &REGION_DECLARATIONS[13]))
-    .replace("__CALL_N_HOLES__", &hole_decl("CALL_N", &REGION_DECLARATIONS[14]))
-    .replace("__ARITHMETIC_GLUE_HOLES__", &hole_decl("ARITHMETIC_GLUE", &REGION_DECLARATIONS[15]))
-    .replace("__GET_PROPERTY_HOLES__", &hole_decl("GET_PROPERTY", &REGION_DECLARATIONS[16]))
-    .replace("__SET_N_HOLES__", &hole_decl("SET_N", &REGION_DECLARATIONS[17]))
-    .replace("__GET_INDEX_HOLES__", &hole_decl("GET_INDEX", &REGION_DECLARATIONS[18]))
-    .replace("__SET_INDEX_HOLES__", &hole_decl("SET_INDEX", &REGION_DECLARATIONS[19]))
-    .replace("__GET_INDEX_INC_HOLES__", &hole_decl("GET_INDEX_INC", &REGION_DECLARATIONS[20]))
-    .replace("__FOR_I_HOLES__", &hole_decl("FOR_I", &REGION_DECLARATIONS[21]))
-    .replace("__ADD_CHAIN_HOLES__", &hole_decl("ADD_CHAIN", &REGION_DECLARATIONS[22]))
-    .replace("__ARRAY_LOOP_BODY_HOLES__", &hole_decl("ARRAY_LOOP_BODY", &REGION_DECLARATIONS[23]))
-    .replace("__ARRAY_NUMERIC_LOOP_HOLES__", &hole_decl("ARRAY_NUMERIC_LOOP", &REGION_DECLARATIONS[24]))
-    .replace("__LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[0].operations))
-    .replace("__PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[1].operations))
-    .replace("__MOVE_OPS__", &opcode_expr(REGION_DECLARATIONS[2].operations))
-    .replace("__FALLTHROUGH_OPS__", &opcode_expr(REGION_DECLARATIONS[3].operations))
-    .replace("__SUBTRACT_OPS__", &opcode_expr(REGION_DECLARATIONS[4].operations))
-    .replace("__MULTIPLY_OPS__", &opcode_expr(REGION_DECLARATIONS[5].operations))
-    .replace("__DIVIDE_OPS__", &opcode_expr(REGION_DECLARATIONS[6].operations))
-    .replace("__ADD_CONST_OPS__", &opcode_expr(REGION_DECLARATIONS[7].operations))
-    .replace("__LOOP_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[9].operations))
-    .replace("__LOOP_BODY_OPS__", &opcode_expr(REGION_DECLARATIONS[10].operations))
-    .replace("__BINARY_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[11].operations))
-    .replace("__UPDATE_RETURN_OPS__", &opcode_expr(REGION_DECLARATIONS[12].operations))
-    .replace("__CALL_OPS__", &opcode_expr(REGION_DECLARATIONS[13].operations))
-    .replace("__CALL_N_OPS__", &opcode_expr(REGION_DECLARATIONS[14].operations))
-    .replace("__ARITHMETIC_GLUE_OPS__", &opcode_expr(REGION_DECLARATIONS[15].operations))
-    .replace("__GET_PROPERTY_OPS__", &opcode_expr(REGION_DECLARATIONS[16].operations))
-    .replace("__SET_N_OPS__", &opcode_expr(REGION_DECLARATIONS[17].operations))
-    .replace("__GET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[18].operations))
-    .replace("__SET_INDEX_OPS__", &opcode_expr(REGION_DECLARATIONS[19].operations))
-    .replace("__GET_INDEX_INC_OPS__", &opcode_expr(REGION_DECLARATIONS[20].operations))
-    .replace("__FOR_I_OPS__", &opcode_expr(REGION_DECLARATIONS[21].operations))
-    .replace("__ADD_CHAIN_OPS__", &opcode_expr(REGION_DECLARATIONS[22].operations))
-    .replace("__ARRAY_LOOP_BODY_OPS__", &opcode_expr(REGION_DECLARATIONS[23].operations))
-    .replace("__ARRAY_NUMERIC_LOOP_OPS__", &opcode_expr(REGION_DECLARATIONS[24].operations))
-    .replace("__KEY_DEFS__", &key_defs)
-    .replace("__REGION_ROWS__", &region_rows)
-    .replace("__LOOKUP_ARMS__", &lookup_arms)
-    .replace("__CANONICAL_BYTES__", &canonical_bytes)
-    .replace("__CANONICAL_HOLES__", &canonical_holes)
-    .replace("__CANONICAL_OPS__", &canonical_ops)
-    .replace("__CANONICAL_KEYS__", &canonical_keys)
-    .replace("__ACCESSORS__", &accessors);
+"#,
+    );
+    generated.push_str(&accessors);
+    generated.push('\n');
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
