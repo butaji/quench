@@ -414,6 +414,14 @@ const fn aarch64_cset_ge_w0() -> u32 {
     0x1A9F_B7E0
 }
 
+const fn aarch64_bitop_w(base: u32, rd: u8, rn: u8, rm: u8) -> u32 {
+    base | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
+}
+
+const fn aarch64_shift_w(base: u32, rd: u8, rn: u8, rm: u8) -> u32 {
+    base | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
+}
+
 const fn aarch64_mvn_w0() -> u32 {
     0x2A20_03E0
 }
@@ -501,17 +509,17 @@ const AARCH64_COMPARE_GREATER_BYTES: [u8; 20] =
 const AARCH64_COMPARE_GREATER_EQUAL_BYTES: [u8; 20] =
     aarch64_ordered_compare_bytes(aarch64_cset_ge_w0());
 const AARCH64_BITWISE_AND_BYTES: [u8; 8] =
-    aarch64_pair(0x0A01_0000, aarch64_ret());
+    aarch64_pair(aarch64_bitop_w(0x0A00_0000, 0, 0, 1), aarch64_ret());
 const AARCH64_BITWISE_OR_BYTES: [u8; 8] =
-    aarch64_pair(0x2A01_0000, aarch64_ret());
+    aarch64_pair(aarch64_bitop_w(0x2A00_0000, 0, 0, 1), aarch64_ret());
 const AARCH64_BITWISE_XOR_BYTES: [u8; 8] =
-    aarch64_pair(0x4A01_0000, aarch64_ret());
+    aarch64_pair(aarch64_bitop_w(0x4A00_0000, 0, 0, 1), aarch64_ret());
 const AARCH64_SHIFT_LEFT_BYTES: [u8; 8] =
-    aarch64_pair(0x1AC1_2000, aarch64_ret());
+    aarch64_pair(aarch64_shift_w(0x1AC0_2000, 0, 0, 1), aarch64_ret());
 const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] =
-    aarch64_pair(0x1AC1_2800, aarch64_ret());
+    aarch64_pair(aarch64_shift_w(0x1AC0_2800, 0, 0, 1), aarch64_ret());
 const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
-    aarch64_pair(0x1AC1_2400, aarch64_ret());
+    aarch64_pair(aarch64_shift_w(0x1AC0_2400, 0, 0, 1), aarch64_ret());
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
 const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
 const AARCH64_TRUTHY_WORD_BYTES: [u8; 24] = aarch64_truthy_word_bytes();
