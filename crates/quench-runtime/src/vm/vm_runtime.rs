@@ -3841,6 +3841,57 @@ mod compact_handler_tests {
         assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), Value::Number(4.0));
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn composed_array_post_entry_failure_is_not_retryable() {
+        let code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::CheckInitialized { slot: 0, name: "a".into() },
+            Op::LoadLocal { dst: 1, slot: 0 },
+            Op::GetPropertyDynamic { dst: 2, object: 1, key: 3 },
+            Op::Binary {
+                dst: 4,
+                operator: crate::ops::BinaryOp::Add,
+                lhs: 2,
+                rhs: 5,
+            },
+            Op::SetPropertyDynamic { object: 1, key: 3, src: 4, strict: false },
+            Op::Return { src: 4 },
+        ]);
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![Value::Number(4.0)])));
+        let environment = crate::environment::Environment::new();
+        environment.set(0, array.clone());
+        let _guard = crate::locals::EnvironmentGuard::install(environment);
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(0.0),
+            Value::Undefined,
+            Value::Number(3.0),
+        ]);
+        let mut region = super::NativeRegionContext::new(
+            code.code(),
+            0,
+            crate::stencil_select::select_region(
+                crate::stencil_select::array_loop_body_region_key(),
+            )
+            .expect("array region declaration")
+            .operations,
+            &mut registers,
+            &context,
+        );
+        let result = super::execute_composed_array_kernel(&mut region, |_raw| {
+            Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+        });
+        assert!(matches!(
+            result,
+            Err(crate::machine::NativeDispatchError::Committed(_))
+        ));
+        assert!(region.native_entered);
+        assert_eq!(crate::vm::get_property_result(&array, "0").unwrap(), Value::Number(4.0));
+    }
+
     /// This test is compiled only on ARM64 and invokes the rendered stencil
     /// bytes directly. The portable host test above intentionally models the
     /// ABI callback; it is not evidence that machine code executed.
