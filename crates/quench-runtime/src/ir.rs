@@ -35,6 +35,35 @@ pub enum ControlOperands {
     Loop { a: u16, b: u16, c: u16 },
 }
 
+/// Canonical register use/definition roles for the compact instruction.
+/// Immediate slots and local/constant operands are excluded; `complete` is
+/// false when an opcode carries a structured payload that needs the ordinary
+/// handler rather than bounded physical composition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegisterFlow {
+    pub uses: [Option<Register>; 3],
+    pub definition: Option<Register>,
+    pub complete: bool,
+}
+
+impl RegisterFlow {
+    pub const fn none() -> Self {
+        Self { uses: [None; 3], definition: None, complete: true }
+    }
+
+    pub const fn unary(definition: Register, source: Register) -> Self {
+        Self { uses: [Some(source), None, None], definition: Some(definition), complete: true }
+    }
+
+    pub const fn binary(definition: Register, left: Register, right: Register) -> Self {
+        Self { uses: [Some(left), Some(right), None], definition: Some(definition), complete: true }
+    }
+
+    pub const fn store(source: Register) -> Self {
+        Self { uses: [Some(source), None, None], definition: None, complete: true }
+    }
+}
+
 /// Uniform signature for generated compact dispatch handlers.
 pub(crate) type CompactHandler =
     for<'a> fn(
@@ -727,6 +756,50 @@ impl Instruction {
             None
         }
     }
+
+    pub fn register_flow(self) -> RegisterFlow {
+        use Opcode::*;
+        match self.opcode {
+            LoadConst => RegisterFlow { uses: [None; 3], definition: Some(self.a), complete: true },
+            Move | LoadLocal | LoadLocalChecked => RegisterFlow::unary(self.a, self.b),
+            Add | Sub | Mul | Div | Binary => RegisterFlow::binary(self.a, self.b, self.c),
+            AddConst | Unary | IncI => RegisterFlow::unary(self.a, self.b),
+            JumpIfFalse | Return => RegisterFlow::store(self.a),
+            Call | CallN => RegisterFlow {
+                uses: [Some(self.b), (self.flags != 0).then_some(self.c), None],
+                definition: Some(self.a),
+                complete: true,
+            },
+            AGetI | AGetIQuickened | AGetIInc | GetProperty | GetPropertyQuickened => {
+                RegisterFlow::binary(self.a, self.b, self.c)
+            }
+            ASetI => RegisterFlow {
+                uses: [Some(self.a), Some(self.b), Some(self.c)],
+                definition: None,
+                complete: true,
+            },
+            GetN | GetNQuickened if self.flags & GETN_GLOBAL_FLAG != 0 => RegisterFlow {
+                uses: [None; 3],
+                definition: Some(self.a),
+                complete: true,
+            },
+            GetN | GetNQuickened => RegisterFlow::unary(self.a, self.b),
+            SetN => RegisterFlow {
+                uses: [Some(self.a), Some(self.b), None],
+                definition: None,
+                complete: true,
+            },
+            UpdateLocal => RegisterFlow {
+                uses: [Some(self.a), Some(self.b), None],
+                definition: None,
+                complete: true,
+            },
+            InitLocal | StoreLocal | StoreLocalChecked => RegisterFlow::store(self.b),
+            Jump | Slow => RegisterFlow::none(),
+            ForI => RegisterFlow { uses: [None; 3], definition: None, complete: false },
+        }
+    }
+
     pub const fn jump_if_false(condition: Register, target: u16) -> Self {
         Self {
             opcode: Opcode::JumpIfFalse,
@@ -1522,6 +1595,26 @@ mod tests {
             Opcode::Return.builder().operands(7, 1, 0).build(),
             Err("unused operand must be zero")
         );
+    }
+
+    #[test]
+    fn register_flow_excludes_constants_and_tracks_cfg_operands() {
+        let arithmetic = Instruction::add(4, 1, 2).register_flow();
+        assert_eq!(arithmetic.definition, Some(4));
+        assert_eq!(arithmetic.uses, [Some(1), Some(2), None]);
+        let constant = Instruction::add_const(4, 1, 9).register_flow();
+        assert_eq!(constant.uses, [Some(1), None, None]);
+        let branch = Instruction::jump_if_false(4, 8).register_flow();
+        assert_eq!(branch.uses, [Some(4), None, None]);
+        assert!(!Instruction {
+            opcode: Opcode::ForI,
+            flags: 0,
+            a: 0,
+            b: 1,
+            c: 2,
+        }
+        .register_flow()
+        .complete);
     }
 
     #[test]
