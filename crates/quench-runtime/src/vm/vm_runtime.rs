@@ -1259,6 +1259,31 @@ pub(crate) fn execute_optimized_code_step_from(
         }
         _ => {}
     }
+    if instruction.opcode == crate::ir::Opcode::LoadLocal {
+        if let Some(native) = entry.native_load_local.as_ref() {
+            let source = crate::locals::with_current_ref(|environment| {
+                environment.and_then(|environment| {
+                    environment.proven_word_ptr(instruction.b)
+                })
+            });
+            if let Some(source) = source {
+                if let Ok(bits) = native.borrow_mut().execute(source) {
+                    if registers
+                        .write_tagged_bits(usize::from(instruction.a), bits)
+                        .is_some()
+                    {
+                        crate::execution_trace::stencil_observation(
+                            code, start, "load_local", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        return Ok((crate::completion::Completion::Normal, start + 1));
+                    }
+                }
+            }
+            crate::execution_trace::stencil_observation(code, start, "load_local", false);
+            crate::execution_trace::leaf_rejection("optimizing_native_load_local");
+        }
+    }
     if instruction.opcode == crate::ir::Opcode::Move && instruction.flags == 0 {
         if let Some(native) = entry.native_move.as_ref() {
             if let Some(source) = registers.word_ptr(usize::from(instruction.b)) {
@@ -1550,6 +1575,30 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         if let Some(environment) = environment {
             match instruction.opcode {
                 crate::ir::Opcode::LoadLocal => {
+                    if let Some(native) = plan.native_load_local_at(pc) {
+                        let source = environment.proven_word_ptr(instruction.b);
+                        if let Some(source) = source {
+                            if let Ok(bits) = native.borrow_mut().execute(source) {
+                                if registers
+                                    .write_tagged_bits(usize::from(instruction.a), bits)
+                                    .is_some()
+                                {
+                                    crate::execution_trace::stencil_observation(
+                                        code, pc, "load_local", true,
+                                    );
+                                    crate::execution_trace::event(
+                                        crate::execution_trace::Event::LeafHit,
+                                    );
+                                    pc += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                        crate::execution_trace::stencil_observation(
+                            code, pc, "load_local", false,
+                        );
+                        crate::execution_trace::leaf_rejection("native_load_local");
+                    }
                     crate::locals::load_proven_in(
                         environment,
                         registers,
@@ -4700,6 +4749,42 @@ mod compact_handler_tests {
         assert_eq!(
             completion,
             crate::completion::Completion::Return(Value::String("ab".into()))
+        );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn baseline_load_local_uses_native_tagged_word_for_proven_slot() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::LoadLocal { dst: 0, slot: 1 },
+            Op::Return { src: 0 },
+        ]);
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            function.code().expect("function code"),
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        assert!(plan.native_load_local_at(0).is_some());
+        let code = function.code().expect("function code");
+        let environment = crate::environment::Environment::new();
+        environment.set(1, Value::Number(42.5));
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+        let (completion, _) = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("native proven local load");
+        assert_eq!(completion, crate::completion::Completion::Return(Value::Number(42.5)));
+        assert_eq!(
+            plan.native_load_local_at(0)
+                .unwrap()
+                .borrow()
+                .native_entry_count(),
+            1
         );
     }
 
