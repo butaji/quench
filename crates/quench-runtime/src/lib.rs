@@ -118,6 +118,7 @@ pub mod stencil_arena;
 pub mod stencil_fact;
 pub mod stencil_lifecycle;
 pub mod stencil_patch;
+mod stencil_policy;
 pub mod stencil_select;
 
 #[cfg(test)]

@@ -140,6 +140,14 @@ struct CompactSiteKey {
 }
 
 #[cfg(feature = "execution-trace")]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct StencilKey {
+    code: u32,
+    pc: u32,
+    kind: &'static str,
+}
+
+#[cfg(feature = "execution-trace")]
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -176,6 +184,7 @@ struct Counters {
     last_index: HashMap<&'static str, u64>,
     kernels: HashMap<&'static str, (u64, u64)>,
     quickening: HashMap<&'static str, (u64, u64)>,
+    stencils: HashMap<StencilKey, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
 }
@@ -1287,6 +1296,40 @@ pub(crate) fn call_method(
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn call_method(_: usize, _: bool, _: bool, _: &'static str) {}
 
+/// Classify a callable for diagnostic call-shape counters.  Trace builds use
+/// generated builtin metadata so a single `Builtin` bucket does not hide the
+/// dominant gateway; scored builds retain the cheap coarse classification.
+#[cfg(feature = "execution-trace")]
+#[inline(always)]
+pub(crate) fn call_target_name(value: &crate::value::Value) -> &'static str {
+    match value {
+        crate::value::Value::Function(_) => "Function",
+        crate::value::Value::Builtin(builtin) => {
+            let name = crate::builtins::builtin_name(*builtin);
+            if name.is_empty() {
+                "Builtin"
+            } else {
+                name
+            }
+        }
+        crate::value::Value::BoundFunction(_) => "BoundFunction",
+        crate::value::Value::Undefined => "Undefined",
+        _ => "Other",
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn call_target_name(value: &crate::value::Value) -> &'static str {
+    match value {
+        crate::value::Value::Function(_) => "Function",
+        crate::value::Value::Builtin(_) => "Builtin",
+        crate::value::Value::BoundFunction(_) => "BoundFunction",
+        crate::value::Value::Undefined => "Undefined",
+        _ => "Other",
+    }
+}
+
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
@@ -1513,6 +1556,54 @@ fn quickening_profile(counters: &Counters) -> serde_json::Map<String, serde_json
         .collect()
 }
 
+/// Record whether an admitted stencil site executed native bytes or fell
+/// through to its complete canonical handler. The key is code identity plus
+/// bytecode offset and plan kind, so the fact remains reusable across
+/// fixtures without retaining source names or benchmark identity.
+#[inline(always)]
+pub(crate) fn stencil_observation(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    kind: &'static str,
+    native: bool,
+) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        let (_, code_id) = code.trace_identity();
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            let counts = counters
+                .stencils
+                .entry(StencilKey {
+                    code: code_id,
+                    pc: pc as u32,
+                    kind,
+                })
+                .or_default();
+            if native {
+                counts.0 += 1;
+            } else {
+                counts.1 += 1;
+            }
+        });
+    }
+    let _ = (code, pc, kind, native);
+}
+
+#[cfg(feature = "execution-trace")]
+fn stencil_profile(counters: &Counters) -> serde_json::Map<String, serde_json::Value> {
+    counters
+        .stencils
+        .iter()
+        .map(|(key, &(hits, misses))| {
+            (
+                format!("code={}:pc={}:{}", key.code, key.pc, key.kind),
+                serde_json::json!({ "hits": hits, "misses": misses }),
+            )
+        })
+        .collect()
+}
+
 #[cfg(feature = "execution-trace")]
 pub fn snapshot() -> Option<serde_json::Value> {
     loop_trace_enabled().then(|| {
@@ -1698,6 +1789,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "call_shapes": call_shapes,
                 "call_targets": call_targets,
                 "quickening": quickening,
+                "stencil": stencil_profile(&counters),
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,

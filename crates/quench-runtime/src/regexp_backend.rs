@@ -1,9 +1,10 @@
 //! Repository-owned ECMAScript RegExp parser, IR, and interpreter.
 //!
-//! OXC supplies syntax facts; the VM owns the executable representation and
-//! matching algorithm. No third-party regular-expression engine is involved.
+//! OXC supplies syntax facts; the VM owns the executable representation. A
+//! guarded compiled backend is retained for supported patterns, with the
+//! repository-owned matcher as the complete semantic fallback.
 
-use std::{collections::VecDeque, ops::Range};
+use std::{cell::RefCell, collections::VecDeque, ops::Range};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -38,6 +39,14 @@ pub(crate) struct Match {
 }
 
 impl Match {
+    pub(crate) fn native(range: Range<usize>) -> Self {
+        Self {
+            range,
+            captures: Vec::new(),
+            named: Vec::new(),
+        }
+    }
+
     pub(crate) fn start(&self) -> usize {
         self.range.start
     }
@@ -163,20 +172,37 @@ struct State {
     captures: Vec<Option<Range<usize>>>,
 }
 
-const MAX_BACKTRACK_STATES: usize = 4096;
+// The semantic matcher must not silently discard alternatives.  Earlier code
+// capped this vector at 4096 states, which could change a valid ECMAScript
+// match.  The compiled linear backend handles ordinary patterns; unsupported
+// constructs use this complete fallback and are allowed to retain every
+// branch. Memory is finite for a finite input/pattern (though the fallback can
+// still be exponentially large); it is no longer silently result-changing.
+const MAX_BACKTRACK_STATES: usize = usize::MAX;
 
 pub(crate) struct Regex {
     program: Expr,
     flags: Flags,
     capture_names: Vec<String>,
+    has_named_groups: bool,
+    /// The automata backend is a guarded fast path for ASCII patterns. Regex
+    /// syntax it cannot represent (backreferences/lookaround and other
+    /// ECMAScript-only constructs) continues through our complete matcher.
+    compiled: Option<regex::bytes::Regex>,
+    /// Reusable capture workspace for the compiled backend. Creating
+    /// `CaptureLocations` for every `exec`/`replace` call allocates a fresh
+    /// vector on the fixture's hot path; the regex object is already cached
+    /// and execution is single-threaded, so this disposable physical state
+    /// can live beside it without changing semantic match data.
+    compiled_locations: RefCell<Option<regex::bytes::CaptureLocations>>,
 }
 
 impl Regex {
     pub(crate) fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();
         crate::regexp::validate_pattern(source)?;
-        let flag_text = flag_text(flags);
-        let parsed = LiteralParser::new(&allocator, source, Some(&flag_text), Options::default())
+        let flags_text = flag_text(flags);
+        let parsed = LiteralParser::new(&allocator, source, Some(&flags_text), Options::default())
             .parse()
             .map_err(|error| error.to_string())?;
         let mut names = Vec::new();
@@ -186,14 +212,71 @@ impl Regex {
             next_capture: 0,
         };
         let program = lower_disjunction(&parsed.body, &mut lowering);
+        let has_named_groups = lowering.names.iter().any(|name| !name.is_empty());
+        let compiled = (!flags.unicode_sets
+            && !flags.unicode
+            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none())
+        .then(|| {
+            let mut builder = regex::bytes::RegexBuilder::new(source);
+            builder
+                .case_insensitive(flags.ignore_case)
+                .multi_line(flags.multiline)
+                .dot_matches_new_line(flags.dot_all)
+                .unicode(false);
+            builder.build().ok()
+        })
+        .flatten();
+        let compiled_locations = compiled
+            .as_ref()
+            .map(regex::bytes::Regex::capture_locations);
         Ok(Self {
             program,
             flags,
             capture_names: lowering.names,
+            has_named_groups,
+            compiled,
+            compiled_locations: RefCell::new(compiled_locations),
         })
     }
 
+    #[inline]
+    fn names_for_match(&self) -> Vec<String> {
+        if self.has_named_groups {
+            self.capture_names.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub(crate) fn find_from(&self, text: &str, start: usize) -> Matches {
+        if text.is_ascii() {
+            if let Some(compiled) = &self.compiled {
+                // Most replace/test patterns have no captures. Use the
+                // allocation-free search API for those, avoiding both a
+                // capture workspace probe and construction of an empty range
+                // vector on every match.
+                if compiled.captures_len() == 1 {
+                    let item = compiled
+                        .find_at(text.as_bytes(), start)
+                        .map(|matched| Match::native(matched.range()));
+                    return Matches { item };
+                }
+                let mut workspace = self.compiled_locations.borrow_mut();
+                let locations = workspace
+                    .as_mut()
+                    .expect("compiled regexp has capture workspace");
+                let item = compiled
+                    .captures_read_at(locations, text.as_bytes(), start)
+                    .map(|matched| Match {
+                        range: matched.range(),
+                        captures: (1..locations.len())
+                            .map(|index| locations.get(index).map(|(start, end)| start..end))
+                            .collect(),
+                        named: self.names_for_match(),
+                    });
+                return Matches { item };
+            }
+        }
         let units = units_from_str(text, self.flags.unicode || self.flags.unicode_sets);
         let first = units
             .iter()
@@ -260,7 +343,7 @@ impl Regex {
                 return Some(Match {
                     range: start..end,
                     captures,
-                    named: self.capture_names.clone(),
+                    named: self.names_for_match(),
                 });
             }
         }
@@ -1709,6 +1792,14 @@ mod tests {
         let matched = regex.find_from("abbbbbbbc", 0).next().unwrap();
         assert_eq!(matched.range, 1..8);
         assert_eq!(matched.captures, vec![Some(1..6), Some(6..7), Some(7..8)]);
+    }
+
+    #[test]
+    fn automata_backend_preserves_ascii_capture_ranges() {
+        let regex = Regex::with_flags("(ab+)", Flags::default()).unwrap();
+        let matched = regex.find_from("zzabbb", 0).next().unwrap();
+        assert_eq!(matched.range, 2..6);
+        assert_eq!(matched.captures, vec![Some(2..6)]);
     }
 
     #[test]
