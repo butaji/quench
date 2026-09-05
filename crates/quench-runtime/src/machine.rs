@@ -2686,6 +2686,11 @@ impl PhysicalState {
         self.cache.clear();
         self.lifecycle.reset();
     }
+
+    fn retire(&mut self) {
+        self.cache.clear();
+        self.lifecycle.retire();
+    }
 }
 
 pub(crate) struct NativeLoadConstPlan {
@@ -4429,16 +4434,20 @@ impl NativeRegionPlan {
         &mut self,
         result: &Result<crate::vm::DispatchTransition, NativeDispatchError>,
     ) {
-        if !matches!(
-            result,
-            Err(NativeDispatchError::Physical(_) | NativeDispatchError::Committed(_))
-        ) {
-            return;
+        match result {
+            Err(NativeDispatchError::Committed(_)) => {
+                // A committed failure cannot be replayed through the same
+                // bytes. Retire this version permanently while the shared
+                // owner remains live for unrelated regions.
+                self.physical.retire();
+            }
+            Err(NativeDispatchError::Physical(_)) => {
+                // Entry rejection is safe to rebuild after the caller takes
+                // the ordinary path; it did not cross the physical boundary.
+                self.physical.clear();
+            }
+            _ => {}
         }
-        // Both pre-entry rejection and post-entry failure retire this
-        // physical version. A committed failure is never retried through the
-        // same bytes; the shared owner remains live for other regions.
-        self.physical.clear();
     }
 }
 
