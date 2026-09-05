@@ -212,6 +212,28 @@ const MAX_NATIVE_ARRAY_LOOP_ITERATIONS: usize = 4096;
 // over at this boundary and preserves the same canonical transitions.
 const DISPATCH_RECURSION_LIMIT: usize = 64;
 
+fn try_native_word_truthiness(
+    native: &std::cell::RefCell<crate::machine::NativeTruthinessPlan>,
+    registers: &crate::register_file::RegisterFile,
+    index: usize,
+) -> Option<bool> {
+    let bits = registers.word_bits(index)?;
+    match crate::tagged_value::TaggedValue::from_bits(bits).decode() {
+        crate::tagged_value::DecodedValue::Bool(_)
+        | crate::tagged_value::DecodedValue::Null
+        | crate::tagged_value::DecodedValue::Undefined => {
+            native.borrow_mut().execute_word(bits).ok()
+        }
+        crate::tagged_value::DecodedValue::Number(_)
+        | crate::tagged_value::DecodedValue::I31(_)
+        | crate::tagged_value::DecodedValue::ObjectPtr(_)
+        | crate::tagged_value::DecodedValue::ArrayPtr(_)
+        | crate::tagged_value::DecodedValue::FunctionPtr(_)
+        | crate::tagged_value::DecodedValue::HeapPtr(_)
+        | crate::tagged_value::DecodedValue::HeapRef(_) => None,
+    }
+}
+
 /// The only code pointer embedded in the generated all-opcode trampoline.
 /// It does no operation selection and owns no values; it simply invokes the
 /// same baseline handler/control path used by the non-native driver.
@@ -1227,6 +1249,20 @@ pub(crate) fn execute_optimized_code_step_from(
         }
         crate::ir::Opcode::JumpIfFalse => {
             if let Some(native) = entry.native_truthiness.as_ref() {
+                if let Some(truthy) = try_native_word_truthiness(
+                    native,
+                    registers,
+                    usize::from(instruction.a),
+                ) {
+                    crate::execution_trace::stencil_observation(
+                        code, start, "truthy_word", true,
+                    );
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    return Ok((
+                        crate::completion::Completion::Normal,
+                        if truthy { start + 1 } else { usize::from(instruction.b) },
+                    ));
+                }
                 if let Some(value) = registers.read_number(usize::from(instruction.a)) {
                     if let Ok(truthy) = native.borrow_mut().execute(value) {
                         crate::execution_trace::stencil_observation(
@@ -1762,6 +1798,16 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         }
         if instruction.opcode == crate::ir::Opcode::JumpIfFalse {
             if let Some(native) = plan.native_truthiness_at(pc) {
+                if let Some(truthy) = try_native_word_truthiness(
+                    native,
+                    registers,
+                    usize::from(instruction.a),
+                ) {
+                    crate::execution_trace::stencil_observation(code, pc, "truthy_word", true);
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    pc = if truthy { pc + 1 } else { usize::from(instruction.b) };
+                    continue;
+                }
                 if let Some(value) = registers.read_number(usize::from(instruction.a)) {
                     if let Ok(truthy) = native.borrow_mut().execute(value) {
                         crate::execution_trace::stencil_observation(

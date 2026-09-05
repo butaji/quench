@@ -396,10 +396,11 @@ mod generated_region_admission_tests {
                     ));
                 }
                 RegionAbi::ScalarWordBool => {
-                    assert!(matches!(record.stencil.bytes.len(), 27 | 32));
+                    assert!(matches!(record.stencil.bytes.len(), 20 | 24 | 27 | 32));
                     assert!(matches!(
                         record.operations,
                         [crate::ir::Opcode::Unary, crate::ir::Opcode::Return]
+                            | [crate::ir::Opcode::JumpIfFalse]
                     ));
                 }
                 RegionAbi::ScalarI32 => {
