@@ -999,7 +999,8 @@ impl StencilArena {
         if !record.executable {
             return fallback();
         }
-        self.render_and_execute(cache, key, &record.stencil, values, execute, fallback)
+        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        self.render_and_execute(cache, key, stencil, values, execute, fallback)
     }
 
     /// End-to-end executable entry for the proven-number Add+Return region.
@@ -1020,11 +1021,12 @@ impl StencilArena {
         if !record.executable {
             return fallback();
         }
+        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
         if let Some((tail, rel32_offset)) = record.fallthrough {
             return self.render_fallthrough_f64(
                 cache,
                 key,
-                &record.stencil,
+                stencil,
                 tail,
                 values,
                 rel32_offset,
@@ -1033,18 +1035,18 @@ impl StencilArena {
                 fallback,
             );
         }
-        let address = match self.render_or_get(cache, key, &record.stencil, values) {
+        let address = match self.render_or_get(cache, key, stencil, values) {
             Ok(address) => address,
             Err(_) => return fallback(),
         };
         if self.make_executable().is_err() {
-            cache.remove(key, cache_signature(&record.stencil, values), address);
+            cache.remove(key, cache_signature(stencil, values), address);
             return fallback();
         }
         match self.execute_f64(address, lhs, rhs) {
             Ok(value) => Ok(value),
             Err(_) => {
-                cache.remove(key, cache_signature(&record.stencil, values), address);
+                cache.remove(key, cache_signature(stencil, values), address);
                 fallback()
             }
         }
@@ -1064,12 +1066,13 @@ impl StencilArena {
         if record.fallthrough.is_some() {
             return Err(ArenaError::ProtectionFailed);
         }
-        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_bool(address, lhs, rhs) {
             Ok(value) => Ok(value),
             Err(error) => {
-                cache.remove(key, cache_signature(&record.stencil, values), address);
+                cache.remove(key, cache_signature(stencil, values), address);
                 Err(error)
             }
         }
@@ -1092,12 +1095,13 @@ impl StencilArena {
         {
             return Err(ArenaError::ProtectionFailed);
         }
-        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_i32(address, lhs, rhs) {
             Ok(value) => Ok(value),
             Err(error) => {
-                cache.remove(key, cache_signature(&record.stencil, values), address);
+                cache.remove(key, cache_signature(stencil, values), address);
                 Err(error)
             }
         }
@@ -1120,7 +1124,8 @@ impl StencilArena {
         {
             return Err(ArenaError::ProtectionFailed);
         }
-        let address = self.render_or_get(cache, key, &record.stencil, values)?;
+        let stencil = crate::stencil_select::select_stencil(key).unwrap_or(&record.stencil);
+        let address = self.render_or_get(cache, key, stencil, values)?;
         self.make_executable()?;
         match self.execute_u32(address, lhs, rhs) {
             Ok(value) => Ok(value),
@@ -2311,6 +2316,21 @@ mod tests {
         );
         assert_eq!(arena.used(), used);
         assert_eq!(cache.len(), 1);
+    }
+
+    #[cfg(quench_generated_stencil_artifacts)]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn generated_add_const_artifact_executes_through_typed_leaf_entry() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::AddConst);
+        let values = PatchValues::from_site(&site);
+        let key = crate::stencil_select::add_const_region_key();
+        assert_eq!(
+            arena.render_selected_f64(&mut cache, key, &values, 3.5, 2.25, || Ok(0.0)),
+            Ok(5.75)
+        );
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
