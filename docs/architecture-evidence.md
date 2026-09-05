@@ -38,3 +38,5 @@ The fused indexed-update declaration also matches ordinary frontend lowering:
 destructive-alias sibling remains canonical fallback.
 The host/API boundary also compiles against this source (`cargo check -p
 quench-node --no-default-features`, `/tmp/quench-node-check-20260905-fused-update.log`).
+The same host check was repeated after the constant-update admission
+(`/tmp/quench-node-check-20260905-fused-const-update.log`).
