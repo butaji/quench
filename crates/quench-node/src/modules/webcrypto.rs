@@ -1448,15 +1448,28 @@ fn validate_key_use(
         Value::String(name) => name.clone(),
         _ => execute::to_js_string(&execute::get_property(algorithm, "name")).ok()?,
     };
+    let key_algorithm_value = execute::get_property(key, "algorithm");
+    let key_algorithm_value = if matches!(key_algorithm_value, Value::Undefined) {
+        let metadata = execute::get_property(key, KEY_META_PROP);
+        execute::get_property(&metadata, "algorithm")
+    } else {
+        key_algorithm_value
+    };
     let key_algorithm = execute::to_js_string(&execute::get_property(
-        &execute::get_property(key, "algorithm"),
+        &key_algorithm_value,
         "name",
     ))
     .ok()?;
     if !requested.eq_ignore_ascii_case(&key_algorithm) {
         return Some(operation_error("Key algorithm mismatch"));
     }
-    let usages = execute::get_property(key, "usages");
+    let usages_value = execute::get_property(key, "usages");
+    let usages = if matches!(usages_value, Value::Undefined) {
+        let metadata = execute::get_property(key, KEY_META_PROP);
+        execute::get_property(&metadata, "usages")
+    } else {
+        usages_value
+    };
     let length = match execute::get_property(&usages, "length") {
         Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
         _ => 0,
@@ -1466,9 +1479,12 @@ fn validate_key_use(
             .is_ok_and(|value| value == usage)
     });
     if !allowed {
-        return Some(invalid_access_error(&format!(
-            "baseKey does not have {usage} usage"
-        )));
+        let message = if matches!(usage, "sign" | "verify") {
+            format!("Unable to use this key to {usage}")
+        } else {
+            format!("baseKey does not have {usage} usage")
+        };
+        return Some(invalid_access_error(&message));
     }
     let key_type = execute::to_js_string(&execute::get_property(key, "type")).ok()?;
     let required_type = match (key_algorithm.to_ascii_uppercase().as_str(), usage) {
