@@ -624,6 +624,26 @@ fn cached_plain_writable_slot<'a>(
     data.hot_properties().slot_word(slot)
 }
 
+/// Return a proven writable own-data slot for the typed property-store leaf.
+/// Cache misses and transitions remain on the complete setter path.
+pub(crate) fn proven_named_writable_slot(
+    registers: &crate::register_file::RegisterFile,
+    object: u16,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Option<*const crate::register_file::SlotWord> {
+    if cache.get() & WRITE_TRANSITION_TAG != 0 {
+        return None;
+    }
+    let data = registers.read_object(usize::from(object))?;
+    if data.has_replacement() || data.has_regexp_internal_slot() {
+        return None;
+    }
+    let (layout, slot) = crate::machine::unpack_named_cache(cache.get())?;
+    cached_plain_writable_slot(&data, key, layout, slot)
+        .map(|word| word as *const crate::register_file::SlotWord)
+}
+
 fn finish_set_property(
     registers: &mut crate::register_file::RegisterFile,
     object: u16,

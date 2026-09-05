@@ -1435,6 +1435,27 @@ pub(crate) fn execute_optimized_code_step_from(
             crate::execution_trace::leaf_rejection("optimizing_native_unary");
         }
     }
+    if instruction.opcode == crate::ir::Opcode::SetN && instruction.flags == 0 {
+        if let Some(native) = entry.native_store_property.as_ref() {
+            if try_native_property_store(
+                native,
+                code,
+                start,
+                registers,
+                instruction.a,
+                instruction.b,
+            ) {
+                crate::execution_trace::stencil_observation(
+                    code,
+                    start,
+                    "property_store",
+                    true,
+                );
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                return Ok((crate::completion::Completion::Normal, start + 1));
+            }
+        }
+    }
     if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
         if let Some(native) = entry.native_property.as_ref() {
             let slot = registers
@@ -1917,6 +1938,30 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     crate::execution_trace::stencil_observation(code, pc, "property", false);
                     crate::execution_trace::leaf_rejection("native_property");
                 }
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::SetN && instruction.flags == 0 {
+            if let Some(native) = plan.native_store_property_at(pc) {
+                if try_native_property_store(
+                    native,
+                    code,
+                    pc,
+                    registers,
+                    instruction.a,
+                    instruction.b,
+                ) {
+                    crate::execution_trace::stencil_observation(
+                        code,
+                        pc,
+                        "property_store",
+                        true,
+                    );
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    pc += 1;
+                    continue;
+                }
+                crate::execution_trace::stencil_observation(code, pc, "property_store", false);
+                crate::execution_trace::leaf_rejection("native_property_store");
             }
         }
         if instruction.opcode == crate::ir::Opcode::Move && instruction.flags == 0 {
@@ -3115,6 +3160,42 @@ fn run_compact_get_named_fallback(
     Ok(None)
 }
 
+fn try_native_property_store(
+    native: &std::cell::RefCell<crate::machine::NativeMovePlan>,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    registers: &mut crate::register_file::RegisterFile,
+    object: u16,
+    source: u16,
+) -> bool {
+    let Some(metadata) = code.metadata_at(pc) else {
+        return false;
+    };
+    let Some(key) = metadata.name.as_deref() else {
+        return false;
+    };
+    let Some(slot) = crate::properties::proven_named_writable_slot(
+        registers,
+        object,
+        key,
+        &metadata.named_cache,
+    ) else {
+        return false;
+    };
+    let Some(source_ptr) = registers.word_ptr(usize::from(source)) else {
+        return false;
+    };
+    let Ok(bits) = native.borrow_mut().execute(source_ptr) else {
+        return false;
+    };
+    if registers.word_bits(usize::from(source)) != Some(bits) {
+        return false;
+    }
+    // SAFETY: the slot came from the cache's descriptor/layout proof and the
+    // native transfer cannot allocate, call JS, or resize the object.
+    unsafe { &*slot }.store_from_register(registers, usize::from(source)).is_some()
+}
+
 #[inline(always)]
 pub(crate) fn run_compact_set_named(
     code: crate::machine::CodeView<'_>,
@@ -4115,6 +4196,89 @@ mod compact_handler_tests {
         run_compact_get_named(code, 0, quickened, &mut registers, &context)
             .expect("direct tagged-word lookup");
         assert_eq!(registers.read(0), Some(Value::Number(9.0)));
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn baseline_named_store_uses_tagged_word_body_after_cache_warmup() {
+        let object = Rc::new(ObjectData::new(vec![
+            ("value".into(), Value::Number(1.0)),
+        ]));
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::SetProperty {
+                object: 0,
+                key: "value".into(),
+                src: 1,
+                strict: false,
+            },
+            Op::Return { src: 1 },
+        ]);
+        let code = function.code().expect("lowered named store");
+        assert_eq!(code.instruction(0).unwrap().opcode, crate::ir::Opcode::SetN);
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        assert!(plan.native_store_property_at(0).is_some());
+        let context = crate::vm::current_context_or_default();
+        let run = |value: f64| {
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                Value::Object(Rc::clone(&object)),
+                Value::Number(value),
+            ]);
+            crate::vm::execute_baseline_code_from(
+                code,
+                &plan,
+                0,
+                &mut registers,
+                &context,
+                crate::environment::Environment::new(),
+            )
+            .expect("named store execution");
+        };
+        run(3.0);
+        run(5.0);
+        assert_eq!(
+            crate::vm::get_property_result(&Value::Object(object), "value").unwrap(),
+            Value::Number(5.0)
+        );
+        assert!(plan
+            .native_store_property_at(0)
+            .unwrap()
+            .borrow()
+            .native_entry_count()
+            > 0);
+
+        let cell = crate::value::BindingCell::new(Value::Number(2.0));
+        let cell_object = Rc::new(ObjectData::new(vec![
+            ("value".into(), Value::BindingCell(Rc::clone(&cell))),
+        ]));
+        let cell_plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let mut cell_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Object(cell_object),
+            Value::Number(9.0),
+        ]);
+        crate::vm::execute_baseline_code_from(
+            code,
+            &cell_plan,
+            0,
+            &mut cell_registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("binding-cell fallback");
+        assert_eq!(cell.load(), Value::Number(9.0));
+        assert_eq!(
+            cell_plan
+                .native_store_property_at(0)
+                .unwrap()
+                .borrow()
+                .native_entry_count(),
+            0
+        );
     }
 
     #[test]
