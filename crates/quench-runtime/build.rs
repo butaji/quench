@@ -1640,6 +1640,7 @@ fn generate_stencil_catalog() {
         .iter()
         .enumerate()
         .map(|(index, declaration)| {
+            let declaration_name = declaration.name;
             let name = key_name(declaration.name);
             let fallthrough = if declaration.name == "fallthrough" {
                 "Some((&FALLTHROUGH_TAIL, if cfg!(target_arch = \"aarch64\") { 4 } else { 5 }))"
@@ -1665,7 +1666,7 @@ fn generate_stencil_catalog() {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "    crate::stencil_select::RegionRecord {{ key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, executable: {executable} }}, // declaration {index}",
+                "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, executable: {executable} }}, // declaration {index}",
                 entry = declaration.entry,
             )
         })

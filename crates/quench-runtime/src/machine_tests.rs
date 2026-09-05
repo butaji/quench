@@ -238,6 +238,7 @@ fn generated_scalar_and_array_rows_route_through_declared_abis() {
         crate::stencil_select::array_loop_body_region_key(),
     )
     .expect("array row");
+    assert_eq!(array_record.name, "array_loop_body");
     assert_eq!(array_record.entry, 0);
     assert_eq!(array_record.external_entries, &[0]);
     assert!(matches!(
