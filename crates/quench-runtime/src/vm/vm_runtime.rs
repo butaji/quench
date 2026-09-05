@@ -1,6 +1,27 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeStatus {
+    Ok,
+    SemanticError,
+    CommittedError,
+    Interrupt,
+    Unknown(u64),
+}
+
+impl From<u64> for NativeStatus {
+    fn from(status: u64) -> Self {
+        match status {
+            NATIVE_DISPATCH_OK => Self::Ok,
+            NATIVE_DISPATCH_SEMANTIC_ERROR => Self::SemanticError,
+            NATIVE_DISPATCH_COMMITTED_ERROR => Self::CommittedError,
+            NATIVE_DISPATCH_INTERRUPT => Self::Interrupt,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
 /// Opaque state passed through the generated baseline entry trampoline. The
 /// lifetime is only used while the synchronous call is active; the machine
 /// code receives a raw pointer and never retains it.
@@ -42,8 +63,8 @@ impl<'a> NativeDispatchContext<'a> {
         self,
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
-        match status {
-            NATIVE_DISPATCH_OK => self.result.ok_or_else(|| {
+        match NativeStatus::from(status) {
+            NativeStatus::Ok => self.result.ok_or_else(|| {
                 if self.entry_started {
                     crate::machine::NativeDispatchError::Committed(
                         "native bridge entered without a transition".into(),
@@ -54,7 +75,7 @@ impl<'a> NativeDispatchContext<'a> {
                     )
                 }
             }),
-            NATIVE_DISPATCH_SEMANTIC_ERROR => self.error.map_or_else(
+            NativeStatus::SemanticError => self.error.map_or_else(
                 || {
                     Err(if self.entry_started {
                         crate::machine::NativeDispatchError::Committed(
@@ -74,12 +95,24 @@ impl<'a> NativeDispatchContext<'a> {
                     None => Err(crate::machine::NativeDispatchError::Semantic(error)),
                 },
             ),
-            _ if self.entry_started => Err(crate::machine::NativeDispatchError::Committed(
+            NativeStatus::Interrupt if self.entry_started => Err(
+                crate::machine::NativeDispatchError::Committed(
+                    "native bridge interrupted after committed progress".into(),
+                ),
+            ),
+            NativeStatus::Interrupt => Err(crate::machine::NativeDispatchError::Physical(
+                "native bridge interrupted before entry".into(),
+            )),
+            NativeStatus::CommittedError | NativeStatus::Unknown(_) if self.entry_started => Err(
+                crate::machine::NativeDispatchError::Committed(
                 "native bridge returned an invalid post-entry status".into(),
-            )),
-            _ => Err(crate::machine::NativeDispatchError::Physical(
+                ),
+            ),
+            NativeStatus::CommittedError | NativeStatus::Unknown(_) => Err(
+                crate::machine::NativeDispatchError::Physical(
                 "native bridge returned an invalid entry status".into(),
-            )),
+                ),
+            ),
         }
     }
 }
@@ -154,8 +187,8 @@ impl<'a> NativeRegionContext<'a> {
         self,
         status: u64,
     ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
-        match status {
-            NATIVE_DISPATCH_OK => match self.result {
+        match NativeStatus::from(status) {
+            NativeStatus::Ok => match self.result {
                 Some(result) => Ok(result),
                 None if self.entry_started => Err(
                     crate::machine::NativeDispatchError::Committed(
@@ -166,7 +199,7 @@ impl<'a> NativeRegionContext<'a> {
                     "native region rejected without a transition".into(),
                 )),
             },
-            NATIVE_DISPATCH_SEMANTIC_ERROR => match self.error {
+            NativeStatus::SemanticError => match self.error {
                 Some(error) => match self.error_pc {
                     Some(pc) => Err(crate::machine::NativeDispatchError::SemanticAt {
                         pc,
@@ -183,21 +216,23 @@ impl<'a> NativeRegionContext<'a> {
                     "native region rejected without a semantic error".into(),
                 )),
             },
-            NATIVE_DISPATCH_COMMITTED_ERROR => Err(crate::machine::NativeDispatchError::Committed(
+            NativeStatus::CommittedError => Err(crate::machine::NativeDispatchError::Committed(
                 "native region reported a post-entry failure".into(),
             )),
-            NATIVE_DISPATCH_INTERRUPT if self.entry_started => Err(
+            NativeStatus::Interrupt if self.entry_started => Err(
                 crate::machine::NativeDispatchError::Committed(
                     "native region interrupted after committed progress".into(),
                 ),
             ),
-            NATIVE_DISPATCH_INTERRUPT => Err(crate::machine::NativeDispatchError::Physical(
+            NativeStatus::Interrupt => Err(crate::machine::NativeDispatchError::Physical(
                 "native region interrupted before entry".into(),
             )),
-            _ if self.entry_started => Err(crate::machine::NativeDispatchError::Committed(
-                "native region returned an invalid post-entry status".into(),
-            )),
-            _ => Err(crate::machine::NativeDispatchError::Physical(
+            NativeStatus::Unknown(_) if self.entry_started => Err(
+                crate::machine::NativeDispatchError::Committed(
+                    "native region returned an invalid post-entry status".into(),
+                ),
+            ),
+            NativeStatus::Unknown(_) => Err(crate::machine::NativeDispatchError::Physical(
                 "native region returned an invalid entry status".into(),
             )),
         }
