@@ -380,7 +380,9 @@ fn execute_print(arguments: &[Value]) -> Result<Value, VmError> {
         .join(" ");
     let context = CURRENT_CONTEXT.with(|current| current.borrow().clone());
     if let Some(context) = context {
-        context.emit_output(&text);
+        // `print` is the shell-style compatibility builtin and owns its
+        // record delimiter. Node stream writes remain raw chunks.
+        context.emit_output(&format!("{text}\n"));
     }
     Ok(Value::Undefined)
 }
