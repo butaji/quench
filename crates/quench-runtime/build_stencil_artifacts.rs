@@ -113,6 +113,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let target = env::var("TARGET").expect("TARGET for stencil object generation");
     let compiler = rustc_path();
     let flags = ["--crate-type=lib", "--emit=obj", "-Copt-level=2", "-Cpanic=abort", "-Coverflow-checks=off", "--edition=2021"];
+    let rustflags = effective_rustflags();
     let fingerprint = fingerprint(&target, &compiler, &flags, declarations);
     let root = unique_directory();
     let mut constants = Vec::new();
@@ -124,7 +125,15 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         let Some(recipe) = super::rust_leaf_recipe(declaration.operations) else {
             continue;
         };
-        let artifact = compile_one(&root.path, &target, &compiler, &flags, declaration, recipe);
+        let artifact = compile_one(
+            &root.path,
+            &target,
+            &compiler,
+            &flags,
+            &rustflags,
+            declaration,
+            recipe,
+        );
         let (constant, row) = render_artifact(declaration.name, &target, &compiler, &fingerprint, &artifact);
         constants.push(constant);
         rows.push(row);
@@ -152,6 +161,7 @@ fn compile_one(
     target: &str,
     compiler: &str,
     flags: &[&str],
+    rustflags: &[String],
     declaration: &RegionDeclaration,
     recipe: super::RustLeafRecipe,
 ) -> Vec<u8> {
@@ -159,7 +169,11 @@ fn compile_one(
     let object = root.join(format!("{}.o", declaration.name));
     fs::write(&source, rust_source(declaration.name, recipe)).expect("write Rust stencil source");
     let mut command = Command::new(compiler);
-    command.args(["--target", target]).args(flags).args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
+    command
+        .args(["--target", target])
+        .args(flags)
+        .args(rustflags)
+        .args([source.to_str().unwrap(), "-o", object.to_str().unwrap()]);
     run(&mut command, "compile Rust stencil object");
     parse_object(&object, &format!("q_{}", declaration.name))
 }
@@ -305,6 +319,15 @@ fn fingerprint(target: &str, compiler: &str, flags: &[&str], declarations: &[Reg
 
 fn rustc_path() -> String {
     env::var_os("QUENCH_RUSTC").or_else(|| env::var_os("RUSTC")).map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| "rustc".to_owned())
+}
+
+fn effective_rustflags() -> Vec<String> {
+    env::var("CARGO_ENCODED_RUSTFLAGS")
+        .unwrap_or_default()
+        .split('\u{1f}')
+        .filter(|flag| !flag.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn unique_directory() -> OwnedDirectory {
