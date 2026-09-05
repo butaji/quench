@@ -540,12 +540,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         returns_boolean: false,
         integer_op: None,
         integer_unsigned: false,
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        shared_entry: None,
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        shared_int_entry: None,
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        shared_uint_entry: None,
+        installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
@@ -567,19 +562,11 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         returns_boolean: false,
         integer_op: None,
         integer_unsigned: false,
-        entry: None,
-        int_entry: None,
-        tagged_entry: None,
-        uint_entry: None,
-        shared_entry: None,
-        shared_bool_entry: None,
-        shared_int_entry: None,
-        shared_uint_entry: None,
-        tagged_shared_entry: None,
+        installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
-    assert!(plan.entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Local(_)));
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
@@ -603,13 +590,12 @@ fn native_numeric_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
         .expect("shared numeric plan");
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     let used = shared.borrow().used();
-    assert!(plan.entry.is_some());
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Shared(_)));
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
-    assert!(plan.shared_entry.is_some(), "eviction must rebuild the entry");
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Shared(_)), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -674,13 +660,13 @@ fn native_shared_boolean_entry_rebuilds_through_typed_owner() {
     let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
         .expect("shared boolean plan");
     assert_eq!(plan.execute(1.0, 2.0), Ok(1.0));
-    assert!(plan.shared_bool_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::BoolShared(_)));
     let used = shared.borrow().used();
     assert_eq!(plan.execute(2.0, 3.0), Ok(1.0));
     assert_eq!(shared.borrow().used(), used, "owner hit must not render again");
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 1.0), Ok(0.0));
-    assert!(plan.shared_bool_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::BoolShared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -836,7 +822,8 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
             }))
         );
         assert!(
-            plan.int_entry.is_some() || plan.uint_entry.is_some(),
+            matches!(plan.installed, super::InstalledBinaryEntry::I32Local(_)
+                | super::InstalledBinaryEntry::U32Local(_)),
             "conversion cases must reach the rendered typed entry"
         );
     }
@@ -877,10 +864,10 @@ fn native_shared_integer_entry_rebuilds_through_typed_owner() {
     let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
         .expect("shared integer plan");
     assert_eq!(plan.execute(-1.0, 1.0), Ok(2_147_483_647.0));
-    assert!(plan.shared_uint_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::U32Shared(_)));
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(-1.0, 33.5), Ok(2_147_483_647.0));
-    assert!(plan.shared_uint_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledBinaryEntry::U32Shared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

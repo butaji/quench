@@ -62,22 +62,6 @@ fn invoke_f64x3_entry(
     entry(lhs, rhs, third)
 }
 
-/// Clear a plan's physical capabilities as one lifecycle transition.  The
-/// entry fields remain typed per ABI; this macro only derives the repetitive
-/// invalidation mechanics so owner retirement cannot leave one stale variant
-/// behind.
-macro_rules! invalidate_plan_capabilities {
-    ($this:expr, [$($field:ident),+ $(,)?], with_lifecycle) => {{
-        $( $this.$field = None; )+
-        $this.cache.clear();
-        $this.lifecycle.reset();
-    }};
-    ($this:expr, [$($field:ident),+ $(,)?], no_lifecycle) => {{
-        $( $this.$field = None; )+
-        $this.cache.clear();
-    }};
-}
-
 const OPTIMIZATION_WARMUP_MULTIPLIER: u32 = 8;
 
 // Code stores are isolate-local and never shared across runtime threads. The
@@ -1483,6 +1467,21 @@ pub struct TierProfile {
 /// Optional machine-code leaf for generated Number binary-operation stencils.
 /// It is deliberately narrow: any non-number input or stencil failure returns
 /// to the ordinary handler, so this cannot create an alternate JS semantics.
+#[derive(Clone, Copy)]
+enum InstalledBinaryEntry {
+    Unpublished,
+    F64Local(extern "C" fn(f64, f64) -> f64),
+    F64Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> f64>),
+    BoolLocal(extern "C" fn(f64, f64) -> u64),
+    BoolShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> u64>),
+    I32Local(extern "C" fn(i32, i32) -> i32),
+    I32Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(i32, i32) -> i32>),
+    U32Local(extern "C" fn(u32, u32) -> u32),
+    U32Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(u32, u32) -> u32>),
+    TaggedLocal(extern "C" fn(u64, u64) -> u64),
+    TaggedShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64, u64) -> u64>),
+}
+
 pub(crate) struct NativeBinaryPlan {
     // Mapping is lazy: compiling a baseline plan only records the admitted
     // leaf.  The disposable executable arena is created on first proven
@@ -1506,24 +1505,7 @@ pub(crate) struct NativeBinaryPlan {
     /// typed entry pointer. Numeric stencil bytes have no mutable VM state;
     /// re-running lifecycle, cache, mprotect, and address checks on every
     /// iteration otherwise costs more than the floating-point instruction.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(f64, f64) -> f64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    int_entry: Option<extern "C" fn(i32, i32) -> i32>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    tagged_entry: Option<extern "C" fn(u64, u64) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    uint_entry: Option<extern "C" fn(u32, u32) -> u32>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> f64>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_bool_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> u64>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_int_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(i32, i32) -> i32>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_uint_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u32, u32) -> u32>>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    tagged_shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64, u64) -> u64>>,
+    installed: InstalledBinaryEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -1657,22 +1639,7 @@ impl NativeBinaryPlan {
             returns_boolean,
             integer_op,
             integer_unsigned: false,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            int_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            tagged_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            uint_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_bool_entry: None,
-            shared_int_entry: None,
-            shared_uint_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            tagged_shared_entry: None,
+            installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -1713,22 +1680,7 @@ impl NativeBinaryPlan {
             returns_boolean: false,
             integer_op: Some(operator),
             integer_unsigned: unsigned,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            int_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            tagged_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            uint_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_bool_entry: None,
-            shared_int_entry: None,
-            shared_uint_entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            tagged_shared_entry: None,
+            installed: InstalledBinaryEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -1749,11 +1701,9 @@ impl NativeBinaryPlan {
 
     #[inline]
     fn clear_physical_capabilities(&mut self) {
-        invalidate_plan_capabilities!(self, [
-            entry, int_entry, tagged_entry, uint_entry, shared_entry,
-            shared_bool_entry, shared_int_entry, shared_uint_entry,
-            tagged_shared_entry
-        ], with_lifecycle);
+        self.installed = InstalledBinaryEntry::Unpublished;
+        self.cache.clear();
+        self.lifecycle.reset();
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1766,19 +1716,18 @@ impl NativeBinaryPlan {
             .tagged_key
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         if self.shared_arena.is_none() {
-            if let Some(entry) = self.tagged_entry {
+            if let InstalledBinaryEntry::TaggedLocal(entry) = self.installed {
                 self.note_native_entry();
                 return Ok(entry(lhs, rhs) != 0);
             }
         }
-        if let (Some(shared), Some(owned)) =
-            (self.shared_arena.clone(), self.tagged_shared_entry)
-        {
+        if let (Some(shared), InstalledBinaryEntry::TaggedShared(owned)) =
+            (self.shared_arena.clone(), self.installed) {
             if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
                 self.note_native_entry();
                 return Ok(result != 0);
             }
-            self.tagged_shared_entry = None;
+            self.installed = InstalledBinaryEntry::Unpublished;
         }
         if let Some(shared) = self.shared_arena.clone() {
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
@@ -1792,7 +1741,7 @@ impl NativeBinaryPlan {
             };
             drop(values);
             let owned = shared.borrow().owned_word_pair_bool_entry(address)?;
-            self.tagged_shared_entry = Some(owned);
+            self.installed = InstalledBinaryEntry::TaggedShared(owned);
             return match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
                 Ok(result) => {
                     self.note_native_entry();
@@ -1817,7 +1766,7 @@ impl NativeBinaryPlan {
         let address = arena.render_or_get(&mut self.cache, key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_pair_bool_entry(address)?;
-        self.tagged_entry = Some(entry);
+        self.installed = InstalledBinaryEntry::TaggedLocal(entry);
         self.note_native_entry();
         Ok(entry(lhs, rhs) != 0)
     }
@@ -1833,17 +1782,19 @@ impl NativeBinaryPlan {
             let right = number_to_int32(rhs);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if self.shared_arena.is_none() {
-                if let Some(entry) = self.int_entry {
-                    if !self.integer_unsigned {
-                        self.note_native_entry();
-                        return Ok(f64::from(entry(left, right)));
-                    }
+                if let InstalledBinaryEntry::I32Local(entry) = self.installed {
+                    self.note_native_entry();
+                    return Ok(f64::from(entry(left, right)));
+                }
+                if let InstalledBinaryEntry::U32Local(entry) = self.installed {
+                    self.note_native_entry();
+                    return Ok(f64::from(entry(left as u32, right as u32)));
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(shared) = self.shared_arena.clone() {
                 if self.integer_unsigned {
-                    if let Some(owned) = self.shared_uint_entry {
+                    if let InstalledBinaryEntry::U32Shared(owned) = self.installed {
                         match shared.borrow().with_owned(owned, |entry| {
                             entry(left as u32, right as u32)
                         }) {
@@ -1856,7 +1807,7 @@ impl NativeBinaryPlan {
                             }
                         }
                     }
-                } else if let Some(owned) = self.shared_int_entry {
+                } else if let InstalledBinaryEntry::I32Shared(owned) = self.installed {
                     match shared.borrow().with_owned(owned, |entry| entry(left, right)) {
                         Ok(result) => {
                             self.note_native_entry();
@@ -1869,12 +1820,6 @@ impl NativeBinaryPlan {
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if self.shared_arena.is_none() && self.integer_unsigned {
-                if let Some(entry) = self.uint_entry {
-                    self.note_native_entry();
-                    return Ok(f64::from(entry(left as u32, right as u32)));
-                }
-            }
             if self.lifecycle.observe_site(&self.site, self.key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
             {
@@ -1914,8 +1859,7 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
-                    self.uint_entry = Some(entry);
-                    self.shared_uint_entry = Some(owned);
+                    self.installed = InstalledBinaryEntry::U32Shared(owned);
                     self.note_native_entry();
                     return Ok(f64::from(result));
                 }
@@ -1946,8 +1890,7 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                self.int_entry = Some(entry);
-                self.shared_int_entry = Some(owned);
+                self.installed = InstalledBinaryEntry::I32Shared(owned);
                 self.note_native_entry();
                 return Ok(f64::from(result));
             }
@@ -1979,9 +1922,17 @@ impl NativeBinaryPlan {
                 if let Some(arena) = self.arena.as_ref() {
                     if let Some(address) = self.cache.get_owned(self.key, 0, arena.id()) {
                         if self.integer_unsigned {
-                            self.uint_entry = arena.u32_entry(address).ok();
+                            self.installed = arena
+                                .u32_entry(address)
+                                .ok()
+                                .map(InstalledBinaryEntry::U32Local)
+                                .unwrap_or(InstalledBinaryEntry::Unpublished);
                         } else {
-                            self.int_entry = arena.i32_entry(address).ok();
+                            self.installed = arena
+                                .i32_entry(address)
+                                .ok()
+                                .map(InstalledBinaryEntry::I32Local)
+                                .unwrap_or(InstalledBinaryEntry::Unpublished);
                         }
                     }
                 }
@@ -1992,24 +1943,22 @@ impl NativeBinaryPlan {
                 self.lifecycle.reset();
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 {
-                    self.int_entry = None;
-                    self.uint_entry = None;
+                    self.installed = InstalledBinaryEntry::Unpublished;
                 }
             }
             return result;
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() && !self.returns_boolean {
-            if let Some(entry) = self.entry {
+            if let InstalledBinaryEntry::F64Local(entry) = self.installed {
                 self.note_native_entry();
                 return Ok(unsafe { invoke_f64x2_entry(entry, lhs, rhs) });
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !self.returns_boolean {
-            if let (Some(shared), Some(owned)) =
-                (self.shared_arena.clone(), self.shared_entry)
-            {
+            if let (Some(shared), InstalledBinaryEntry::F64Shared(owned)) =
+                (self.shared_arena.clone(), self.installed) {
                 match shared.borrow().with_owned(owned, |entry| unsafe {
                     invoke_f64x2_entry(entry, lhs, rhs)
                 }) {
@@ -2025,9 +1974,8 @@ impl NativeBinaryPlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.returns_boolean {
-            if let (Some(shared), Some(owned)) =
-                (self.shared_arena.clone(), self.shared_bool_entry)
-            {
+            if let (Some(shared), InstalledBinaryEntry::BoolShared(owned)) =
+                (self.shared_arena.clone(), self.installed) {
                 match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs)) {
                     Ok(result) => {
                         self.note_native_entry();
@@ -2069,7 +2017,7 @@ impl NativeBinaryPlan {
                 return match rendered {
                     Ok((address, entry)) => {
                         let owned = shared.borrow().owned_bool_entry(address)?;
-                        self.shared_bool_entry = Some(owned);
+                        self.installed = InstalledBinaryEntry::BoolShared(owned);
                         match shared.borrow().with_owned(owned, |entry| entry(lhs, rhs) != 0) {
                             Ok(value) => {
                                 self.note_native_entry();
@@ -2104,9 +2052,8 @@ impl NativeBinaryPlan {
                     return Err(error);
                 }
             };
-            self.entry = Some(entry);
             let owned = shared.borrow().owned_f64_entry(address)?;
-            self.shared_entry = Some(owned);
+            self.installed = InstalledBinaryEntry::F64Shared(owned);
             return match shared
                 .borrow()
                 .with_owned(owned, |entry| unsafe { invoke_f64x2_entry(entry, lhs, rhs) })
@@ -2163,7 +2110,11 @@ impl NativeBinaryPlan {
                 };
                 if let Some(arena) = self.arena.as_ref() {
                     if let Some(address) = self.cache.get_owned(key, signature, arena.id()) {
-                        self.entry = arena.f64_entry(address).ok();
+                        self.installed = arena
+                            .f64_entry(address)
+                            .ok()
+                            .map(InstalledBinaryEntry::F64Local)
+                            .unwrap_or(InstalledBinaryEntry::Unpublished);
                     }
                 }
             }
@@ -2178,7 +2129,7 @@ impl NativeBinaryPlan {
             self.lifecycle.reset();
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.entry = None;
+                self.installed = InstalledBinaryEntry::Unpublished;
             }
         }
         result
