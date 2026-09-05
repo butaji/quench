@@ -2014,9 +2014,18 @@ impl NativeBinaryPlan {
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if result.is_ok() {
+                let abi = if self.is_unsigned_integer() {
+                    crate::stencil_select::RegionAbi::ScalarU32
+                } else {
+                    crate::stencil_select::RegionAbi::ScalarI32
+                };
+                let signature = crate::stencil_select::select_physical_for_abi(self.key, abi)
+                    .map(|view| crate::stencil_arena::physical_cache_signature(view, &values));
                 self.note_native_entry();
                 if let Some(arena) = self.arena.as_ref() {
-                    if let Some(address) = self.physical.cache.get_owned(self.key, 0, arena.id()) {
+                    if let Some(address) = signature.and_then(|signature| {
+                        self.physical.cache.get_owned(self.key, signature, arena.id())
+                    }) {
                         if self.is_unsigned_integer() {
                             self.installed = arena
                                 .u32_entry(address)
@@ -2218,11 +2227,7 @@ impl NativeBinaryPlan {
                 // cached pointer would never be found for the common Add,
                 // Sub, Mul, and Div leaves and the boundary tax would return
                 // on every iteration.
-                let signature = if view.stencil.holes.is_empty() {
-                    0
-                } else {
-                    values.signature()
-                };
+                let signature = crate::stencil_arena::physical_cache_signature(view, &values);
                 if let Some(arena) = self.arena.as_ref() {
                     if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id())
                     {
@@ -3486,7 +3491,11 @@ impl NativeAddChainPlan {
         if result.is_ok() {
             self.note_entry();
             if let Some(arena) = self.arena.as_ref() {
-                if let Some(address) = self.physical.cache.get_owned(key, 0, arena.id()) {
+                let signature = crate::stencil_arena::physical_cache_signature(
+                    crate::stencil_select::select_physical(key).expect("installed view"),
+                    &values,
+                );
+                if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id()) {
                     self.installed = arena
                         .f64x3_entry(address)
                         .ok()
@@ -3762,13 +3771,15 @@ impl NativeMovePlan {
             arena.make_executable()?;
             arena.execute_tagged_word(address, source)
         })();
-        if result.is_ok() {
-            self.note_entry();
-        }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
+            let signature = crate::stencil_select::select_physical(key)
+                .map(|view| crate::stencil_arena::physical_cache_signature(view, &values));
+            self.note_entry();
             if let Some(arena) = self.arena.as_ref() {
-                if let Some(address) = self.physical.cache.get_owned(key, 0, arena.id()) {
+                if let Some(address) = signature.and_then(|signature| {
+                    self.physical.cache.get_owned(key, signature, arena.id())
+                }) {
                     self.installed = arena
                         .tagged_word_entry(address)
                         .map(|_| InstalledWordEntry::Local(address))
@@ -3999,7 +4010,11 @@ impl NativePropertyPlan {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
             }
             if let Some(arena) = self.arena.as_ref() {
-                if let Some(address) = self.physical.cache.get_owned(key, 0, arena.id()) {
+                let signature = crate::stencil_arena::physical_cache_signature(
+                    crate::stencil_select::select_physical(key).expect("installed view"),
+                    &values,
+                );
+                if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id()) {
                     self.installed = arena
                         .tagged_word_entry(address)
                         .ok()
