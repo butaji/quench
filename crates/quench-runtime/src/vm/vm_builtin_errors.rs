@@ -66,6 +66,18 @@ fn error_cause_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
+    // Error instances materialize `stack` as a configurable own data
+    // property. Once user code deletes it, the prototype accessor must not
+    // resurrect a synthetic stack from the internal error marker.
+    if !matches!(
+        crate::builtins::object::has_own_property(
+            Some(value),
+            Some(&Value::String("stack".to_string())),
+        ),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
     let error_constructor = crate::execute::get_property(
         &crate::vm::current_global_object(),
         "Error",
@@ -79,7 +91,34 @@ fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
         );
     }
     if has_error_slot(value) {
-        Ok(Value::String(stack_text(value)?))
+        let mut stack = stack_text(value)?;
+        // Error construction can happen outside an active function frame
+        // (for example, before an enumerable `stack` descriptor is copied).
+        // V8 still materializes the current script location lazily. Preserve
+        // the configured zero-frame limit, otherwise derive one host frame
+        // from the canonical source context.
+        let limit = crate::execute::get_property(
+            &crate::vm::current_global_object(),
+            "Error",
+        );
+        let limit = crate::execute::get_property(&limit, "stackTraceLimit");
+        let has_frames = stack.contains('\n');
+        if !has_frames
+            && !matches!(limit, Value::Number(value) if value <= 0.0)
+            && crate::vm::current_context().source_name().is_some()
+        {
+            let frames = crate::vm::vm_ops::call_stack_frames();
+            let frame = frames
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "<anonymous>".to_string());
+            let filename = crate::vm::current_context()
+                .source_name()
+                .map(|name| name.to_string())
+                .unwrap_or_default();
+            stack.push_str(&format!("\n    at {frame} ({filename}:1:1)"));
+        }
+        Ok(Value::String(stack))
     } else {
         Ok(Value::Undefined)
     }
@@ -135,12 +174,6 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             ));
         }
     }
-    let Value::String(text) = stack else {
-        return Err(crate::value::error::throw_type_error("Stack value must be a string"));
-    };
-    if crate::conversion::is_symbol_string(text) {
-        return Err(crate::value::error::throw_type_error("Stack value must be a string"));
-    }
     if error_stack_setter_dispatch(value, stack)? {
         return Ok(Value::Undefined);
     }
@@ -160,7 +193,19 @@ fn error_stack_setter_dispatch(value: &Value, stack: &Value) -> Result<bool, VmE
         let updated = if matches!(value, Value::Proxy(_)) {
             crate::proxy::proxy_set(value, "stack", stack, Some(value))?
         } else {
-            Value::Boolean(crate::properties::set_with_receiver(value, "stack", stack, value)?)
+            let updated = crate::execute::set_property_in_place(
+                value,
+                "stack",
+                stack.clone(),
+            );
+            if updated {
+                let _ = crate::execute::set_property_in_place(
+                    value,
+                    "\0quench:stack_decorated",
+                    Value::Boolean(true),
+                );
+            }
+            Value::Boolean(updated)
         };
         if !crate::execute::is_truthy(&updated) {
             return Ok(false);
@@ -236,6 +281,21 @@ fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
         Value::Undefined => String::new(),
         value => crate::conversion::to_string(&value)?,
     };
+    let node_coded = matches!(
+        crate::execute::get_property_result(value, "\0node_error_to_string_code")?,
+        Value::Boolean(true)
+    );
+    if name == "SystemError" || node_coded {
+        if let Value::String(code) = crate::execute::get_property_result(value, "code")? {
+            if !code.is_empty() {
+                return Ok(Value::String(if message.is_empty() {
+                    format!("{name} [{code}]")
+                } else {
+                    format!("{name} [{code}]: {message}")
+                }));
+            }
+        }
+    }
     if name.is_empty() && message.is_empty() {
         Ok(Value::String(String::new()))
     } else if name.is_empty() {
