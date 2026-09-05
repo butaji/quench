@@ -7961,6 +7961,9 @@ pub fn cp_spawn(
                 .cloned()
         })
         .unwrap_or(Value::Undefined);
+    if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        crate::modules::child_process::validate_spawn_credentials(&options)?;
+    }
     if cp_options_have_nul(&options) {
         return Err(cp_nul_error());
     }
@@ -13840,6 +13843,29 @@ pub fn process_getgid(
     _: &[Value],
 ) -> Result<Value, VmError> {
     Ok(crate::modules::process::credential("gid"))
+}
+pub fn process_getgroups(
+    _state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    #[cfg(unix)]
+    {
+        let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        if count > 0 {
+            let mut groups = vec![0 as libc::gid_t; count as usize];
+            let actual = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+            if actual >= 0 {
+                return Ok(host_api::array(
+                    groups[..actual as usize]
+                        .iter()
+                        .map(|gid| Value::Number(*gid as f64))
+                        .collect(),
+                ));
+            }
+        }
+    }
+    Ok(host_api::array(Vec::new()))
 }
 pub fn process_geteuid(
     state: &Rc<RefCell<HostState>>,
