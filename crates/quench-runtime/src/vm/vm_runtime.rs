@@ -234,6 +234,32 @@ fn try_native_word_truthiness(
     }
 }
 
+fn identity_word(bits: u64) -> bool {
+    matches!(
+        crate::tagged_value::TaggedValue::from_bits(bits).decode(),
+        crate::tagged_value::DecodedValue::Bool(_)
+            | crate::tagged_value::DecodedValue::Null
+            | crate::tagged_value::DecodedValue::Undefined
+            | crate::tagged_value::DecodedValue::ObjectPtr(_)
+            | crate::tagged_value::DecodedValue::ArrayPtr(_)
+            | crate::tagged_value::DecodedValue::FunctionPtr(_)
+    )
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn try_native_identity_compare(
+    native: &std::cell::RefCell<crate::machine::NativeBinaryPlan>,
+    registers: &crate::register_file::RegisterFile,
+    lhs: usize,
+    rhs: usize,
+) -> Option<bool> {
+    let left = registers.word_bits(lhs)?;
+    let right = registers.word_bits(rhs)?;
+    (identity_word(left) && identity_word(right))
+        .then(|| native.borrow_mut().execute_tagged(left, right).ok())
+        .flatten()
+}
+
 /// The only code pointer embedded in the generated all-opcode trampoline.
 /// It does no operation selection and owns no values; it simply invokes the
 /// same baseline handler/control path used by the non-native driver.
@@ -1454,6 +1480,21 @@ pub(crate) fn execute_optimized_code_step_from(
             crate::execution_trace::leaf_rejection("optimizing_native_property");
         }
     }
+    if instruction.opcode == crate::ir::Opcode::Binary {
+        if let Some(native) = entry.native_binary.as_ref() {
+            if let Some(result) = try_native_identity_compare(
+                native,
+                registers,
+                usize::from(instruction.b),
+                usize::from(instruction.c),
+            ) {
+                crate::execution_trace::stencil_observation(code, start, "binary_word", true);
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                write_value(registers, instruction.a, Value::Boolean(result));
+                return Ok((crate::completion::Completion::Normal, start + 1));
+            }
+        }
+    }
     if let Some(native) = entry.native_binary.as_ref() {
         let operands = if instruction.opcode == crate::ir::Opcode::AddConst {
             registers
@@ -1967,6 +2008,22 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     crate::execution_trace::stencil_observation(code, pc, "add_chain", false);
                     crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
                     crate::execution_trace::leaf_rejection("native_add_chain_guard");
+                }
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::Binary {
+            if let Some(native) = plan.native_binary_at(pc) {
+                if let Some(result) = try_native_identity_compare(
+                    native,
+                    registers,
+                    usize::from(instruction.b),
+                    usize::from(instruction.c),
+                ) {
+                    crate::execution_trace::stencil_observation(code, pc, "binary_word", true);
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    registers.write_boolean(usize::from(instruction.a), result);
+                    pc += 1;
+                    continue;
                 }
             }
         }

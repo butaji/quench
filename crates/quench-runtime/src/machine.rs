@@ -1482,6 +1482,7 @@ pub(crate) struct NativeBinaryPlan {
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
     key: crate::stencil_fact::RegionKey,
+    tagged_key: Option<crate::stencil_fact::RegionKey>,
     returns_boolean: bool,
     integer_op: Option<crate::ops::BinaryOp>,
     integer_unsigned: bool,
@@ -1494,9 +1495,13 @@ pub(crate) struct NativeBinaryPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     int_entry: Option<extern "C" fn(i32, i32) -> i32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    tagged_entry: Option<extern "C" fn(u64, u64) -> u64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     uint_entry: Option<extern "C" fn(u32, u32) -> u32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_entry_address: Option<usize>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    tagged_shared_entry: Option<(usize, extern "C" fn(u64, u64) -> u64)>,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -1597,6 +1602,13 @@ impl NativeBinaryPlan {
         } else {
             return None;
         };
+        let tagged_key = match instruction.flags {
+            flag if flag == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual) =>
+                Some(crate::stencil_select::compare_equal_word_region_key()),
+            flag if flag == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual) =>
+                Some(crate::stencil_select::compare_not_equal_word_region_key()),
+            _ => None,
+        };
         // The AddConst stencil has a fixed machine operand order (source in
         // xmm0, embedded constant in xmm1).  Constant-left addition is
         // observationally distinct for signed zero, so keep that variant on
@@ -1610,6 +1622,10 @@ impl NativeBinaryPlan {
         // recovered; the ordinary baseline remains the default fallback.
         crate::stencil_select::select_region(key)
             .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
+        if let Some(tagged_key) = tagged_key {
+            crate::stencil_select::select_region(tagged_key)
+                .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
+        }
         Some(Self {
             arena: None,
             shared_arena: None,
@@ -1618,6 +1634,7 @@ impl NativeBinaryPlan {
             site: crate::quickening::QuickeningSite::new(opcode),
             opcode,
             key,
+            tagged_key,
             returns_boolean,
             integer_op,
             integer_unsigned: false,
@@ -1626,9 +1643,13 @@ impl NativeBinaryPlan {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             int_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            tagged_entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             shared_entry_address: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            tagged_shared_entry: None,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -1665,6 +1686,7 @@ impl NativeBinaryPlan {
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
             key,
+            tagged_key: None,
             returns_boolean: false,
             integer_op: Some(operator),
             integer_unsigned: unsigned,
@@ -1673,9 +1695,13 @@ impl NativeBinaryPlan {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             int_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            tagged_entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             shared_entry_address: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            tagged_shared_entry: None,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -1687,6 +1713,62 @@ impl NativeBinaryPlan {
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn execute_tagged(
+        &mut self,
+        lhs: u64,
+        rhs: u64,
+    ) -> Result<bool, crate::stencil_arena::ArenaError> {
+        let key = self
+            .tagged_key
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        if self.shared_arena.is_none() {
+            if let Some(entry) = self.tagged_entry {
+                self.note_native_entry();
+                return Ok(entry(lhs, rhs) != 0);
+            }
+        }
+        if let (Some(shared), Some((address, entry))) =
+            (self.shared_arena.clone(), self.tagged_shared_entry)
+        {
+            if let Ok(result) = shared.borrow().with_active(address, || entry(lhs, rhs)) {
+                self.note_native_entry();
+                return Ok(result != 0);
+            }
+            self.tagged_shared_entry = None;
+        }
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        if let Some(shared) = self.shared_arena.clone() {
+            let (address, entry) = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                slab.make_executable(address)?;
+                (address, slab.word_pair_bool_entry(address)?)
+            };
+            self.tagged_shared_entry = Some((address, entry));
+            let result = shared.borrow().with_active(address, || entry(lhs, rhs))?;
+            self.note_native_entry();
+            return Ok(result != 0);
+        }
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let arena = self
+            .arena
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let stencil = crate::stencil_select::select_stencil(key)
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let address = arena.render_or_get(&mut self.cache, key, stencil, &values)?;
+        arena.make_executable()?;
+        let entry = arena.word_pair_bool_entry(address)?;
+        self.tagged_entry = Some(entry);
+        self.note_native_entry();
+        Ok(entry(lhs, rhs) != 0)
     }
 
     #[inline]
@@ -3643,6 +3725,7 @@ impl NativeRegionPlan {
                         | crate::stencil_select::RegionAbi::ConstantWord
                         | crate::stencil_select::RegionAbi::ScalarBool
                         | crate::stencil_select::RegionAbi::ScalarWordBool
+                        | crate::stencil_select::RegionAbi::ScalarWordPairBool
                         | crate::stencil_select::RegionAbi::ScalarI32
                         | crate::stencil_select::RegionAbi::ScalarU32
                 )
@@ -3734,6 +3817,7 @@ impl NativeRegionPlan {
                     | crate::stencil_select::RegionAbi::ConstantWord
                     | crate::stencil_select::RegionAbi::ScalarBool
                     | crate::stencil_select::RegionAbi::ScalarWordBool
+                    | crate::stencil_select::RegionAbi::ScalarWordPairBool
                     | crate::stencil_select::RegionAbi::ScalarI32
                     | crate::stencil_select::RegionAbi::ScalarU32
             ) {
@@ -3766,6 +3850,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ConstantWord => "constant_word",
                 crate::stencil_select::RegionAbi::ScalarBool => "scalar_bool",
                 crate::stencil_select::RegionAbi::ScalarWordBool => "scalar_word_bool",
+                crate::stencil_select::RegionAbi::ScalarWordPairBool => "scalar_word_pair_bool",
                 crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
                 crate::stencil_select::RegionAbi::ScalarU32 => "scalar_u32",
             };
@@ -3843,6 +3928,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ScalarWordBool => {
                     return Err(NativeDispatchError::Physical(
                         "scalar-word-bool ABI cannot enter a region context".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::ScalarWordPairBool => {
+                    return Err(NativeDispatchError::Physical(
+                        "scalar-word-pair-bool ABI cannot enter a region context".into(),
                     ));
                 }
                 crate::stencil_select::RegionAbi::ScalarI32 => {
@@ -4226,6 +4316,7 @@ impl BaselinePlan {
                                     | crate::stencil_select::RegionAbi::ConstantWord
                                     | crate::stencil_select::RegionAbi::ScalarBool
                                     | crate::stencil_select::RegionAbi::ScalarWordBool
+                                    | crate::stencil_select::RegionAbi::ScalarWordPairBool
                                     | crate::stencil_select::RegionAbi::ScalarI32
                                     | crate::stencil_select::RegionAbi::ScalarU32
                             )

@@ -21,6 +21,7 @@ enum DeclAbi {
     ConstantWord,
     ScalarBool,
     ScalarWordBool,
+    ScalarWordPairBool,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -225,6 +226,15 @@ const fn x86_truthy_word_bytes() -> [u8; 20] {
     ]
 }
 
+const fn x86_word_compare_bytes(setcc: u8) -> [u8; 10] {
+    [
+        0x48, 0x39, 0xF7, // cmp rdi, rsi
+        0x0F, setcc, 0xC0, // setcc al
+        0x0F, 0xB6, 0xC0, // movzx eax, al
+        0xC3,
+    ]
+}
+
 const NULLISH_UNDEFINED_BITS: u64 = 0x7ff8_4000_0000_0003;
 
 const fn x86_compare_not_equal_bytes() -> [u8; 11] {
@@ -310,6 +320,8 @@ const X86_SHIFT_RIGHT_ZERO_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xEF, 0x89, 0xF8,
 const X86_BITWISE_NOT_BYTES: [u8; 5] = x86_i32_unary_not();
 const X86_NULLISH_WORD_BYTES: [u8; 27] = x86_nullish_word_bytes();
 const X86_TRUTHY_WORD_BYTES: [u8; 20] = x86_truthy_word_bytes();
+const X86_WORD_EQUAL_BYTES: [u8; 10] = x86_word_compare_bytes(0x94);
+const X86_WORD_NOT_EQUAL_BYTES: [u8; 10] = x86_word_compare_bytes(0x95);
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -424,6 +436,16 @@ const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
 const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
 const AARCH64_NULLISH_WORD_BYTES: [u8; 32] = aarch64_nullish_word_bytes();
 const AARCH64_TRUTHY_WORD_BYTES: [u8; 24] = aarch64_truthy_word_bytes();
+const AARCH64_WORD_EQUAL_BYTES: [u8; 12] = aarch64_triple(
+    aarch64_cmp_x0_x1(),
+    aarch64_cset_eq_w0(),
+    aarch64_ret(),
+);
+const AARCH64_WORD_NOT_EQUAL_BYTES: [u8; 12] = aarch64_triple(
+    aarch64_cmp_x0_x1(),
+    aarch64_cset_ne_w0(),
+    aarch64_ret(),
+);
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -658,6 +680,33 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         abi: DeclAbi::Scalar,
         x86_bytes: &X86_COMPARE_NOT_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_NOT_EQUAL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "compare_equal_word",
+        // Identity equality is valid only for non-string tagged values:
+        // Bool/null/undefined and heap object identities. Numbers, I31 and
+        // heap strings stay on the canonical comparison path.
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarWordPairBool,
+        x86_bytes: &X86_WORD_EQUAL_BYTES,
+        aarch64_bytes: &AARCH64_WORD_EQUAL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "compare_not_equal_word",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::ScalarWordPairBool,
+        x86_bytes: &X86_WORD_NOT_EQUAL_BYTES,
+        aarch64_bytes: &AARCH64_WORD_NOT_EQUAL_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
@@ -1505,6 +1554,7 @@ const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate:
         | crate::stencil_select::RegionAbi::ConstantWord
         | crate::stencil_select::RegionAbi::ScalarBool
         | crate::stencil_select::RegionAbi::ScalarWordBool
+        | crate::stencil_select::RegionAbi::ScalarWordPairBool
         | crate::stencil_select::RegionAbi::ScalarI32
         | crate::stencil_select::RegionAbi::ScalarU32 => crate::stencil_select::AbiContract {
             context_arg_words: 0,
@@ -1628,6 +1678,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::ConstantWord => "crate::stencil_select::RegionAbi::ConstantWord",
         DeclAbi::ScalarBool => "crate::stencil_select::RegionAbi::ScalarBool",
         DeclAbi::ScalarWordBool => "crate::stencil_select::RegionAbi::ScalarWordBool",
+        DeclAbi::ScalarWordPairBool => "crate::stencil_select::RegionAbi::ScalarWordPairBool",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
