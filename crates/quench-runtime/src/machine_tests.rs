@@ -103,6 +103,26 @@ fn baseline_region_admission_respects_declared_abi() {
     assert!(plan.native_region_at(0).is_none());
 }
 
+#[test]
+fn baseline_admissions_use_sparse_indexed_storage() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::Return { src: 0 }]);
+    let code = function.code().expect("compact code");
+    let plan = super::BaselinePlan::compile_for_test(
+        code,
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+    );
+    assert_eq!(plan.admission_index.len(), plan.entries.len());
+    assert!(plan.admissions.len() <= plan.entries.len() * 13);
+    assert!(std::mem::size_of::<super::AdmissionSpan>() <= 8);
+    eprintln!(
+        "baseline-admission-layout entries={} sparse={} span={} record={}",
+        plan.entries.len(),
+        plan.admissions.len(),
+        std::mem::size_of::<super::AdmissionSpan>(),
+        std::mem::size_of::<super::NativeAdmission>()
+    );
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn baseline_scalar_entry_rebuilds_after_shared_owner_eviction() {
