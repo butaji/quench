@@ -318,13 +318,16 @@ impl RenderedRegionCache {
 }
 
 include!(concat!(env!("OUT_DIR"), "/stencil_catalog.rs"));
+include!(concat!(env!("OUT_DIR"), "/stencil_artifacts.rs"));
 
 /// Select an admitted region with one canonical table lookup.
 pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
-    CANONICAL_REGION_TABLE
+    let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
+    BUILD_STENCIL_ARTIFACTS
         .iter()
-        .find(|record| record.key == key)
-        .map(|record| &record.stencil)
+        .find(|artifact| artifact.name == record.name)
+        .map(|artifact| &artifact.stencil)
+        .or(Some(&record.stencil))
 }
 
 pub fn select_region(key: RegionKey) -> Option<&'static RegionRecord> {
@@ -992,5 +995,18 @@ mod tests {
             choose_promotion(Some(first), second, false),
             Promotion::Render
         );
+    }
+
+    #[test]
+    fn extracted_build_artifacts_match_canonical_bytes() {
+        for artifact in BUILD_STENCIL_ARTIFACTS {
+            let record = CANONICAL_REGION_TABLE
+                .iter()
+                .find(|record| record.name == artifact.name)
+                .expect("artifact declaration has a catalog row");
+            assert_eq!(artifact.bytes, record.stencil.bytes, "artifact {} drifted", artifact.name);
+            assert!(!artifact.fingerprint.is_empty());
+            assert!(!artifact.target.is_empty());
+        }
     }
 }
