@@ -2478,6 +2478,17 @@ impl BaselinePlan {
                 crate::stencil_select::region_records()
                     .iter()
                     .find_map(|record| {
+                        // Region plans consume only the erased bridge or one
+                        // of the explicitly typed raw-array ABIs.  Scalar
+                        // leaves (Add/Move/property) have separate typed
+                        // plans and must never be passed a
+                        // NativeRegionContext pointer merely because their
+                        // opcode prefix matches this window.
+                        if !record.executable
+                            || matches!(record.abi, crate::stencil_select::RegionAbi::Scalar)
+                        {
+                            return None;
+                        }
                         let key = record.key;
                         let end = pc.checked_add(record.operations.len())?;
                         (end <= entries.len()
