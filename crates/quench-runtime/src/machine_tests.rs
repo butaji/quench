@@ -464,6 +464,23 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
     assert!(not_equal.returns_boolean());
     assert_eq!(not_equal.execute(2.0, 2.0), Ok(0.0));
     assert_eq!(not_equal.execute(f64::NAN, f64::NAN), Ok(1.0));
+    for (operator, lhs, rhs, expected) in [
+        (crate::ops::BinaryOp::LessThan, 1.0, 2.0, 1.0),
+        (crate::ops::BinaryOp::LessEqual, 2.0, 2.0, 1.0),
+        (crate::ops::BinaryOp::GreaterThan, 3.0, 2.0, 1.0),
+        (crate::ops::BinaryOp::GreaterEqual, 2.0, 2.0, 1.0),
+    ] {
+        let mut ordered = super::NativeBinaryPlan::new(
+            crate::ir::Instruction {
+                flags: crate::ir::compact_binary_id(operator),
+                ..instruction
+            },
+            policy,
+        )
+        .expect("ordered scalar compare");
+        assert_eq!(ordered.execute(lhs, rhs), Ok(expected));
+        assert_eq!(ordered.execute(f64::NAN, rhs), Ok(0.0), "operator {operator:?}");
+    }
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
