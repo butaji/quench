@@ -26,7 +26,7 @@ Execution-trace runtime regression is also green (**742 passed, 0 failed,
 The current revision adds a typed numeric-negate stencil (build-time
 `negate` declaration, target bytes, and owned `f64 -> f64` entry) with
 ordinary-source execution, signed-zero, and coercive fallback coverage:
-`/tmp/quench-negate-focused-20260905-v2.log`. Full runtime is **731 passed,
+`/tmp/quench-negate-focused-20260905-v3.log`. Full runtime is **731 passed,
 0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-negate.log`) and
 execution-trace runtime is **743 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-trace-20260905-negate.log`).
