@@ -243,6 +243,10 @@ impl<'a, const N: usize> PatchValues<'a, N> {
                 .unwrap_or(self.opcode() as u64),
         }
     }
+
+    pub(crate) fn constant_bits(&self) -> Option<u64> {
+        self.constant_bits
+    }
 }
 
 fn mix_u64(mut hash: u64, value: u64) -> u64 {
