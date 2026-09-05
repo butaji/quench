@@ -1467,6 +1467,13 @@ pub struct TierProfile {
 /// Optional machine-code leaf for generated Number binary-operation stencils.
 /// It is deliberately narrow: any non-number input or stencil failure returns
 /// to the ordinary handler, so this cannot create an alternate JS semantics.
+macro_rules! reset_installed {
+    ($plan:expr, $empty:expr) => {{
+        $plan.installed = $empty;
+        $plan.physical.clear();
+    }};
+}
+
 #[derive(Clone, Copy)]
 enum InstalledBinaryEntry {
     Unpublished,
@@ -1698,8 +1705,7 @@ impl NativeBinaryPlan {
 
     #[inline]
     fn clear_physical_capabilities(&mut self) {
-        self.installed = InstalledBinaryEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledBinaryEntry::Unpublished);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2205,8 +2211,7 @@ pub(crate) struct NativeTruthinessPlan {
 impl NativeTruthinessPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledTruthinessEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledTruthinessEntry::Unpublished);
     }
 
     #[inline]
@@ -2518,8 +2523,7 @@ pub(crate) struct NativeNullishPlan {
 impl NativeNullishPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledNullishEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledNullishEntry::Unpublished);
     }
 
     fn new_with_shared(
@@ -2719,8 +2723,7 @@ impl std::fmt::Debug for NativeLoadConstPlan {
 impl NativeLoadConstPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledConstantEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledConstantEntry::Unpublished);
     }
 
     fn new_with_shared(
@@ -2879,8 +2882,7 @@ impl std::fmt::Debug for NativeUnaryPlan {
 impl NativeUnaryPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledUnaryEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledUnaryEntry::Unpublished);
     }
 
     fn new_with_shared(
@@ -3103,8 +3105,7 @@ pub(crate) struct NativeAddChainPlan {
 impl NativeAddChainPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledF64x3Entry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledF64x3Entry::Unpublished);
     }
 
     fn new_with_arena(
@@ -3354,8 +3355,7 @@ pub(crate) struct NativeMovePlan {
 impl NativeMovePlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledWordEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledWordEntry::Unpublished);
     }
 
     fn new_with_arena(
@@ -3587,8 +3587,7 @@ pub(crate) struct NativePropertyPlan {
 impl NativePropertyPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.installed = InstalledPropertyEntry::Unpublished;
-        self.physical.clear();
+        reset_installed!(self, InstalledPropertyEntry::Unpublished);
     }
 
     fn new_with_arena(
