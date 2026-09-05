@@ -37,6 +37,41 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     }
 }
 
+pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
+    let data = fs::read(path).expect("read Rust assembly object");
+    let file = object::File::parse(&*data).expect("parse Rust assembly object");
+    let mut sections = file.sections().filter(|section| {
+        section
+            .name()
+            .ok()
+            .is_some_and(|name| name == ".text" || name == "__text")
+    });
+    let section = sections.next().expect("Rust assembly text section");
+    assert!(sections.next().is_none(), "assembly verifier found multiple text sections");
+    let section_index = section.index();
+    let mut previous = 0;
+    for name in names {
+        let symbols = file
+            .symbols()
+            .filter(|symbol| symbol.section_index() == Some(section_index))
+            .filter(|symbol| {
+                symbol
+                    .name()
+                    .ok()
+                    .is_some_and(|value| value.trim_start_matches('_') == *name)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(symbols.len(), 1, "assembly symbol {name} must be unique");
+        let offset = symbols[0]
+            .address()
+            .checked_sub(section.address())
+            .expect("assembly symbol precedes text") as usize;
+        assert!(offset >= previous, "assembly symbols are out of order");
+        assert!(offset < section.size() as usize, "assembly symbol is outside text");
+        previous = offset;
+    }
+}
+
 fn empty_artifacts() -> String {
     format!(
         "{HEADER}pub struct BuildStencilArtifact {{ pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[];\n"
