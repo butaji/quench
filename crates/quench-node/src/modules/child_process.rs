@@ -525,6 +525,10 @@ pub fn spawn_sync(
     cmd.args(&child_args);
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
+        if let Some(eval_index) = child_args.iter().position(|arg| arg == "-e" || arg == "--eval") {
+            let exec_argv = serde_json::to_string(&child_args[..eval_index]).unwrap_or_else(|_| "[]".into());
+            cmd.env("QUENCH_EXEC_ARGV", exec_argv);
+        }
     }
 
     let mut input: Option<Vec<u8>> = None;
