@@ -224,11 +224,13 @@ fn try_native_word_truthiness(
         | crate::tagged_value::DecodedValue::Undefined => {
             native.borrow_mut().execute_word(bits).ok()
         }
+        crate::tagged_value::DecodedValue::ObjectPtr(_)
+        | crate::tagged_value::DecodedValue::ArrayPtr(_)
+        | crate::tagged_value::DecodedValue::FunctionPtr(_) => {
+            native.borrow_mut().execute_pointer(bits).ok()
+        }
         crate::tagged_value::DecodedValue::Number(_)
         | crate::tagged_value::DecodedValue::I31(_)
-        | crate::tagged_value::DecodedValue::ObjectPtr(_)
-        | crate::tagged_value::DecodedValue::ArrayPtr(_)
-        | crate::tagged_value::DecodedValue::FunctionPtr(_)
         | crate::tagged_value::DecodedValue::HeapPtr(_)
         | crate::tagged_value::DecodedValue::HeapRef(_) => None,
     }
