@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `8b9fc8338` (cleanup files remain
+Evidence below is bound to source revision `2d861a0ec` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -27,6 +27,13 @@ invocation families. Native-focused coverage remains **45 passed, 0 failed**
 (`/tmp/quench-native-capability-tests-20260905.log`); the full runtime is
 **735 passed, 0 failed, 1 ignored** at
 `/tmp/quench-runtime-full-20260905-scalar-capabilities.log`.
+
+Truthiness shared numeric, tagged-word and pointer entries now invalidate all
+typed capabilities and the render cache on owner mismatch after publication.
+The ordinary-source numeric truthiness/fallback test passes at
+`/tmp/quench-truthiness-owner-tests-20260905.log` (1 passed); full runtime is
+**735 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-truthiness-capabilities.log`.
 
 Latest source-only cache-hit refinement is at `43c8b2da0`: fused Add-chain
 cache hits now defer `PatchValues` construction until a render is required,
