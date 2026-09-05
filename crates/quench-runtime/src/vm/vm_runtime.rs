@@ -2284,7 +2284,12 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                         .completion
                         .filter(|value| !matches!(value, crate::completion::Completion::Normal))
                     {
-                        return completion_step_after_transition(registers, completion, next);
+                        let suspended = completion.is_suspension();
+                        let mut step = completion_step_after_transition(registers, completion, next)?;
+                        if suspended {
+                            step.suspended_pc = Some(pc);
+                        }
+                        return Ok(step);
                     }
                     match target {
                         DispatchTarget::Callee(_) => {
@@ -2989,7 +2994,12 @@ fn dispatch_segment<'code, 'state>(
             .completion
             .filter(|value| !matches!(value, crate::completion::Completion::Normal))
         {
-            return completion_step_after_transition(state.registers, completion, next);
+            let suspended = completion.is_suspension();
+            let mut step = completion_step_after_transition(state.registers, completion, next)?;
+            if suspended {
+                step.suspended_pc = Some(pc);
+            }
+            return Ok(step);
         }
         match transition.target {
             DispatchTarget::Callee(_) => pc = next,
@@ -3105,7 +3115,7 @@ fn maybe_osr_switch(
         .baseline_plan()
         .ok_or_else(|| VmError::EvalError("baseline tier compiled without a plan".into()))?;
     execute_baseline_code_step_from_with_owner(code, &plan, next, registers, context, owner)
-        .map(|(completion, next)| CompletionStep { completion, next })
+        .map(|(completion, next)| CompletionStep { completion, next, suspended_pc: None })
         .map(Some)
 }
 
@@ -4276,7 +4286,7 @@ fn completion_step_after_error(
     next: usize,
 ) -> Result<CompletionStep, VmError> {
     crate::vm::flush_global_declaration_batch(registers);
-    error_completion(error).map(|completion| CompletionStep { completion, next })
+    error_completion(error).map(|completion| CompletionStep { completion, next, suspended_pc: None })
 }
 
 #[cold]
@@ -4286,7 +4296,7 @@ fn completion_step_after_transition(
     next: usize,
 ) -> Result<CompletionStep, VmError> {
     crate::vm::flush_global_declaration_batch(registers);
-    Ok(CompletionStep { completion, next })
+    Ok(CompletionStep { completion, next, suspended_pc: None })
 }
 
 pub(crate) fn completion_result(
@@ -4825,6 +4835,58 @@ mod compact_handler_tests {
         run_compact_get_named(code, 0, quickened, &mut registers, &context)
             .expect("direct tagged-word lookup");
         assert_eq!(registers.read(0), Some(Value::Number(9.0)));
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn native_named_get_witness_requires_guarded_shape_before_entry() {
+        let object = Rc::new(ObjectData::new(vec![(
+            "value".into(),
+            Value::Number(7.0),
+        )]));
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::GetProperty {
+                dst: 0,
+                object: 1,
+                key: "value".into(),
+            },
+            Op::Return { src: 0 },
+        ]);
+        let code = function.code().expect("named-get lowering");
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let native = plan.native_property_at(0).expect("property admission");
+        let context = crate::vm::current_context_or_default();
+        let run = |receiver: Rc<ObjectData>| {
+            let mut registers = crate::register_file::RegisterFile::from_values(vec![
+                Value::Undefined,
+                Value::Object(receiver),
+            ]);
+            crate::vm::execute_baseline_code_from(
+                code,
+                &plan,
+                0,
+                &mut registers,
+                &context,
+                crate::environment::Environment::new(),
+            )
+            .expect("complete named-get execution")
+            .0
+        };
+        assert_eq!(run(Rc::clone(&object)), crate::completion::Completion::Return(Value::Number(7.0)));
+        assert_eq!(native.borrow().native_entry_count(), 0, "cold guard must fallback");
+        assert_eq!(run(Rc::clone(&object)), crate::completion::Completion::Return(Value::Number(7.0)));
+        assert_eq!(native.borrow().native_entry_count(), 1, "guarded hit must enter native bytes");
+
+        assert!(crate::execute::set_property_in_place(
+            &Value::Object(Rc::clone(&object)),
+            "other",
+            Value::Number(9.0),
+        ));
+        assert_eq!(run(Rc::clone(&object)), crate::completion::Completion::Return(Value::Number(7.0)));
+        assert_eq!(native.borrow().native_entry_count(), 1, "shape miss must not enter stale bytes");
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

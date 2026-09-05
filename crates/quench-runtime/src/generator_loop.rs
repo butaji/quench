@@ -10,7 +10,11 @@ struct LoopFrameResume {
 }
 
 fn loop_frame_resume(generator: &GeneratorData) -> Option<LoopFrameResume> {
-    let frame = generator.machine.borrow().frames.frames.last()?.clone();
+    let frames = &generator.machine.borrow().frames.frames;
+    let frame = match frames.last()? {
+        crate::machine::Frame::Await { .. } => frames.get(frames.len().checked_sub(2)?)?.clone(),
+        frame => frame.clone(),
+    };
     let crate::machine::Frame::Loop {
         label,
         body,
@@ -45,6 +49,12 @@ fn resume_loop_frame(
     let Some(frame) = loop_frame_resume(generator) else {
         return Ok(None);
     };
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Await { .. })
+    ) {
+        generator.machine.borrow_mut().pop_await_frame();
+    }
     if !matches!(input, crate::completion::Completion::Normal) {
         // A throw/return injected at a yield inside a structured try must
         // enter that try's handler before the loop is unwound. Materialize
@@ -67,9 +77,41 @@ fn resume_loop_frame(
     let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let completion = run_loop_after_yield(generator, &frame)?;
     if completion.is_suspension() {
+        if matches!(
+            completion,
+            crate::completion::Completion::Suspend(_)
+                | crate::completion::Completion::SuspendAt(_, _)
+        ) {
+            try_push_frame(
+                &mut generator.machine.borrow_mut(),
+                crate::machine::Frame::Await {
+                    phase: 0,
+                    resume: generator.function.code.range,
+                    destination: frame.yield_dst,
+                },
+            )?;
+        }
         return Ok(Some(completion));
     }
     generator.machine.borrow_mut().pop_frame();
+    // A nested loop owns the next continuation.  Resume the enclosing loop
+    // from its already-recorded post-inner-loop body range before returning
+    // to the parent function; otherwise the inner loop's completion skips the
+    // remaining outer iterations.
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Loop { .. })
+    ) {
+        return resume_loop_frame(generator, state, completion);
+    }
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Try { .. })
+    ) {
+        if let Some(completion) = crate::generator::resume_try_frame(generator, state, completion.clone())? {
+            return Ok(Some(completion));
+        }
+    }
     resume_generator_range(generator, state, frame.resume, completion).map(Some)
 }
 
@@ -77,19 +119,20 @@ fn run_loop_after_yield(
     generator: &GeneratorData,
     frame: &LoopFrameResume,
 ) -> Result<crate::completion::Completion, VmError> {
-    let mut body = frame.body_resume;
+    let body = frame.body;
+    let mut resume = frame.body_resume;
     loop {
-        let step = execute_loop_body_range(generator, body)?;
+        let pc = resume.start.saturating_sub(body.start) as usize;
+        let step = execute_loop_body_range(generator, body, pc)?;
         if step.completion.is_suspension() {
             if let Some(crate::continuation::SuspensionPoint::Yield { src, .. }) = step.suspension {
                 update_loop_body_resume(generator, body, step.pc, src)?;
                 return Ok(step.completion);
             }
-            if let Some((resume, src)) = nested_loop_yield_resume(generator, body) {
-                update_loop_body_resume_at(generator, resume, src)?;
-                return Ok(step.completion);
-            }
-            return Err(VmError::MissingReturn);
+            // Nested structured operations carry their own exact point and
+            // leave this frame's post-operation resume range unchanged.
+            // Never recover a continuation by scanning syntax for an await.
+            return Ok(step.completion);
         }
         match step.completion {
             crate::completion::Completion::Normal
@@ -109,61 +152,14 @@ fn run_loop_after_yield(
         if !test {
             return Ok(crate::completion::Completion::Normal);
         }
-        body = frame.body;
+        resume = frame.body;
     }
-}
-
-fn nested_loop_yield_resume(
-    generator: &GeneratorData,
-    range: crate::machine::CodeRange,
-) -> Option<(crate::machine::CodeRange, u16)> {
-    let store = generator.machine.borrow().store.clone()?;
-    let code = store.code(range)?;
-    find_loop_yield_resume(code, range)
-}
-
-fn find_loop_yield_resume(
-    code: crate::machine::CodeView<'_>,
-    range: crate::machine::CodeRange,
-) -> Option<(crate::machine::CodeRange, u16)> {
-    for (index, op) in code.cold_ops() {
-        if let crate::ops::Op::Yield { src } = op {
-            return Some((crate::machine::CodeRange {
-                code: range.code,
-                start: range.start.saturating_add(index as u32 + 1),
-                end: range.end,
-            }, *src));
-        }
-        let branch = match op {
-            crate::ops::Op::Try { body, .. }
-            | crate::ops::Op::Loop { body, .. }
-            | crate::ops::Op::ForOf { body, .. }
-            | crate::ops::Op::ForIn { body, .. } => Some(body),
-            crate::ops::Op::Conditional { consequent, alternate, .. } => {
-                if let Some(found) = find_loop_yield_in_function(consequent) {
-                    return Some(found);
-                }
-                Some(alternate)
-            }
-            _ => None,
-        };
-        if let Some(branch) = branch.and_then(find_loop_yield_in_function) {
-            return Some(branch);
-        }
-    }
-    None
-}
-
-fn find_loop_yield_in_function(
-    function: &crate::machine::FunctionCode,
-) -> Option<(crate::machine::CodeRange, u16)> {
-    let range = function.range;
-    function.code().and_then(|code| find_loop_yield_resume(code, range))
 }
 
 fn execute_loop_body_range(
     generator: &GeneratorData,
     range: crate::machine::CodeRange,
+    pc: usize,
 ) -> Result<crate::vm::GeneratorStep, VmError> {
     let store = generator
         .machine
@@ -178,7 +174,7 @@ fn execute_loop_body_range(
             code,
             registers,
             environment,
-            0,
+            pc,
             crate::completion::Completion::Normal,
         )
     })
@@ -249,34 +245,12 @@ fn update_loop_body_resume(
         start: range.start.saturating_add(next as u32),
         end: range.end,
     };
-    let machine = generator.machine.borrow_mut();
-    let Some(crate::machine::Frame::Loop {
-        body_resume,
-        yield_dst: destination,
-        ..
-    }) = machine.frames.frames.last_mut()
-    else {
-        return Err(VmError::MissingReturn);
-    };
-    *body_resume = resume;
-    *destination = yield_dst;
-    Ok(())
-}
-
-fn update_loop_body_resume_at(
-    generator: &GeneratorData,
-    resume: crate::machine::CodeRange,
-    yield_dst: u16,
-) -> Result<(), VmError> {
-    let machine = generator.machine.borrow_mut();
-    let Some(crate::machine::Frame::Loop {
-        body_resume,
-        yield_dst: destination,
-        ..
-    }) = machine.frames.frames.last_mut()
-    else {
-        return Err(VmError::MissingReturn);
-    };
+    let mut machine = generator.machine.borrow_mut();
+    let index = machine.frames.frames.iter().rposition(|frame| {
+        matches!(frame, crate::machine::Frame::Loop { body, .. } if *body == range)
+    }).ok_or(VmError::MissingReturn)?;
+    let crate::machine::Frame::Loop { body_resume, yield_dst: destination, .. } =
+        &mut machine.frames.frames[index] else { return Err(VmError::MissingReturn) };
     *body_resume = resume;
     *destination = yield_dst;
     Ok(())
