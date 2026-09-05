@@ -40,6 +40,8 @@ library remains green (**4 passed**) at
 `/tmp/quench-node-full-20260905-negate-v6.log`. The ordinary-source ARM loop
 check remains a real native-path test (**1 passed**) at
 `/tmp/quench-arm-loop-20260905-v7.log`.
+The host boundary also compiles cleanly at this revision
+(`/tmp/quench-node-check-20260905-shared-bool-v2.log`).
 
 Shared scalar plans now retain typed `OwnedEntry` capabilities for f64, i32 and
 u32 entries rather than parallel raw address/owner fields; eviction/rebuild is
