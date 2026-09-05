@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `c85330bbc` (cleanup files remain
+Evidence below is bound to source revision `08a5c1269` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -38,6 +38,8 @@ The prototype-property G path now has a normal baseline-driver witness in
 `/tmp/quench-prototype-native-20260905.log`; shadowing/accessor/dictionary cases
 stop the chain proof and remain on complete canonical property semantics.
 The same guarded slot selection is wired through the optimizing entry path.
+Prototype replacement and stale-entry rejection are covered by
+`/tmp/quench-prototype-mutation-20260905.log`.
 Latest post-guard runtime regression: **701 passed, 0 failed, 1 ignored** at
 `80d00a941` (`/tmp/quench-runtime-full-20260905-prototype-guard.log`).
 The same suite at current source `c85330bbc` is **701 passed, 0 failed, 1
