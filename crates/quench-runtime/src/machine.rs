@@ -4233,7 +4233,7 @@ fn validate_physical_view(
     if raw_region_declares_allocation(contract) {
         return Err("raw array region declares an allocating operation".into());
     }
-    if cfg!(target_arch = "aarch64") && stencil.holes.is_empty() {
+    if cfg!(target_arch = "aarch64") && !stencil_has_data_holes(stencil) {
         crate::stencil_physical::validate_aarch64_instruction_stream(stencil.bytes)?;
     }
     if matches!(
@@ -4260,6 +4260,15 @@ fn validate_physical_view(
         }
     }
     Ok(())
+}
+
+fn stencil_has_data_holes(stencil: &crate::stencil_fact::Stencil) -> bool {
+    stencil.holes.iter().any(|hole| {
+        matches!(
+            hole.kind,
+            crate::stencil_fact::HoleKind::Literal64 | crate::stencil_fact::HoleKind::Ptr64
+        )
+    })
 }
 
 fn abi_pointer_hole_contract(abi: crate::stencil_select::RegionAbi) -> usize {
