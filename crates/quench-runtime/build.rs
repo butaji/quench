@@ -536,8 +536,8 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         // ldr d1, #16; fadd d0, d0, d1; ret; padding; <literal f64>
         aarch64_bytes: &AARCH64_ADD_CONST_BYTES,
         portable_bytes: &[0xC3],
-        holes: &[(13, 8, "Ptr64")],
-        aarch64_holes: &[(16, 8, "Ptr64")],
+        holes: &[(13, 8, "Literal64")],
+        aarch64_holes: &[(16, 8, "Literal64")],
         entry: 0,
         external_entries: &[0],
     },

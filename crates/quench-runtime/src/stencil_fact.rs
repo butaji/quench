@@ -78,6 +78,9 @@ pub enum HoleKind {
     Rel32,
     /// AArch64 `B` immediate: signed word displacement in bits [25:0].
     Branch26,
+    /// Embedded immutable numeric literal, distinct from an external pointer
+    /// argument even though both occupy one machine word.
+    Literal64,
     Ptr64,
 }
 
@@ -98,14 +101,14 @@ impl Stencil {
         self.holes.iter().enumerate().all(|(index, hole)| {
             let width = match hole.kind {
                 HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
-                HoleKind::Ptr64 => 8,
+                HoleKind::Literal64 | HoleKind::Ptr64 => 8,
             };
             let aligned =
                 !matches!(hole.kind, HoleKind::Branch26) || usize::from(hole.offset) % 4 == 0;
             let disjoint = self.holes[..index].iter().all(|prior| {
                 let prior_width = match prior.kind {
                     HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
-                    HoleKind::Ptr64 => 8,
+                    HoleKind::Literal64 | HoleKind::Ptr64 => 8,
                 };
                 let start = usize::from(hole.offset);
                 let prior_start = usize::from(prior.offset);
@@ -234,9 +237,9 @@ impl<'a, const N: usize> PatchValues<'a, N> {
             HoleKind::Branch26 => self
                 .relative_target
                 .map_or(0, |(target, next)| target.wrapping_sub(next) as u64),
+            HoleKind::Literal64 => self.constant_bits.unwrap_or(self.opcode() as u64),
             HoleKind::Ptr64 => self
                 .pointer_bits
-                .or(self.constant_bits)
                 .unwrap_or(self.opcode() as u64),
         }
     }
@@ -508,5 +511,8 @@ mod tests {
         let pointer_b = PatchValues::from_site(&first_site).with_pointer_bits(0x2000);
         assert_ne!(pointer_a.signature(), pointer_b.signature());
         assert_eq!(pointer_a.value_for(HoleKind::Ptr64), 0x1000);
+        let constant = PatchValues::from_site(&first_site).with_constant_bits(0x1234);
+        assert_eq!(constant.value_for(HoleKind::Literal64), 0x1234);
+        assert_eq!(constant.value_for(HoleKind::Ptr64), crate::ir::Opcode::GetProperty as u64);
     }
 }

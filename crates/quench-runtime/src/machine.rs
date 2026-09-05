@@ -1626,7 +1626,8 @@ impl NativeBinaryPlan {
         // Build-generated rows are the sole executable admission fact.  ARM64
         // rows are real but opt-in until their measured call overhead is
         // recovered; the ordinary baseline remains the default fallback.
-        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        crate::stencil_select::select_region(key)
+            .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
         Some(Self {
             arena: None,
             shared_arena: None,
@@ -1660,13 +1661,14 @@ impl NativeBinaryPlan {
             || instruction.opcode != crate::ir::Opcode::Binary
             || !crate::stencil_select::select_region(key)
                 .is_some_and(|record| {
-                    record.executable
-                        && record.abi
-                            == if unsigned {
-                                crate::stencil_select::RegionAbi::ScalarU32
-                            } else {
-                                crate::stencil_select::RegionAbi::ScalarI32
-                            }
+                record.executable
+                    && record.abi
+                        == if unsigned {
+                            crate::stencil_select::RegionAbi::ScalarU32
+                        } else {
+                            crate::stencil_select::RegionAbi::ScalarI32
+                        }
+                    && validate_physical_template(record).is_ok()
                 })
         {
             return None;
@@ -2029,7 +2031,9 @@ impl NativeUnaryPlan {
             && instruction.opcode == crate::ir::Opcode::Unary
             && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::BitwiseNot)
             && crate::stencil_select::select_region(key).is_some_and(|record| {
-                record.executable && record.abi == crate::stencil_select::RegionAbi::ScalarI32
+                record.executable
+                    && record.abi == crate::stencil_select::RegionAbi::ScalarI32
+                    && validate_physical_template(record).is_ok()
             }))
             .then_some(Self {
                 arena: None,
@@ -2115,7 +2119,8 @@ impl NativeAddChainPlan {
             return None;
         }
         let key = crate::stencil_select::add_chain_region_key();
-        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        crate::stencil_select::select_region(key)
+            .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
         Some(Self {
             arena: None,
             shared_arena: None,
@@ -2249,7 +2254,9 @@ impl NativeMovePlan {
         }
         let key = crate::stencil_select::move_region_key();
         crate::stencil_select::select_region(key).filter(|record| {
-            record.executable && record.abi == crate::stencil_select::RegionAbi::TaggedWord
+            record.executable
+                && record.abi == crate::stencil_select::RegionAbi::TaggedWord
+                && validate_physical_template(record).is_ok()
         })?;
         Some(Self {
             arena: None,
@@ -2403,7 +2410,9 @@ impl NativePropertyPlan {
         (opcode == crate::ir::Opcode::GetN).then_some(())?;
         let key = crate::stencil_select::property_region_key();
         crate::stencil_select::select_region(key).filter(|record| {
-            record.executable && record.abi == crate::stencil_select::RegionAbi::TaggedWord
+            record.executable
+                && record.abi == crate::stencil_select::RegionAbi::TaggedWord
+                && validate_physical_template(record).is_ok()
         })?;
         Some(Self {
             arena: None,
@@ -2591,7 +2600,8 @@ impl NativeDispatchPlan {
             return None;
         }
         let key = crate::stencil_select::dispatch_region_key();
-        crate::stencil_select::select_region(key).filter(|record| record.executable)?;
+        crate::stencil_select::select_region(key)
+            .filter(|record| record.executable && validate_physical_template(record).is_ok())?;
         Some(Self {
             arena: None,
             shared_arena: None,
@@ -2775,75 +2785,7 @@ fn validate_region_window(
             "native region contract has no legal entry".into(),
         ));
     }
-    let abi = contract.abi_contract();
-    let physical_call = stencil_contains_call(record.stencil.bytes);
-    if physical_call && !abi.may_call_helper {
-        return Err(NativeDispatchError::Physical(
-            "native stencil contains a call outside its ABI contract".into(),
-        ));
-    }
-    if abi.interruptible_backedge && !stencil_contains_interrupt_checkpoint(record.stencil.bytes) {
-        return Err(NativeDispatchError::Physical(
-            "interruptible region has no verified native checkpoint".into(),
-        ));
-    }
-    if !record.stencil.validate() {
-        return Err(NativeDispatchError::Physical(
-            "native region stencil layout or relocation is invalid".into(),
-        ));
-    }
-    if matches!(
-        contract.abi,
-        crate::stencil_select::RegionAbi::ArrayKernel
-            | crate::stencil_select::RegionAbi::ArrayNumericLoop
-    ) && abi.may_call_helper
-    {
-        return Err(NativeDispatchError::Physical(
-            "raw array region ABI permits an interior helper call".into(),
-        ));
-    }
-    let pointer_holes = record
-        .stencil
-        .holes
-        .iter()
-        .filter(|hole| matches!(hole.kind, crate::stencil_fact::HoleKind::Ptr64))
-        .count();
-    if matches!(
-        contract.abi,
-        crate::stencil_select::RegionAbi::ArrayKernel
-            | crate::stencil_select::RegionAbi::ArrayNumericLoop
-    ) && pointer_holes != 0
-    {
-        return Err(NativeDispatchError::Physical(
-            "raw array region contains an external pointer relocation".into(),
-        ));
-    }
-    if abi.context_arg_words == 0 && pointer_holes != 0 {
-        return Err(NativeDispatchError::Physical(
-            "scalar/native leaf ABI cannot carry a context pointer relocation".into(),
-        ));
-    }
-    if matches!(contract.abi, crate::stencil_select::RegionAbi::Bridge)
-        && abi.context_arg_words == 1
-        && pointer_holes != 1
-    {
-        return Err(NativeDispatchError::Physical(
-            "bridge region must carry exactly one context relocation".into(),
-        ));
-    }
-    // Raw memory entries have no allocating helper boundary.  Keep this
-    // check declaration-derived so a future row cannot accidentally acquire
-    // an allocating operation merely by reusing the array ABI bytes.
-    if matches!(
-        contract.abi,
-        crate::stencil_select::RegionAbi::ArrayKernel
-            | crate::stencil_select::RegionAbi::ArrayNumericLoop
-    ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
-    {
-        return Err(NativeDispatchError::Physical(
-            "raw array region declares an allocating operation".into(),
-        ));
-    }
+    validate_physical_template(record).map_err(NativeDispatchError::Physical)?;
     let end = pc
         .checked_add(contract.operations.len())
         .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
@@ -2887,6 +2829,58 @@ fn validate_region_window(
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+/// Validate the emitted template independently of opcode identity.  Every
+/// physical entry is selected through a typed ABI, so calls, pointer holes,
+/// checkpoints, and allocation effects must agree with that declaration.
+/// Constructors for scalar/tagged leaves use this same proof before retaining
+/// an entry pointer; region execution repeats it at the full-window boundary.
+fn validate_physical_template(
+    record: &crate::stencil_select::RegionRecord,
+) -> Result<(), String> {
+    let contract = record.contract();
+    let abi = contract.abi_contract();
+    if !record.stencil.validate() {
+        return Err("native region stencil layout or relocation is invalid".into());
+    }
+    if stencil_contains_call(record.stencil.bytes) && !abi.may_call_helper {
+        return Err("native stencil contains a call outside its ABI contract".into());
+    }
+    if abi.interruptible_backedge
+        && !stencil_contains_interrupt_checkpoint(record.stencil.bytes)
+    {
+        return Err("interruptible region has no verified native checkpoint".into());
+    }
+    let pointer_holes = record
+        .stencil
+        .holes
+        .iter()
+        .filter(|hole| matches!(hole.kind, crate::stencil_fact::HoleKind::Ptr64))
+        .count();
+    let pointer_contract = match contract.abi {
+        crate::stencil_select::RegionAbi::Bridge => 1,
+        crate::stencil_select::RegionAbi::ArrayKernel
+        | crate::stencil_select::RegionAbi::ArrayNumericLoop
+        | crate::stencil_select::RegionAbi::Scalar
+        | crate::stencil_select::RegionAbi::TaggedWord
+        | crate::stencil_select::RegionAbi::ScalarI32
+        | crate::stencil_select::RegionAbi::ScalarU32 => 0,
+    };
+    if pointer_holes != pointer_contract {
+        return Err(format!(
+            "ABI permits {pointer_contract} external pointer relocations, template has {pointer_holes}"
+        ));
+    }
+    if matches!(
+        contract.abi,
+        crate::stencil_select::RegionAbi::ArrayKernel
+            | crate::stencil_select::RegionAbi::ArrayNumericLoop
+    ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
+    {
+        return Err("raw array region declares an allocating operation".into());
     }
     Ok(())
 }
@@ -4837,6 +4831,68 @@ mod tests {
             let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
             assert!(super::stencil_contains_interrupt_checkpoint(&bytes));
         }
+    }
+
+    #[test]
+    fn physical_templates_match_declared_abi_before_entry() {
+        for record in crate::stencil_select::region_records() {
+            if record.executable {
+                assert!(
+                    super::validate_physical_template(record).is_ok(),
+                    "generated ABI/template mismatch for {:?} abi={:?} ops={:?} holes={:?}",
+                    record.key,
+                    record.abi,
+                    record.operations,
+                    record.stencil.holes
+                );
+            }
+        }
+        static BYTES: [u8; 8] = [0; 8];
+        static HOLES: [crate::stencil_fact::Hole; 1] = [crate::stencil_fact::Hole {
+            offset: 0,
+            kind: crate::stencil_fact::HoleKind::Ptr64,
+        }];
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Add];
+        static ENTRIES: [u16; 1] = [0];
+        let scalar_with_pointer = crate::stencil_select::RegionRecord {
+            key: crate::stencil_fact::RegionKey(0),
+            stencil: crate::stencil_fact::Stencil {
+                bytes: &BYTES,
+                holes: &HOLES,
+            },
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::Scalar,
+            executable: true,
+        };
+        assert!(super::validate_physical_template(&scalar_with_pointer).is_err());
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    #[test]
+    fn physical_helper_call_is_rejected_for_scalar_abi() {
+        #[cfg(target_arch = "aarch64")]
+        static CALL_BYTES: [u8; 4] = 0x9400_0000u32.to_le_bytes();
+        #[cfg(target_arch = "x86_64")]
+        static CALL_BYTES: [u8; 1] = [0xE8];
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Add];
+        static ENTRIES: [u16; 1] = [0];
+        let scalar_call = crate::stencil_select::RegionRecord {
+            key: crate::stencil_fact::RegionKey(1),
+            stencil: crate::stencil_fact::Stencil {
+                bytes: &CALL_BYTES,
+                holes: &[],
+            },
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::Scalar,
+            executable: true,
+        };
+        assert!(super::validate_physical_template(&scalar_call).is_err());
     }
 
     #[test]
