@@ -47,6 +47,10 @@ covered by `/tmp/quench-scalar-owned-focused-20260905-v2.log` and
 `/tmp/quench-scalar-owned-int-20260905.log` (1 passed each), with the current
 full runtime at **733 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-scalar-owned-v3.log`).
+The trace-enabled full runtime remains green at **745 passed, 0 failed, 1
+ignored** (`/tmp/quench-runtime-trace-20260905-scalar-owned-v3.log`), with the
+typed shared-integer witness passing separately
+(`/tmp/quench-scalar-owned-int-trace-20260905.log`).
 
 Logical-not now reuses the corrected truthiness entries for proven numbers and
 tagged words; the ARM64 zero setup is encoded as `fmov d1, xzr` and is covered
