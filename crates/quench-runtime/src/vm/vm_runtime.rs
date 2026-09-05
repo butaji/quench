@@ -567,6 +567,8 @@ impl NativeArrayLoopContext {
         self.index <= self.end
             && self.end <= self.len
             && (self.len == 0 || !self.data.is_null())
+            && (self.len == 0
+                || (self.data as usize) % std::mem::align_of::<f64>() == 0)
             && !self.interrupt.is_null()
     }
 }
@@ -3543,6 +3545,9 @@ mod compact_handler_tests {
         assert!(!invalid.is_valid());
         invalid.end = 1;
         invalid.interrupt = std::ptr::null();
+        assert!(!invalid.is_valid());
+        invalid.interrupt = &interrupt;
+        invalid.data = (invalid.data.cast::<u8>()).wrapping_add(1).cast();
         assert!(!invalid.is_valid());
     }
 
