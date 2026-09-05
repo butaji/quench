@@ -1242,6 +1242,26 @@ fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
             Some(5.0)
         );
         assert!(region.borrow().last_native_execution());
+        assert!(
+            plan.shared_region_arena.borrow_mut().evict_idle(0) >= 1,
+            "composed owner should expose an evictable published slab"
+        );
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("composed update after owner eviction");
+        assert_eq!(
+            registers
+                .read_array(usize::from(store.a))
+                .and_then(|array| array.dense_number_at(0)),
+            Some(7.0)
+        );
+        assert!(region.borrow().last_native_execution());
         executed = true;
     };
     inspect(program.code());
