@@ -711,6 +711,9 @@ pub(crate) fn execute_composed_array_numeric_loop(
         move_index, load_array_body, require_object, load_index_get, get, add_value, set,
         move_result, load_index_update, add_index, store_index, jump] = instructions.as_slice()
     else { return Ok(None) };
+    if !array_loop_roles_are_disjoint(&instructions) {
+        return Ok(None);
+    }
     if compare.a != branch.a
         || compare.b != load_index.a
         || compare.c != load_end.a
@@ -898,6 +901,28 @@ pub(crate) fn execute_baseline_code_from(
         Some(environment.as_ref()),
     )?;
     Ok((step.completion, step.next))
+}
+
+#[cfg(target_arch = "aarch64")]
+fn array_loop_roles_are_disjoint(instructions: &[crate::ir::Instruction]) -> bool {
+    // These are independent live values in the canonical loop lowering. The
+    // remaining equalities (for example set.a == move_index.a) are explicit
+    // forwarding edges checked by the caller and are intentionally omitted.
+    let roles = [
+        instructions[0].a,
+        instructions[1].a,
+        instructions[4].a,
+        instructions[6].a,
+        instructions[8].a,
+        instructions[10].a,
+        instructions[11].a,
+        instructions[12].a,
+        instructions[15].a,
+        instructions[16].a,
+    ];
+    roles.iter().enumerate().all(|(index, role)| {
+        roles[index + 1..].iter().all(|other| other != role)
+    })
 }
 
 fn run_ops_completion_step(
@@ -3385,6 +3410,17 @@ mod compact_handler_tests {
         assert_eq!(offset_of!(super::NativeArrayLoopContext, addend), 32);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, result), 40);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, interrupt), 48);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn numeric_loop_alias_roles_fail_closed() {
+        let mut aliased = vec![crate::ir::Instruction::load_local_checked(0, 0); 19];
+        assert!(!super::array_loop_roles_are_disjoint(&aliased));
+        for (index, instruction) in aliased.iter_mut().enumerate() {
+            instruction.a = index as u16;
+        }
+        assert!(super::array_loop_roles_are_disjoint(&aliased));
     }
 
     #[test]
