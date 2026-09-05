@@ -7,7 +7,8 @@
 use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::{select_region, RenderedRegionCache};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -76,6 +77,7 @@ pub struct StencilArena {
     cursor: usize,
     executable: bool,
     id: u64,
+    published_abis: RefCell<HashMap<usize, crate::stencil_select::RegionAbi>>,
 }
 
 /// Bounded collection of immutable-after-publication executable slabs.  Region
@@ -473,6 +475,7 @@ impl StencilArena {
             cursor: 0,
             executable: false,
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
+            published_abis: RefCell::new(HashMap::new()),
         })
     }
 
@@ -561,6 +564,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64, f64) -> f64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::Scalar)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -574,6 +578,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64) -> f64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::Scalar)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -587,6 +592,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(u64) -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarWordBool)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -600,6 +606,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(u64, u64) -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarWordPairBool)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -613,6 +620,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64) -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarBool)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -626,6 +634,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn() -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ConstantWord)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -639,6 +648,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64, f64) -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarBool)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -652,6 +662,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(i32, i32) -> i32, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarI32)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -665,6 +676,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(i32) -> i32, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarI32)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -686,6 +698,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(u32, u32) -> u32, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::ScalarU32)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -699,6 +712,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(f64, f64, f64) -> f64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::Scalar)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -712,6 +726,7 @@ impl StencilArena {
         &self,
         address: usize,
     ) -> Result<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, ArenaError> {
+        self.require_abi(address, crate::stencil_select::RegionAbi::TaggedWord)?;
         let base = self.ptr as usize;
         let end = base.saturating_add(self.cursor);
         if !self.executable || address < base || address >= end {
@@ -868,6 +883,7 @@ impl StencilArena {
             .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
+            self.record_abi(address, key);
             return Ok(address);
         }
         if !stencil.validate() {
@@ -875,7 +891,25 @@ impl StencilArena {
         }
         let offset = self.copy_and_patch(stencil, values)?;
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
+        self.record_abi(address, key);
         Ok(cache.insert_owned(key, signature, address, self.id))
+    }
+
+    fn record_abi(&self, address: usize, key: crate::stencil_fact::RegionKey) {
+        if let Some(abi) = select_region(key).map(|record| record.abi) {
+            self.published_abis.borrow_mut().insert(address, abi);
+        }
+    }
+
+    fn require_abi(
+        &self,
+        address: usize,
+        expected: crate::stencil_select::RegionAbi,
+    ) -> Result<(), ArenaError> {
+        let actual = self.published_abis.borrow().get(&address).copied();
+        (actual == Some(expected) && self.executable && self.owns_address(address))
+            .then_some(())
+            .ok_or(ArenaError::ProtectionFailed)
     }
 
     /// Execute an installed region through the caller-supplied semantic entry
@@ -1819,6 +1853,21 @@ mod tests {
         arena.make_executable().unwrap();
         let entry = arena.constant_word_entry(address).unwrap();
         assert_eq!(entry(), crate::tagged_value::TaggedValue::number(42.5).bits());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn typed_entry_rejects_wrong_published_abi() {
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let record = crate::stencil_select::select_region(key).expect("numeric declaration");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena.render_or_get(&mut cache, key, &record.stencil, &values).unwrap();
+        arena.make_executable().unwrap();
+        assert!(arena.bool_entry(address).is_err(), "scalar bytes cannot be called as bool ABI");
+        assert!(arena.f64_entry(address).is_ok());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
