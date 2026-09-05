@@ -133,6 +133,18 @@ impl Op {
             _ => {}
         }
     }
+
+    /// Visit fragments that execute in the current frame. Function literals
+    /// own independent call frames and do not widen this frame's window.
+    pub(crate) fn visit_frame_fragments(
+        &self,
+        visitor: &mut impl FnMut(&crate::machine::FunctionCode),
+    ) {
+        match self {
+            Self::MakeFunction { .. } | Self::MakeFunctionWithKind { .. } => {}
+            _ => self.visit_bodies(visitor),
+        }
+    }
 }
 
 fn rehome_loop(
