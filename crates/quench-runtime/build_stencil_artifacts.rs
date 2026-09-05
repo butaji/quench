@@ -40,6 +40,7 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
+    assert_no_relocations(&file, "assembly verifier");
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -48,7 +49,6 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     });
     let section = sections.next().expect("Rust assembly text section");
     assert!(sections.next().is_none(), "assembly verifier found multiple text sections");
-    assert!(section.relocations().next().is_none(), "assembly verifier found an undeclared relocation");
     let bytes = section.uncompressed_data().expect("read Rust assembly text");
     assert!(!bytes.is_empty() && bytes.len() % 4 == 0, "assembly verifier found invalid instruction bounds");
     for word in expected {
@@ -63,6 +63,7 @@ pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
+    assert_no_relocations(&file, "assembly verifier");
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -162,6 +163,7 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
+    assert_no_relocations(&file, "Rust stencil");
     for symbol in file.symbols() {
         if matches!(symbol.section(), SymbolSection::Undefined) {
             panic!("Rust stencil has undeclared external symbol {:?}", symbol.name());
@@ -179,7 +181,6 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let bytes = section.uncompressed_data().expect("read Rust stencil text");
     assert_eq!(section.size() as usize, bytes.len(), "Rust stencil text size is ambiguous");
     assert_eq!(section.align() % 4, 0, "Rust stencil text alignment is invalid");
-    assert!(section.relocations().next().is_none(), "leaf Rust stencil has an undeclared relocation");
     let symbols = file.symbols().filter(|symbol| symbol.section_index() == Some(section_index)).filter(|symbol| symbol.name().ok().is_some_and(|value| value.trim_start_matches('_') == name)).collect::<Vec<_>>();
     assert_eq!(symbols.len(), 1, "Rust stencil entry symbol must be unique");
     let symbol = &symbols[0];
@@ -222,6 +223,19 @@ fn reject_unwind_or_tls_sections<'data>(file: &object::File<'data>) {
             "Rust leaf carries an unsupported unwind section {name}");
         assert!(!matches!(section.kind(), SectionKind::Tls | SectionKind::UninitializedTls | SectionKind::TlsVariables),
             "Rust leaf carries unsupported TLS data");
+    }
+}
+
+fn assert_no_relocations<'data>(file: &object::File<'data>, context: &str) {
+    for section in file.sections() {
+        if let Some((offset, relocation)) = section.relocations().next() {
+            panic!(
+                "{context} contains unsupported relocation at {offset:#x}: kind={:?} encoding={:?} size={}",
+                relocation.kind(),
+                relocation.encoding(),
+                relocation.size()
+            );
+        }
     }
 }
 
