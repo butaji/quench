@@ -1323,7 +1323,7 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
     ]));
     let mut registers = crate::register_file::RegisterFile::from_values(vec![
         crate::value::Value::Undefined,
-        crate::value::Value::Object(receiver),
+        crate::value::Value::Object(std::rc::Rc::clone(&receiver)),
     ]);
     let context = crate::vm::current_context_or_default();
     let (completion, _) = crate::vm::execute_baseline_code_from(
@@ -1342,6 +1342,36 @@ fn ordinary_residual_prototype_get_executes_guarded_property_stencil() {
     assert!(plan
         .native_property_at(0)
         .is_some_and(|native| native.borrow().native_entry_count > 0));
+    let native_count = plan
+        .native_property_at(0)
+        .map(|native| native.borrow().native_entry_count)
+        .unwrap_or(0);
+    let replacement = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
+    assert!(crate::execute::set_prototype_of(
+        &crate::value::Value::Object(receiver),
+        &crate::value::Value::Object(replacement),
+    )
+    .is_ok());
+    registers.write(0, crate::value::Value::Undefined);
+    let (completion, _) = crate::vm::execute_baseline_code_from(
+        code,
+        &plan,
+        0,
+        &mut registers,
+        &context,
+        crate::environment::Environment::new(),
+    )
+    .expect("prototype mutation fallback");
+    assert_eq!(
+        completion,
+        crate::completion::Completion::Return(crate::value::Value::Undefined)
+    );
+    assert_eq!(
+        plan.native_property_at(0)
+            .map(|native| native.borrow().native_entry_count),
+        Some(native_count),
+        "prototype replacement must not reuse stale native slot"
+    );
 }
 
 #[test]
