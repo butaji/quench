@@ -1516,6 +1516,8 @@ pub(crate) struct NativeBinaryPlan {
     int_entry: Option<extern "C" fn(i32, i32) -> i32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     uint_entry: Option<extern "C" fn(u32, u32) -> u32>,
+    #[cfg(test)]
+    native_entry_count: u64,
 }
 
 #[inline]
@@ -1641,6 +1643,8 @@ impl NativeBinaryPlan {
             int_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             uint_entry: None,
+            #[cfg(test)]
+            native_entry_count: 0,
         })
     }
 
@@ -1683,7 +1687,17 @@ impl NativeBinaryPlan {
             int_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             uint_entry: None,
+            #[cfg(test)]
+            native_entry_count: 0,
         })
+    }
+
+    #[inline]
+    fn note_native_entry(&mut self) {
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
     }
 
     #[inline]
@@ -1696,14 +1710,18 @@ impl NativeBinaryPlan {
             let left = number_to_int32(lhs);
             let right = number_to_int32(rhs);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some(entry) = self.int_entry {
-                if !self.integer_unsigned {
-                    return Ok(f64::from(entry(left, right)));
+            if self.shared_arena.is_none() {
+                if let Some(entry) = self.int_entry {
+                    if !self.integer_unsigned {
+                        self.note_native_entry();
+                        return Ok(f64::from(entry(left, right)));
+                    }
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if self.integer_unsigned {
+            if self.shared_arena.is_none() && self.integer_unsigned {
                 if let Some(entry) = self.uint_entry {
+                    self.note_native_entry();
                     return Ok(f64::from(entry(left as u32, right as u32)));
                 }
             }
@@ -1735,7 +1753,7 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
-                    self.uint_entry = Some(entry);
+                    self.note_native_entry();
                     return Ok(f64::from(entry(left as u32, right as u32)));
                 }
                 let rendered = (|| -> Result<
@@ -1757,7 +1775,7 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                self.int_entry = Some(entry);
+                self.note_native_entry();
                 return Ok(f64::from(entry(left, right)));
             }
             if self.arena.is_none() {
@@ -1807,8 +1825,9 @@ impl NativeBinaryPlan {
             return result;
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if !self.returns_boolean {
+        if self.shared_arena.is_none() && !self.returns_boolean {
             if let Some(entry) = self.entry {
+                self.note_native_entry();
                 return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
             }
         }
@@ -1841,7 +1860,10 @@ impl NativeBinaryPlan {
                     Ok(entry(lhs, rhs) != 0)
                 })();
                 return match result {
-                    Ok(value) => Ok(if value { 1.0 } else { 0.0 }),
+                    Ok(value) => {
+                        self.note_native_entry();
+                        Ok(if value { 1.0 } else { 0.0 })
+                    }
                     Err(error) => {
                         self.cache.clear();
                         self.lifecycle.reset();
@@ -1865,7 +1887,7 @@ impl NativeBinaryPlan {
                     return Err(error);
                 }
             };
-            self.entry = Some(entry);
+            self.note_native_entry();
             return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
         }
         if self.arena.is_none() {
@@ -2005,8 +2027,10 @@ impl NativeAddChainPlan {
         rhs: f64,
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        if let Some(entry) = self.entry {
-            return Ok(unsafe { invoke_f64x3_preserve_none(entry, lhs, rhs, third) });
+        if self.shared_arena.is_none() {
+            if let Some(entry) = self.entry {
+                return Ok(unsafe { invoke_f64x3_preserve_none(entry, lhs, rhs, third) });
+            }
         }
         let key = crate::stencil_select::add_chain_region_key();
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
@@ -2035,7 +2059,6 @@ impl NativeAddChainPlan {
                     return Err(error);
                 }
             };
-            self.entry = Some(entry);
             return Ok(unsafe { invoke_f64x3_preserve_none(entry, lhs, rhs, third) });
         }
         if self.arena.is_none() {
@@ -2137,8 +2160,10 @@ impl NativeMovePlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let Some(entry) = self.entry {
-            return Ok(entry(source));
+        if self.shared_arena.is_none() {
+            if let Some(entry) = self.entry {
+                return Ok(entry(source));
+            }
         }
         let key = crate::stencil_select::move_region_key();
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
@@ -2167,7 +2192,6 @@ impl NativeMovePlan {
                     return Err(error);
                 }
             };
-            self.entry = Some(entry);
             return Ok(entry(source));
         }
         if self.arena.is_none() {
@@ -2286,8 +2310,10 @@ impl NativePropertyPlan {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let Some(entry) = self.entry {
-            return Ok(entry(slot.cast()));
+        if self.shared_arena.is_none() {
+            if let Some(entry) = self.entry {
+                return Ok(entry(slot.cast()));
+            }
         }
         let key = crate::stencil_select::property_region_key();
         let values = crate::stencil_fact::PatchValues::from_site(site);
@@ -2317,7 +2343,6 @@ impl NativePropertyPlan {
                     return Err(error);
                 }
             };
-            self.entry = Some(entry);
             return Ok(entry(slot.cast()));
         }
         if self.arena.is_none() {
