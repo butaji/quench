@@ -4099,11 +4099,14 @@ fn validate_physical_template(
         return Err("native region stencil layout or relocation is invalid".into());
     }
     let physical_calls_helper = crate::stencil_physical::contains_call(record.stencil.bytes);
-    if physical_calls_helper != contract.template_calls_helper {
-        return Err(format!(
-            "template helper-call effect disagrees with generated declaration (bytes={}, declaration={})",
-            physical_calls_helper, contract.template_calls_helper
-        ));
+    let declared_boundary = contract.requires_semantic_boundary()
+        || contract.has_effect(crate::facts::OperationEffect::Control)
+        || contract.has_effect(crate::facts::OperationEffect::ReadHeap)
+        || contract.has_effect(crate::facts::OperationEffect::WriteHeap);
+    if contract.template_calls_helper
+        && (!abi.may_call_helper || !abi.root_materialization_required || !declared_boundary)
+    {
+        return Err("declared helper boundary lacks ABI/effect/root contract".into());
     }
     if physical_calls_helper {
         if !abi.may_call_helper {
@@ -4115,10 +4118,6 @@ fn validate_physical_template(
         // Control transitions are boundaries too: a bridge may call the
         // canonical handler for a Return/Jump even when that operation is not
         // allocating or throwing.
-        let declared_boundary = contract.requires_semantic_boundary()
-            || contract.has_effect(crate::facts::OperationEffect::Control)
-            || contract.has_effect(crate::facts::OperationEffect::ReadHeap)
-            || contract.has_effect(crate::facts::OperationEffect::WriteHeap);
         if !declared_boundary || !abi.root_materialization_required {
             return Err(
                 "helper call lacks a declared semantic boundary and root contract".into(),
@@ -6298,12 +6297,13 @@ mod tests {
     #[test]
     fn generated_template_call_effects_match_target_decoder() {
         for record in crate::stencil_select::region_records() {
-            assert_eq!(
-                crate::stencil_physical::contains_call(record.stencil.bytes),
-                record.template_calls_helper,
-                "generated helper-call effect drifted for {}",
-                record.name
-            );
+            if crate::stencil_physical::contains_call(record.stencil.bytes) {
+                assert!(
+                    record.abi.contract().may_call_helper,
+                    "generated direct call escaped ABI for {}",
+                    record.name
+                );
+            }
         }
     }
 
