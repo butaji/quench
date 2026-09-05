@@ -5032,6 +5032,69 @@ mod compact_handler_tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn ordinary_source_nullish_coalescing_admits_native_predicate() {
+        let executable = crate::reduce::reduce_source(
+            "function f(x) { return x ?? 7; } f(null);",
+        )
+        .expect("source lowers");
+        let code = executable.code();
+        fn find_and_check(
+            view: crate::machine::CodeView<'_>,
+            policy: crate::stencil_policy::ExecutionPolicy,
+        ) -> bool {
+            for pc in 0..view.len() {
+                let Some(instruction) = view.instruction(pc) else {
+                    continue;
+                };
+                if instruction.opcode == crate::ir::Opcode::Unary
+                    && instruction.flags
+                        == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+                {
+                    let plan = crate::machine::BaselinePlan::compile_for_test(view, policy);
+                    assert!(plan.native_nullish_at(pc).is_some());
+                    return true;
+                }
+                let Some(op) = view.cold_at(pc) else {
+                    continue;
+                };
+                let mut found = false;
+                op.visit_bodies(&mut |body| {
+                    if !found {
+                        if let Some(nested) = body.code() {
+                            found = find_and_check(nested, policy);
+                        }
+                    }
+                });
+                if found {
+                    return true;
+                }
+            }
+            false
+        }
+        let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+        assert!(find_and_check(code, policy), "lowered nullish predicate");
+        let plan = crate::machine::BaselinePlan::compile_for_test(code, policy);
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(16);
+        let result = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("ordinary nullish execution");
+        assert!(
+            matches!(result.0, crate::completion::Completion::Return(_)),
+            "unexpected completion: {:?}",
+            result.0
+        );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn baseline_fused_add_chain_matches_two_canonical_adds() {
         let function = crate::machine::FunctionCode::from_ops(vec![
             Op::Binary { dst: 0, operator: crate::ops::BinaryOp::Add, lhs: 1, rhs: 2 },
