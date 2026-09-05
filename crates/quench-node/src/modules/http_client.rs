@@ -297,7 +297,7 @@ pub fn agent_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result
         vec![
             (
                 "destroy".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
+                crate::host::capability(crate::registry::SPEC_HTTP_AGENT_DESTROY),
             ),
             (
                 "getName".to_string(),
@@ -306,6 +306,45 @@ pub fn agent_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result
         ],
     )?;
     Ok(object)
+}
+
+pub fn agent_destroy(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(agent) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let sockets = ["sockets", "freeSockets"]
+        .into_iter()
+        .flat_map(|pool_name| {
+            let pools = execute::get_property(agent, pool_name);
+            execute::own_enumerable_keys(&pools)
+                .into_iter()
+                .flat_map(move |name| {
+                    let list = execute::get_property(&pools, &name);
+                    execute::own_enumerable_keys(&list)
+                        .into_iter()
+                        .filter_map(move |key| {
+                            let socket = execute::get_property(&list, &key);
+                            matches!(socket, Value::Object(_) | Value::ObjectAlias(_))
+                                .then_some(socket)
+                        })
+                })
+        })
+        .collect::<Vec<_>>();
+    for socket in sockets {
+        let _ = net::socket_destroy(state, Some(&socket), &[]);
+    }
+    for pool_name in ["sockets", "freeSockets", "requests"] {
+        let pools = execute::get_property(agent, pool_name);
+        for key in execute::own_enumerable_keys(&pools) {
+            let (updated, _) = execute::delete_property(pools.clone(), &key);
+            execute::replace_value(&pools, &updated);
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 fn validate_agent_limit(name: &str, value: Value) -> Result<f64, VmError> {
@@ -1385,6 +1424,13 @@ pub fn req_write(
                 state.borrow_mut().http.clients.insert(socket_id, id);
             }
         }
+    } else if !dispatched {
+        // A write on a keep-alive socket must dispatch the request headers and
+        // buffered body immediately; waiting for end deadlocks responses that
+        // are intentionally sent before the caller closes the request.
+        let request = receiver.cloned().unwrap_or(Value::Undefined);
+        req_end(state, Some(&request), &[])?;
+        set_request_property(Some(&request), "finished", Value::Boolean(false));
     }
     invoke_write_callback(receiver, args)?;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -2719,11 +2765,7 @@ pub fn req_error(
     let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
-    execute::set_property_in_place(
-        socket,
-        "Symbol(async_id_symbol)\0quench",
-        Value::Number(-1.0),
-    );
+    set_socket_async_id(socket, -1.0);
     crate::modules::http::clear_idle_socket(state, socket);
     let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
@@ -3271,11 +3313,7 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
         };
         let socket = execute::get_property(&list, &key);
         if let Some(id) = net::net_id(&socket) {
-            execute::set_property_in_place(
-                &socket,
-                "Symbol(async_id_symbol)\0quench",
-                Value::Number(id as f64),
-            );
+            set_socket_async_id(&socket, id as f64 + 1_000_000.0);
         }
         if lifo {
             let pop = execute::get_property(&list, "pop");
@@ -3307,7 +3345,12 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
     }
 }
 
-fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
+fn move_agent_socket_to_free(
+    state: &Rc<RefCell<HostState>>,
+    agent: &Value,
+    name: &str,
+    socket: &Value,
+) {
     let sockets_pools = execute::get_property(agent, "sockets");
     let sockets = execute::get_property(&sockets_pools, name);
     let remaining: Vec<Value> = execute::own_enumerable_keys(&sockets)
@@ -3322,11 +3365,7 @@ fn move_agent_socket_to_free(agent: &Value, name: &str, socket: &Value) {
     if !found {
         return;
     }
-    execute::set_property_in_place(
-        socket,
-        "Symbol(async_id_symbol)\0quench",
-        Value::Number(-1.0),
-    );
+    set_socket_async_id(socket, -1.0);
     execute::set_property_in_place(&sockets_pools, name, host_api::array(remaining));
     let free_pools = execute::get_property(agent, "freeSockets");
     let free = match execute::get_property(&free_pools, name) {
@@ -4045,7 +4084,7 @@ fn pool_response_socket(
             return Ok(());
         }
         let name = agent_name(&target, &agent);
-        move_agent_socket_to_free(&agent, &name, socket);
+        move_agent_socket_to_free(state, &agent, &name, socket);
         crate::modules::http::mark_idle_socket(state, socket);
         if matches!(execute::get_property(&agent, "timeout"), Value::Number(timeout) if timeout.is_finite() && timeout > 0.0)
         {
@@ -4057,6 +4096,13 @@ fn pool_response_socket(
             let destroy = crate::host::capability(crate::registry::SPEC_NET_SOCKET_DESTROY);
             subscribe_event(state, socket, "timeout", destroy)?;
         }
+    }
+    if !keep_alive && alive {
+        // A response may be protocol-reusable even when this Agent does not
+        // retain idle sockets. Close the transport after the response has
+        // become complete so an unref'd server cannot leave the client loop
+        // alive forever.
+        net::socket_end(state, Some(socket), &[])?;
     }
     // Agent callbacks may destroy the socket while the response event is
     // still unwinding.  In that case Node does not deliver a late `free`
@@ -4088,11 +4134,7 @@ pub fn res_end_handler(
     let Some(socket) = receiver else {
         return Ok(Value::Undefined);
     };
-    execute::set_property_in_place(
-        socket,
-        "Symbol(async_id_symbol)\0quench",
-        Value::Number(-1.0),
-    );
+    retire_socket_async_id(state, socket);
     let Some(client_id) = client_id_for_socket(state, socket) else {
         return Ok(Value::Undefined);
     };
@@ -4153,8 +4195,7 @@ pub fn res_end_handler(
             return Ok(Value::Undefined);
         }
         if !no_body_status
-            && (expected.is_some_and(|expected| expected != received)
-                || (chunked && !chunked_done))
+            && (expected.is_some_and(|expected| expected != received) || (chunked && !chunked_done))
         {
             return abort_incomplete_response(state, client_id, &res);
         }
@@ -4566,6 +4607,29 @@ fn set_response_property(response: &Value, key: &str, value: Value) {
     execute::set_property_in_place(response, key, value.clone());
     let updated = execute::set_property(response.clone(), key, value);
     execute::replace_value(response, &updated);
+}
+
+fn set_socket_async_id(socket: &Value, id: f64) {
+    let updated = execute::set_property(
+        socket.clone(),
+        "Symbol(async_id_symbol)\0quench",
+        Value::Number(id),
+    );
+    execute::replace_value(socket, &updated);
+}
+
+fn retire_socket_async_id(state: &Rc<RefCell<HostState>>, socket: &Value) {
+    if let Value::Number(id) = execute::get_property(socket, "Symbol(async_id_symbol)\0quench") {
+        if id > 0.0 {
+            let _ = crate::modules::async_hooks::queue_destroy_async_id(
+                state,
+                None,
+                &[Value::Number(id)],
+            );
+            crate::modules::async_hooks::drain_queued_destroy_ids(state);
+        }
+    }
+    set_socket_async_id(socket, -1.0);
 }
 
 fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {

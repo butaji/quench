@@ -844,6 +844,11 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             .cloned()
             .unwrap_or(Value::String("AsyncResource".into()))
     };
+    let trace_type = match &resource_type {
+        Value::String(value) => value.as_str(),
+        _ => "AsyncResource",
+    };
+    crate::modules::process::trace_resource_init(state, trace_type, id, trigger, 1);
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
     for (callback, receiver) in callbacks {
@@ -892,6 +897,7 @@ pub fn attach_resource(
     execute::set_property_in_place(&resource, TRIGGER_ID, Value::Number(trigger as f64));
     let id_value = Value::Number(id as f64);
     let trigger_value = Value::Number(trigger as f64);
+    crate::modules::process::trace_resource_init(state, resource_type, id, trigger, 1);
     let resource_type = Value::String(resource_type.into());
     for (callback, receiver) in active_callbacks(state, HookEvent::Init) {
         call_hook(
@@ -941,6 +947,7 @@ pub fn worker_resource(
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let resource = execute::set_property(resource, ASYNC_ID, Value::Number(id as f64));
     let resource = execute::set_property(resource, TRIGGER_ID, Value::Number(trigger as f64));
+    crate::modules::process::trace_resource_init(state, "WORKER", id, trigger, 1);
     for (callback, receiver) in active_callbacks(state, HookEvent::Init) {
         call_hook(
             state,
