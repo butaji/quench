@@ -550,6 +550,20 @@ pub fn module_api(state: &Rc<RefCell<HostState>>) -> Value {
             "flushCompileCache".into(),
             crate::host::capability(crate::registry::SPEC_MODULE_FLUSH_COMPILE_CACHE),
         ),
+        (
+            "constants".into(),
+            host_api::object(vec![
+                (
+                    "compileCacheStatus".into(),
+                    host_api::object(vec![
+                        ("FAILED".into(), Value::Number(0.0)),
+                        ("ENABLED".into(), Value::Number(1.0)),
+                        ("ALREADY_ENABLED".into(), Value::Number(2.0)),
+                        ("DISABLED".into(), Value::Number(3.0)),
+                    ]),
+                ),
+            ]),
+        ),
     ]);
     // Node exposes the constructor namespace as `module.Module`; preserve
     // identity so `Module.globalPaths` tracks the public array.
@@ -977,7 +991,10 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             "__nodeCommon",
         );
         if matches!(common, Value::Object(_) | Value::ObjectAlias(_)) {
-            if matches!(execute::get_property(&common, "skipIfPerfettoEnabled"), Value::Undefined) {
+            if matches!(
+                execute::get_property(&common, "skipIfPerfettoEnabled"),
+                Value::Undefined
+            ) {
                 let _ = execute::set_property_in_place(
                     &common,
                     "skipIfPerfettoEnabled",
