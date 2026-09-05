@@ -184,6 +184,7 @@ struct Counters {
     kernels: HashMap<&'static str, (u64, u64)>,
     quickening: HashMap<&'static str, (u64, u64)>,
     stencils: HashMap<StencilKey, (u64, u64)>,
+    stencil_rejections: HashMap<(StencilKey, &'static str), u64>,
     stencil_iterations: HashMap<StencilKey, u64>,
     stencil_storage: HashMap<StencilKey, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
@@ -229,6 +230,7 @@ impl Default for Counters {
             kernels: HashMap::new(),
             quickening: HashMap::new(),
             stencils: HashMap::new(),
+            stencil_rejections: HashMap::new(),
             stencil_iterations: HashMap::new(),
             stencil_storage: HashMap::new(),
             compact_sites: HashMap::new(),
@@ -1667,6 +1669,30 @@ pub(crate) fn stencil_iterations(
     let _ = (code, pc, kind, iterations);
 }
 
+/// Attribute an entry rejection without conflating it with an executed miss.
+/// Reasons are static categories, so the optional map remains bounded by the
+/// generated region identities and does not retain source or fixture data.
+#[inline(always)]
+pub(crate) fn stencil_rejection(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    kind: &'static str,
+    reason: &'static str,
+) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        let (_, code_id) = code.trace_identity();
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .stencil_rejections
+                .entry((StencilKey { code: code_id, pc: pc as u32, kind }, reason))
+                .or_default() += 1;
+        });
+    }
+    let _ = (code, pc, kind, reason);
+}
+
 /// Record the bounded physical storage observed by a selected region.  This
 /// is optional attribution only; uninstrumented execution does not touch the
 /// map.  The pair is `(used_bytes, capacity_bytes)` for the owning shared
@@ -1710,6 +1736,22 @@ fn stencil_profile(counters: &Counters) -> serde_json::Map<String, serde_json::V
                     "misses": misses,
                     "iterations": counters.stencil_iterations.get(key).copied().unwrap_or_default(),
                 }),
+            )
+        })
+        .collect()
+}
+
+#[cfg(feature = "execution-trace")]
+fn stencil_rejection_profile(
+    counters: &Counters,
+) -> serde_json::Map<String, serde_json::Value> {
+    counters
+        .stencil_rejections
+        .iter()
+        .map(|(&(key, reason), &count)| {
+            (
+                format!("code={}:pc={}:{}:{}", key.code, key.pc, key.kind, reason),
+                serde_json::json!(count),
             )
         })
         .collect()
@@ -1901,6 +1943,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "call_targets": call_targets,
                 "quickening": quickening,
                 "stencil": stencil_profile(&counters),
+                "stencil_rejections": stencil_rejection_profile(&counters),
                 "stencil_storage": counters
                     .stencil_storage
                     .iter()
@@ -2001,6 +2044,21 @@ mod lane_profile_tests {
             .copied()
             .expect("storage fact");
         assert_eq!(value, (76, 4096));
+    }
+
+    #[test]
+    fn stencil_rejection_profile_keeps_reason_separate_from_misses() {
+        let mut counters = Counters::default();
+        let key = StencilKey {
+            code: 5,
+            pc: 8,
+            kind: "composed_region",
+        };
+        counters
+            .stencil_rejections
+            .insert((key, "window_validation"), 2);
+        let profile = stencil_rejection_profile(&counters);
+        assert_eq!(profile["code=5:pc=8:composed_region:window_validation"], 2);
     }
 
     #[test]
