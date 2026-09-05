@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `46e720740` (cleanup files remain
+Evidence below is bound to source revision `021317337` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -53,6 +53,11 @@ The optimizing driver now attributes physical-entry misses and post-entry
 failures with distinct rejection reasons; the normal-source loop witness and
 typed-status bridge test pass at `/tmp/quench-region-rejection-witness-20260905.log`
 and `/tmp/quench-region-rejection-trace-20260905b.log` (1 passed each).
+
+Distinct rejection facts are capped at 256 keys and retain counts for existing
+keys; the cap path passes `/tmp/quench-stencil-rejection-cap-20260905-v2.log`
+(1 passed), with a normal runtime compile check at
+`/tmp/quench-runtime-check-20260905-stencil-rejection-cap.log`.
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
