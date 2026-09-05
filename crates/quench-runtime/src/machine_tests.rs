@@ -572,6 +572,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         tagged_entry: None,
         uint_entry: None,
         shared_entry: None,
+        shared_bool_entry: None,
         shared_int_entry: None,
         shared_uint_entry: None,
         tagged_shared_entry: None,
@@ -654,6 +655,29 @@ fn native_strict_numeric_equality_uses_typed_scalar_entry() {
         assert_eq!(ordered.execute(lhs, rhs), Ok(expected));
         assert_eq!(ordered.execute(f64::NAN, rhs), Ok(0.0), "operator {operator:?}");
     }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_shared_boolean_entry_rebuilds_through_typed_owner() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Binary,
+        flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::LessThan),
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
+        .expect("shared boolean plan");
+    assert_eq!(plan.execute(1.0, 2.0), Ok(1.0));
+    assert!(plan.shared_bool_entry.is_some());
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(2.0, 1.0), Ok(0.0));
+    assert!(plan.shared_bool_entry.is_some());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
