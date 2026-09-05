@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `021317337` (cleanup files remain
+Evidence below is bound to source revision `938645d7d` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -58,6 +58,11 @@ Distinct rejection facts are capped at 256 keys and retain counts for existing
 keys; the cap path passes `/tmp/quench-stencil-rejection-cap-20260905-v2.log`
 (1 passed), with a normal runtime compile check at
 `/tmp/quench-runtime-check-20260905-stencil-rejection-cap.log`.
+
+Scalar and fallthrough stencil execution now removes the cache entry after a
+physical execution failure before taking fallback; the 32 arena ownership,
+cache, publication, and failure tests pass at
+`/tmp/quench-stencil-arena-tests-20260905.log`.
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
