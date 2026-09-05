@@ -919,12 +919,20 @@ fn native_unary_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
         .expect("shared unary plan");
     assert_eq!(plan.execute(1.5), Ok(-2.0));
     let used = shared.borrow().used();
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(
+        plan.installed,
+        super::InstalledUnaryEntry::NumberShared(_)
+            | super::InstalledUnaryEntry::IntegerShared(_)
+    ));
     assert_eq!(plan.execute(1.5), Ok(-2.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(1.5), Ok(-2.0));
-    assert!(plan.shared_entry.is_some(), "eviction must rebuild the entry");
+    assert!(matches!(
+        plan.installed,
+        super::InstalledUnaryEntry::NumberShared(_)
+            | super::InstalledUnaryEntry::IntegerShared(_)
+    ), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
