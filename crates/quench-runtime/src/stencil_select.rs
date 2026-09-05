@@ -391,9 +391,11 @@ impl RenderedRegionCache {
 include!(concat!(env!("OUT_DIR"), "/stencil_catalog.rs"));
 include!(concat!(env!("OUT_DIR"), "/stencil_artifacts.rs"));
 
-/// Select an admitted region with one canonical table lookup.
-pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
-    select_physical(key).map(|view| view.stencil)
+/// Select an admitted region with one canonical table lookup.  The complete
+/// physical view is returned so callers cannot detach bytes from ABI/layout
+/// and continuation metadata.
+pub fn select_stencil(key: RegionKey) -> Option<PhysicalStencilView> {
+    select_physical(key)
 }
 
 /// Select one complete physical view after checking the typed entry ABI.
@@ -1226,7 +1228,7 @@ mod tests {
                 .expect("fused chain declaration");
             assert_eq!(chain.bytes, chain_record.stencil.bytes);
             assert_eq!(
-                select_stencil(chain_record.key).map(|stencil| stencil.bytes),
+                select_stencil(chain_record.key).map(|view| view.stencil.bytes),
                 Some(chain.bytes),
                 "normal selection must use the generated chain artifact"
             );
