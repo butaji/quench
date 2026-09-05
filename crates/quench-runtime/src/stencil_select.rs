@@ -405,7 +405,9 @@ pub fn select_physical_for_abi(
     key: RegionKey,
     abi: RegionAbi,
 ) -> Option<PhysicalStencilView> {
-    select_physical(key).filter(|view| view.executable && view.abi == abi)
+    select_physical(key).filter(|view| {
+        view.executable && view.abi == abi && view.contract().abi_is_well_formed()
+    })
 }
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
