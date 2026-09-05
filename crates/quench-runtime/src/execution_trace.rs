@@ -185,6 +185,7 @@ struct Counters {
     kernels: HashMap<&'static str, (u64, u64)>,
     quickening: HashMap<&'static str, (u64, u64)>,
     stencils: HashMap<StencilKey, (u64, u64)>,
+    stencil_iterations: HashMap<StencilKey, u64>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
 }
@@ -1590,6 +1591,35 @@ pub(crate) fn stencil_observation(
     let _ = (code, pc, kind, native);
 }
 
+/// Attribute the number of machine-level loop iterations retired by a native
+/// region.  This is deliberately separate from the hit/miss pair consumed by
+/// the ledger: an entry hit proves only that bytes were entered, while this
+/// fact proves the native body did useful repeated work.
+#[inline(always)]
+pub(crate) fn stencil_iterations(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    kind: &'static str,
+    iterations: usize,
+) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        let (_, code_id) = code.trace_identity();
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            *counters
+                .stencil_iterations
+                .entry(StencilKey {
+                    code: code_id,
+                    pc: pc as u32,
+                    kind,
+                })
+                .or_default() += iterations as u64;
+        });
+    }
+    let _ = (code, pc, kind, iterations);
+}
+
 #[cfg(feature = "execution-trace")]
 fn stencil_profile(counters: &Counters) -> serde_json::Map<String, serde_json::Value> {
     counters
@@ -1598,7 +1628,11 @@ fn stencil_profile(counters: &Counters) -> serde_json::Map<String, serde_json::V
         .map(|(key, &(hits, misses))| {
             (
                 format!("code={}:pc={}:{}", key.code, key.pc, key.kind),
-                serde_json::json!({ "hits": hits, "misses": misses }),
+                serde_json::json!({
+                    "hits": hits,
+                    "misses": misses,
+                    "iterations": counters.stencil_iterations.get(key).copied().unwrap_or_default(),
+                }),
             )
         })
         .collect()
@@ -1850,6 +1884,24 @@ mod lane_profile_tests {
         let profile = quickening_profile(&counters);
         assert_eq!(profile["GetProperty"]["hits"], 9);
         assert_eq!(profile["GetProperty"]["misses"], 2);
+    }
+
+    #[test]
+    fn stencil_profile_keeps_entry_outcomes_and_retired_iterations() {
+        let mut counters = Counters::default();
+        let key = StencilKey {
+            code: 7,
+            pc: 11,
+            kind: "array_numeric_loop",
+        };
+        counters.stencils.insert(key, (3, 1));
+        counters.stencil_iterations.insert(key, 12);
+        let profile = stencil_profile(&counters);
+        assert_eq!(profile["code=7:pc=11:array_numeric_loop"]["hits"], 3);
+        assert_eq!(
+            profile["code=7:pc=11:array_numeric_loop"]["iterations"],
+            12
+        );
     }
 
     #[test]
