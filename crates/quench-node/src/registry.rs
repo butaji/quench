@@ -1259,6 +1259,7 @@ pub const SPEC_WEBCRYPTO_GENERATE_KEY: NodeSpec = NodeSpec::new("webcrypto:gener
 pub const SPEC_WEBCRYPTO_ENCRYPT: NodeSpec = NodeSpec::new("webcrypto:encrypt", 0x1c34);
 pub const SPEC_WEBCRYPTO_DECRYPT: NodeSpec = NodeSpec::new("webcrypto:decrypt", 0x1c35);
 pub const SPEC_WEBCRYPTO_DERIVE_BITS: NodeSpec = NodeSpec::new("webcrypto:deriveBits", 0x1c36);
+pub const SPEC_WEBCRYPTO_DERIVE_KEY: NodeSpec = NodeSpec::new("webcrypto:deriveKey", 0x1c3b);
 pub const SPEC_WEBCRYPTO_KEY_CONSTRUCT: NodeSpec =
     NodeSpec::new("webcrypto:CryptoKey:construct", 0x1c37);
 pub const SPEC_WEBCRYPTO_SIGN: NodeSpec = NodeSpec::new("webcrypto:sign", 0x1c38);
@@ -1806,6 +1807,7 @@ pub const CAP_WEBCRYPTO_GENERATE_KEY: CapId = SPEC_WEBCRYPTO_GENERATE_KEY.cap;
 pub const CAP_WEBCRYPTO_ENCRYPT: CapId = SPEC_WEBCRYPTO_ENCRYPT.cap;
 pub const CAP_WEBCRYPTO_DECRYPT: CapId = SPEC_WEBCRYPTO_DECRYPT.cap;
 pub const CAP_WEBCRYPTO_DERIVE_BITS: CapId = SPEC_WEBCRYPTO_DERIVE_BITS.cap;
+pub const CAP_WEBCRYPTO_DERIVE_KEY: CapId = SPEC_WEBCRYPTO_DERIVE_KEY.cap;
 pub const CAP_WEBCRYPTO_KEY_CONSTRUCT: CapId = SPEC_WEBCRYPTO_KEY_CONSTRUCT.cap;
 pub const CAP_WEBCRYPTO_SIGN: CapId = SPEC_WEBCRYPTO_SIGN.cap;
 pub const CAP_WEBCRYPTO_VERIFY: CapId = SPEC_WEBCRYPTO_VERIFY.cap;
