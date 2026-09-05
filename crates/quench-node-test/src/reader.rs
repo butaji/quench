@@ -217,6 +217,11 @@ impl NodeRunner {
         } else {
             String::new()
         };
+        let zlib_iter_surface = if fixture_source.contains("zlib/iter") {
+            quench_node::polyfills::bootstrap::iterators::JS.to_string()
+        } else {
+            String::new()
+        };
         // Node exposes WHATWG stream constructors globally. Install the
         // shared surface before the fixture so globals and `stream/web`
         // resolve to one constructor identity.
@@ -278,7 +283,7 @@ impl NodeRunner {
         // the runner realm so fixtures using `global.gc`, `global.process`,
         // and identity checks observe the same host surface as `globalThis`.
         let bootstrap_tail = format!(
-            "var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{punycode_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{stream_iter_surface}"
+            "var global = globalThis; if (typeof gc === 'function') globalThis.gc = gc; if (!Object.getOwnPropertyDescriptor(globalThis, '__nodeCurrentAsyncResource')) Object.defineProperty(globalThis, '__nodeCurrentAsyncResource', {{ value: {{}}, writable: true, configurable: true, enumerable: false }});\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{punycode_surface}\n{async_resource_surface}\n{webcrypto_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\n{web_streams_surface}\n{performance_surface}\n{dgram_surface}\n{dns_surface}\n{stream_iter_surface}\n{zlib_iter_surface}"
         );
         // ESM imports create lexical bindings. Run the host bootstrap through
         // a separately constructed function so its global lookups cannot

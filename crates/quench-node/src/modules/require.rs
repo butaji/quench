@@ -108,7 +108,8 @@ pub fn dynamic_import_rejection(reason: Value) -> Value {
 }
 
 const BUILTIN_MODULES: &str = "assert assert/strict async_hooks buffer child_process cluster console crypto dgram diagnostics_channel dns domain events fs http http2 https module net os path path/posix path/win32 perf_hooks process punycode querystring readline repl stream stream/consumers string_decoder sys timers timers/promises tls tty url util util/types v8 vm worker_threads zlib inspector trace_events wasi node:test";
-const INTERNAL_BUILTIN_MODULES: &str = "vfs sqlite _http_server internal/js_stream_socket internal/net";
+const INTERNAL_BUILTIN_MODULES: &str =
+    "vfs sqlite _http_server internal/js_stream_socket internal/net";
 
 /// Canonical internal/util namespace owned by the Rust host.
 pub fn internal_util_module() -> Value {
@@ -769,7 +770,10 @@ pub fn module_set_source_maps_support(args: &[Value]) -> Result<Value, VmError> 
 /// object rather than a second cache implementation.
 pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
     if let Some(options) = args.first() {
-        if matches!(options, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        if matches!(
+            options,
+            Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+        ) {
             return Ok(host_api::object(vec![(
                 "status".into(),
                 Value::Number(3.0),
@@ -777,7 +781,9 @@ pub fn module_enable_compile_cache(args: &[Value]) -> Result<Value, VmError> {
         }
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::TypeError,
-            &[Value::String("The \"options\" argument must be of type object".into())],
+            &[Value::String(
+                "The \"options\" argument must be of type object".into(),
+            )],
         );
         return Err(VmError::Thrown(execute::set_property(
             error,
@@ -1128,10 +1134,7 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     }
     // `node:assert` exports a callable value whose identity is stable
     // across requires (assert.strict === assert); cache it like a CJS module.
-    if matches!(
-        spec.as_str(),
-        "assert" | "node:assert"
-    ) {
+    if matches!(spec.as_str(), "assert" | "node:assert") {
         let key = "node:assert".to_string();
         if let Some(cached) = state.borrow().module_cache.get(&key) {
             return Ok(cached.clone());
@@ -1359,21 +1362,21 @@ fn package_type_is_module(path: &std::path::Path) -> bool {
     while let Some(current) = directory {
         let manifest = current.join("package.json");
         if let Ok(source) = std::fs::read_to_string(manifest) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&source) else {
-            return false;
-        };
-        // The repository manifest is private tooling metadata, not the
-        // package scope of the Node fixtures executed by this host.  Its
-        // module type must not silently turn every fixture `.js` file into an
-        // ES module; fixture packages still opt in through their own nearest
-        // manifest, exactly as Node's package-boundary walk does.
-        if value.get("private").and_then(serde_json::Value::as_bool) == Some(true)
-            && value.get("name").is_none()
-        {
-            directory = current.parent();
-            continue;
-        }
-        return value.get("type").and_then(serde_json::Value::as_str) == Some("module");
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&source) else {
+                return false;
+            };
+            // The repository manifest is private tooling metadata, not the
+            // package scope of the Node fixtures executed by this host.  Its
+            // module type must not silently turn every fixture `.js` file into an
+            // ES module; fixture packages still opt in through their own nearest
+            // manifest, exactly as Node's package-boundary walk does.
+            if value.get("private").and_then(serde_json::Value::as_bool) == Some(true)
+                && value.get("name").is_none()
+            {
+                directory = current.parent();
+                continue;
+            }
+            return value.get("type").and_then(serde_json::Value::as_str) == Some("module");
         }
         directory = current.parent();
     }
@@ -1686,8 +1689,12 @@ fn resolve_path_from_base(
             if let Some(path) = probe_global_module_candidate(&candidate) {
                 return Ok(path);
             }
-            let Some(parent) = directory.parent() else { break };
-            if parent == directory { break; }
+            let Some(parent) = directory.parent() else {
+                break;
+            };
+            if parent == directory {
+                break;
+            }
             directory = parent.to_path_buf();
         }
     }
@@ -2386,16 +2393,27 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 ),
             ]))
         }
-        "zlib/iter" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "compressGzipSync".into(),
-                crate::host::capability(crate::registry::SPEC_ZLIB_ITER_COMPRESS),
-            ),
-            (
-                "decompressGzipSync".into(),
-                crate::host::capability(crate::registry::SPEC_ZLIB_ITER_DECOMPRESS),
-            ),
-        ])),
+        "zlib/iter" => {
+            // The iterator surface is installed by the fixture bootstrap when
+            // the experimental flag is present. Reuse that one namespace so
+            // CJS `require` and the global loader cannot diverge.
+            let global = quench_runtime::vm::current_global_object();
+            let helper = execute::get_property(&global, "__quenchRequireZlibIter");
+            if let Ok(value) = execute::call(&helper, &Value::Undefined, &[]) {
+                Some(value)
+            } else {
+                Some(crate::host::namespace_object_from_pairs(vec![
+                    (
+                        "compressGzipSync".into(),
+                        crate::host::capability(crate::registry::SPEC_ZLIB_ITER_COMPRESS),
+                    ),
+                    (
+                        "decompressGzipSync".into(),
+                        crate::host::capability(crate::registry::SPEC_ZLIB_ITER_DECOMPRESS),
+                    ),
+                ]))
+            }
+        }
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
         "os" => {
