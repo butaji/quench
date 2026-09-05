@@ -128,6 +128,479 @@ fn array_buffer(data: &[u8]) -> Value {
     Value::ArrayBuffer(buffer)
 }
 
+// X25519 is kept here as a small, self-contained Montgomery ladder so the
+// WebCrypto boundary does not need to delegate key agreement to the OpenSSL
+// backed `crypto` module.  The representation is radix 2^51; every product
+// fits in u128 and the ladder follows RFC 7748 section 5.
+#[derive(Clone, Copy)]
+struct X25519Field([u64; 5]);
+
+const X25519_LIMB_MASK: u64 = (1_u64 << 51) - 1;
+const X25519_P: [u64; 5] = [
+    X25519_LIMB_MASK - 18,
+    X25519_LIMB_MASK,
+    X25519_LIMB_MASK,
+    X25519_LIMB_MASK,
+    X25519_LIMB_MASK,
+];
+
+impl X25519Field {
+    const ZERO: Self = Self([0; 5]);
+    const ONE: Self = Self([1, 0, 0, 0, 0]);
+
+    fn reduce(mut limbs: [u128; 5]) -> Self {
+        for _ in 0..2 {
+            let mut carry = 0_u128;
+            for limb in &mut limbs {
+                *limb += carry;
+                carry = *limb >> 51;
+                *limb &= X25519_LIMB_MASK as u128;
+            }
+            limbs[0] += carry * 19;
+        }
+        Self(limbs.map(|limb| limb as u64))
+    }
+
+    fn add(self, rhs: Self) -> Self {
+        Self::reduce(std::array::from_fn(|index| {
+            self.0[index] as u128 + rhs.0[index] as u128
+        }))
+    }
+
+    fn sub(self, rhs: Self) -> Self {
+        Self::reduce(std::array::from_fn(|index| {
+            self.0[index] as u128 + 2 * X25519_P[index] as u128 - rhs.0[index] as u128
+        }))
+    }
+
+    fn mul(self, rhs: Self) -> Self {
+        let mut product = [0_u128; 9];
+        for left in 0..5 {
+            for right in 0..5 {
+                product[left + right] += self.0[left] as u128 * rhs.0[right] as u128;
+            }
+        }
+        for index in (5..9).rev() {
+            product[index - 5] += product[index] * 19;
+        }
+        Self::reduce(product[..5].try_into().expect("fixed X25519 product"))
+    }
+
+    fn square(self) -> Self {
+        self.mul(self)
+    }
+
+    fn canonical(self) -> Self {
+        let mut candidate = [0_u64; 5];
+        let mut borrow = 0_i128;
+        for index in 0..5 {
+            let value = self.0[index] as i128 - X25519_P[index] as i128 - borrow;
+            candidate[index] = (value.rem_euclid(1_i128 << 51)) as u64;
+            borrow = i128::from(value < 0);
+        }
+        if borrow == 0 {
+            Self(candidate)
+        } else {
+            self
+        }
+    }
+
+    fn invert(self) -> Self {
+        // p - 2 = 2^255 - 21, represented little-endian.
+        let mut result = Self::ONE;
+        let exponent_low = 0xeb_u8;
+        for bit in (0..255).rev() {
+            result = result.square();
+            let set = if bit < 8 { (exponent_low >> bit) & 1 } else { 1 };
+            if set != 0 {
+                result = result.mul(self);
+            }
+        }
+        result
+    }
+
+    fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let mut limbs = [0_u64; 5];
+        for bit in 0..255 {
+            limbs[bit / 51] |= u64::from((bytes[bit / 8] >> (bit % 8)) & 1) << (bit % 51);
+        }
+        Self(limbs).canonical()
+    }
+
+    fn to_bytes(self) -> [u8; 32] {
+        let value = self.canonical();
+        let mut bytes = [0_u8; 32];
+        for bit in 0..255 {
+            bytes[bit / 8] |= (((value.0[bit / 51] >> (bit % 51)) & 1) as u8) << (bit % 8);
+        }
+        bytes
+    }
+}
+
+fn x25519(scalar: &[u8; 32], u_coordinate: &[u8; 32]) -> [u8; 32] {
+    let mut scalar = *scalar;
+    scalar[0] &= 248;
+    scalar[31] &= 127;
+    scalar[31] |= 64;
+    let mut u = *u_coordinate;
+    u[31] &= 127;
+
+    let x1 = X25519Field::from_bytes(&u);
+    let mut x2 = X25519Field::ONE;
+    let mut z2 = X25519Field::ZERO;
+    let mut x3 = x1;
+    let mut z3 = X25519Field::ONE;
+    let mut swap = 0_u64;
+    for bit in (0..255).rev() {
+        let bit_value = u64::from((scalar[bit / 8] >> (bit % 8)) & 1);
+        swap ^= bit_value;
+        let mask = 0_u64.wrapping_sub(swap);
+        for index in 0..5 {
+            let difference = mask & (x2.0[index] ^ x3.0[index]);
+            x2.0[index] ^= difference;
+            x3.0[index] ^= difference;
+            let difference = mask & (z2.0[index] ^ z3.0[index]);
+            z2.0[index] ^= difference;
+            z3.0[index] ^= difference;
+        }
+        swap = bit_value;
+
+        let a = x2.add(z2);
+        let aa = a.square();
+        let b = x2.sub(z2);
+        let bb = b.square();
+        let e = aa.sub(bb);
+        let c = x3.add(z3);
+        let d = x3.sub(z3);
+        let da = d.mul(a);
+        let cb = c.mul(b);
+        x3 = da.add(cb).square();
+        z3 = x1.mul(da.sub(cb).square());
+        x2 = aa.mul(bb);
+        z2 = e.mul(aa.add(X25519Field([121665, 0, 0, 0, 0]).mul(e)));
+    }
+    let mask = 0_u64.wrapping_sub(swap);
+    for index in 0..5 {
+        let difference = mask & (x2.0[index] ^ x3.0[index]);
+        x2.0[index] ^= difference;
+        x3.0[index] ^= difference;
+        let difference = mask & (z2.0[index] ^ z3.0[index]);
+        z2.0[index] ^= difference;
+        z3.0[index] ^= difference;
+    }
+    x2.mul(z2.invert()).to_bytes()
+}
+
+#[derive(Clone, Copy)]
+struct X448Field([u64; 8]);
+
+const X448_LIMB_MASK: u64 = (1_u64 << 56) - 1;
+const X448_P: [u64; 8] = [
+    X448_LIMB_MASK,
+    X448_LIMB_MASK,
+    X448_LIMB_MASK,
+    X448_LIMB_MASK,
+    X448_LIMB_MASK - 1,
+    X448_LIMB_MASK,
+    X448_LIMB_MASK,
+    X448_LIMB_MASK,
+];
+
+impl X448Field {
+    const ZERO: Self = Self([0; 8]);
+    const ONE: Self = Self([1, 0, 0, 0, 0, 0, 0, 0]);
+
+    fn reduce(mut limbs: [u128; 8]) -> Self {
+        for _ in 0..2 {
+            let mut carry = 0_u128;
+            for limb in &mut limbs {
+                *limb += carry;
+                carry = *limb >> 56;
+                *limb &= X448_LIMB_MASK as u128;
+            }
+            limbs[0] += carry;
+            limbs[4] += carry;
+        }
+        Self(limbs.map(|limb| limb as u64))
+    }
+
+    fn add(self, rhs: Self) -> Self {
+        Self::reduce(std::array::from_fn(|index| {
+            self.0[index] as u128 + rhs.0[index] as u128
+        }))
+    }
+
+    fn sub(self, rhs: Self) -> Self {
+        Self::reduce(std::array::from_fn(|index| {
+            self.0[index] as u128 + 2 * X448_P[index] as u128 - rhs.0[index] as u128
+        }))
+    }
+
+    fn mul(self, rhs: Self) -> Self {
+        let mut product = [0_u128; 15];
+        for left in 0..8 {
+            for right in 0..8 {
+                product[left + right] += self.0[left] as u128 * rhs.0[right] as u128;
+            }
+        }
+        for index in (8..15).rev() {
+            product[index - 8] += product[index];
+            product[index - 4] += product[index];
+        }
+        Self::reduce(product[..8].try_into().expect("fixed X448 product"))
+    }
+
+    fn square(self) -> Self {
+        self.mul(self)
+    }
+
+    fn canonical(self) -> Self {
+        let mut candidate = [0_u64; 8];
+        let mut borrow = 0_i128;
+        for index in 0..8 {
+            let value = self.0[index] as i128 - X448_P[index] as i128 - borrow;
+            candidate[index] = (value.rem_euclid(1_i128 << 56)) as u64;
+            borrow = i128::from(value < 0);
+        }
+        if borrow == 0 {
+            Self(candidate)
+        } else {
+            self
+        }
+    }
+
+    fn invert(self) -> Self {
+        // p - 2 = 2^448 - 2^224 - 3.  Its little-endian bytes are
+        // [0xfd, ff..ff, 0xfe, ff..ff].
+        let mut result = Self::ONE;
+        for bit in (0..448).rev() {
+            result = result.square();
+            let set = if bit < 8 {
+                (0xfd_u8 >> bit) & 1
+            } else if bit < 224 {
+                1
+            } else if bit == 224 {
+                0
+            } else if bit < 232 {
+                (0xfe_u8 >> (bit - 224)) & 1
+            } else {
+                1
+            };
+            if set != 0 {
+                result = result.mul(self);
+            }
+        }
+        result
+    }
+
+    fn from_bytes(bytes: &[u8; 56]) -> Self {
+        let mut limbs = [0_u64; 8];
+        for bit in 0..448 {
+            limbs[bit / 56] |= u64::from((bytes[bit / 8] >> (bit % 8)) & 1) << (bit % 56);
+        }
+        Self(limbs).canonical()
+    }
+
+    fn to_bytes(self) -> [u8; 56] {
+        let value = self.canonical();
+        let mut bytes = [0_u8; 56];
+        for bit in 0..448 {
+            bytes[bit / 8] |= (((value.0[bit / 56] >> (bit % 56)) & 1) as u8) << (bit % 8);
+        }
+        bytes
+    }
+}
+
+fn x448(scalar: &[u8; 56], u_coordinate: &[u8; 56]) -> [u8; 56] {
+    let mut scalar = *scalar;
+    scalar[0] &= 252;
+    scalar[55] |= 128;
+
+    let x1 = X448Field::from_bytes(u_coordinate);
+    let mut x2 = X448Field::ONE;
+    let mut z2 = X448Field::ZERO;
+    let mut x3 = x1;
+    let mut z3 = X448Field::ONE;
+    let mut swap = 0_u64;
+    for bit in (0..448).rev() {
+        let bit_value = u64::from((scalar[bit / 8] >> (bit % 8)) & 1);
+        swap ^= bit_value;
+        let mask = 0_u64.wrapping_sub(swap);
+        for index in 0..8 {
+            let difference = mask & (x2.0[index] ^ x3.0[index]);
+            x2.0[index] ^= difference;
+            x3.0[index] ^= difference;
+            let difference = mask & (z2.0[index] ^ z3.0[index]);
+            z2.0[index] ^= difference;
+            z3.0[index] ^= difference;
+        }
+        swap = bit_value;
+
+        let a = x2.add(z2);
+        let aa = a.square();
+        let b = x2.sub(z2);
+        let bb = b.square();
+        let e = aa.sub(bb);
+        let c = x3.add(z3);
+        let d = x3.sub(z3);
+        let da = d.mul(a);
+        let cb = c.mul(b);
+        x3 = da.add(cb).square();
+        z3 = x1.mul(da.sub(cb).square());
+        x2 = aa.mul(bb);
+        z2 = e.mul(aa.add(X448Field([39081, 0, 0, 0, 0, 0, 0, 0]).mul(e)));
+    }
+    let mask = 0_u64.wrapping_sub(swap);
+    for index in 0..8 {
+        let difference = mask & (x2.0[index] ^ x3.0[index]);
+        x2.0[index] ^= difference;
+        x3.0[index] ^= difference;
+        let difference = mask & (z2.0[index] ^ z3.0[index]);
+        z2.0[index] ^= difference;
+        z3.0[index] ^= difference;
+    }
+    x2.mul(z2.invert()).to_bytes()
+}
+
+fn key_slot(key: &Value, name: &str) -> Value {
+    let value = execute::get_property(key, name);
+    if matches!(value, Value::Undefined) {
+        let metadata = execute::get_property(key, KEY_META_PROP);
+        execute::get_property(&metadata, name)
+    } else {
+        value
+    }
+}
+
+fn cfrg_key_bytes(key: &Value, private: bool) -> Option<Vec<u8>> {
+    let data = bytes(&execute::get_property(key, KEY_DATA_PROP))?;
+    if matches!(data.len(), 32 | 56) {
+        return Some(data);
+    }
+    let markers: &[&[u8]] = if private {
+        &[&[0x04, 0x22, 0x04, 0x20], &[0x04, 0x3a, 0x04, 0x38]]
+    } else {
+        &[&[0x03, 0x21, 0x00], &[0x03, 0x39, 0x00]]
+    };
+    for marker in markers {
+        let Some(position) = data.windows(marker.len()).position(|window| window == *marker)
+        else {
+            continue;
+        };
+        let start = position + marker.len();
+        let size = if marker.len() == 4 {
+            marker[3] as usize
+        } else {
+            marker[1] as usize - 1
+        };
+        let end = start.checked_add(size)?;
+        if let Some(bytes) = data.get(start..end) {
+            return Some(bytes.to_vec());
+        }
+    }
+    None
+}
+
+fn cfrg_derive_bits(
+    algorithm: &Value,
+    base_key: &Value,
+    length: Option<&Value>,
+) -> Result<Vec<u8>, VmError> {
+    let public = execute::get_property(algorithm, "public");
+    if matches!(public, Value::Undefined) {
+        return Err(error(
+            Builtin::TypeError,
+            Some("ERR_MISSING_OPTION"),
+            "The \"public\" option is required",
+        ));
+    }
+    if invalid_key_this(&public).is_some() {
+        return Err(error(
+            Builtin::TypeError,
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The public key must be a CryptoKey",
+        ));
+    }
+    let public_type = execute::to_js_string(&key_slot(&public, "type")).unwrap_or_default();
+    if public_type != "public" {
+        return Err(invalid_access_error("Unable to use this key to deriveBits"));
+    }
+    let public_algorithm = key_slot(&public, "algorithm");
+    let requested_name = algorithm_name(algorithm);
+    let public_name = algorithm_name(&public_algorithm);
+    if !requested_name.eq_ignore_ascii_case(&public_name) {
+        return Err(operation_error("key algorithm mismatch"));
+    }
+    let length = match length {
+        Some(Value::Number(value))
+            if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 =>
+        {
+            if *value > i32::MAX as f64 {
+                return Err(error(
+                    Builtin::TypeError,
+                    Some("ERR_OUT_OF_RANGE"),
+                    "The requested length is outside the supported range",
+                ));
+            }
+            *value as usize
+        }
+        Some(Value::Null | Value::Undefined) | None => {
+            if requested_name.eq_ignore_ascii_case("X448") {
+                448
+            } else {
+                256
+            }
+        }
+        Some(_) => {
+            return Err(error(
+                Builtin::TypeError,
+                Some("ERR_INVALID_ARG_TYPE"),
+                "The length must be a number",
+            ))
+        }
+    };
+    let size = if requested_name.eq_ignore_ascii_case("X448") {
+        56
+    } else {
+        32
+    };
+    if length > size * 8 {
+        return Err(operation_error("derived bit length is too small"));
+    }
+    let private = cfrg_key_bytes(base_key, true)
+        .ok_or_else(|| operation_error("Invalid private key data"))?;
+    let public = cfrg_key_bytes(&public, false)
+        .ok_or_else(|| operation_error("Invalid public key data"))?;
+    if private.len() != size || public.len() != size {
+        return Err(operation_error("Key data has the wrong length"));
+    }
+    let secret = if size == 32 {
+        x25519(
+            &private.try_into().expect("validated X25519 private length"),
+            &public.try_into().expect("validated X25519 public length"),
+        )
+        .to_vec()
+    } else {
+        x448(
+            &private.try_into().expect("validated X448 private length"),
+            &public.try_into().expect("validated X448 public length"),
+        )
+        .to_vec()
+    };
+    if secret.iter().all(|byte| *byte == 0) {
+        return Err(operation_error("Invalid public key"));
+    }
+    let output_length = length.div_ceil(8);
+    let mut output = secret[..output_length].to_vec();
+    if let remainder @ 1..=7 = length % 8 {
+        let mask = 0xff_u8 << (8 - remainder);
+        if let Some(last) = output.last_mut() {
+            *last &= mask;
+        }
+    }
+    Ok(output)
+}
+
 fn key(
     prototype: &Value,
     algorithm: Value,
@@ -831,19 +1304,36 @@ pub fn generate_key(
             Err(error) => return Ok(settled(Err(error))),
         };
         let extractable = matches!(args.get(1), Some(Value::Boolean(true)));
+        let (private_data, public_data) = match name.as_str() {
+            "X25519" => {
+                let mut private = [0_u8; 32];
+                let mut base = [0_u8; 32];
+                base[0] = 9;
+                rand::thread_rng().fill_bytes(&mut private);
+                (Some(private.to_vec()), Some(x25519(&private, &base).to_vec()))
+            }
+            "X448" => {
+                let mut private = [0_u8; 56];
+                let mut base = [0_u8; 56];
+                base[0] = 5;
+                rand::thread_rng().fill_bytes(&mut private);
+                (Some(private.to_vec()), Some(x448(&private, &base).to_vec()))
+            }
+            _ => (None, None),
+        };
         let private_key = key_metadata(
             key(
                 &prototype,
                 algorithm.clone(),
                 extractable,
                 private_usages,
-                None,
+                private_data,
             ),
             "private",
             "pkcs8",
         );
         let public_key = key_metadata(
-            key(&prototype, algorithm, extractable, public_usages, None),
+            key(&prototype, algorithm, extractable, public_usages, public_data),
             "public",
             "spki",
         );
@@ -1005,11 +1495,18 @@ pub fn derive_bits(
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     };
     let base_name = algorithm_name(algorithm);
-    if !matches!(base_name.to_ascii_uppercase().as_str(), "HKDF" | "PBKDF2") {
+    let base_name_upper = base_name.to_ascii_uppercase();
+    if !matches!(base_name_upper.as_str(), "HKDF" | "PBKDF2" | "X25519" | "X448") {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveBits") {
         return Ok(settled(Err(error)));
+    }
+    if matches!(base_name_upper.as_str(), "X25519" | "X448") {
+        return Ok(settled(
+            cfrg_derive_bits(algorithm, args.get(1).unwrap_or(&Value::Undefined), args.get(2))
+                .map(|bytes| array_buffer(&bytes)),
+        ));
     }
     let length = match args.get(2) {
         Some(Value::Number(value))
@@ -1099,7 +1596,8 @@ pub fn derive_key(
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     };
     let base_name = algorithm_name(algorithm);
-    if !matches!(base_name.to_ascii_uppercase().as_str(), "HKDF" | "PBKDF2") {
+    let base_name_upper = base_name.to_ascii_uppercase();
+    if !matches!(base_name_upper.as_str(), "HKDF" | "PBKDF2" | "X25519" | "X448") {
         return Ok(settled(Err(not_supported("Unrecognized algorithm name"))));
     }
     if let Some(error) = validate_key_use(args.first(), args.get(1), "deriveKey") {
@@ -1165,6 +1663,41 @@ pub fn derive_key(
     } else {
         derived_algorithm.clone()
     };
+    if matches!(base_name_upper.as_str(), "X25519" | "X448") {
+        let data = match cfrg_derive_bits(
+            algorithm,
+            args.get(1).unwrap_or(&Value::Undefined),
+            Some(&Value::Number(256.0)),
+        ) {
+            Ok(data) => data,
+            Err(error) => return Ok(settled(Err(error))),
+        };
+        if length > data.len() * 8 {
+            return Ok(settled(Err(operation_error("derived bit length is too small"))));
+        }
+        let output_length = length.div_ceil(8);
+        let mut data = data[..output_length].to_vec();
+        if let remainder @ 1..=7 = length % 8 {
+            if let Some(last) = data.last_mut() {
+                *last &= 0xff_u8 << (8 - remainder);
+            }
+        }
+        let prototype = execute::get_prototype_of(args.get(1).unwrap_or(&Value::Undefined))
+            .unwrap_or(Value::Undefined);
+        let extractable = matches!(args.get(3), Some(Value::Boolean(true)));
+        let usages = args
+            .get(4)
+            .cloned()
+            .unwrap_or_else(|| host_api::array(Vec::new()));
+        let derived = key(
+            &prototype,
+            normalized_derived_algorithm,
+            extractable,
+            usages,
+            Some(data),
+        );
+        return Ok(settled(Ok(key_metadata(derived, "secret", "raw"))));
+    }
     if base_name.eq_ignore_ascii_case("PBKDF2") {
         let data = match pbkdf2_webcrypto(state, algorithm, args.get(1), length) {
             Ok(data) => data,
