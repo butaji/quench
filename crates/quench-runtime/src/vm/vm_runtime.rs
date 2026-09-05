@@ -4168,12 +4168,14 @@ mod compact_handler_tests {
 
     #[test]
     fn fallback_consumes_post_entry_completion_without_retry() {
-        const OPS: &[crate::ir::Opcode] = &[crate::ir::Opcode::Return, crate::ir::Opcode::Return];
+        const OPS: &[crate::ir::Opcode] = &[crate::ir::Opcode::StoreLocal, crate::ir::Opcode::Return];
         let code = crate::machine::ExecutableCode::from_ops(vec![
-            Op::Return { src: 0 },
+            Op::StoreLocal { slot: 0, src: 0 },
             Op::Return { src: 0 },
         ]);
         let mut registers = crate::register_file::RegisterFile::from_values(vec![Value::Number(11.0)]);
+        let environment = crate::environment::Environment::new();
+        let _guard = crate::locals::EnvironmentGuard::install(environment.clone());
         let context = crate::vm::current_context_or_default();
         let mut region = super::NativeRegionContext::new(
             code.code(),
@@ -4183,12 +4185,13 @@ mod compact_handler_tests {
             &context,
         );
         let transition = super::execute_region_fallback(&mut region)
-            .expect("the first Return is an exact post-entry completion");
+            .expect("the final Return is an exact post-entry completion");
         assert!(matches!(
             transition.completion,
             Some(crate::completion::Completion::Return(Value::Number(value))) if value == 11.0
         ));
-        assert_eq!(transition.next_pc, 1, "resume state identifies the completed op");
+        assert_eq!(transition.next_pc, 2, "resume state identifies the completed op");
+        assert_eq!(environment.get(0), Value::Number(11.0));
     }
 
     #[test]
