@@ -804,23 +804,13 @@ pub(crate) fn proven_own_slot(
         return None;
     }
     let own = object.hot_properties().slot_word(slot)?;
-    let value = own.load();
-    // These are internal indirections, not observable property values.  The
-    // complete property gateway unwraps them (and preserves binding identity
-    // for writes); a raw cached slot must therefore never admit either form.
-    if matches!(
-        value,
-        Value::BindingCell(_) | Value::WeakFunction(_)
-    ) {
+    // These are internal indirections, not observable property values. The
+    // tagged-word fact rejects them without cloning a temporary `Value`.
+    if own.plain_tagged_bits().is_none() {
         return None;
     }
     if key == "format"
-        && matches!(
-            value,
-            Value::Builtin(
-                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
-            )
-        )
+        && own.is_intl_format_builtin()
     {
         return None;
     }
@@ -857,20 +847,13 @@ pub(crate) fn proven_own_word<'a>(
     // Internal indirections are only meaningful to the complete property
     // gateway.  The raw-word projection must never expose them, even when a
     // duplicate/metadata layout forced us through this conservative scan.
-    if matches!(own.load(), Value::BindingCell(_) | Value::WeakFunction(_)) {
+    if own.plain_tagged_bits().is_none() {
         return None;
     }
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
         return None;
     }
-    if key == "format"
-        && matches!(
-            own.load(),
-            Value::Builtin(
-                Builtin::IntlNumberFormatFormat | Builtin::IntlDateTimeFormatFormat
-            )
-        )
-    {
+    if key == "format" && own.is_intl_format_builtin() {
         return None;
     }
     Some(own)
