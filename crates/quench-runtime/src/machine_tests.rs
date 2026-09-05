@@ -541,8 +541,11 @@ fn non_x86_native_execution_rejects_before_mapping() {
         integer_op: None,
         integer_unsigned: false,
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        shared_entry_address: None,
-        shared_entry_owner: None,
+        shared_entry: None,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        shared_int_entry: None,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        shared_uint_entry: None,
         native_entry_count: 0,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
@@ -568,8 +571,9 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         int_entry: None,
         tagged_entry: None,
         uint_entry: None,
-        shared_entry_address: None,
-        shared_entry_owner: None,
+        shared_entry: None,
+        shared_int_entry: None,
+        shared_uint_entry: None,
         tagged_shared_entry: None,
         native_entry_count: 0,
     };
@@ -599,12 +603,12 @@ fn native_numeric_shared_entry_reuses_live_owner_and_recovers_after_eviction() {
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     let used = shared.borrow().used();
     assert!(plan.entry.is_some());
-    assert!(plan.shared_entry_address.is_some());
+    assert!(plan.shared_entry.is_some());
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
-    assert!(plan.shared_entry_address.is_some(), "eviction must rebuild the entry");
+    assert!(plan.shared_entry.is_some(), "eviction must rebuild the entry");
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -827,6 +831,29 @@ fn native_unsigned_shift_preserves_uint32_number_representation() {
     assert_eq!(plan.execute(-1.0, 1.0), Ok(2_147_483_647.0));
     assert_eq!(plan.execute(-1.0, 33.5), Ok(2_147_483_647.0));
     assert!(plan.native_entry_count >= 3);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_shared_integer_entry_rebuilds_through_typed_owner() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Binary,
+        flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::ShiftRightZeroFill),
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeBinaryPlan::new_with_shared(instruction, policy, shared.clone())
+        .expect("shared integer plan");
+    assert_eq!(plan.execute(-1.0, 1.0), Ok(2_147_483_647.0));
+    assert!(plan.shared_uint_entry.is_some());
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(-1.0, 33.5), Ok(2_147_483_647.0));
+    assert!(plan.shared_uint_entry.is_some());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

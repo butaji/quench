@@ -1499,8 +1499,11 @@ pub(crate) struct NativeBinaryPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     uint_entry: Option<extern "C" fn(u32, u32) -> u32>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry_address: Option<usize>,
-    shared_entry_owner: Option<u64>,
+    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> f64>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_int_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(i32, i32) -> i32>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_uint_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u32, u32) -> u32>>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     tagged_shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(u64, u64) -> u64>>,
     #[cfg(test)]
@@ -1645,8 +1648,9 @@ impl NativeBinaryPlan {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry_address: None,
-            shared_entry_owner: None,
+            shared_entry: None,
+            shared_int_entry: None,
+            shared_uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             tagged_shared_entry: None,
             #[cfg(test)]
@@ -1698,8 +1702,9 @@ impl NativeBinaryPlan {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry_address: None,
-            shared_entry_owner: None,
+            shared_entry: None,
+            shared_int_entry: None,
+            shared_uint_entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             tagged_shared_entry: None,
             #[cfg(test)]
@@ -1791,12 +1796,9 @@ impl NativeBinaryPlan {
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let (Some(shared), Some(address), Some(owner)) =
-                (self.shared_arena.clone(), self.shared_entry_address, self.shared_entry_owner)
-            {
+            if let Some(shared) = self.shared_arena.clone() {
                 if self.integer_unsigned {
-                    if let Some(entry) = self.uint_entry {
-                        let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                    if let Some(owned) = self.shared_uint_entry {
                         match shared.borrow().with_owned(owned, |entry| {
                             entry(left as u32, right as u32)
                         }) {
@@ -1806,13 +1808,11 @@ impl NativeBinaryPlan {
                             }
                             Err(_) => {
                                 self.uint_entry = None;
-                                self.shared_entry_address = None;
-                                self.shared_entry_owner = None;
+                                self.shared_uint_entry = None;
                             }
                         }
                     }
-                } else if let Some(entry) = self.int_entry {
-                    let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                } else if let Some(owned) = self.shared_int_entry {
                     match shared.borrow().with_owned(owned, |entry| entry(left, right)) {
                         Ok(result) => {
                             self.note_native_entry();
@@ -1820,8 +1820,7 @@ impl NativeBinaryPlan {
                         }
                         Err(_) => {
                             self.int_entry = None;
-                            self.shared_entry_address = None;
-                            self.shared_entry_owner = None;
+                            self.shared_int_entry = None;
                         }
                     }
                 }
@@ -1861,14 +1860,12 @@ impl NativeBinaryPlan {
                             return Err(error);
                         }
                     };
-                    let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                    let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                    let owned = shared.borrow().owned_entry(address, entry)?;
                     let result = shared
                         .borrow()
                         .with_owned(owned, |entry| entry(left as u32, right as u32))?;
                     self.uint_entry = Some(entry);
-                    self.shared_entry_address = Some(address);
-                    self.shared_entry_owner = Some(owner);
+                    self.shared_uint_entry = Some(owned);
                     self.note_native_entry();
                     return Ok(f64::from(result));
                 }
@@ -1891,12 +1888,10 @@ impl NativeBinaryPlan {
                         return Err(error);
                     }
                 };
-                let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+                let owned = shared.borrow().owned_entry(address, entry)?;
                 let result = shared.borrow().with_owned(owned, |entry| entry(left, right))?;
                 self.int_entry = Some(entry);
-                self.shared_entry_address = Some(address);
-                self.shared_entry_owner = Some(owner);
+                self.shared_int_entry = Some(owned);
                 self.note_native_entry();
                 return Ok(f64::from(result));
             }
@@ -1956,13 +1951,9 @@ impl NativeBinaryPlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !self.returns_boolean {
-            if let (Some(shared), Some(address), Some(entry)) = (
-                self.shared_arena.clone(),
-                self.shared_entry_address,
-                self.entry,
-            ) {
-                let owner = self.shared_entry_owner.ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+            if let (Some(shared), Some(owned)) =
+                (self.shared_arena.clone(), self.shared_entry)
+            {
                 match shared.borrow().with_owned(owned, |entry| unsafe {
                     invoke_f64x2_entry(entry, lhs, rhs)
                 }) {
@@ -1972,8 +1963,7 @@ impl NativeBinaryPlan {
                     }
                     Err(_) => {
                         self.entry = None;
-                        self.shared_entry_address = None;
-                        self.shared_entry_owner = None;
+                        self.shared_entry = None;
                     }
                 }
             }
@@ -2039,10 +2029,8 @@ impl NativeBinaryPlan {
                 }
             };
             self.entry = Some(entry);
-            let owner = shared.borrow().owner_for(address).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            self.shared_entry_address = Some(address);
-            self.shared_entry_owner = Some(owner);
-            let owned = crate::stencil_arena::OwnedEntry { address, owner, entry };
+            let owned = shared.borrow().owned_entry(address, entry)?;
+            self.shared_entry = Some(owned);
             let result = shared
                 .borrow()
                 .with_owned(owned, |entry| unsafe { invoke_f64x2_entry(entry, lhs, rhs) })?;
