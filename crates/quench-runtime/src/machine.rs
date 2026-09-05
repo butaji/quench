@@ -1489,8 +1489,7 @@ pub(crate) struct NativeBinaryPlan {
     // every arithmetic instruction it happens to contain.
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
-    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    physical: PhysicalState,
     // Numeric leaves currently have no dynamic holes, but retaining one site
     // keeps the patch-value view stable and avoids constructing a fresh cache
     // object on every native execution.
@@ -1630,8 +1629,7 @@ impl NativeBinaryPlan {
         Some(Self {
             arena: None,
             shared_arena: None,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(opcode),
             opcode,
             key,
@@ -1671,8 +1669,7 @@ impl NativeBinaryPlan {
         Some(Self {
             arena: None,
             shared_arena: None,
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
             key,
@@ -1702,8 +1699,7 @@ impl NativeBinaryPlan {
     #[inline]
     fn clear_physical_capabilities(&mut self) {
         self.installed = InstalledBinaryEntry::Unpublished;
-        self.cache.clear();
-        self.lifecycle.reset();
+        self.physical.clear();
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1740,7 +1736,7 @@ impl NativeBinaryPlan {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
                 address
             };
@@ -1768,7 +1764,7 @@ impl NativeBinaryPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let stencil = crate::stencil_select::select_stencil(key)
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_or_get(&mut self.cache, key, stencil, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_pair_bool_entry(address)?;
         self.installed = InstalledBinaryEntry::TaggedLocal(address);
@@ -1835,7 +1831,7 @@ impl NativeBinaryPlan {
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if self.lifecycle.observe_site(&self.site, self.key, true)
+            if self.physical.lifecycle.observe_site(&self.site, self.key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
             {
                 return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -1848,15 +1844,14 @@ impl NativeBinaryPlan {
                         let mut slab = shared.borrow_mut();
                         let stencil = crate::stencil_select::select_stencil(self.key)
                             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                        let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                        let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
                         slab.make_executable(address)?;
                         Ok(address)
                     })();
                     let address = match rendered {
                         Ok(rendered) => rendered,
                         Err(error) => {
-                            self.cache.clear();
-                            self.lifecycle.reset();
+                            self.physical.clear();
                             return Err(error);
                         }
                     };
@@ -1879,15 +1874,14 @@ impl NativeBinaryPlan {
                     let mut slab = shared.borrow_mut();
                     let stencil = crate::stencil_select::select_stencil(self.key)
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                    let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                    let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
                     slab.make_executable(address)?;
                     Ok(address)
                 })();
                 let address = match rendered {
                     Ok(rendered) => rendered,
                     Err(error) => {
-                        self.cache.clear();
-                        self.lifecycle.reset();
+                        self.physical.clear();
                         return Err(error);
                     }
                 };
@@ -1913,7 +1907,7 @@ impl NativeBinaryPlan {
             let result = if self.integer_unsigned {
                 arena
                     .render_selected_u32(
-                        &mut self.cache,
+                        &mut self.physical.cache,
                         self.key,
                         &values,
                         left as u32,
@@ -1922,14 +1916,14 @@ impl NativeBinaryPlan {
                     .map(|value| f64::from(value))
             } else {
                 arena
-                    .render_selected_i32(&mut self.cache, self.key, &values, left, right)
+                    .render_selected_i32(&mut self.physical.cache, self.key, &values, left, right)
                     .map(|value| f64::from(value))
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if result.is_ok() {
                 self.note_native_entry();
                 if let Some(arena) = self.arena.as_ref() {
-                    if let Some(address) = self.cache.get_owned(self.key, 0, arena.id()) {
+                    if let Some(address) = self.physical.cache.get_owned(self.key, 0, arena.id()) {
                         if self.integer_unsigned {
                             self.installed = arena
                                 .u32_entry(address)
@@ -1948,8 +1942,7 @@ impl NativeBinaryPlan {
             }
             if result.is_err() {
                 self.arena.take();
-                self.cache.clear();
-                self.lifecycle.reset();
+                self.physical.clear();
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 {
                     self.installed = InstalledBinaryEntry::Unpublished;
@@ -2011,7 +2004,7 @@ impl NativeBinaryPlan {
         if !crate::stencil_select::select_region(key).is_some_and(|record| record.executable) {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if self.lifecycle.observe_site(&self.site, key, true)
+        if self.physical.lifecycle.observe_site(&self.site, key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -2023,7 +2016,7 @@ impl NativeBinaryPlan {
                     let mut slab = shared.borrow_mut();
                     let stencil = crate::stencil_select::select_stencil(key)
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                    let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                    let address = slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
                     slab.make_executable(address)?;
                     Ok(address)
                 })();
@@ -2043,8 +2036,7 @@ impl NativeBinaryPlan {
                         }
                     }
                     Err(error) => {
-                        self.cache.clear();
-                        self.lifecycle.reset();
+                        self.physical.clear();
                         Err(error)
                     }
                 };
@@ -2053,15 +2045,14 @@ impl NativeBinaryPlan {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
                 Ok(address)
             })();
             let address = match rendered {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    self.cache.clear();
-                    self.lifecycle.reset();
+                    self.physical.clear();
                     return Err(error);
                 }
             };
@@ -2085,7 +2076,7 @@ impl NativeBinaryPlan {
             match crate::stencil_arena::StencilArena::new(4096) {
                 Ok(arena) => self.arena = Some(arena),
                 Err(error) => {
-                    self.lifecycle.reset();
+                    self.physical.lifecycle.reset();
                     return Err(error);
                 }
             }
@@ -2097,14 +2088,14 @@ impl NativeBinaryPlan {
             self.arena
                 .as_mut()
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
-                .render_selected_bool(&mut self.cache, key, &values, lhs, rhs)
+                .render_selected_bool(&mut self.physical.cache, key, &values, lhs, rhs)
                 .map(|value| if value { 1.0 } else { 0.0 })
         } else {
             let arena = self
                 .arena
                 .as_mut()
                 .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-            arena.render_selected_f64(&mut self.cache, key, &values, lhs, rhs, || {
+            arena.render_selected_f64(&mut self.physical.cache, key, &values, lhs, rhs, || {
                 Err(crate::stencil_arena::ArenaError::ProtectionFailed)
             })
         };
@@ -2122,7 +2113,7 @@ impl NativeBinaryPlan {
                     values.signature()
                 };
                 if let Some(arena) = self.arena.as_ref() {
-                    if let Some(address) = self.cache.get_owned(key, signature, arena.id()) {
+                    if let Some(address) = self.physical.cache.get_owned(key, signature, arena.id()) {
                         self.installed = arena
                             .f64_entry(address)
                             .ok()
@@ -2138,8 +2129,7 @@ impl NativeBinaryPlan {
             // instead of retrying into stale writable/exhausted storage; the
             // caller then takes the complete Rust semantic fallback.
             self.arena.take();
-            self.cache.clear();
-            self.lifecycle.reset();
+            self.physical.clear();
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 self.installed = InstalledBinaryEntry::Unpublished;
@@ -2168,7 +2158,7 @@ impl std::fmt::Debug for NativeBinaryPlan {
                     .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
                     .unwrap_or(0),
             )
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
