@@ -2195,7 +2195,7 @@ pub(crate) struct NativeTruthinessPlan {
     pointer_key: crate::stencil_fact::RegionKey,
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<2>,
     installed: InstalledTruthinessEntry,
     #[cfg(test)]
@@ -2206,7 +2206,7 @@ impl NativeTruthinessPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
         self.installed = InstalledTruthinessEntry::Unpublished;
-        self.cache.clear();
+        self.physical.clear();
     }
 
     #[inline]
@@ -2261,7 +2261,7 @@ impl NativeTruthinessPlan {
                 pointer_key,
                 arena: None,
                 shared_arena: None,
-                cache: crate::stencil_select::RenderedRegionCache::new(),
+                physical: PhysicalState::new(),
                 site: crate::quickening::QuickeningSite::new(instruction.opcode),
                 installed: InstalledTruthinessEntry::Unpublished,
                 #[cfg(test)]
@@ -2286,14 +2286,14 @@ impl NativeTruthinessPlan {
                 }
                 self.clear_shared_capabilities();
             }
-            let (address, entry) = {
+            let address = {
                 let values = crate::stencil_fact::PatchValues::from_site(&self.site);
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
                 slab.make_executable(address)?;
-                (address, slab.bool_unary_entry(address)?)
+                address
             };
             let owned = shared.borrow().owned_bool_unary_entry(address)?;
             self.installed = InstalledTruthinessEntry::NumberShared(owned);
@@ -2333,7 +2333,7 @@ impl NativeTruthinessPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let stencil = crate::stencil_select::select_stencil(self.key)
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.bool_unary_entry(address)?;
         self.installed = InstalledTruthinessEntry::NumberLocal(address);
@@ -2365,7 +2365,7 @@ impl NativeTruthinessPlan {
             let mut slab = shared.borrow_mut();
             let stencil = crate::stencil_select::select_stencil(self.word_key)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address = slab.render_or_get(&mut self.cache, self.word_key, stencil, &values)?;
+            let address = slab.render_or_get(&mut self.physical.cache, self.word_key, stencil, &values)?;
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
@@ -2405,7 +2405,7 @@ impl NativeTruthinessPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let stencil = crate::stencil_select::select_stencil(self.word_key)
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.word_key, stencil, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.word_key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
         self.installed = InstalledTruthinessEntry::WordLocal(address);
@@ -2433,7 +2433,7 @@ impl NativeTruthinessPlan {
             let mut slab = shared.borrow_mut();
             let stencil = crate::stencil_select::select_stencil(self.pointer_key)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address = slab.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
+            let address = slab.render_or_get(&mut self.physical.cache, self.pointer_key, stencil, &values)?;
             slab.make_executable(address)?;
             let entry = slab.word_bool_entry(address)?;
             drop(slab);
@@ -2467,7 +2467,7 @@ impl NativeTruthinessPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let stencil = crate::stencil_select::select_stencil(self.pointer_key)
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.pointer_key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
         self.installed = InstalledTruthinessEntry::PointerLocal(address);
@@ -2489,7 +2489,7 @@ impl std::fmt::Debug for NativeTruthinessPlan {
         formatter
             .debug_struct("NativeTruthinessPlan")
             .field("key", &self.key)
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
