@@ -1084,6 +1084,87 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
     assert!(executed, "ordinary driver must execute the lowered bitwise body");
 }
 
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn ordinary_source_lowering_executes_fused_indexed_numeric_update() {
+    let program = crate::reduce::reduce_source("var a = [3]; a[0] = a[0] + 2; a;")
+        .expect("indexed update source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc)
+                .is_some_and(|instruction| instruction.opcode == crate::ir::Opcode::AGetI)
+                && view.instruction(*pc + 1).is_some_and(|instruction| {
+                    matches!(
+                        instruction.opcode,
+                        crate::ir::Opcode::Add | crate::ir::Opcode::AddConst
+                    )
+                })
+                && view.instruction(*pc + 2).is_some_and(|instruction| {
+                    instruction.opcode == crate::ir::Opcode::ASetI
+                })
+        }) else {
+            return;
+        };
+        let load = view.instruction(pc).expect("indexed load");
+        let add = view.instruction(pc + 1).expect("indexed add");
+        let store = view.instruction(pc + 2).expect("indexed store");
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let region = plan.native_region_at(pc).expect("fused update admission");
+        let expected_key = if add.opcode == crate::ir::Opcode::Add {
+            crate::stencil_select::array_numeric_update_region_key()
+        } else {
+            crate::stencil_select::array_numeric_update_const_region_key()
+        };
+        assert_eq!(region.borrow().key_for_test(), expected_key);
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        let array = crate::value::Value::Array(std::rc::Rc::new(
+            crate::value::ArrayData::new(vec![crate::value::Value::Number(3.0)]),
+        ));
+        registers.write(usize::from(load.b), array);
+        registers.write(usize::from(load.c), crate::value::Value::Number(0.0));
+        let array_word = registers.read(usize::from(load.b)).unwrap();
+        registers.write(usize::from(store.a), array_word);
+        registers.write(usize::from(store.b), crate::value::Value::Number(0.0));
+        if add.opcode == crate::ir::Opcode::Add {
+            registers.write(usize::from(add.c), crate::value::Value::Number(2.0));
+        }
+        let context = crate::vm::current_context_or_default();
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("ordinary fused update");
+        assert_eq!(
+            registers
+                .read_array(usize::from(store.a))
+                .and_then(|array| array.dense_number_at(0)),
+            Some(5.0)
+        );
+        assert!(region.borrow().last_native_execution());
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary lowering must expose the fused update shape");
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn ordinary_source_lowering_executes_numeric_comparison_and_falls_back_on_conversion() {
