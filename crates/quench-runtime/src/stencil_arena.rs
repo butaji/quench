@@ -309,7 +309,20 @@ impl SharedStencilSlab {
         if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
-        self.render_or_get(cache, view.key, view.stencil, values)
+        for slab in &mut self.slabs {
+            match slab.render_selected_view(cache, view, values) {
+                Ok(address) => return Ok(address),
+                Err(ArenaError::ProtectionFailed | ArenaError::Exhausted) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        if !self.reclaim_for(self.slab_capacity, cache) {
+            return Err(ArenaError::Exhausted);
+        }
+        let mut slab = StencilArena::new(self.slab_capacity)?;
+        let address = slab.render_selected_view(cache, view, values)?;
+        self.slabs.push(slab);
+        Ok(address)
     }
 
     fn slab_for(&self, address: usize) -> Option<&StencilArena> {
@@ -990,13 +1003,13 @@ impl StencilArena {
             if view.stencil.bytes != stencil.bytes || view.stencil.holes != stencil.holes {
                 return Err(ArenaError::ProtectionFailed);
             }
+            return self.render_selected_view(cache, view, values);
         }
         let signature = cache_signature(stencil, values);
         if let Some(address) = cache
             .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
-            self.record_abi(address, key);
             return Ok(address);
         }
         if !stencil.validate() {
@@ -1004,8 +1017,30 @@ impl StencilArena {
         }
         let offset = self.copy_and_patch(stencil, values)?;
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        self.record_abi(address, key);
         Ok(cache.insert_owned(key, signature, address, self.id))
+    }
+
+    fn render_selected_view<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+    ) -> Result<usize, ArenaError> {
+        if !view.contract().abi_is_well_formed() || !view.stencil.validate() {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let signature = cache_signature(view.stencil, values);
+        if let Some(address) = cache
+            .get_owned(view.key, signature, self.id)
+            .filter(|address| self.owns_address(*address))
+        {
+            self.record_abi(address, view.abi);
+            return Ok(address);
+        }
+        let offset = self.copy_and_patch(view.stencil, values)?;
+        let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
+        self.record_abi(address, view.abi);
+        Ok(cache.insert_owned(view.key, signature, address, self.id))
     }
 
     pub fn render_physical_view_or_get<const N: usize>(
@@ -1019,13 +1054,11 @@ impl StencilArena {
         if !view.contract().abi_is_well_formed() || !view.matches(&selected) {
             return Err(ArenaError::ProtectionFailed);
         }
-        self.render_or_get(cache, view.key, view.stencil, values)
+        self.render_selected_view(cache, view, values)
     }
 
-    fn record_abi(&self, address: usize, key: crate::stencil_fact::RegionKey) {
-        if let Some(view) = crate::stencil_select::select_physical(key) {
-            self.published_abis.borrow_mut().insert(address, view.abi);
-        }
+    fn record_abi(&self, address: usize, abi: crate::stencil_select::RegionAbi) {
+        self.published_abis.borrow_mut().insert(address, abi);
     }
 
     fn require_abi(
@@ -1184,7 +1217,7 @@ impl StencilArena {
             return Err(ArenaError::ProtectionFailed);
         }
         let stencil = view.stencil;
-        let address = self.render_or_get(cache, key, stencil, values)?;
+        let address = self.render_physical_view_or_get(cache, view, values)?;
         self.make_executable()?;
         match self.execute_bool(address, lhs, rhs) {
             Ok(value) => {
@@ -1216,7 +1249,7 @@ impl StencilArena {
             return Err(ArenaError::ProtectionFailed);
         }
         let stencil = view.stencil;
-        let address = self.render_or_get(cache, key, stencil, values)?;
+        let address = self.render_physical_view_or_get(cache, view, values)?;
         self.make_executable()?;
         match self.execute_i32(address, lhs, rhs) {
             Ok(value) => {
@@ -1248,7 +1281,7 @@ impl StencilArena {
             return Err(ArenaError::ProtectionFailed);
         }
         let stencil = view.stencil;
-        let address = self.render_or_get(cache, key, stencil, values)?;
+        let address = self.render_physical_view_or_get(cache, view, values)?;
         self.make_executable()?;
         match self.execute_u32(address, lhs, rhs) {
             Ok(value) => {
@@ -1422,7 +1455,7 @@ impl StencilArena {
         // The displacement is internal to this arena and remains valid while
         // the cached address is owned by it. Match future calls on the
         // caller-visible patch facts, not on the newly allocated addresses.
-        self.record_abi(address, key);
+        self.record_abi(address, crate::stencil_select::RegionAbi::Scalar);
         cache.insert_owned(key, signature, address, self.id);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
@@ -1557,7 +1590,7 @@ impl StencilArena {
                 return fallback();
             }
         };
-        self.record_abi(address, key);
+        self.record_abi(address, crate::stencil_select::RegionAbi::Scalar);
         cache.insert_owned(key, signature, address, self.id);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
@@ -2549,6 +2582,11 @@ mod tests {
     fn physical_view_mismatch_is_rejected_before_allocation() {
         let key = crate::stencil_select::add_const_region_key();
         let view = crate::stencil_select::select_physical(key).expect("physical view");
+        static BAD_TAIL_BYTES: &[u8] = &[0xc3];
+        static BAD_TAIL: Stencil = Stencil {
+            bytes: BAD_TAIL_BYTES,
+            holes: &[],
+        };
         let bad = crate::stencil_select::PhysicalStencilView {
             abi: crate::stencil_select::RegionAbi::TaggedWord,
             ..view
@@ -2559,6 +2597,26 @@ mod tests {
         let mut cache = RenderedRegionCache::new();
         assert_eq!(
             arena.render_physical_view_or_get(&mut cache, bad, &values),
+            Err(ArenaError::ProtectionFailed)
+        );
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
+        let bad_fallthrough = crate::stencil_select::PhysicalStencilView {
+            fallthrough: Some((&BAD_TAIL, 0)),
+            ..view
+        };
+        assert_eq!(
+            arena.render_physical_view_or_get(&mut cache, bad_fallthrough, &values),
+            Err(ArenaError::ProtectionFailed)
+        );
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
+        let bad_entry = crate::stencil_select::PhysicalStencilView {
+            entry: view.entry.saturating_add(1),
+            ..view
+        };
+        assert_eq!(
+            arena.render_physical_view_or_get(&mut cache, bad_entry, &values),
             Err(ArenaError::ProtectionFailed)
         );
         assert_eq!(arena.used(), 0);
