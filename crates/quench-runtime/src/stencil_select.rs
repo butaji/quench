@@ -682,6 +682,15 @@ mod tests {
         assert_eq!(numeric_region_key(crate::ir::Opcode::GetProperty), None);
     }
 
+    #[test]
+    fn numeric_add_leaf_never_selects_nonreturning_fallthrough_head() {
+        let key = numeric_region_key(crate::ir::Opcode::Add).expect("add leaf");
+        let record = select_region(key).expect("add declaration");
+        assert_eq!(key, loop_region_key());
+        assert!(record.fallthrough.is_none());
+        assert!(fallthrough_region_key() != key);
+    }
+
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn numeric_rows_never_admit_x86_bytes_on_other_isas() {
