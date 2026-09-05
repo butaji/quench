@@ -73,7 +73,7 @@ fn cache_signature<const N: usize>(stencil: &Stencil, values: &PatchValues<'_, N
     }
 }
 
-fn physical_cache_signature<const N: usize>(
+pub(crate) fn physical_cache_signature<const N: usize>(
     view: crate::stencil_select::PhysicalStencilView,
     values: &PatchValues<'_, N>,
 ) -> u64 {
