@@ -1106,7 +1106,13 @@ impl StencilArena {
         execute: impl FnOnce(usize) -> Result<T, E>,
         fallback: impl FnOnce() -> Result<T, E>,
     ) -> Result<T, E> {
-        let signature = crate::stencil_select::select_physical(key)
+        let selected = crate::stencil_select::select_physical(key);
+        if let Some(view) = selected.filter(|view| {
+            view.stencil.bytes == stencil.bytes && view.stencil.holes == stencil.holes
+        }) {
+            return self.render_view_and_execute(cache, view, values, execute, fallback);
+        }
+        let signature = selected
             .map(|view| physical_cache_signature(view, values))
             .unwrap_or_else(|| cache_signature(stencil, values));
         match self.render_or_get(cache, key, stencil, values) {
@@ -1135,6 +1141,31 @@ impl StencilArena {
         }
     }
 
+    fn render_view_and_execute<const N: usize, T, E>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+        execute: impl FnOnce(usize) -> Result<T, E>,
+        fallback: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, E> {
+        let signature = physical_cache_signature(view, values);
+        let Ok(address) = self.render_selected_view(cache, view, values) else {
+            return fallback();
+        };
+        if self.make_executable().is_err() {
+            cache.remove(view.key, signature, address);
+            return fallback();
+        }
+        match execute(address) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                cache.remove(view.key, signature, address);
+                fallback()
+            }
+        }
+    }
+
     /// Complete admitted-region path: one catalog lookup, then bounded
     /// allocation/copy/patch/protection and a caller-supplied entry point.
     /// Unknown regions never reach the arena and use ordinary semantics.
@@ -1153,12 +1184,11 @@ impl StencilArena {
         if !contract.executable || contract.abi != crate::stencil_select::RegionAbi::Scalar {
             return fallback();
         }
-        let stencil = view.stencil;
         // This generic adapter accepts a caller closure and is also used by
         // modeled ABI tests. Only typed machine-entry wrappers may publish an
         // execution witness, so a successful closure cannot masquerade as
         // native instruction execution in diagnostics.
-        self.render_and_execute(cache, key, stencil, values, execute, fallback)
+        self.render_view_and_execute(cache, view, values, execute, fallback)
     }
 
     /// End-to-end executable entry for the proven-number Add+Return region.
