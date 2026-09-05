@@ -85,6 +85,17 @@ pub struct SharedStencilSlab {
     peak_dispatches: Cell<usize>,
 }
 
+/// A typed entry pointer paired with the slab generation that published it.
+/// The address alone is not a stable capability: an evicted mapping may be
+/// recycled by the OS.  Callers must pass this token through `with_active` so
+/// execution fails closed if the owner changed.
+#[derive(Clone, Copy)]
+pub(crate) struct OwnedEntry<F: Copy> {
+    pub(crate) address: usize,
+    pub(crate) owner: u64,
+    pub(crate) entry: F,
+}
+
 struct ActiveUse<'a> {
     owner: &'a SharedStencilSlab,
 }
@@ -204,6 +215,26 @@ impl SharedStencilSlab {
 
     pub(crate) fn owner_for(&self, address: usize) -> Option<u64> {
         self.slab_for(address).map(StencilArena::id)
+    }
+
+    pub(crate) fn owned_entry<F: Copy>(
+        &self,
+        address: usize,
+        entry: F,
+    ) -> Result<OwnedEntry<F>, ArenaError> {
+        let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
+        Ok(OwnedEntry { address, owner, entry })
+    }
+
+    pub(crate) fn with_owned<F: Copy, R>(
+        &self,
+        owned: OwnedEntry<F>,
+        invoke: impl FnOnce(F) -> R,
+    ) -> Result<R, ArenaError> {
+        if self.owner_for(owned.address) != Some(owned.owner) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.with_active(owned.address, || invoke(owned.entry))
     }
 
     pub fn make_executable(&mut self, address: usize) -> Result<(), ArenaError> {
@@ -1561,6 +1592,34 @@ mod tests {
         }
         assert_eq!(pool.capacity(), MAX_SHARED_SLAB_BYTES);
         assert_eq!(pool.slab_count(), 4);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn owned_entry_rejects_generation_mismatch_before_invocation() {
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).expect("add key");
+        let record = crate::stencil_select::select_region(key).expect("add row");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = pool
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        pool.make_executable(address).unwrap();
+        let entry = pool.f64_entry(address).unwrap();
+        let owner = pool.owner_for(address).unwrap();
+        let stale = OwnedEntry {
+            address,
+            owner: owner.wrapping_add(1),
+            entry,
+        };
+        assert!(pool
+            .with_owned(stale, |_| panic!("stale entry was invoked"))
+            .is_err());
+        let live = OwnedEntry { address, owner, entry };
+        let value = pool.with_owned(live, |entry| entry(2.0, 3.0)).unwrap();
+        assert_eq!(value, 5.0);
     }
 
     #[cfg(target_arch = "aarch64")]
