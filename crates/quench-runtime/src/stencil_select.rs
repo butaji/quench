@@ -4,6 +4,7 @@
 //! this boundary, then perform one key lookup and use the ordinary VM on a
 //! miss. Instruction selection and CFG reasoning do not belong here.
 
+use crate::facts::OperationEffect;
 use crate::stencil_fact::{FactState, RegionId, RegionKey, Stencil};
 
 pub const MAX_RENDERED_REGIONS: usize = 16;
@@ -34,6 +35,67 @@ pub struct RegionRecord {
     /// executable semantic leaf.  Those rows remain selectable for auditing,
     /// but the renderer must use the canonical fallback for them.
     pub executable: bool,
+}
+
+/// The mechanical semantic contract of a generated region row.  The row's
+/// operation sequence remains the single source of truth: effects, control
+/// shape, and result/live-state requirements are queried from the canonical
+/// opcode declarations instead of being copied into a stencil-specific table.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegionContract {
+    pub abi: RegionAbi,
+    pub operations: &'static [crate::ir::Opcode],
+    pub entry: u16,
+    pub external_entries: &'static [u16],
+    pub executable: bool,
+}
+
+impl RegionContract {
+    pub const fn legal_external_entry(self, offset: u16) -> bool {
+        if offset != self.entry {
+            return false;
+        }
+        let mut index = 0;
+        while index < self.external_entries.len() {
+            if self.external_entries[index] == offset {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    pub fn has_effect(self, effect: OperationEffect) -> bool {
+        self.operations
+            .iter()
+            .copied()
+            .any(|opcode| opcode.has_effect(effect))
+    }
+
+    pub fn requires_semantic_boundary(self) -> bool {
+        self.has_effect(OperationEffect::Allocate)
+            || self.has_effect(OperationEffect::MayThrow)
+            || self.has_effect(OperationEffect::Observable)
+    }
+
+    pub const fn has_single_entry(self) -> bool {
+        self.external_entries.len() == 1 && self.external_entries[0] == self.entry
+    }
+}
+
+impl RegionRecord {
+    /// Build the contract from this generated row.  No caller may construct a
+    /// second effect/ABI universe: operation effects and control facts are
+    /// always read from `ir::Opcode::spec` through this view.
+    pub const fn contract(&self) -> RegionContract {
+        RegionContract {
+            abi: self.abi,
+            operations: self.operations,
+            entry: self.entry,
+            external_entries: self.external_entries,
+            executable: self.executable,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -244,6 +306,28 @@ mod generated_region_admission_tests {
                 RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 76),
             }
         }
+    }
+
+    #[test]
+    fn generated_contracts_reuse_opcode_effects_and_entry_rules() {
+        let scalar = select_region(loop_region_key())
+            .expect("scalar row")
+            .contract();
+        assert_eq!(scalar.abi, RegionAbi::Scalar);
+        assert!(scalar.has_effect(crate::facts::OperationEffect::MayThrow));
+        assert!(!scalar.has_effect(crate::facts::OperationEffect::WriteHeap));
+        assert!(scalar.legal_external_entry(0));
+        assert!(!scalar.legal_external_entry(1));
+
+        let array = select_region(array_numeric_loop_region_key())
+            .expect("numeric loop row")
+            .contract();
+        assert_eq!(array.abi, RegionAbi::ArrayNumericLoop);
+        assert!(array.has_effect(crate::facts::OperationEffect::ReadHeap));
+        assert!(array.has_effect(crate::facts::OperationEffect::WriteHeap));
+        assert!(array.has_effect(crate::facts::OperationEffect::Control));
+        assert!(array.requires_semantic_boundary());
+        assert!(array.has_single_entry());
     }
 }
 
