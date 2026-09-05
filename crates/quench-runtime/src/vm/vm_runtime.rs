@@ -775,16 +775,13 @@ fn execute_composed_array_update(
     let Some(add) = code.instruction(pc + 1) else { return Ok(None) };
     let Some(store) = code.instruction(pc + 2) else { return Ok(None) };
     if load.opcode != crate::ir::Opcode::AGetI
-        || add.opcode != crate::ir::Opcode::Add
+        || !matches!(add.opcode, crate::ir::Opcode::Add | crate::ir::Opcode::AddConst)
         || store.opcode != crate::ir::Opcode::ASetI
         || load.flags != 0
         || add.flags != 0
         || store.flags != 0
-        || store.a != load.b
-        || store.b != load.c
         || add.b != load.a
         || store.c != add.a
-        || add.c == load.a
         || add.a == load.c
         || add.a == load.b
     {
@@ -793,8 +790,28 @@ fn execute_composed_array_update(
     let Some(index) = registers.read_array_index(usize::from(load.c)) else {
         return Ok(None);
     };
-    let Some(addend) = registers.read_number(usize::from(add.c)) else {
+    let Some(store_index) = registers.read_array_index(usize::from(store.b)) else {
         return Ok(None);
+    };
+    if store_index != index {
+        return Ok(None);
+    }
+    let addend = if add.opcode == crate::ir::Opcode::Add {
+        if add.c == load.a {
+            return Ok(None);
+        }
+        let Some(value) = registers.read_number(usize::from(add.c)) else {
+            return Ok(None);
+        };
+        value
+    } else {
+        if add.add_const_is_left() {
+            return Ok(None);
+        }
+        let Some(crate::ops::Constant::Number(value)) = code.constant(add.c) else {
+            return Ok(None);
+        };
+        *value
     };
     let Some(array) = registers
         .read_array(usize::from(load.b))
@@ -803,6 +820,16 @@ fn execute_composed_array_update(
     else {
         return Ok(None);
     };
+    let Some(store_array) = registers
+        .read_array(usize::from(store.a))
+        .filter(|array| crate::locals::array_word_is_current(array))
+        .filter(|array| array.is_plain_dense_access())
+    else {
+        return Ok(None);
+    };
+    if !std::ptr::eq(array, store_array) {
+        return Ok(None);
+    }
     if !array.has_kernel_numeric_index(index) {
         return Ok(None);
     }
@@ -889,6 +916,16 @@ pub(crate) fn execute_composed_array_kernel(
         == [
             crate::ir::Opcode::AGetI,
             crate::ir::Opcode::Add,
+            crate::ir::Opcode::ASetI,
+        ]
+    {
+        return execute_composed_array_update(region, invoke);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if region.operations
+        == [
+            crate::ir::Opcode::AGetI,
+            crate::ir::Opcode::AddConst,
             crate::ir::Opcode::ASetI,
         ]
     {
