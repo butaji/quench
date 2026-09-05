@@ -339,6 +339,25 @@ impl VmContext {
     }
 }
 
+#[cfg(test)]
+mod interrupt_tests {
+    use super::VmContext;
+
+    #[test]
+    fn interrupt_request_is_stable_across_context_clones() {
+        let context = VmContext::default();
+        let clone = context.clone();
+        context.request_interrupt();
+        let requested = unsafe { &*clone.interrupt_flag() }
+            .load(std::sync::atomic::Ordering::Acquire);
+        assert!(requested);
+        clone.clear_interrupt();
+        let cleared = unsafe { &*context.interrupt_flag() }
+            .load(std::sync::atomic::Ordering::Acquire);
+        assert!(!cleared);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum VmError {
     RegisterOutOfBounds(u16),
