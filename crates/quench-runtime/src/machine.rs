@@ -1605,8 +1605,8 @@ impl NativeBinaryPlan {
                 } else {
                     values.signature()
                 };
-                if let Some(address) = self.cache.get(key, signature) {
-                    if let Some(arena) = self.arena.as_ref() {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Some(address) = self.cache.get_owned(key, signature, arena.id()) {
                         self.entry = arena.f64_entry(address).ok();
                     }
                 }
@@ -1701,7 +1701,7 @@ impl NativeAddChainPlan {
             .render_selected_f64x3(&mut self.cache, key, &values, lhs, rhs, third);
         if result.is_ok() {
             if let Some(arena) = self.arena.as_ref() {
-                if let Some(address) = self.cache.get(key, 0) {
+                if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
                     self.entry = arena.f64x3_entry(address).ok();
                 }
             }
@@ -1805,8 +1805,8 @@ impl NativeMovePlan {
         })();
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
-            if let Some(address) = self.cache.get(key, 0) {
-                if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
                     self.entry = arena.tagged_word_entry(address).ok();
                 }
             }
@@ -1915,8 +1915,8 @@ impl NativePropertyPlan {
         })();
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() {
-            if let Some(address) = self.cache.get(key, 0) {
-                if let Some(arena) = self.arena.as_ref() {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
                     self.entry = arena.tagged_word_entry(address).ok();
                 }
             }

@@ -7,6 +7,7 @@
 use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::{select_region, RenderedRegionCache};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 extern "C" {
@@ -33,6 +34,7 @@ fn flush_icache(ptr: *const u8, len: usize) {
 }
 
 const PAGE: usize = 4096;
+static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 /// Workload-independent disposable code budget for one arena.
 pub const MAX_ARENA_BYTES: usize = 1 << 20;
 
@@ -62,6 +64,7 @@ pub struct StencilArena {
     capacity: usize,
     cursor: usize,
     executable: bool,
+    id: u64,
 }
 
 impl StencilArena {
@@ -91,6 +94,7 @@ impl StencilArena {
             capacity,
             cursor: 0,
             executable: false,
+            id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
         })
     }
 
@@ -105,6 +109,12 @@ impl StencilArena {
     }
     pub fn is_executable(&self) -> bool {
         self.executable
+    }
+
+    /// Stable owner token used to validate cached entry pointers.  It is
+    /// distinct from the virtual address because the OS may recycle mappings.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn address(&self, offset: usize) -> Option<usize> {
@@ -319,7 +329,7 @@ impl StencilArena {
     ) -> Result<usize, ArenaError> {
         let signature = cache_signature(stencil, values);
         if let Some(address) = cache
-            .get(key, signature)
+            .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
             return Ok(address);
@@ -329,7 +339,7 @@ impl StencilArena {
         }
         let offset = self.copy_and_patch(stencil, values)?;
         let address = self.address(offset).ok_or(ArenaError::Exhausted)?;
-        Ok(cache.insert(key, signature, address))
+        Ok(cache.insert_owned(key, signature, address, self.id))
     }
 
     /// Execute an installed region through the caller-supplied semantic entry
@@ -475,7 +485,7 @@ impl StencilArena {
     ) -> Result<f64, ArenaError> {
         let signature = cache_signature(head, values);
         if let Some(address) = cache
-            .get(key, signature)
+            .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
             if self.is_executable() {
@@ -554,7 +564,7 @@ impl StencilArena {
         // The displacement is internal to this arena and remains valid while
         // the cached address is owned by it. Match future calls on the
         // caller-visible patch facts, not on the newly allocated addresses.
-        cache.insert(key, signature, address);
+        cache.insert_owned(key, signature, address, self.id);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
             return fallback();
@@ -596,7 +606,7 @@ impl StencilArena {
     ) -> Result<f64, ArenaError> {
         let signature = cache_signature(head, values);
         if let Some(address) = cache
-            .get(key, signature)
+            .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
         {
             if self.is_executable() {
@@ -673,7 +683,7 @@ impl StencilArena {
                 return fallback();
             }
         };
-        cache.insert(key, signature, address);
+        cache.insert_owned(key, signature, address, self.id);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
             return fallback();
@@ -828,6 +838,37 @@ mod tests {
             .unwrap();
         assert_ne!(address, usize::MAX);
         assert_eq!(arena.used(), 3);
+    }
+
+    #[test]
+    fn rendered_entries_are_owned_by_their_arena_generation() {
+        let mut first = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetProperty);
+        let values = PatchValues::from_site(&site);
+        let stencil = Stencil {
+            bytes: &[1, 2, 3],
+            holes: &[],
+        };
+        let key = crate::stencil_fact::RegionKey(91);
+        let first_address = first
+            .render_or_get(&mut cache, key, &stencil, &values)
+            .unwrap();
+        let first_owner = first.id();
+        assert_eq!(cache.get_owned(key, 0, first_owner), Some(first_address));
+
+        // A cache may outlive a disposable arena.  A new owner must not treat
+        // the old raw address as callable, even if the OS later recycles the
+        // same virtual mapping.
+        drop(first);
+        let mut second = StencilArena::new(4096).unwrap();
+        assert_ne!(first_owner, second.id());
+        assert_eq!(cache.get_owned(key, 0, second.id()), None);
+        let second_address = second
+            .render_or_get(&mut cache, key, &stencil, &values)
+            .unwrap();
+        assert_eq!(second.used(), stencil.bytes.len());
+        assert_eq!(cache.get_owned(key, 0, second.id()), Some(second_address));
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
