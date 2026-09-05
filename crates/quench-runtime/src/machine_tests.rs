@@ -1038,6 +1038,108 @@ fn ordinary_source_lowering_executes_numeric_negate_and_preserves_signed_zero() 
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
+fn ordinary_source_lowering_executes_logical_not_with_complete_fallback() {
+    let program = crate::reduce::reduce_source("var x = 0; x = !x; x;")
+        .expect("logical-not source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Unary
+                    && crate::ir::compact_unary_operator(instruction.flags)
+                        == Some(crate::ops::UnaryOp::Not)
+            })
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let native = plan.native_truthiness_at(pc).expect("logical-not truthiness plan");
+        let instruction = view.instruction(pc).expect("logical-not instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Number(0.0));
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            std::rc::Rc::clone(&environment),
+        )
+        .expect("logical-not numeric execution");
+        assert_eq!(
+            registers.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+        assert!(native.borrow().native_entry_count > 0, "logical-not number must execute emitted bytes");
+        assert_eq!(native.borrow_mut().execute(2.0), Ok(true));
+        assert_eq!(native.borrow_mut().execute(f64::NAN), Ok(false));
+        let before = native.borrow().native_entry_count;
+
+        let mut hostile = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        hostile.write(
+            usize::from(instruction.b),
+            crate::value::Value::String(String::new()),
+        );
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .expect("logical-not coercive fallback");
+        assert_eq!(
+            hostile.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+        assert_eq!(native.borrow().native_entry_count, before);
+        let mut boolean_input = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        boolean_input.write(
+            usize::from(instruction.b),
+            crate::value::Value::Boolean(true),
+        );
+        crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut boolean_input,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("logical-not boolean execution");
+        assert_eq!(
+            boolean_input.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(false))
+        );
+        assert!(native.borrow().native_entry_count > before);
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must reach logical-not");
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
 fn ordinary_source_lowering_executes_numeric_truthiness_and_falls_back_for_string() {
     let program = crate::reduce::reduce_source("var x = 0; if (x) { x = 1; } x;")
         .expect("conditional source lowers");

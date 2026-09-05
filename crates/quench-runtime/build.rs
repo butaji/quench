@@ -602,7 +602,7 @@ const AARCH64_LOAD_CONST_BYTES: [u8; 16] = {
 };
 const AARCH64_TRUTHY_NUMBER_BYTES: [u8; 28] = {
     let mut out = [0; 28];
-    put32(&mut out, 0, 0x9E67_0001); // fmov d1, xzr
+    put32(&mut out, 0, 0x9E67_03E1); // fmov d1, xzr
     put32(&mut out, 4, 0x1E61_2000); // fcmp d0, d1
     put32(&mut out, 8, aarch64_cset_ne_w0());
     put32(&mut out, 12, 0x1E60_2000); // fcmp d0, d0
