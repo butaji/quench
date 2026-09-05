@@ -1084,19 +1084,19 @@ fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
 #[test]
 fn region_verifier_rejects_physical_call_for_raw_abi() {
     #[cfg(target_arch = "aarch64")]
-    assert!(super::stencil_contains_call(&[0x00, 0x00, 0x00, 0x94]));
+    assert!(crate::stencil_physical::contains_call(&[0x00, 0x00, 0x00, 0x94]));
     #[cfg(target_arch = "aarch64")]
-    assert!(super::stencil_contains_call(&[0x00, 0x00, 0x3F, 0xD6]));
+    assert!(crate::stencil_physical::contains_call(&[0x00, 0x00, 0x3F, 0xD6]));
     #[cfg(target_arch = "x86_64")]
-    assert!(super::stencil_contains_call(&[0xE8, 0, 0, 0, 0]));
+    assert!(crate::stencil_physical::contains_call(&[0xE8, 0, 0, 0, 0]));
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    assert!(!super::stencil_contains_call(&[0xE8]));
+    assert!(!crate::stencil_physical::contains_call(&[0xE8]));
     for key in [
         crate::stencil_select::array_loop_body_region_key(),
         crate::stencil_select::array_numeric_loop_region_key(),
     ] {
         let record = crate::stencil_select::select_region(key).expect("raw declaration");
-        assert!(!super::stencil_contains_call(record.stencil.bytes));
+        assert!(!crate::stencil_physical::contains_call(record.stencil.bytes));
     }
 }
 
