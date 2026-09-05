@@ -121,10 +121,15 @@ fn generated_chain_relocation_is_declared(
     } else {
         crate::stencil_fact::HoleKind::Rel32
     };
-    view.relocations.len() == 1
-        && view.relocations[0].offset == offset
-        && view.relocations[0].kind == expected_kind
-        && !view.relocations[0].target.is_empty()
+    view.relocations.len() == view.stencil.holes.len()
+        && view.relocations.iter().all(|relocation| {
+            view.stencil.holes.iter().any(|hole| {
+                hole.offset == relocation.offset
+                    && hole.kind == relocation.kind
+                    && relocation.target == "q_fallthrough_tail"
+            })
+        })
+        && view.relocations.iter().all(|relocation| relocation.kind == expected_kind)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2724,10 +2729,16 @@ mod tests {
         if view.generated {
             let (tail, branch_offset) = view.fallthrough.expect("generated successor");
             assert_eq!(arena.used(), view.stencil.bytes.len() + tail.bytes.len());
-            assert_eq!(view.relocations.len(), 1);
-            assert_eq!(view.relocations[0].offset, branch_offset);
-            assert_eq!(view.relocations[0].kind, HoleKind::Branch26);
-            assert!(!view.relocations[0].target.is_empty());
+            assert_eq!(view.relocations.len(), 2);
+            assert!(view.relocations.iter().all(|relocation| {
+                relocation.kind == HoleKind::Branch26
+                    && relocation.target == "q_fallthrough_tail"
+            }));
+            assert!(view
+                .relocations
+                .iter()
+                .any(|relocation| relocation.offset == branch_offset));
+            assert!(view.relocations.iter().any(|relocation| relocation.offset == 8));
         }
         let witness = arena
             .last_physical_execution()
@@ -2779,15 +2790,23 @@ mod tests {
         let key = crate::stencil_select::fallthrough_region_key();
         let view = crate::stencil_select::select_physical(key).expect("physical view");
         assert!(view.generated);
-        assert_eq!(view.stencil.holes.len(), 1);
+        assert_eq!(view.stencil.holes.len(), 2);
         assert_eq!(view.stencil.holes[0].offset, 4);
         assert!(matches!(
             view.stencil.holes[0].kind,
             crate::stencil_fact::HoleKind::Branch26
         ));
-        assert_eq!(view.relocations.len(), 1);
-        assert_eq!(view.relocations[0].offset, 4);
-        assert_eq!(view.relocations[0].target, "q_fallthrough_tail");
+        assert_eq!(view.relocations.len(), 2);
+        let offsets = view
+            .relocations
+            .iter()
+            .map(|relocation| relocation.offset)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(offsets, [4, 8].into_iter().collect());
+        assert!(view
+            .relocations
+            .iter()
+            .all(|relocation| relocation.target == "q_fallthrough_tail"));
         let (tail, entry) = view.fallthrough.expect("generated tail");
         assert_eq!(entry, 4);
         assert_eq!(tail.bytes, &[0xc0, 0x03, 0x5f, 0xd6]);
