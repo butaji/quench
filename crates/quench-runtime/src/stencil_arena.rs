@@ -996,7 +996,8 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key) else {
             return fallback();
         };
-        if !view.executable || view.abi != crate::stencil_select::RegionAbi::Scalar {
+        let contract = view.contract();
+        if !contract.executable || contract.abi != crate::stencil_select::RegionAbi::Scalar {
             return fallback();
         }
         let stencil = view.stencil;
@@ -1018,7 +1019,7 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key) else {
             return fallback();
         };
-        if !view.executable {
+        if !view.contract().executable {
             return fallback();
         }
         let stencil = view.stencil;
@@ -1063,7 +1064,7 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
-        if view.abi != crate::stencil_select::RegionAbi::ScalarBool
+        if view.contract().abi != crate::stencil_select::RegionAbi::ScalarBool
             || view.fallthrough.is_some()
         {
             return Err(ArenaError::ProtectionFailed);
@@ -1092,7 +1093,7 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
-        if view.abi != crate::stencil_select::RegionAbi::ScalarI32
+        if view.contract().abi != crate::stencil_select::RegionAbi::ScalarI32
             || view.fallthrough.is_some()
         {
             return Err(ArenaError::ProtectionFailed);
@@ -1121,7 +1122,7 @@ impl StencilArena {
         let Some(view) = crate::stencil_select::select_physical(key).filter(|view| view.executable) else {
             return Err(ArenaError::ProtectionFailed);
         };
-        if view.abi != crate::stencil_select::RegionAbi::ScalarU32
+        if view.contract().abi != crate::stencil_select::RegionAbi::ScalarU32
             || view.fallthrough.is_some()
         {
             return Err(ArenaError::ProtectionFailed);
@@ -1177,7 +1178,7 @@ impl StencilArena {
         };
         // A fused chain is emitted as one complete stencil and therefore must
         // not recurse through the two-piece fallthrough renderer.
-        if view.abi != crate::stencil_select::RegionAbi::Scalar
+        if view.contract().abi != crate::stencil_select::RegionAbi::Scalar
             || view.record.operations != &[crate::ir::Opcode::Add, crate::ir::Opcode::Add]
             || view.fallthrough.is_some()
         {
