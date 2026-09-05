@@ -47,8 +47,8 @@ covered by `/tmp/quench-scalar-owned-focused-20260905-v2.log` and
 `/tmp/quench-scalar-owned-int-20260905.log` (1 passed each), with the current
 full runtime at **733 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-scalar-owned-v3.log`).
-The trace-enabled full runtime remains green at **745 passed, 0 failed, 1
-ignored** (`/tmp/quench-runtime-trace-20260905-scalar-owned-v3.log`), with the
+The trace-enabled full runtime remains green at **746 passed, 0 failed, 1
+ignored** (`/tmp/quench-runtime-trace-20260905-shared-bool-v2.log`), with the
 typed shared-integer witness passing separately
 (`/tmp/quench-scalar-owned-int-trace-20260905.log`).
 The shared comparison owner witness passes in both normal and trace builds
