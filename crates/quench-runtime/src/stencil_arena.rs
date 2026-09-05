@@ -275,6 +275,27 @@ impl SharedStencilSlab {
         self.active_dispatches.set(active.saturating_sub(1));
         result
     }
+
+    /// Execute a typed scalar entry while retaining the owning slab.  The
+    /// function pointer is valid only for the published allocation; keeping
+    /// the active count elevated across the call prevents idle eviction from
+    /// reclaiming that allocation between lookup and invocation.
+    pub(crate) fn with_active<R>(
+        &self,
+        address: usize,
+        invoke: impl FnOnce() -> R,
+    ) -> Result<R, ArenaError> {
+        if self.slab_for(address).is_none() {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let active = self.active_dispatches.get().saturating_add(1);
+        self.active_dispatches.set(active);
+        self.peak_dispatches
+            .set(self.peak_dispatches.get().max(active));
+        let result = invoke();
+        self.active_dispatches.set(active.saturating_sub(1));
+        Ok(result)
+    }
 }
 
 impl std::fmt::Debug for SharedStencilSlab {
@@ -1341,6 +1362,33 @@ mod tests {
             .render_or_get(&mut cache, first_key, &stencil, &values)
             .unwrap();
         assert_ne!(pool.owner_for(replacement), Some(first_owner));
+    }
+
+    #[test]
+    fn shared_slab_typed_entry_guard_blocks_eviction_during_call() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        static BYTES: [u8; 4] = [0; 4];
+        let address = pool
+            .render_or_get(
+                &mut cache,
+                crate::stencil_fact::RegionKey(106),
+                &Stencil {
+                    bytes: &BYTES,
+                    holes: &[],
+                },
+                &values,
+            )
+            .unwrap();
+        assert_eq!(pool.active_dispatches(), 0);
+        let observed = pool
+            .with_active(address, || pool.active_dispatches())
+            .unwrap();
+        assert_eq!(observed, 1);
+        assert_eq!(pool.active_dispatches(), 0);
+        assert_eq!(pool.evict_idle(0), 1);
     }
 
     #[test]
