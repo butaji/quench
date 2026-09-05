@@ -167,6 +167,11 @@ fn composed_plan_retires_cached_bytes_after_committed_failure() {
         Err(super::NativeDispatchError::Committed("post-entry".into()));
     plan.retire_on_failure(&committed);
     assert_eq!(plan.physical.cache.len(), 0, "committed bytes must not remain callable");
+    assert_eq!(
+        plan.physical.lifecycle.state(),
+        crate::stencil_lifecycle::StencilState::Retired,
+        "committed failure must not reset admission history"
+    );
 
     plan.physical.cache.insert(
         crate::stencil_fact::RegionKey(901),
