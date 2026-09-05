@@ -247,6 +247,49 @@ impl SlotWord {
         unsafe { use_word(&*self.0.get()) }
     }
 
+    /// Return the canonical tagged payload when it is safe to copy directly
+    /// into another execute register. Binding cells and weak functions carry
+    /// identity-sensitive indirection and must continue through the ordinary
+    /// decoded path; every other tag already owns a complete immutable word.
+    #[inline(always)]
+    pub(crate) fn plain_tagged_bits(&self) -> Option<u64> {
+        self.with_word(|word| {
+            let tagged = word.tagged();
+            if let DecodedValue::HeapPtr(pointer) = tagged.decode() {
+                // SAFETY: HeapPtr values are created only by `encode`, and
+                // this SlotWord owns the strong reference during inspection.
+                let value = unsafe { &*(pointer as *const AlignedValue) };
+                if matches!(value.0, Value::BindingCell(_) | Value::WeakFunction(_)) {
+                    return None;
+                }
+            }
+            Some(tagged.bits())
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_null(&self) -> bool {
+        self.with_word(|word| matches!(word.tagged().decode(), DecodedValue::Null))
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_intl_format_builtin(&self) -> bool {
+        let tagged = self.with_word(OwnedWord::tagged);
+        let DecodedValue::HeapPtr(pointer) = tagged.decode() else {
+            return false;
+        };
+        // SAFETY: HeapPtr values originate from `encode`; the slot owns the
+        // payload while this read-only classification is in progress.
+        let value = unsafe { &*(pointer as *const AlignedValue) };
+        matches!(
+            value.0,
+            Value::Builtin(
+                crate::ops::Builtin::IntlNumberFormatFormat
+                    | crate::ops::Builtin::IntlDateTimeFormatFormat
+            )
+        )
+    }
+
     #[inline(always)]
     pub(crate) fn store(&self, value: Value) {
         // SAFETY: property mutation is serialized by the VM's single-threaded

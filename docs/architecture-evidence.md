@@ -4,6 +4,8 @@ This document records reproducible checks for the fact-generated VM plan,
 including the copy-and-patch region-stencil tier described in
 [`copy-and-patch-jit.md`](copy-and-patch-jit.md). It is an evidence index, not
 a benchmark score and never selects a production path.
+The source-based CPython comparison and transferable ARM lessons are recorded
+in [`cpython-copy-patch-notes.md`](cpython-copy-patch-notes.md).
 Run commands from the repository root; write generated reports under
 `target/` so they remain disposable.
 
@@ -673,6 +675,7 @@ historical measurements.
 | `f76c6ff7a` post-048/049/054/059 findings (300 s) | 8 / 8 | 67.91 | 2.504 | 285.389 (100/100) | 178.1 speed, 377.3 memory (33/38 instrumentation; 38/38 output) |
 | `625abe21e` production no-trace rebaseline (300 s) | 8 / 8 | 70.23 | 2.160 | 295.381 (100/100) | 182.6 speed, 377.3 memory (34/38 instrumentation; 38/38 output) |
 | `c87fb7b53` ARM64 rendered-address correction (300 s) | 8 / 8 | 69.91 | 2.133 | 295.423 (100/100) | 195.9 speed, 387.7 memory (38/38 output; no trace counters) |
+| `3ee862587` post-071/072 ARM64 release recheck (300 s) | 8 / 8 | 66.87 | 2.417 | 288.865 (100/100) | 182.95 speed, 378.22 memory (33/38 under ceilings; 38/38 output) |
 
 \* The RegExp fixture is excluded because it emits an error; this is not a
 whole-suite score. The row is a paired measurement record, not an optimization
@@ -701,6 +704,18 @@ NavierStokes 211. Summed peak RSS was 2,281,603,072 bytes versus Node's
 are paired with the same corrected source tree; the curriculum no-trace run
 was 38/38 output-correct (speed 195.9, memory 387.7). This is a measured
 trajectory row, not a claim that the ~60k capstone target has been reached.
+
+The `3ee862587` recheck used `target/release/quench-node`, one run per fixture,
+and the tracked runner's 300-second timeout. Every fixture returned
+`output_equal:true`: Richards 52.1 (4.51 s, 15.6 MiB), DeltaBlue 46.4
+(6.58 s, 87.2 MiB), Crypto 16.6 (223.47 s, 34.7 MiB), RayTrace 161
+(16.58 s, 18.4 MiB), EarleyBoyer 70.4 (72.27 s, 151.4 MiB), RegExp 13.8
+(226.88 s, 1.67 GiB), Splay 352 (3.73 s, 433.7 MiB), and NavierStokes 181
+(27.89 s, 18.4 MiB). The paired neutral run was 100/100 with overall score
+288.865; the trace-enabled curriculum run was 38/38 output-correct, with
+speed 182.95 and memory 378.22 (33/38 under optional performance ceilings).
+The current tree's anti-cheat scan found only generic semantic names (such as
+the `RegExp` builtin), with no fixture-identity checks in production code.
 
 ## Task 069 Crypto completion/profile finding
 
@@ -888,6 +903,84 @@ grep was run for this cycle; matches are generic semantic names such as the
 `RegExp` builtin and no production path detects fixture identity, source file,
 or benchmark-specific input.
 
+## Task 073: ARM64 entry-cache follow-up row
+
+The current working tree (task 068's typed-entry cache and in-place native-plan
+borrows) was measured with the same 300-second tracked runner, three-run
+neutral corpus, and one-run curriculum. All eight v8-v7 fixtures were
+`output_equal:true`: Richards 55.9 (3.061 s, 15.3 MiB), DeltaBlue 48.8
+(5.444 s, 80.1 MiB), Crypto 16.9 (220.161 s, 33.8 MiB), RayTrace 166
+(16.065 s, 18.1 MiB), EarleyBoyer 74.3 (67.536 s, 151.3 MiB), RegExp 13.7
+(227.075 s, 1.67 GiB), Splay 373 (3.636 s, 433.7 MiB), and NavierStokes
+215 (23.510 s, 18.3 MiB). The engine score geomean is 70.7067; summed peak
+RSS is 2,576,498,688 bytes versus Node's 1,070,956,544 bytes (2.4058x).
+
+| Snapshot | Complete / 8 | Engine score geomean | Aggregate RSS ratio | Neutral score | Curriculum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| working tree, task-068 typed-entry cache/Rc-borrow | 8 / 8 | 70.7067 | 2.4058 | 300.833 fallback / 291.261 native (100/100 each) | 67.321 fallback / 69.661 native (31/38 each; 38/38 output) |
+
+After centralizing admission in `stencil_policy.rs` and restoring the ARM
+optimizing-view gate, the exact release artifact produced a fresh neutral
+100/100 result: Score **299.336** (speed 239.289, memory 374.452). The
+trace-enabled curriculum remained 31/38 with all 38 outputs correct, speed
+**69.0**, and memory **338.6**. These are confirmation measurements for the
+policy refactor, not a fused-region win; the v8-v7 row is recorded only after
+the matching no-trace release run completes below.
+
+The paired opt-in native neutral run had speed 232.396 and memory 365.036;
+fallback had speed 240.144 and memory 376.859. The native curriculum run had
+speed 69.661 and memory 338.767 versus fallback speed 67.321 and memory
+340.855. Thus the typed entry removes steady-state work and helps the synthetic
+long numeric loop and curriculum speed, but the aggregate neutral composite is
+not a net win and the full-suite RegExp RSS outlier remains. ARM64 native
+stencils stay opt-in; this row records progress toward the capstone and does
+not claim the ~60k target.
+
+The required production diff anti-cheat scan for this row found no fixture
+identity strings, and all runtime tests, formatting, and diff checks passed.
+
+The matching no-trace release artifact (with ARM stencil capabilities off, so
+the relocation path is not on this production hot path) completed all eight
+v8-v7 fixtures with `output_equal:true`. Its score geomean
+was **66.2817** and summed peak RSS was 2,576,662,528 bytes versus Node's
+1,090,027,520 bytes (**2.3639x**). Per-fixture scores were Richards 56.4,
+DeltaBlue 47.6, Crypto 16.7, RayTrace 165, EarleyBoyer 74.3, RegExp 13.5,
+Splay 326, and NavierStokes 154. This is a correctness and trajectory record
+for the exact tree, not evidence that ARM stencils should be enabled by
+default; the RegExp memory outlier and allocation-heavy Splay/NavierStokes
+paths still dominate the aggregate.
+
+The targeted trace sweep for arithmetic cases 017--019 remained 3/3 output
+correct after the AArch64 chaining work: fallback speed/memory was **87.9 / 341.8**
+versus opt-in ARM **87.8 / 339.5**. The small spread is not a measured net
+throughput win, so the direct native leaves and fused bridge capability remain
+opt-in/gated while a wider native state ABI is designed.
+
+## Architecture policy follow-up
+
+The working tree now derives all physical stencil admissions from one
+`ExecutionPolicy` (`stencil_policy.rs`). Compile-time architecture facts and
+the explicit `QUENCH_ENABLE_AARCH64_STENCILS` opt-in are converted once into
+capabilities for scalar leaves, dispatch bridges, fused regions, and the
+separate beyond-paper optimizing view. ARM scalar leaves remain opt-in;
+dispatch bridges and fused regions remain disabled because the current ARM
+region implementation still re-enters the Rust handler loop. The ARM
+optimizing view remains x86_64-gated until a composed native region exists.
+This removes repeated target branches without claiming a performance win or
+changing JavaScript semantics.
+
+The AArch64 fallthrough renderer now composes its head and return tail in one
+arena allocation: `FADD` falls through to a patched `B`/imm26 relocation and
+the tail performs the sole `RET`. `StencilArena::make_executable` invalidates
+the published range with the platform cache-maintenance primitive before the
+RX transition. The broader multi-op catalog remains bridge-backed and is still
+disabled on ARM; no claim is made that those regions execute fused machine
+operations yet.
+The companion `/usr/bin/sample` capture is retained as
+`target/arm-stencil-chain.dwarf.sample`; it sees the published ARM mapping as
+anonymous machine code in the release artifact, so instruction attribution is
+reported as unknown rather than inferred from wall time.
+
 ## Task 068 recheck after LOOP_BODY coverage
 
 Enabling `QUENCH_ENABLE_AARCH64_STENCILS=1` was re-tested after task 048's
@@ -924,6 +1017,45 @@ curriculum speed is still marginally lower and memory is not better. The
 `QUENCH_ENABLE_AARCH64_STENCILS` opt-in therefore remains off by default; no
 default-on claim is made until both gates are net-positive.
 
+## Task 068 steady-state ARM64 entry caching
+
+The next DWARF/profile pass targeted the remaining per-hit boundary rather than
+adding more stencil bytes. `sample` on a long ARM64 numeric loop still shows
+the rendered leaf as anonymous machine code (the expected consequence of
+copy-and-patch publication), while the Rust symbols account for the one-time
+`StencilArena::render_or_get`/`NativeBinaryPlan::execute` setup. The plan now
+retains the validated typed entry pointer after successful W^X publication;
+subsequent numeric, Move, and own-property hits skip lifecycle, cache,
+protection, and address checks. The pointer is cleared whenever the arena is
+discarded, and unit coverage proves the arena remains reused. The baseline
+plan's native-leaf accessors also borrow the existing `RefCell` in place
+instead of cloning an `Rc` per instruction, removing reference-count traffic
+from the same hot boundary. A fresh current-tree DWARF sample still attributes
+steady-state work to the canonical dispatch loop and only sparse samples to
+`NativeBinaryPlan::execute`/render setup, consistent with the cached-entry
+design.
+
+On the ARM64 host, three release runs of a 5,000,000-iteration numeric loop
+measured fallback wall times of 1.75/1.76/1.75 s versus 1.62/1.64/1.63 s with
+`QUENCH_ENABLE_AARCH64_STENCILS=1`; retired instructions fell from about
+36.51B to 35.39B and cycles from about 7.00B to 6.49B. The paired three-run
+neutral corpus remained 100/100 output-correct: fallback Score 296.306
+(speed 234.977, memory 373.642) versus native Score 296.181 (speed 236.417,
+memory 371.053). This is a real steady-state speed win for long numeric
+regions, but the small memory cost and neutral composite parity do not justify
+flipping the default; ARM execution remains opt-in pending a broader positive
+gate. The paired one-run curriculum sweep stayed 31/38 (all 38 outputs
+correct) and improved its speed score from 67.8 fallback to 69.3 native, while
+memory moved from 341.8 to 340.1; the same five known performance-ceiling
+cases remain the failures.
+
+After the final Rc-borrow cleanup, a current-tree three-run neutral recheck
+remained 100/100: fallback Score 299.043 (speed 238.020, memory 375.712)
+versus native Score 297.456 (speed 237.366, memory 372.759). This small
+release-to-release spread is still within the existing host-noise band and
+does not support default-on ARM execution; a new full v8-v7 trajectory row is
+deferred until that suite is rerun against this exact tree.
+
 ## ARM64 optimizing-plan admission experiment (reverted)
 
 The already-generated AArch64 dispatch-region bytes were temporarily admitted
@@ -937,3 +1069,458 @@ and the curriculum changed from speed 186.2/memory 384.5 to speed
 regressed, so the experiment was reverted and the optimizing view remains
 x86_64-only. This confirms that the current multi-op AArch64 bridge does not
 yet amortize its call boundary; no trajectory score claim is made.
+
+## AArch64 fused numeric chain (Add -> Add)
+
+The first genuinely composed native region is now generated from one
+`add_chain` declaration. Its AArch64 bytes are `FADD d0,d0,d1; FADD
+d0,d0,d2; RET` (x86-64 is the equivalent two-`ADDSD` sequence). The baseline
+admits it only when the second `Add` consumes the first result, all three input
+words are numeric, and the second third-operand does not alias the transient
+result. The machine code has one typed entry (`extern "C" fn(f64,f64,f64)`),
+one allocation/protection transition, and one return; all guards and aliasing
+uncertainty fall back to the two complete canonical handlers.
+
+On the ARM64 host, a release micro-run of three million `(x+1)+2` iterations
+reported 1.13/1.13/1.13 s with the default fallback and 0.99/0.99/1.00 s with
+`QUENCH_ENABLE_AARCH64_STENCILS=1` (about 12% lower wall time after warm-up).
+The generated chain unit test also verifies `1.5+2.25+4.0 == 7.75` and cache
+reuse without a second allocation. `target/add-chain.dwarf.sample` is kept as
+the required profile artifact; macOS `sample` reports the copied RX mapping as
+anonymous code, so no instruction-level attribution is claimed from that
+capture.
+The DWARF-enabled optimized capture `target/add-chain.dwarf-profiling.sample`
+symbolizes the surrounding `vm_runtime.rs` dispatch frames while correctly
+leaving the copied RX bytes anonymous; this separates setup/dispatch samples
+from the leaf itself. This is a targeted proof that composition removes one VM boundary,
+not evidence to enable every ARM region or the optimizing tier.
+
+## Task 073: fused-chain full-suite cross-check (2026-09-04)
+
+The rebuilt release artifact was run through the tracked v8-v7 harness with
+the Node oracle, one run, and the documented 300-second per-fixture timeout.
+All 8/8 fixtures completed with `output_equal:true`. Engine scores were
+Richards **56.2**, DeltaBlue **48.6**, Crypto **16.9**, RayTrace **166**,
+EarleyBoyer **73.8**, RegExp **13.7**, Splay **373**, and NavierStokes **212**;
+the score geomean was **70.5340** versus Node **86,693.1060**. Summed peak RSS
+was 2,575,581,184 bytes versus Node 1,071,923,200 bytes (**2.4028x**), with
+RegExp still accounting for 1,789,034,496 bytes.
+
+| Snapshot | Complete / 8 | Engine score geomean | Aggregate RSS ratio | Neutral score | Curriculum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| release baseline, ARM stencil policy default-off | 8 / 8 | 70.5340 | 2.4028 | 291.454 (100/100) | speed 181.7 / memory 375.3 (34/38; 38/38 output) |
+
+For the separately tracked stencil-reachable subset, the three numeric-heavy
+fixtures scored Crypto **16.9**, RayTrace **166**, and NavierStokes **212**
+(subset geomean **84.0963**). With `QUENCH_ENABLE_AARCH64_STENCILS=1`, the
+same targeted harness run produced Crypto **16.8**, RayTrace **155**, and
+NavierStokes **213** (subset geomean **82.1625**), all output-equal; the spread
+is not a positive stencil result. This keeps a real stencil signal visible
+separately from Richards/DeltaBlue's generic Branch/TraceSite slow lane. The
+neutral and curriculum cross-checks used the same tree; no benchmark identity
+is inspected by production code. The chain's microbenchmark gain remains a
+localized proof of boundary removal, not evidence to enable every ARM region
+or claim that the 60k capstone target has been reached.
+
+## Task 053 follow-up: remove the compiled-backtracking dependency (2026-09-04)
+
+The DWARF capture `target/regexp-backend.dwarf.sample` identified compiled
+backtracking and its growing capture-state vectors in the RegExp hot path.
+The first replacement was deliberately narrow: regular ASCII patterns are
+compiled once with the `regex` byte automata backend (`unicode(false)` so
+`\w` and character classes retain the non-Unicode JavaScript meaning), while
+patterns using unsupported ECMAScript constructs or Unicode inputs continue
+through Quench's repository-owned parser/interpreter. Replacement and split
+now acquire the same cached source/flags program used by `exec` instead of
+rebuilding a parser and bytecode on every call. The `regress` dependency and
+all production references to it are removed; this is a guarded physical
+execution choice, not a second semantic model.
+
+| Same-tree RegExp run | Score | Wall time | Peak RSS | Observable output |
+| --- | ---: | ---: | ---: | --- |
+| automata candidate | 59.3 | 54.17 s | 1,790,197,760 B | equal |
+| `QUENCH_DISABLE_COMPILED_REGEXP=1` control | 22.8 | 137.41 s | 1,788,264,448 B | equal |
+
+The earlier candidate-only run (62.9 / 51.2 s) is within the expected host
+noise band; the paired control still shows the material effect. The anchored
+literal specialization added in the same pass removes the high-frequency
+`^literal` calls from the generic engine without inspecting fixture names.
+An independently named 200k-iteration `^ab` replacement clone measured
+4.10 s with the automata path versus 4.13 s with the disabled-backend control,
+so the clone is neutral rather than an isolated-win claim.
+The RSS outlier is unchanged, so allocation/representation remains a separate
+track. Full-suite and curriculum gates must be re-run before any broader
+default-on policy change.
+
+## Call IC weak-identity probe (reverted, 2026-09-04)
+
+The current full-suite rebaseline puts Crypto at **16.8** (220.19 s), making
+its call/interpreter path the next measured target. A narrowly scoped probe
+changed `CallableCache::lookup` from `Weak::upgrade` on every entry to a raw
+pointer plus `strong_count` check, retaining weak edges and explicitly
+rejecting dead entries to preserve allocator-reuse safety. This is a general
+identity-cache change, not fixture-specific logic.
+
+The renamed one-million-call clone was instruction-neutral (13.399B versus
+13.398B retired instructions) and only varied by cycle noise (2.621B versus
+2.592B cycles). The real paired Crypto run went from **16.8 / 220.19 s** to
+**16.6 / 223.17 s**, both output-equal. Because neither gate was positive, the
+probe was reverted. The remaining call cost is therefore the frame/dispatch
+boundary itself; no weak-cache representation change is claimed.
+
+## Stencil provenance ledger (2026-09-04)
+
+The schema-2 `instruction-category-ledger.mjs` was rerun over the same 138
+micro/curriculum fixtures with the trace-enabled release artifact. The default
+ARM policy produced no stencil rows, as expected. With the explicit
+`QUENCH_ENABLE_AARCH64_STENCILS=1` diagnostic opt-in, the new Rust-side
+`stencil` category accounted for **3.08%** of counted events (4,037,356
+observations), while `compact` fell from 15.72% to 12.02%. The largest sites
+were `code=4:pc=2:binary` (839,009 hits, 0 misses),
+`code=2:pc=4:binary` (236,099 hits / 6,272 misses, 97.4% hit rate), and
+`code=2:pc=10:move` (217,174 hits, 0 misses). This confirms that the counter
+is mapping real native decisions rather than silently counting only admission
+attempts; it does not claim a score win, because the trace build is
+instrumented and the ARM stencil policy remains opt-in pending paired
+fallback/native benchmark gates.
+
+## Target-architecture reconciliation (2026-09-04)
+
+The direct audit of the target-architecture proposal confirms that no new
+plan hierarchy or task is warranted. Task 044's generated
+`generated_region_admissions!` declaration is the canonical build-time
+RegionKey/CFG wiring. Task 048 has already added the largest currently
+admitted seven-op `LOOP_BODY` span; its bytes are a single bridge stencil that
+validates and executes canonical handlers, not runtime-generated machine code.
+Task 049 surveyed bounded polymorphic variants and correctly closed as a
+no-go because no reusable finite fact combination was measurable. The
+`Native*Plan` structs in `machine.rs` are physical arena/cache/ABI wrappers
+around those build-time records, not a parallel selector. The remaining work
+is therefore limited to extending 048/049's build-time catalog and sharing a
+compatible physical boundary template; runtime must remain lookup-only with
+complete fallback.
+
+## Corpus-wide instruction-category ledger (2026-09-04)
+
+The new `tools/instruction-category-ledger.mjs` was validated against the
+trace-enabled release artifact (`cargo build --release --features
+execution-trace`) over 138 standalone micro/curriculum fixtures. The command
+must set `QUENCH_EXEC_TRACE=1`; without that opt-in the tool correctly reports
+missing snapshots. All 138 fixtures emitted a parseable snapshot, for a
+grand total of 125,568,327 counted events.
+
+| Category | Events | Share | Largest names | Interpretation |
+| --- | ---: | ---: | --- | --- |
+| `events` | 103,028,422 | 82.05% | `owned_word_read` 71.1%; `value_decode` 7.6%; `register_file_read` 7.6% | diagnostic counters, not retired instructions |
+| `compact` | 19,777,386 | 15.75% | `LoadLocal` 18.0%; `LoadConst` 14.5%; `Return` 12.3% | existing compact interpreter lane |
+| `environment_children` | 1,180,558 | 0.94% | `16:4` 72.5%; `19:5` 14.0% | environment-shape attribution |
+| `slow` | 1,155,124 | 0.92% | `TraceSite` 35.8%; `Branch` 26.6%; `RequireObjectCoercible` 13.6% | generic semantic handlers |
+
+This ranking changes the triage rule: `events` is intentionally excluded from
+optimization decisions because it measures the diagnostic machinery itself.
+Among semantic categories, `compact` dominates; however `LoadLocal` and
+`LoadConst` are already in the release-only inline hot path, so this ledger is
+frequency evidence rather than proof that a new cache will help. The earlier
+weak-callable identity probe remains a no-go (near-zero retired-instruction
+change and a Crypto regression). A candidate for the compact lane must first
+show a reduced category share in a fresh ledger comparison, then pass paired
+same-tree benchmark gates.
+
+## RegExp capture-workspace and call-target measurement (2026-09-04)
+
+The trace build was extended to report generated builtin names and to include
+compact-call targets in the corpus ledger; scored builds retain the coarse,
+zero-cost labels. Across the 38-case Deegen curriculum, `call_targets` was
+256,696 events: 97.3% direct `Function` calls, with `floor` (1.2%) and
+`push` (0.5%) the largest builtin names. A broad builtin-call IC is therefore
+not the next justified mechanism.
+
+The RegExp trace shows 2,887,450 `exec` calls, 1,267,860 `replace` calls,
+328 regex-cache misses, 1,166,540 match-result allocations, and a peak RSS of
+1,797,816,320 bytes in the trace-enabled diagnostic process (the retained
+counter snapshot makes that RSS non-comparable to scored artifacts). The
+compiled ASCII backend now reuses its
+`CaptureLocations` workspace and uses `find_at` for no-capture patterns. The
+runtime test suite remains 629 passed; three same-artifact RegExp runs were
+58.4--59.3 score (Node 21,751--22,252), matching the prior 59.3 result within
+noise. A fresh production verification of the same fixture is
+output-equal at score **61.7** with **31,162,368 B** peak RSS (Node
+70,664,192 B), so the historical 1.79 GiB number must not be used as a
+production memory gate without reproducing the exact artifact. The dominant
+remaining cost is match-result/object construction, not pattern compilation.
+
+## Numeric constant representation probe (2026-09-04)
+
+The corpus ledger ranks `LoadConst` at **14.5%** of compact events. A
+representation-only probe now writes `Constant::Number` directly through the
+register file's tagged-number slot; nonnumeric constants retain the complete
+`Value` conversion path. On a renamed two-level numeric-loop clone, the
+same-tree production binaries measured **3.56--3.61 s** with the direct write
+versus **3.64 s** for the conversion baseline after warm-up (roughly 1--2%,
+inside the observed 2--3% host-noise band). The clone's result stayed
+`107500000`; runtime tests remain **629 passed**. This is a broad O(1)
+representation improvement, but not a score-gate claim until the neutral and
+curriculum corpora are rerun. The execution-trace build deliberately routes
+through the diagnostic dispatcher, so its `LoadConst` share is expected to
+remain unchanged; this probe must be judged with scored-build paired timings,
+not by treating the diagnostic ledger as a proxy for release-only inlining.
+
+## Corpus ledger refresh after representation probe (2026-09-04)
+
+The refreshed schema-2 ledger covered **138 fixtures** with **126,861,366**
+counted events. Excluding the intentionally diagnostic `events` row (81.61%),
+the semantic ranking is `compact` **15.59%**, `environment_children` **0.93%**,
+and `slow` **0.91%**; within `compact`, `LoadLocal` is 18.0%, `LoadConst`
+14.5%, and `Return` 12.3%. The direct-number constant write is therefore a
+release-only representation probe: the trace artifact confirms workload
+frequency but cannot expose its inlined implementation. The full report and
+facts log are `target/instruction-category-ledger-after-full.json` and
+`target/instruction-facts-after-full.jsonl`.
+
+## Fixed-arity direct-builtin call probe (reverted, 2026-09-04)
+
+Because RegExp invokes a registered builtin with one argument, a temporary
+path bypassed `CallArguments` and the generic callable gateway for immutable
+builtin tags (while preserving register-aware mutators and constructor
+semantics). The real fixture moved from **61.2 / 51.70 s** in the control to
+**62.3 / 50.84 s** in one paired run, output-equal with comparable RSS. The
+renamed regex-call clone measured **0.64--0.67 s** with the candidate versus
+**0.64--0.66 s** without it, with identical output. Since the clone showed no
+comparable improvement and the fixture delta is inside host noise, the probe
+was reverted; no direct-builtin speedup is claimed.
+
+## Proven-local environment threading and regex fallback completeness (2026-09-04)
+
+The interpreter and baseline dispatch states now carry the active immutable
+`Environment` where the caller owns it. `LoadLocal` and `StoreLocal` can
+therefore use direct proven word transfers without opening a TLS closure on
+each instruction; deleted, immutable, and uninitialized bindings retain the
+canonical fallback. On the renamed local-accumulation clone, paired production
+timings were **2.00--2.46 s** with the change versus **2.01--2.08 s** for the
+same-tree baseline. The three-run spread overlaps, and the v8-v7 RegExp/Splay
+pair stayed output-equal (RegExp **61.9** vs baseline **61.8**; Splay **377**
+vs **377**, both within the host's broad variance). This remains
+representation groundwork, not a measured score win.
+
+The regex fallback no longer truncates its backtracking state vector at 4096
+entries: that bound could silently discard a valid ECMAScript alternative. The
+compiled linear backend remains the normal path; unsupported constructs now
+preserve complete matching semantics at the cost of potentially exponential
+fallback state on adversarial patterns. This
+matches the QuickJS `libregexp.c` shape (compiled bytecode plus a small inline
+execution stack that grows only on overflow) while keeping Quench's existing
+capture and UTF-16 fallback machinery.
+
+## Packed-array mutation transition (2026-09-04)
+
+`ArrayData::set_index` now derives a packed array's monotonic kind directly
+from an existing numeric overwrite (`Limb28 → Int → Double`, or
+`PackedValue` for a non-number) instead of rescanning the dense payload. The
+scan remains for hole fills, sparse growth, aliases, and other structural
+uncertainty. A renamed 5-million-store array clone stayed output-identical;
+paired production timings were **3.17--3.62 s** with the transition versus
+**3.11--3.19 s** for the baseline, so this is an O(1) representation fix but
+not a demonstrated wall-clock gain yet (the indexed numeric fast path already
+bypasses `set_index` for much of this shape).
+
+## Arithmetic-glue admission probe (rejected, 2026-09-04)
+
+A temporary precompiled handler was tested against the actual lowered stream.
+The first declared five-op shape was not emitted; trace transitions showed the
+common numeric sequence is `LoadLocalChecked → AddConst → Move`. Wiring that
+shape into the ordinary dispatcher produced zero successful stencil hits (all
+admission attempts missed) and added guard/table work. The renamed local-loop
+clone measured roughly **2.08--2.18 s** for the candidate versus **2.00--2.02 s**
+for the preserved baseline after warm-up. The probe was removed and the
+build-time `ARITHMETIC_GLUE` row restored to its original canonical fact; no
+negative specialization remains enabled by default.
+
+The micros corpus itself is now validated against Quench through a temporary
+output adapter (Quench exposes a no-op `print`, while the frozen harness uses
+`print` when present). Numeric, calls, locals, arrays, and composition smoke
+groups all passed with output equality. Paired `locals` size sweeps (15
+scenarios, two process pairs) remained output-equal and showed candidate
+within-engine medians between **0.887 and 0.995×** the preserved baseline,
+with no qualification claim; the stale harness-only attempt is retained as an
+invalid artifact.
+
+The latest uninstrumented v8-v7 subset check (one run, unchanged fixtures)
+also remained output-equal: RegExp scored **62** versus Node **22071** at
+**31 MiB** peak RSS, and Splay scored **381** versus Node **83968** at
+**434 MiB**. This confirms correctness and records the current gap; it is not
+evidence of a throughput or geometric-mean improvement.
+
+## Freeze-time register-width fact (2026-09-04)
+
+Function entry no longer sizes temporary registers from `FunctionCode::len()`
+(instruction count). `CodeArena` derives the maximum register operand for each
+lowered range once, stores that width beside the immutable range metadata, and
+`build_registers`/generator entry selects it with a four-slot floor. Unknown
+slow paths retain safe resize-on-write behavior. This keeps frame shape as one
+derived fact rather than adding a runtime scan or a second frame model.
+
+The focused locals micros sweep (15 scenarios, two independent process pairs)
+was output-correct; candidate medians were **0.875–1.014×** the preserved
+pre-change binary overall, with the eight-local `many` sibling at
+**0.875–0.934×**. The full runtime suite remained **629 passed, 1 ignored**.
+These are development paired results, not full qualification or a claim that
+all call/closure/generator frame paths are complete; nested residual semantics
+remain covered by the regression suite and need broader memory/RSS measurement.
+
+## Micros arrays/composition follow-up (2026-09-04)
+
+Using the frozen Edition 1 harness through the temporary output adapter, the
+frame-width candidate (`549b7edee9f09bcaa7e2f6bfa065f4839143062740019db6745d6446ec9db0d1`)
+was paired with the preserved same-tree baseline
+(`d5498217ca08b89942e6152d4340ac4be80037d470f61f7a30aa880bbcc1cf93`). All
+33 arrays/composition scenarios were output-correct. The arrays sweep was
+noise-level overall (candidate/baseline median **0.999×**, range
+**0.808–1.061×**, RSS median **1.035×**), so the packed-array transition is
+not a measured throughput win yet. Composition was more encouraging but still
+inside the host variance band (median **0.972×**, range **0.944–1.006×**, RSS
+median **1.031×**); this is evidence that frame/local work can survive mixed
+language behavior, not proof of a stencil or kernel gain. Reports are
+`target/micros/arrays-candidate-framelayout.json`,
+`target/micros/arrays-baseline-loadlocal.json`,
+`target/micros/composition-candidate-framelayout.json`, and
+`target/micros/composition-baseline-loadlocal.json`.
+
+## Native scalar ABI parity (2026-09-04)
+
+The AArch64 scalar numeric leaf now enters through the same small
+preserve-none-equivalent wrapper as the existing three-operand fused chain:
+`v0/v1` carry the two numbers and `v0` carries the result, with a raw `blr`
+and no compiler-generated call-frame assumptions. This only changes the
+physical boundary; it does not enable ARM native admission (the policy remains
+off by default because the current leaf/bridge regions have not demonstrated
+an end-to-end win). The opt-in ARM smoke run passed all six numeric cases after
+the change. No speedup is claimed until a paired opt-in ARM run measures
+retired instructions and the real numeric subset; the default scored binary is
+unchanged in policy.
+
+## Fused-chain live-result admission guard (2026-09-04)
+
+The existing two-Add physical chain returns only the second destination. A
+conservative build-time scan now rejects it when the first destination appears
+in any later compact operand, preventing a stale intermediate from becoming
+observable. The new regression test covers that case; the full runtime suite
+passes **630 tests (1 ignored)**. This intentionally trades some possible
+fusion coverage for a proof-friendly residual boundary; no timing gain is
+claimed until a genuinely live-safe chain is measured on real loop shapes.
+
+## Pinned StoreLocal probe (reverted, 2026-09-04)
+
+Routing ordinary interpreter `StoreLocal` through the already-held environment
+was tested as a companion to the pinned `LoadLocal` path. A two-pair micros
+sample appeared faster (**0.85×** on `locals/many/medium`), but a matched
+three-pair, 150 ms warmup/100 ms window repeat moved to **1.41×** the preserved
+baseline. The result is therefore inconclusive-to-negative under the required
+noise discipline; the change was reverted and the baseline `store_proven`
+path remains active. Reports are retained at
+`target/micros/locals-many-storelocal-repeat.json` and
+`target/micros/locals-many-baseline-isolate.json`.
+
+## Proven non-nullish coercion elision (2026-09-04)
+
+The arrays/read trace exposed a repeated slow gateway in the actual lowered
+loop: `GetNQuickened -> RequireObjectCoercible -> LoadLocal -> AGetI`. The
+existing skip check was present only in the unplanned interpreter dispatcher
+and required immediate adjacency, so baseline loop fragments still retired
+one coercibility check per indexed read. The general fact is exact: a tagged
+register word distinguishes `null`/`undefined` from every value that passes
+`RequireObjectCoercible`. Baseline-plan execution now applies that fact before
+dispatch, without requiring a later AGetI/ASetI to be adjacent; unknown or
+nullish words still run the canonical slow operation.
+
+Paired trace diagnostics on `arrays/read/small/17` changed
+`RequireObjectCoercible` from **2,113** executions to **0**, slow handlers from
+**2,728** to **615**, and total handler events from **28,022** to **23,796**;
+`AGetI` stayed at **2,113**. The result remained output-correct. A same-tree
+uninstrumented sweep using candidate binary
+`3b79fd75f01b0a7fbed4ddf6befe78d7db40fe55390515a444f0027dcc714e7a` and before
+binary `c00dcd52d06427be4dbfa7abb5c8a24a8a01263524642ad6e6f6a45d5e17a26d`
+was output-correct for all three read sizes. Candidate/before timing ratios
+were **0.968x (small, fail)**, **0.954x (medium, inconclusive)**, and
+**0.947x (large, inconclusive)** under five process pairs; RSS ratios were
+**1.003x, 0.995x, and 1.003x** (all passing). The direction is encouraging but
+the timing bounds do not establish a qualification-grade win. Reserved
+read/write/holey/sparse/grow/presized controls (36 scenarios) and the complete
+runtime suite (**632 passed, 1 ignored**) remained correct. Reports:
+`target/micros/arrays-read-coercible-paired-5.json` and
+`target/micros/arrays-read-after-coercible-2.json`.
+
+## Quickened named-load word transfer (2026-09-04)
+
+The same trace showed 4,253 `GetNQuickened` hits. Their shared IC path was
+decoding the receiver and cloning a slot payload for validation, then decoding
+again to write the destination. `SlotWord::plain_tagged_bits` now validates
+identity-sensitive `BindingCell`/`WeakFunction` payloads without materializing
+`Value`; rewritten named loads retain the canonical tagged word directly.
+Misses, descriptor/accessor changes, and identity-sensitive payloads still use
+the complete property gateway.
+
+The before/after trace kept compact, slow, and packed-array counts unchanged,
+while `value_decode` fell **18,182 -> 13,929** and owned-word reads fell
+**175,062 -> 166,554**. The isolated uninstrumented sweep (candidate
+`cb582d4de2dacf558d542b819f2edee20291d86fad0da790c9351863efeb7bd5` versus the
+same-tree coercion-elision binary `3b79fd75f01b0a7fbed4ddf6befe78d7db40fe55390515a444f0027dcc714e7a`)
+was output-correct and passed timing bounds at **0.936x / 0.927x / 0.936x**
+(small/medium/large; five process pairs). RSS ratios were **0.994x / 1.001x /
+1.005x**, all passing. All 36 reserved array read/write/holey/sparse/grow/
+presized scenarios passed, as did the complete runtime suite. Report:
+`target/micros/arrays-read-word-paired-5.json`.
+
+## Corpus instruction-category ledger (2026-09-04)
+
+The schema-2 ledger was run over **139** standalone micros/deegen fixtures
+with the execution-trace artifact (build metadata and raw facts are in
+`target/instruction-category-ledger-current.json` and
+`target/instruction-facts-current.jsonl`). The grand total was **122,185,955**
+counted events. The top categories were `events` **84.35%** (dominated by
+`owned_word_read` **71.3%** of that category), `compact` **12.78%** (top names:
+`LoadConst` 18.4%, `Return` 15.7%, `LoadLocalChecked` 11.4%, `Binary` 10.5%),
+`environment_children` **0.97%**, `slow` **0.88%** (mostly `TraceSite` 48.1%
+and `Branch` 27.1%), and call-shape/target categories at **0.27%** each.
+This is a triage ledger over diagnostic counters, not CPU time; it points at
+shared representation/dispatch work and does not by itself justify enabling
+ARM native bridges. The ledger had zero failed trace fixtures and appended
+15,183 fact records.
+
+## Composed array block entry (2026-09-04)
+
+The existing `RegionKey` catalog previously admitted `array_loop_body` only as
+a dispatch-shaped row. It now declares the lowered five-op shape
+`LoadLocalChecked -> AGetI -> Add -> ASetI -> Return` and routes that key to a
+single statically wired executor. Entry proofs cover local initialization,
+plain dense array representation, bounds/number tags, operand wiring and
+aliasing; the store commits only after every proof succeeds. Holes, prototypes,
+non-number values and stale shapes take the complete canonical bridge. The
+executor performs no per-op baseline dispatch for the admitted path and records
+`composed_array_loop` separately in stencil diagnostics. ARM remains default-off;
+`QUENCH_ENABLE_AARCH64_STENCILS=1` exposes this composed key through the
+optimizing view for direct validation. Unit coverage exercises actual
+`ExecutableCode` lowering, mutation, return state and a holey hostile fallback;
+the full micros sweep is intentionally deferred until the infrastructure gate
+is complete.
+
+## ARM64 numeric-loop composition and generated ABI routing (2026-09-04)
+
+The direct AArch64 loop stencil now separates one-time result initialization
+from its condition header: the entry branch skips initialization on subsequent
+iterations and the backward branch targets the compare header. Rendered-byte
+coverage passes zero-, one-, many-iteration cases plus a non-zero initial
+result, with exact `[1,2,3] -> [2,3,4]` mutation and preserved loop-carried
+result. The ordinary OXC/lowering test discovers the same 19-op residual span,
+constructs its baseline plan, and executes the selected rendered bytes at the
+lowered loop PC; the per-plan witness reports a real native entry.
+
+Region planning now iterates the generated declaration table rather than a
+parallel key allowlist. Each generated `RegionRecord` carries a target-aware
+`RegionAbi` (`Scalar`, `Bridge`, `ArrayKernel`, or `ArrayNumericLoop`), and
+construction/invocation fail closed on ABI mismatch. Scalar Add/Move/property
+rows therefore cannot be passed a `NativeRegionContext` pointer, while array
+rows use raw contexts only on AArch64 and remain bridge/fallback rows elsewhere.
+The host and AArch64 runtime suites each pass **642 tests** (one ignored), and
+the Node host suite passes **4 tests**. Encoding verification succeeds with
+`QUENCH_VERIFY_STENCIL_ENCODINGS=1`; micros remain gated pending the remaining
+resource/root/safepoint and broader region-lifetime completion work.
