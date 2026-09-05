@@ -3672,7 +3672,14 @@ fn validate_physical_template(
     if !record.stencil.validate() {
         return Err("native region stencil layout or relocation is invalid".into());
     }
-    if stencil_contains_call(record.stencil.bytes) {
+    let physical_calls_helper = stencil_contains_call(record.stencil.bytes);
+    if physical_calls_helper != contract.template_calls_helper {
+        return Err(format!(
+            "template helper-call effect disagrees with generated declaration (bytes={}, declaration={})",
+            physical_calls_helper, contract.template_calls_helper
+        ));
+    }
+    if physical_calls_helper {
         if !abi.may_call_helper {
             return Err("native stencil contains a call outside its ABI contract".into());
         }
@@ -5952,9 +5959,22 @@ mod tests {
             external_entries: &ENTRIES,
             fallthrough: None,
             abi: crate::stencil_select::RegionAbi::Scalar,
+            template_calls_helper: false,
             executable: true,
         };
         assert!(super::validate_physical_template(&scalar_with_pointer).is_err());
+    }
+
+    #[test]
+    fn generated_template_call_effects_match_target_decoder() {
+        for record in crate::stencil_select::region_records() {
+            assert_eq!(
+                super::stencil_contains_call(record.stencil.bytes),
+                record.template_calls_helper,
+                "generated helper-call effect drifted for {}",
+                record.name
+            );
+        }
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -5975,6 +5995,7 @@ mod tests {
             external_entries: &ENTRIES,
             fallthrough: None,
             abi: crate::stencil_select::RegionAbi::ArrayKernel,
+            template_calls_helper: false,
             executable: true,
         };
         assert!(super::validate_physical_template(&record)
@@ -6000,6 +6021,7 @@ mod tests {
             external_entries: &ENTRIES,
             fallthrough: None,
             abi: crate::stencil_select::RegionAbi::ArrayKernel,
+            template_calls_helper: false,
             executable: true,
         };
         assert!(super::validate_physical_template(&record)
@@ -6028,6 +6050,7 @@ mod tests {
             external_entries: &ENTRIES,
             fallthrough: None,
             abi: crate::stencil_select::RegionAbi::Scalar,
+            template_calls_helper: true,
             executable: true,
         };
         assert!(super::validate_physical_template(&scalar_call).is_err());
@@ -6051,12 +6074,35 @@ mod tests {
             external_entries: &ENTRIES,
             fallthrough: None,
             abi: crate::stencil_select::RegionAbi::Bridge,
+            template_calls_helper: true,
             executable: true,
         };
         assert!(
             super::validate_physical_template(&pure_bridge).is_err(),
             "a physical helper call must not be admitted for a pure operation"
         );
+    }
+
+    #[test]
+    fn physical_effect_mismatch_rejects_before_entry() {
+        static BYTES: [u8; 1] = [0xC3];
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Move];
+        static ENTRIES: [u16; 1] = [0];
+        let record = crate::stencil_select::RegionRecord {
+            name: "test_effect_mismatch",
+            key: crate::stencil_fact::RegionKey(5),
+            stencil: crate::stencil_fact::Stencil { bytes: &BYTES, holes: &[] },
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::Bridge,
+            template_calls_helper: true,
+            executable: true,
+        };
+        let error = super::validate_physical_template(&record)
+            .expect_err("a drifted physical effect must fail closed");
+        assert!(error.contains("effect disagrees"));
     }
 
     #[test]
