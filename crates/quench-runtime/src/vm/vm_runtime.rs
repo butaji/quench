@@ -5788,13 +5788,15 @@ mod compact_handler_tests {
     #[test]
     fn rendered_numeric_array_loop_executes_native_backedge() {
         let key = crate::stencil_select::array_numeric_loop_region_key();
-        let record = crate::stencil_select::select_region(key).expect("numeric loop declaration");
+        let view = crate::stencil_select::select_physical(key).expect("numeric loop physical view");
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(view.generated, "loop must execute generated Rust artifact");
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::LoadLocal);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
         let mut cache = crate::stencil_select::RenderedRegionCache::new();
         let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .render_or_get(&mut cache, key, view.stencil, &values)
             .expect("render numeric loop");
         arena.make_executable().expect("protect numeric loop");
         for (mut data, initial_result, expected_result, expected_data) in [
@@ -5833,13 +5835,15 @@ mod compact_handler_tests {
     #[test]
     fn rendered_numeric_array_loop_poll_exits_after_committed_iteration() {
         let key = crate::stencil_select::array_numeric_loop_region_key();
-        let record = crate::stencil_select::select_region(key).expect("numeric loop declaration");
+        let view = crate::stencil_select::select_physical(key).expect("numeric loop physical view");
+        #[cfg(quench_generated_stencil_artifacts)]
+        assert!(view.generated, "loop must execute generated Rust artifact");
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::LoadLocal);
         let values = crate::stencil_fact::PatchValues::from_site(&site);
         let mut arena = crate::stencil_arena::StencilArena::new(4096).expect("arena");
         let mut cache = crate::stencil_select::RenderedRegionCache::new();
         let address = arena
-            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .render_or_get(&mut cache, key, view.stencil, &values)
             .expect("render numeric loop");
         arena.make_executable().expect("protect numeric loop");
         let interrupt = std::sync::atomic::AtomicBool::new(true);
