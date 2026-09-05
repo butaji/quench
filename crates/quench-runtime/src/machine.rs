@@ -1526,6 +1526,11 @@ impl NativeBinaryPlan {
             && instruction.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual)
         {
             (crate::stencil_select::compare_equal_region_key(), true)
+        } else if opcode == crate::ir::Opcode::Binary
+            && instruction.flags
+                == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual)
+        {
+            (crate::stencil_select::compare_not_equal_region_key(), true)
         } else {
             return None;
         };

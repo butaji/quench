@@ -158,6 +158,15 @@ const fn x86_compare_equal_bytes() -> [u8; 11] {
     ]
 }
 
+const fn x86_compare_not_equal_bytes() -> [u8; 11] {
+    [
+        0x66, 0x0F, 0x2E, 0xC1, // ucomisd xmm0, xmm1
+        0x0F, 0x95, 0xC0, // setne al (unordered is also not equal)
+        0x0F, 0xB6, 0xC0, // movzbl al, eax
+        0xC3,
+    ]
+}
+
 /// Intel SDM Vol. 2, near JMP r/m64 through RAX after MOV RAX,imm64.
 const fn x86_dispatch_bytes() -> [u8; 12] {
     [
@@ -207,6 +216,7 @@ const X86_MULTIPLY_BYTES: [u8; 5] = x86_binary_ret(0x59);
 const X86_DIVIDE_BYTES: [u8; 5] = x86_binary_ret(0x5E);
 const X86_ADD_CONST_BYTES: [u8; 21] = x86_add_const_bytes();
 const X86_COMPARE_EQUAL_BYTES: [u8; 11] = x86_compare_equal_bytes();
+const X86_COMPARE_NOT_EQUAL_BYTES: [u8; 11] = x86_compare_not_equal_bytes();
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -215,6 +225,10 @@ const fn aarch64_fcmp_d() -> u32 {
 
 const fn aarch64_cset_eq_w0() -> u32 {
     0x1A9F_17E0
+}
+
+const fn aarch64_cset_ne_w0() -> u32 {
+    0x1A9F_07E0
 }
 
 const AARCH64_LOOP_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_ret());
@@ -226,6 +240,8 @@ const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aa
 const AARCH64_DIVIDE_BYTES: [u8; 8] = aarch64_pair(aarch64_fdiv_d(0, 0, 1), aarch64_ret());
 const AARCH64_COMPARE_EQUAL_BYTES: [u8; 12] =
     aarch64_triple(aarch64_fcmp_d(), aarch64_cset_eq_w0(), aarch64_ret());
+const AARCH64_COMPARE_NOT_EQUAL_BYTES: [u8; 12] =
+    aarch64_triple(aarch64_fcmp_d(), aarch64_cset_ne_w0(), aarch64_ret());
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -412,6 +428,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         abi: DeclAbi::Scalar,
         x86_bytes: &X86_COMPARE_EQUAL_BYTES,
         aarch64_bytes: &AARCH64_COMPARE_EQUAL_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "compare_not_equal",
+        operations: &["Binary", "Return"],
+        abi: DeclAbi::Scalar,
+        x86_bytes: &X86_COMPARE_NOT_EQUAL_BYTES,
+        aarch64_bytes: &AARCH64_COMPARE_NOT_EQUAL_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
