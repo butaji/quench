@@ -2252,11 +2252,14 @@ impl NativeRegionPlan {
                         "native fused region render failed: {error:?}"
                     ))
                 })?;
-            arena.borrow_mut().make_executable(address).map_err(|error| {
-                NativeDispatchError::Physical(format!(
-                    "native fused region protection failed: {error:?}"
-                ))
-            })?;
+            arena
+                .borrow_mut()
+                .make_executable(address)
+                .map_err(|error| {
+                    NativeDispatchError::Physical(format!(
+                        "native fused region protection failed: {error:?}"
+                    ))
+                })?;
             let mut region =
                 crate::vm::NativeRegionContext::new(code, pc, operations, registers, context);
             // The array block has a direct raw numeric entry on AArch64. Its
@@ -2331,10 +2334,7 @@ impl std::fmt::Debug for NativeRegionPlan {
             .field("operations", &self.operations)
             .field(
                 "used_bytes",
-                &self
-                    .arena
-                    .as_ref()
-                    .map_or(0, |arena| arena.borrow().used()),
+                &self.arena.as_ref().map_or(0, |arena| arena.borrow().used()),
             )
             .finish()
     }
