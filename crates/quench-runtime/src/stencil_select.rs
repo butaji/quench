@@ -235,6 +235,9 @@ pub struct PhysicalStencilView {
     /// Immutable payload kept separate from executable code bytes.
     pub data: &'static [u8],
     pub compiler: Option<&'static str>,
+    /// Relocations validated against the Rust object and carried with the
+    /// selected bytes. Targets are physical labels, never semantic op names.
+    pub relocations: &'static [PhysicalRelocation],
     /// Identity and physical boundary facts travel with the selected bytes.
     /// Callers must not pair an artifact with independently looked-up record
     /// metadata after this point.
@@ -269,6 +272,7 @@ impl PhysicalStencilView {
             && self.artifact_id == other.artifact_id
             && self.data == other.data
             && self.compiler == other.compiler
+            && self.relocations == other.relocations
             && self.abi == other.abi
             && self.entry == other.entry
             && self.external_entries == other.external_entries
@@ -284,6 +288,13 @@ impl PhysicalStencilView {
             && self.target == other.target
             && self.fingerprint == other.fingerprint
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalRelocation {
+    pub offset: u16,
+    pub kind: crate::stencil_fact::HoleKind,
+    pub target: &'static str,
 }
 
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
@@ -458,6 +469,7 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         artifact_id: record.name,
         data: &[],
         compiler: None,
+        relocations: &[],
         abi: record.abi,
         entry: record.entry,
         external_entries: record.external_entries,
@@ -509,6 +521,7 @@ fn generated_physical_view(
         artifact_id: artifact.artifact_id,
         data: artifact.data,
         compiler: Some(artifact.compiler),
+        relocations: artifact.relocations,
         abi: artifact.abi,
         entry: artifact.entry,
         external_entries: artifact.external_entries,
@@ -1248,6 +1261,12 @@ mod tests {
             assert!(!artifact.target.is_empty());
             assert_eq!(artifact.abi, record.abi);
             assert_eq!(artifact.key, record.key);
+            for relocation in artifact.relocations {
+                assert!(artifact.stencil.holes.iter().any(|hole| {
+                    hole.offset == relocation.offset && hole.kind == relocation.kind
+                }));
+                assert!(!relocation.target.is_empty());
+            }
         }
         if !BUILD_STENCIL_ARTIFACTS.is_empty() {
             let chain = BUILD_STENCIL_ARTIFACTS
@@ -1290,6 +1309,7 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             data: &[],
+            relocations: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
@@ -1309,6 +1329,7 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             data: &[],
+            relocations: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
@@ -1328,6 +1349,7 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             data: &[],
+            relocations: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 9,
@@ -1347,6 +1369,7 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             data: &[],
+            relocations: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
@@ -1376,6 +1399,7 @@ mod tests {
             template_calls_helper: false,
             bytes: BYTES,
             data: &[],
+            relocations: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,

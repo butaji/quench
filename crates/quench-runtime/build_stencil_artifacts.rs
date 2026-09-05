@@ -40,6 +40,7 @@ struct OwnedDirectory {
 struct ExtractedObject {
     bytes: Vec<u8>,
     fallthrough: Option<Vec<u8>>,
+    relocations: Vec<(u16, &'static str, &'static str)>,
 }
 
 impl Drop for OwnedDirectory {
@@ -142,7 +143,7 @@ fn empty_artifacts() -> String {
 }
 
 fn artifact_schema() -> &'static str {
-    "#[derive(Clone, Copy, Debug)] pub struct BuildStencilArtifact { pub name: &'static str, pub artifact_id: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub data: &'static [u8], pub stencil: crate::stencil_fact::Stencil, pub fallthrough: Option<crate::stencil_fact::Stencil>, pub fallthrough_entry: u16 }"
+    "#[derive(Clone, Copy, Debug)] pub struct BuildStencilArtifact { pub name: &'static str, pub artifact_id: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub data: &'static [u8], pub relocations: &'static [crate::stencil_select::PhysicalRelocation], pub stencil: crate::stencil_fact::Stencil, pub fallthrough: Option<crate::stencil_fact::Stencil>, pub fallthrough_entry: u16 }"
 }
 
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
@@ -195,6 +196,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     None,
                 ),
                 fallthrough: None,
+                relocations: Vec::new(),
             }
         } else {
             let Some(recipe) = super::rust_leaf_recipe(declaration) else {
@@ -211,6 +213,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     recipe,
                 ),
                 fallthrough: None,
+                relocations: Vec::new(),
             }
         };
         let (constant, row) =
@@ -284,6 +287,7 @@ fn compile_fragment_pair(
         return ExtractedObject {
             bytes: Vec::new(),
             fallthrough: None,
+            relocations: Vec::new(),
         };
     }
     let head = compile_assembly_fragment(
@@ -311,6 +315,7 @@ fn compile_fragment_pair(
     ExtractedObject {
         bytes: head,
         fallthrough: Some(tail),
+        relocations: vec![(4, "Branch26", "q_fallthrough_tail")],
     }
 }
 
@@ -775,12 +780,13 @@ fn render_artifact(
         .collect::<Vec<_>>()
         .join(", ");
     let row = format!(
-        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {}, fallthrough_entry: {} }},",
+        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], relocations: {}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {}, fallthrough_entry: {} }},",
         super::abi_expr(declaration),
         declaration.entry,
         entries,
         declaration.name == "fallthrough",
         super::target_template_calls_helper(declaration),
+        relocation_expr(extracted),
         holes_expr(declaration, target, extracted.fallthrough.is_some()),
         extracted.fallthrough.as_ref().map_or("None".to_owned(), |_| {
             format!("Some(crate::stencil_fact::Stencil {{ bytes: FALLTHROUGH_{identifier}, holes: &[] }})")
@@ -789,6 +795,20 @@ fn render_artifact(
         artifact_id = format!("{name}@{fingerprint}"),
     );
     (constant, row)
+}
+
+fn relocation_expr(extracted: &ExtractedObject) -> String {
+    let entries = extracted
+        .relocations
+        .iter()
+        .map(|(offset, kind, target)| {
+            format!(
+                "crate::stencil_select::PhysicalRelocation {{ offset: {offset}, kind: crate::stencil_fact::HoleKind::{kind}, target: {target:?} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{entries}]")
 }
 
 fn fallthrough_offset(declaration: &RegionDeclaration, target: &str) -> u16 {
