@@ -268,13 +268,6 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
     }
     // From this point on a handler or physical kernel may have committed
     // effects. Any failure is therefore an exit, never a retryable miss.
-    let _frame_roots = if region.abi.contract().may_call_helper {
-        let registers = unsafe { &*region.registers };
-        let environment = crate::locals::current();
-        Some(crate::cycle_collector::protect_frame(registers, &environment))
-    } else {
-        None
-    };
     region.entry_started = true;
 
     // Physical dispatch is selected from the generated declaration's ABI.
@@ -338,6 +331,21 @@ pub(crate) fn execute_region_fallback(
     // handler call, so a stale opcode/operand/edge can only reject before
     // effects.
     validate_residual_window(region)?;
+    // Both bridge regions and guarded raw-region misses can execute canonical
+    // handlers that allocate, throw, or re-enter. Root the live frame for the
+    // whole semantic span; helper-free native entries do not take this path.
+    let _frame_roots = if region
+        .operations
+        .iter()
+        .copied()
+        .any(|opcode| opcode.has_effect(crate::facts::OperationEffect::MayThrow))
+    {
+        let registers = unsafe { &*region.registers };
+        let environment = crate::locals::current();
+        Some(crate::cycle_collector::protect_frame(registers, &environment))
+    } else {
+        None
+    };
     let mut last = None;
     for (offset, _expected) in region.operations.iter().copied().enumerate() {
         let pc = region.pc.checked_add(offset).ok_or_else(|| {
