@@ -19,6 +19,7 @@ enum DeclAbi {
     Scalar,
     TaggedWord,
     ConstantWord,
+    ScalarBool,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -381,10 +382,31 @@ const AARCH64_ADD_CHAIN_BYTES: [u8; 12] = aarch64_triple(
 const X86_LOAD_CONST_BYTES: [u8; 11] = [
     0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xC3,
 ];
+const X86_TRUTHY_NUMBER_BYTES: [u8; 23] = [
+    0x0F, 0x57, 0xC9, // xorps xmm1, xmm1
+    0x66, 0x0F, 0x2E, 0xC1, // ucomisd xmm0, xmm1
+    0x0F, 0x95, 0xC0, // setne al
+    0x66, 0x0F, 0x2E, 0xC0, // ucomisd xmm0, xmm0
+    0x0F, 0x9B, 0xC2, // setnp dl
+    0x20, 0xD0, // and al, dl
+    0x0F, 0xB6, 0xC0, // movzx eax, al
+    0xC3,
+];
 const AARCH64_LOAD_CONST_BYTES: [u8; 16] = {
     let mut out = [0; 16];
     put32(&mut out, 0, 0x5800_0040); // ldr x0, #8
     put32(&mut out, 4, aarch64_ret());
+    out
+};
+const AARCH64_TRUTHY_NUMBER_BYTES: [u8; 28] = {
+    let mut out = [0; 28];
+    put32(&mut out, 0, 0x9E67_0001); // fmov d1, xzr
+    put32(&mut out, 4, 0x1E61_2000); // fcmp d0, d1
+    put32(&mut out, 8, aarch64_cset_ne_w0());
+    put32(&mut out, 12, 0x1E60_2000); // fcmp d0, d0
+    put32(&mut out, 16, aarch64_cset_vc_w1());
+    put32(&mut out, 20, aarch64_and_w0_w0_w1());
+    put32(&mut out, 24, aarch64_ret());
     out
 };
 const AARCH64_ADD_CONST_BYTES: [u8; 24] = aarch64_add_const_bytes();
@@ -1016,6 +1038,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "truthy_number",
+        operations: &["JumpIfFalse"],
+        abi: DeclAbi::ScalarBool,
+        x86_bytes: &X86_TRUTHY_NUMBER_BYTES,
+        aarch64_bytes: &AARCH64_TRUTHY_NUMBER_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "load_const",
         operations: &["LoadConst", "Return"],
         abi: DeclAbi::ConstantWord,
@@ -1334,6 +1368,7 @@ const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate:
         crate::stencil_select::RegionAbi::Scalar
         | crate::stencil_select::RegionAbi::TaggedWord
         | crate::stencil_select::RegionAbi::ConstantWord
+        | crate::stencil_select::RegionAbi::ScalarBool
         | crate::stencil_select::RegionAbi::ScalarI32
         | crate::stencil_select::RegionAbi::ScalarU32 => crate::stencil_select::AbiContract {
             context_arg_words: 0,
@@ -1455,6 +1490,7 @@ fn abi_expr(declaration: &RegionDeclaration) -> &'static str {
         DeclAbi::Scalar => "crate::stencil_select::RegionAbi::Scalar",
         DeclAbi::TaggedWord => "crate::stencil_select::RegionAbi::TaggedWord",
         DeclAbi::ConstantWord => "crate::stencil_select::RegionAbi::ConstantWord",
+        DeclAbi::ScalarBool => "crate::stencil_select::RegionAbi::ScalarBool",
         DeclAbi::ScalarI32 => "crate::stencil_select::RegionAbi::ScalarI32",
         DeclAbi::ScalarU32 => "crate::stencil_select::RegionAbi::ScalarU32",
         DeclAbi::Bridge => "crate::stencil_select::RegionAbi::Bridge",
