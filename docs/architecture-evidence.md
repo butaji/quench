@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `ff5bf423b` (cleanup files remain
+Evidence below is bound to source revision `875e90f49` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -29,6 +29,14 @@ argument arity matches its typed entry family; the catalog consistency test
 passes at `/tmp/quench-abi-arity-contract-20260905.log` (1 passed), with the
 full runtime at `/tmp/quench-runtime-full-20260905-abi-arity.log` (734 passed,
 0 failed, 1 ignored).
+
+Composed array bridge errors now preserve the typed `SemanticAt` fault PC
+through the C status boundary instead of reconstructing a fixed offset. The
+post-entry no-replay and fault-PC checks pass at
+`/tmp/quench-array-fault-pc-20260905.log` and
+`/tmp/quench-array-fault-pc-bridge-20260905.log` (1 passed each); full runtime
+is **734 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-array-fault-pc.log`.
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
