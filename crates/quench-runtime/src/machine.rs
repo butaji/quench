@@ -3973,8 +3973,7 @@ impl std::fmt::Debug for NativeDispatchPlan {
 /// ordinary per-instruction path.
 pub(crate) struct NativeRegionPlan {
     arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
-    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
     operations: &'static [crate::ir::Opcode],
@@ -4201,8 +4200,7 @@ impl NativeRegionPlan {
         })?;
         Some(Self {
             arena: Some(arena),
-            cache: crate::stencil_select::RenderedRegionCache::new(),
-            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            physical: PhysicalState::new(),
             site: crate::quickening::QuickeningSite::new(record.operations[0]),
             key,
             operations: record.operations,
@@ -4255,7 +4253,7 @@ impl NativeRegionPlan {
         }
         validate_region_window(code, pc, record)?;
         if !record.executable
-            || self.lifecycle.observe_site(&self.site, key, true)
+            || self.physical.lifecycle.observe_site(&self.site, key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(NativeDispatchError::Physical(
@@ -4286,7 +4284,7 @@ impl NativeRegionPlan {
             }
             let address = arena
                 .borrow_mut()
-                .render_or_get(&mut self.cache, key, &record.stencil, &values)
+                .render_or_get(&mut self.physical.cache, key, &record.stencil, &values)
                 .map_err(|error| {
                     NativeDispatchError::Physical(format!(
                         "native fused region render failed: {error:?}"
@@ -4440,8 +4438,7 @@ impl NativeRegionPlan {
         // Both pre-entry rejection and post-entry failure retire this
         // physical version. A committed failure is never retried through the
         // same bytes; the shared owner remains live for other regions.
-        self.cache.clear();
-        self.lifecycle.reset();
+        self.physical.clear();
     }
 }
 
