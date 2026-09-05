@@ -1295,6 +1295,25 @@ pub(crate) fn fail_fork_process(
     execute::set_property_in_place(&child, "connected", Value::Boolean(false));
     execute::set_property_in_place(&child, "exitCode", Value::Number(code as f64));
     execute::set_property_in_place(&child, "signalCode", Value::Null);
+    let stderr = execute::get_property(&child, "stderr");
+    if let Value::String(text) = execute::get_property(&child, "\0forkStderr") {
+        if !text.is_empty() && matches!(stderr, Value::Object(_) | Value::ObjectAlias(_)) {
+            crate::modules::events::method_emit(
+                state,
+                Some(&stderr),
+                &[Value::String("data".into()), Value::String(text)],
+            )?;
+        }
+    }
+    if matches!(stderr, Value::Object(_) | Value::ObjectAlias(_)) {
+        for event in ["end", "close"] {
+            crate::modules::events::method_emit(
+                state,
+                Some(&stderr),
+                &[Value::String(event.into())],
+            )?;
+        }
+    }
     for event in ["exit", "close"] {
         crate::modules::events::method_emit(
             state,

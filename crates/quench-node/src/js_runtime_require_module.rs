@@ -64,10 +64,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         )]));
     }
     if name == "internal/js_stream_socket" || name == "node:internal/js_stream_socket" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "StreamWrap".into(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
-        )]));
+        let ctor = crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM);
+        return Ok(quench_runtime::execute::set_property(
+            ctor.clone(),
+            "StreamWrap",
+            ctor,
+        ));
     }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(

@@ -2108,10 +2108,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             "kConnectionsCheckingInterval".into(),
             Value::String("Symbol.kConnectionsCheckingInterval\0quench".into()),
         )])),
-        "internal/js_stream_socket" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "StreamWrap".into(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
-        )])),
+        "internal/js_stream_socket" => {
+            let ctor = crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM);
+            Some(execute::set_property(ctor.clone(), "StreamWrap", ctor))
+        }
         "internal/net" => Some(crate::modules::net::internal_module()),
         "internal/assert" => Some(crate::host::capability(crate::registry::SPEC_ASSERT_OK)),
         "internal/assert/myers_diff" => Some(crate::host::namespace_object_from_pairs(vec![(
