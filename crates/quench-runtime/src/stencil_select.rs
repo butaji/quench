@@ -363,7 +363,8 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
     let Some(artifact) = BUILD_STENCIL_ARTIFACTS.iter().find(|artifact| {
-        artifact.name == record.name
+        artifact.key == key
+            && artifact.name == record.name
             && artifact.abi == record.abi
             && artifact_target_matches_host(artifact.target)
     }) else {
@@ -396,6 +397,7 @@ fn generated_physical_view(
     artifact: &'static BuildStencilArtifact,
 ) -> Option<PhysicalStencilView> {
     let metadata_matches = artifact.name == record.name
+        && artifact.key == key
         && artifact.abi == record.abi
         && artifact.entry == record.entry
         && artifact.external_entries == record.external_entries
@@ -1129,11 +1131,12 @@ mod tests {
             assert!(!artifact.fingerprint.is_empty());
             assert!(!artifact.target.is_empty());
             assert_eq!(artifact.abi, record.abi);
+            assert_eq!(artifact.key, record.key);
         }
         if !BUILD_STENCIL_ARTIFACTS.is_empty() {
             let chain = BUILD_STENCIL_ARTIFACTS
                 .iter()
-                .find(|artifact| artifact.name == "add_chain")
+                .find(|artifact| artifact.key == add_chain_region_key())
                 .expect("Rust generation must include the fused arithmetic chain");
             let chain_record = CANONICAL_REGION_TABLE
                 .iter()
@@ -1154,6 +1157,7 @@ mod tests {
         static WRONG_ENTRIES: &[u16] = &[1];
         static BAD_ENTRY: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            key: RegionKey(0),
             target: "test",
             compiler: "test",
             fingerprint: "test",
@@ -1166,6 +1170,7 @@ mod tests {
         };
         static BAD_ENTRIES: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            key: RegionKey(0),
             target: "test",
             compiler: "test",
             fingerprint: "test",
