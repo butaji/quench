@@ -1135,6 +1135,32 @@ fn ordinary_source_lowering_executes_tagged_identity_comparison() {
         );
         assert!(native.borrow().native_entry_count > 0, "identity bytes must execute");
 
+        let object = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
+        let mut object_registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        object_registers.write(
+            usize::from(instruction.b),
+            crate::value::Value::Object(std::rc::Rc::clone(&object)),
+        );
+        object_registers.write(
+            usize::from(instruction.c),
+            crate::value::Value::Object(object),
+        );
+        let object_result = crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut object_registers,
+            &context,
+            crate::environment::Environment::new(),
+        );
+        assert!(object_result.is_ok(), "object identity comparison should execute");
+        assert_eq!(
+            object_registers.read(usize::from(instruction.a)),
+            Some(crate::value::Value::Boolean(true))
+        );
+
         let before = native.borrow().native_entry_count;
         let mut hostile = crate::register_file::RegisterFile::with_undefined(
             usize::from(view.register_count()).max(8),
