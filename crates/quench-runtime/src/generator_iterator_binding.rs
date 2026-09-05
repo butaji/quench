@@ -552,7 +552,19 @@ fn resume_after_iterator(
     range: crate::machine::CodeRange,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
-    resume_generator_range(generator, state, range, completion)
+    let completion = resume_generator_range(generator, state, range, completion)?;
+    if !matches!(completion, crate::completion::Completion::Normal) {
+        return Ok(completion);
+    }
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Iterator { .. })
+    ) {
+        if let Some(completion) = resume_iterator_frame(generator, state, completion.clone())? {
+            return Ok(completion);
+        }
+    }
+    Ok(completion)
 }
 
 fn set_iterator_phase(generator: &GeneratorData, phase: crate::machine::IteratorPhase) {

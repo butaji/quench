@@ -49,7 +49,11 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     if raw_stages.iter().any(is_web_stage) {
         return web_pipeline(state, &raw_stages, callback);
     }
-    let stages = normalize_pipeline(state, raw_stages)?;
+    let terminal = raw_stages.last().filter(|value| quench_runtime::is_callable(value)).cloned();
+    let stream_args = terminal
+        .as_ref()
+        .map_or_else(|| raw_stages.clone(), |_| raw_stages[..raw_stages.len() - 1].to_vec());
+    let stages = normalize_pipeline(state, stream_args)?;
     if stages.is_empty() {
         let code = if args.is_empty() {
             "ERR_INVALID_ARG_TYPE"
@@ -72,6 +76,10 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         };
         return Err(pipeline_error("The pipeline requires a callback", code));
     }
+    if let Some(terminal) = terminal {
+        validate_terminal_pipeline(&stages)?;
+        return run_terminal_pipeline(state, &stages, terminal, callback.expect("validated"));
+    }
     for pair in stages.windows(2) {
         if let Err(error) = pipe(&pair[0], &pair[1]) {
             let error = unable_to_pipe(error);
@@ -85,6 +93,61 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
         attach_pipeline_callback(&stages, callback)?;
     }
     Ok(stages.last().cloned().unwrap_or(Value::Undefined))
+}
+
+fn run_terminal_pipeline(
+    state: &Rc<RefCell<HostState>>,
+    stages: &[Value],
+    terminal: Value,
+    callback: Value,
+) -> Result<Value, VmError> {
+    for pair in stages.windows(2) {
+        pipe(&pair[0], &pair[1]).map_err(|error| VmError::Thrown(unable_to_pipe(error)))?;
+    }
+    let source = stages.last().expect("validated terminal pipeline").clone();
+    let output = execute::call(&terminal, &Value::Undefined, &[source])?;
+    if matches!(output, Value::Promise(_)) {
+        let fulfilled = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_COMPLETE),
+            vec![callback.clone(), Value::Boolean(true)],
+        );
+        let rejected = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_WEB_PIPELINE_ERROR),
+            vec![callback],
+        );
+        quench_runtime::promise_then(Some(&output), &[fulfilled, rejected])?;
+        return Ok(stages.last().cloned().unwrap_or(Value::Undefined));
+    }
+    let output_stream = readable_from(state, output.clone())?;
+    let options = host_api::object(vec![
+        ("readable".into(), Value::Boolean(true)),
+        ("writable".into(), Value::Boolean(false)),
+    ]);
+    finished(state, None, &[output_stream.clone(), options, callback])?;
+    Ok(output_stream)
+}
+
+fn validate_terminal_pipeline(stages: &[Value]) -> Result<(), VmError> {
+    let first = stages.first().expect("terminal pipeline has a source");
+    if !has_callable(first, "pipe") || !has_callable(first, "on") {
+        return Err(pipeline_error(
+            "The \"streams\" argument must contain stream instances",
+            "ERR_INVALID_ARG_TYPE",
+        ));
+    }
+    for stream in stages.iter().skip(1) {
+        if !has_callable(stream, "pipe")
+            || !has_callable(stream, "on")
+            || !has_callable(stream, "write")
+            || !has_callable(stream, "end")
+        {
+            return Err(pipeline_error(
+                "The \"streams\" argument must contain stream instances",
+                "ERR_INVALID_ARG_TYPE",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Promise APIs reuse the callback pipeline state machine. The promise
@@ -264,7 +327,12 @@ pub fn web_pipeline_complete(
 ) -> Result<Value, VmError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     if quench_runtime::is_callable(&callback) {
-        execute::call(&callback, &Value::Undefined, &[])?;
+        let arguments = if matches!(args.get(1), Some(Value::Boolean(true))) {
+            vec![Value::Undefined, args.get(2).cloned().unwrap_or(Value::Undefined)]
+        } else {
+            Vec::new()
+        };
+        execute::call(&callback, &Value::Undefined, &arguments)?;
     }
     Ok(Value::Undefined)
 }
@@ -299,7 +367,16 @@ fn normalize_pipeline(
     mut stages: Vec<Value>,
 ) -> Result<Vec<Value>, VmError> {
     if let Some(first) = stages.first().cloned() {
-        if let Value::Array(ref array) = first {
+        if quench_runtime::is_callable(&first) {
+            let result = execute::call(&first, &Value::Undefined, &[])?;
+            if matches!(result, Value::Undefined) {
+                return Err(pipeline_error(
+                    "The pipeline function must return an AsyncIterable",
+                    "ERR_INVALID_RETURN_VALUE",
+                ));
+            }
+            stages[0] = readable_from(state, result)?;
+        } else if let Value::Array(ref array) = first {
             let values: Vec<Value> = (0..array.logical_len())
                 .map(|index| {
                     execute::get_property(&Value::Array(array.clone()), &index.to_string())
