@@ -239,6 +239,13 @@ pub fn eval_script_with_exec_argv(
         let _dynamic_import = quench_runtime::module_bindings::install_dynamic_import({
             let dynamic_namespace_cache = std::rc::Rc::clone(&dynamic_namespace_cache);
             std::rc::Rc::new(move |specifier, _deferred| {
+                let trace = crate::modules::diagnostics_channel::module_import_begin(
+                    &state,
+                    crate::modules::diagnostics_channel::module_import_parent_url(&state),
+                    specifier.to_owned(),
+                )
+                .ok()
+                .flatten();
                 let mocked = crate::modules::test::module_is_mocked(specifier);
                 let cacheable = !mocked || crate::modules::test::mock_module_cache(specifier);
                 let cache_key = format!(
@@ -248,6 +255,13 @@ pub fn eval_script_with_exec_argv(
                 );
                 if cacheable {
                     if let Some(cached) = dynamic_namespace_cache.borrow().get(&cache_key) {
+                        if let Some(event) = trace {
+                            let _ = crate::modules::diagnostics_channel::module_import_end(
+                                &state,
+                                event,
+                                Ok(cached.clone()),
+                            );
+                        }
                         return Some(cached.clone());
                     }
                 }
@@ -257,6 +271,13 @@ pub fn eval_script_with_exec_argv(
                 ) {
                     Ok(value) => {
                         let namespace = crate::modules::require::dynamic_namespace(value);
+                        if let Some(event) = trace {
+                            let _ = crate::modules::diagnostics_channel::module_import_end(
+                                &state,
+                                event,
+                                Ok(namespace.clone()),
+                            );
+                        }
                         if cacheable {
                             dynamic_namespace_cache
                                 .borrow_mut()
@@ -265,7 +286,16 @@ pub fn eval_script_with_exec_argv(
                         Some(namespace)
                     }
                     Err(VmError::Thrown(reason)) => {
-                        Some(crate::modules::require::dynamic_import_rejection(reason))
+                        let rejection =
+                            crate::modules::require::dynamic_import_rejection(reason.clone());
+                        if let Some(event) = trace {
+                            let _ = crate::modules::diagnostics_channel::module_import_end(
+                                &state,
+                                event,
+                                Err(reason),
+                            );
+                        }
+                        Some(rejection)
                     }
                     Err(_) => None,
                 }

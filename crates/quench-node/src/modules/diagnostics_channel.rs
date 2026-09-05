@@ -440,6 +440,90 @@ pub(crate) fn module_require_end(
     Ok(())
 }
 
+/// Trace the host's dynamic `import()` boundary.  Dynamic imports are lowered
+/// to a Rust resolver in this runtime, so the loader must publish the same
+/// stable event object that Node publishes around its ESM resolver.  Keep the
+/// event lifecycle here, next to the tracing-channel implementation, rather
+/// than teaching each resolver call site about channel ordering.
+pub fn module_import_begin(
+    state: &Rc<RefCell<HostState>>,
+    parent: String,
+    url: String,
+) -> Result<Option<Value>, VmError> {
+    let channels = TRACE_CHANNELS
+        .iter()
+        .map(|name| channel(state, None, &[Value::String(format!("tracing:module.import:{name}"))]))
+        .collect::<Result<Vec<_>, _>>()?;
+    if !channels.iter().any(|value| channel_has_subscribers(state, value)) {
+        return Ok(None);
+    }
+    let event = host_api::object(vec![
+        ("parentURL".into(), Value::String(parent)),
+        ("url".into(), Value::String(url)),
+    ]);
+    if channel_has_subscribers(state, &channels[0]) {
+        publish(state, Some(&channels[0]), std::slice::from_ref(&event))?;
+    }
+    Ok(Some(event))
+}
+
+pub fn module_import_parent_url(state: &Rc<RefCell<HostState>>) -> String {
+    let parent = state
+        .borrow()
+        .module_stack
+        .last()
+        .cloned()
+        .or_else(|| quench_runtime::vm::current_context().source_name().map(str::to_owned))
+        .unwrap_or_default();
+    if parent.starts_with("file://") {
+        return parent;
+    }
+    crate::modules::url_file::path_to_file_url(
+        state,
+        None,
+        &[Value::String(parent.clone())],
+    )
+    .ok()
+    .and_then(|url| execute::to_js_string(&execute::get_property(&url, "href")).ok())
+    .unwrap_or(parent)
+}
+
+pub fn module_import_end(
+    state: &Rc<RefCell<HostState>>,
+    event: Value,
+    result: Result<Value, Value>,
+) -> Result<(), VmError> {
+    let channels = TRACE_CHANNELS
+        .iter()
+        .map(|name| channel(state, None, &[Value::String(format!("tracing:module.import:{name}"))]))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (value, error) = match result {
+        Ok(value) => (Some(value), None),
+        Err(error) => (None, Some(error)),
+    };
+    let failed = error.is_some();
+    // Node's import trace closes the synchronous span before publishing the
+    // error (if any), then reports the asynchronous promise transition.
+    if channel_has_subscribers(state, &channels[1]) {
+        publish(state, Some(&channels[1]), std::slice::from_ref(&event))?;
+    }
+    if let Some(error) = error {
+        execute::set_property_in_place(&event, "error", error);
+    } else if let Some(value) = value {
+        execute::set_property_in_place(&event, "result", value);
+    }
+    if failed && channel_has_subscribers(state, &channels[4]) {
+        publish(state, Some(&channels[4]), std::slice::from_ref(&event))?;
+    }
+    if channel_has_subscribers(state, &channels[2]) {
+        publish(state, Some(&channels[2]), std::slice::from_ref(&event))?;
+    }
+    if channel_has_subscribers(state, &channels[3]) {
+        publish(state, Some(&channels[3]), std::slice::from_ref(&event))?;
+    }
+    Ok(())
+}
+
 fn tracing_object(channels: Vec<Value>) -> Value {
     let mut properties = vec![(TRACE.into(), Value::Boolean(true))];
     for (name, channel) in TRACE_CHANNELS.iter().zip(channels) {
