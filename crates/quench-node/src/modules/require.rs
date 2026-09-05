@@ -991,10 +991,7 @@ fn require_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
             "__nodeCommon",
         );
         if matches!(common, Value::Object(_) | Value::ObjectAlias(_)) {
-            if matches!(
-                execute::get_property(&common, "skipIfPerfettoEnabled"),
-                Value::Undefined
-            ) {
+            if matches!(execute::get_property(&common, "skipIfPerfettoEnabled"), Value::Undefined) {
                 let _ = execute::set_property_in_place(
                     &common,
                     "skipIfPerfettoEnabled",
