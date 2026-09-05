@@ -1156,9 +1156,11 @@ pub(crate) fn execute_optimized_code_step_from(
             )
         };
         if let Some((lhs, rhs)) = operands {
-            if let Ok(result) = native.borrow_mut().execute(lhs, rhs) {
+            let returns_boolean = native.borrow().returns_boolean();
+            let result = { native.borrow_mut().execute(lhs, rhs) };
+            if let Ok(result) = result {
                 crate::execution_trace::stencil_observation(code, start, "binary", true);
-                let value = if native.borrow().returns_boolean() {
+                let value = if returns_boolean {
                     Value::Boolean(result != 0.0)
                 } else {
                     Value::Number(result)
@@ -1501,12 +1503,14 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 )
             };
             if let Some((lhs, rhs)) = operands {
-                if let Ok(result) = native.borrow_mut().execute(lhs, rhs) {
+                let returns_boolean = native.borrow().returns_boolean();
+                let result = { native.borrow_mut().execute(lhs, rhs) };
+                if let Ok(result) = result {
                     crate::execution_trace::stencil_observation(
                         code, pc, "binary", true,
                     );
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                    let value = if native.borrow().returns_boolean() {
+                    let value = if returns_boolean {
                         Value::Boolean(result != 0.0)
                     } else {
                         Value::Number(result)

@@ -1503,12 +1503,24 @@ pub(crate) struct NativeBinaryPlan {
     opcode: crate::ir::Opcode,
     key: crate::stencil_fact::RegionKey,
     returns_boolean: bool,
+    integer_op: Option<crate::ops::BinaryOp>,
     /// Once the first render has passed all arena and fact checks, retain the
     /// typed entry pointer. Numeric stencil bytes have no mutable VM state;
     /// re-running lifecycle, cache, mprotect, and address checks on every
     /// iteration otherwise costs more than the floating-point instruction.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: Option<extern "C" fn(f64, f64) -> f64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    int_entry: Option<extern "C" fn(i32, i32) -> i32>,
+}
+
+#[inline]
+fn exact_i32(value: f64) -> Option<i32> {
+    value.is_finite()
+        .then_some(value)
+        .filter(|value| value.trunc() == *value)
+        .filter(|value| *value >= f64::from(i32::MIN) && *value <= f64::from(i32::MAX))
+        .map(|value| value as i32)
 }
 
 impl NativeBinaryPlan {
@@ -1520,19 +1532,34 @@ impl NativeBinaryPlan {
             return None;
         }
         let opcode = instruction.opcode;
-        let (key, returns_boolean) = if opcode.numeric_operator().is_some() {
-            (crate::stencil_select::numeric_region_key(opcode)?, false)
+        let (key, returns_boolean, integer_op) = if opcode.numeric_operator().is_some() {
+            (crate::stencil_select::numeric_region_key(opcode)?, false, None)
         } else if opcode == crate::ir::Opcode::Binary
             && instruction.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual)
         {
-            (crate::stencil_select::compare_equal_region_key(), true)
+            (crate::stencil_select::compare_equal_region_key(), true, None)
         } else if opcode == crate::ir::Opcode::Binary
             && instruction.flags
                 == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictNotEqual)
         {
-            (crate::stencil_select::compare_not_equal_region_key(), true)
+            (crate::stencil_select::compare_not_equal_region_key(), true, None)
         } else if opcode == crate::ir::Opcode::Binary {
             let key = match crate::ir::compact_binary_operator(instruction.flags) {
+                Some(crate::ops::BinaryOp::BitwiseAnd) => {
+                    return Self::new_integer(instruction, policy,
+                        crate::stencil_select::bitwise_and_region_key(),
+                        crate::ops::BinaryOp::BitwiseAnd)
+                }
+                Some(crate::ops::BinaryOp::BitwiseOr) => {
+                    return Self::new_integer(instruction, policy,
+                        crate::stencil_select::bitwise_or_region_key(),
+                        crate::ops::BinaryOp::BitwiseOr)
+                }
+                Some(crate::ops::BinaryOp::BitwiseXor) => {
+                    return Self::new_integer(instruction, policy,
+                        crate::stencil_select::bitwise_xor_region_key(),
+                        crate::ops::BinaryOp::BitwiseXor)
+                }
                 Some(crate::ops::BinaryOp::LessThan) => {
                     crate::stencil_select::compare_less_region_key()
                 }
@@ -1547,7 +1574,7 @@ impl NativeBinaryPlan {
                 }
                 _ => return None,
             };
-            (key, true)
+            (key, true, None)
         } else {
             return None;
         };
@@ -1571,8 +1598,40 @@ impl NativeBinaryPlan {
             opcode,
             key,
             returns_boolean,
+            integer_op,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            int_entry: None,
+        })
+    }
+
+    fn new_integer(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        key: crate::stencil_fact::RegionKey,
+        operator: crate::ops::BinaryOp,
+    ) -> Option<Self> {
+        if !policy.native_leaves
+            || instruction.opcode != crate::ir::Opcode::Binary
+            || !crate::stencil_select::select_region(key)
+                .is_some_and(|record| record.executable)
+        {
+            return None;
+        }
+        Some(Self {
+            arena: None,
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+            site: crate::quickening::QuickeningSite::new(instruction.opcode),
+            opcode: instruction.opcode,
+            key,
+            returns_boolean: false,
+            integer_op: Some(operator),
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            int_entry: None,
         })
     }
 
@@ -1582,6 +1641,47 @@ impl NativeBinaryPlan {
         lhs: f64,
         rhs: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        if self.integer_op.is_some() {
+            let left = exact_i32(lhs).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let right = exact_i32(rhs).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some(entry) = self.int_entry {
+                return Ok(f64::from(entry(left, right)));
+            }
+            if self.lifecycle.observe_site(&self.site, self.key, true)
+                == crate::stencil_lifecycle::StencilState::Retired
+            {
+                return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+            }
+            if self.arena.is_none() {
+                self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+            }
+            let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+            let result = self
+                .arena
+                .as_mut()
+                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
+                .render_selected_i32(&mut self.cache, self.key, &values, left, right)
+                .map(f64::from);
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if result.is_ok() {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Some(address) = self.cache.get_owned(self.key, 0, arena.id()) {
+                        self.int_entry = arena.i32_entry(address).ok();
+                    }
+                }
+            }
+            if result.is_err() {
+                self.arena.take();
+                self.cache.clear();
+                self.lifecycle.reset();
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                {
+                    self.int_entry = None;
+                }
+            }
+            return result;
+        }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !self.returns_boolean {
             if let Some(entry) = self.entry {
@@ -1677,6 +1777,7 @@ impl std::fmt::Debug for NativeBinaryPlan {
         formatter
             .debug_struct("NativeBinaryPlan")
             .field("opcode", &self.opcode)
+            .field("integer_op", &self.integer_op)
             .field(
                 "used_bytes",
                 &self.arena.as_ref().map_or(0, |arena| arena.used()),
@@ -2314,7 +2415,11 @@ impl NativeRegionPlan {
         let record = crate::stencil_select::select_region(key).filter(|record| {
             record.executable
                 && !record.operations.is_empty()
-                && !matches!(record.abi, crate::stencil_select::RegionAbi::Scalar)
+                && !matches!(
+                    record.abi,
+                    crate::stencil_select::RegionAbi::Scalar
+                        | crate::stencil_select::RegionAbi::ScalarI32
+                )
         })?;
         Some(Self {
             arena: Some(arena),
@@ -2396,7 +2501,11 @@ impl NativeRegionPlan {
             // closed if metadata and the selected invocation path disagree;
             // an opcode-prefix match is never sufficient to pass a scalar
             // or raw-array entry a NativeRegionContext pointer.
-            if matches!(contract.abi, crate::stencil_select::RegionAbi::Scalar) {
+            if matches!(
+                contract.abi,
+                crate::stencil_select::RegionAbi::Scalar
+                    | crate::stencil_select::RegionAbi::ScalarI32
+            ) {
                 return Err(NativeDispatchError::Physical(
                     "native fused region ABI metadata mismatch".into(),
                 ));
@@ -2422,6 +2531,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayNumericLoop => "array_numeric_loop",
                 crate::stencil_select::RegionAbi::Bridge => "bridge",
                 crate::stencil_select::RegionAbi::Scalar => "scalar",
+                crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
             };
             let (used_bytes, capacity_bytes) = {
                 let slab = arena.borrow();
@@ -2471,6 +2581,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::Scalar => {
                     return Err(NativeDispatchError::Physical(
                         "scalar ABI cannot enter a region context".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::ScalarI32 => {
+                    return Err(NativeDispatchError::Physical(
+                        "scalar i32 ABI cannot enter a region context".into(),
                     ));
                 }
             }
@@ -2685,7 +2800,11 @@ impl BaselinePlan {
                         // NativeRegionContext pointer merely because their
                         // opcode prefix matches this window.
                         if !record.executable
-                            || matches!(record.abi, crate::stencil_select::RegionAbi::Scalar)
+                            || matches!(
+                                record.abi,
+                                crate::stencil_select::RegionAbi::Scalar
+                                    | crate::stencil_select::RegionAbi::ScalarI32
+                            )
                         {
                             return None;
                         }
