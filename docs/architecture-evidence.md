@@ -40,3 +40,5 @@ stop the chain proof and remain on complete canonical property semantics.
 The same guarded slot selection is wired through the optimizing entry path.
 Latest post-guard runtime regression: **701 passed, 0 failed, 1 ignored** at
 `80d00a941` (`/tmp/quench-runtime-full-20260905-prototype-guard.log`).
+The same suite at current source `c85330bbc` is **701 passed, 0 failed, 1
+ignored** (`/tmp/quench-runtime-full-20260905-c853.log`).
