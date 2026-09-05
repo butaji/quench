@@ -1284,6 +1284,38 @@ pub(crate) fn execute_optimized_code_step_from(
             crate::execution_trace::leaf_rejection("optimizing_native_load_local");
         }
     }
+    if instruction.opcode == crate::ir::Opcode::StoreLocal {
+        if let Some(native) = entry.native_store_local.as_ref() {
+            let can_store = crate::locals::with_current_ref(|environment| {
+                environment.is_some_and(|environment| {
+                    environment.can_store_proven_tagged_bits(instruction.a)
+                })
+            });
+            if !can_store {
+                crate::execution_trace::stencil_observation(
+                    code, start, "store_local", false,
+                );
+                crate::execution_trace::leaf_rejection("optimizing_native_store_local_guard");
+            } else if let Some(source) = registers.word_ptr(usize::from(instruction.b)) {
+                if let Ok(bits) = native.borrow_mut().execute(source) {
+                    let stored = crate::locals::with_current_ref(|environment| {
+                        environment.is_some_and(|environment| {
+                            environment.store_proven_tagged_bits(instruction.a, bits)
+                        })
+                    });
+                    if stored {
+                        crate::execution_trace::stencil_observation(
+                            code, start, "store_local", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        return Ok((crate::completion::Completion::Normal, start + 1));
+                    }
+                }
+            }
+            crate::execution_trace::stencil_observation(code, start, "store_local", false);
+            crate::execution_trace::leaf_rejection("optimizing_native_store_local");
+        }
+    }
     if instruction.opcode == crate::ir::Opcode::Move && instruction.flags == 0 {
         if let Some(native) = entry.native_move.as_ref() {
             if let Some(source) = registers.word_ptr(usize::from(instruction.b)) {
@@ -1609,6 +1641,40 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                     continue;
                 }
                 crate::ir::Opcode::StoreLocal => {
+                    if let Some(native) = plan.native_store_local_at(pc) {
+                        if !environment.can_store_proven_tagged_bits(instruction.a) {
+                            crate::execution_trace::stencil_observation(
+                                code, pc, "store_local", false,
+                            );
+                            crate::execution_trace::leaf_rejection("native_store_local_guard");
+                            crate::locals::store_proven_in(
+                                environment,
+                                registers,
+                                instruction.a,
+                                instruction.b,
+                            )?;
+                            pc += 1;
+                            continue;
+                        }
+                        if let Some(source) = registers.word_ptr(usize::from(instruction.b)) {
+                            if let Ok(bits) = native.borrow_mut().execute(source) {
+                                if environment.store_proven_tagged_bits(instruction.a, bits) {
+                                    crate::execution_trace::stencil_observation(
+                                        code, pc, "store_local", true,
+                                    );
+                                    crate::execution_trace::event(
+                                        crate::execution_trace::Event::LeafHit,
+                                    );
+                                    pc += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                        crate::execution_trace::stencil_observation(
+                            code, pc, "store_local", false,
+                        );
+                        crate::execution_trace::leaf_rejection("native_store_local");
+                    }
                     crate::locals::store_proven_in(
                         environment,
                         registers,
@@ -4786,6 +4852,54 @@ mod compact_handler_tests {
                 .native_entry_count(),
             1
         );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn baseline_store_local_commits_native_tagged_word_once() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Const {
+                dst: 0,
+                value: crate::ops::Constant::Number(9.25),
+            },
+            Op::StoreLocal { slot: 1, src: 0 },
+            Op::Return { src: 0 },
+        ]);
+        let code = function.code().expect("function code");
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        assert!(plan.native_store_local_at(1).is_some());
+        let environment = crate::environment::Environment::new();
+        environment.set(1, Value::Number(0.0));
+        let context = crate::vm::current_context_or_default();
+        let mut registers = crate::register_file::RegisterFile::with_undefined(4);
+        let (completion, _) = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            environment.clone(),
+        )
+        .expect("native proven local store");
+        assert_eq!(completion, crate::completion::Completion::Return(Value::Number(9.25)));
+        assert_eq!(environment.get(1), Value::Number(9.25));
+        assert_eq!(plan.native_store_local_at(1).unwrap().borrow().native_entry_count(), 1);
+
+        environment.mark_immutable_slot(1);
+        registers.write_number(0, 10.5);
+        let result = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            1,
+            &mut registers,
+            &context,
+            environment,
+        );
+        assert!(result.is_err(), "immutable stores must use the canonical throw path");
+        assert_eq!(plan.native_store_local_at(1).unwrap().borrow().native_entry_count(), 1);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
