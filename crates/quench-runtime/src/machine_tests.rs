@@ -213,6 +213,21 @@ fn region_admission_rejects_noncanonical_operands_before_publication() {
 #[test]
 fn generated_scalar_and_array_rows_route_through_declared_abis() {
     let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let scalar_add = super::FunctionCode::from_ops(vec![
+        super::Op::Binary {
+            dst: 0,
+            operator: crate::ops::BinaryOp::Add,
+            lhs: 1,
+            rhs: 2,
+        },
+        super::Op::Return { src: 0 },
+    ]);
+    let scalar_plan = super::BaselinePlan::compile_for_test(
+        scalar_add.code().expect("scalar add code"),
+        policy,
+    );
+    assert!(scalar_plan.native_binary_at(0).is_some());
+    assert!(scalar_plan.native_region_at(0).is_none());
     for ops in [
         vec![super::Op::Move { dst: 0, src: 1 }],
         vec![super::Op::GetProperty {
