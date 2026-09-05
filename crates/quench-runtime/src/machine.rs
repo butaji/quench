@@ -2898,13 +2898,14 @@ fn stencil_contains_call(bytes: &[u8]) -> bool {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             encoded & 0xFC00_0000 == 0x9400_0000
                 || encoded & 0xFFFF_FC1F == 0xD63F_0000
+                || encoded & 0xFFFF_FC1F == 0xD61F_0000
         });
     }
     #[cfg(target_arch = "x86_64")]
     {
         return bytes.first().is_some_and(|byte| *byte == 0xE8)
             || bytes.windows(2).any(|window| {
-                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18)
+                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18 | 0x20 | 0x28)
             });
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
