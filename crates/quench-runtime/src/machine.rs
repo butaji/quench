@@ -1913,6 +1913,7 @@ impl NativeBinaryPlan {
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if result.is_ok() {
+                self.note_native_entry();
                 if let Some(arena) = self.arena.as_ref() {
                     if let Some(address) = self.cache.get_owned(self.key, 0, arena.id()) {
                         if self.integer_unsigned {
