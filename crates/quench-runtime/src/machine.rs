@@ -2677,14 +2677,34 @@ enum InstalledConstantEntry {
     Shared(crate::stencil_arena::EntryToken<extern "C" fn() -> u64>),
 }
 
+/// Shared physical installation bookkeeping. The cache is only a disposable
+/// index; lifecycle remains the authority for admission and retirement.
+struct PhysicalState {
+    cache: crate::stencil_select::RenderedRegionCache,
+    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+}
+
+impl PhysicalState {
+    fn new() -> Self {
+        Self {
+            cache: crate::stencil_select::RenderedRegionCache::new(),
+            lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.cache.clear();
+        self.lifecycle.reset();
+    }
+}
+
 pub(crate) struct NativeLoadConstPlan {
     bits: u64,
     key: crate::stencil_fact::RegionKey,
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<2>,
-    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     installed: InstalledConstantEntry,
     #[cfg(test)]
     native_entry_count: u64,
@@ -2696,7 +2716,7 @@ impl std::fmt::Debug for NativeLoadConstPlan {
             .debug_struct("NativeLoadConstPlan")
             .field("bits", &self.bits)
             .field("key", &self.key)
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
@@ -2705,8 +2725,7 @@ impl NativeLoadConstPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
         self.installed = InstalledConstantEntry::Unpublished;
-        self.cache.clear();
-        self.lifecycle.reset();
+        self.physical.clear();
     }
 
     fn new_with_shared(
@@ -2732,9 +2751,8 @@ impl NativeLoadConstPlan {
                 key,
                 arena: None,
                 shared_arena: None,
-                cache: crate::stencil_select::RenderedRegionCache::new(),
+                physical: PhysicalState::new(),
                 site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::LoadConst),
-                lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 installed: InstalledConstantEntry::Unpublished,
                 #[cfg(test)]
@@ -2744,7 +2762,7 @@ impl NativeLoadConstPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
-        if self.lifecycle.observe_site(&self.site, self.key, true)
+        if self.physical.lifecycle.observe_site(&self.site, self.key, true)
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
@@ -2762,13 +2780,13 @@ impl NativeLoadConstPlan {
             }
             let values = crate::stencil_fact::PatchValues::from_site(&self.site)
                 .with_constant_bits(self.bits);
-            let (address, entry) = {
+            let address = {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
                 slab.make_executable(address)?;
-                (address, slab.constant_word_entry(address)?)
+                address
             };
             let owned = shared.borrow().owned_constant_word_entry(address)?;
             self.installed = InstalledConstantEntry::Shared(owned);
@@ -2807,7 +2825,7 @@ impl NativeLoadConstPlan {
             .arena
             .as_mut()
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
         arena.constant_word_entry(address)?;
         self.installed = InstalledConstantEntry::Local(address);
