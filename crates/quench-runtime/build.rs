@@ -1306,6 +1306,51 @@ fn generate_stencil_catalog() {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let abi_contracts = r#"
+const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate::stencil_select::AbiContract {
+    match abi {
+        crate::stencil_select::RegionAbi::Scalar
+        | crate::stencil_select::RegionAbi::TaggedWord
+        | crate::stencil_select::RegionAbi::ScalarI32
+        | crate::stencil_select::RegionAbi::ScalarU32 => crate::stencil_select::AbiContract {
+            context_arg_words: 0,
+            preserves_vm_registers: true,
+            may_call_helper: false,
+            interruptible_backedge: false,
+            hardware_clobber_mask: 0,
+            live_out_mask: 1,
+            root_materialization_required: false,
+        },
+        crate::stencil_select::RegionAbi::Bridge => crate::stencil_select::AbiContract {
+            context_arg_words: 1,
+            preserves_vm_registers: false,
+            may_call_helper: true,
+            interruptible_backedge: false,
+            hardware_clobber_mask: 0xffff,
+            live_out_mask: 0xffff,
+            root_materialization_required: true,
+        },
+        crate::stencil_select::RegionAbi::ArrayKernel => crate::stencil_select::AbiContract {
+            context_arg_words: 1,
+            preserves_vm_registers: false,
+            may_call_helper: false,
+            interruptible_backedge: false,
+            hardware_clobber_mask: 0x0003,
+            live_out_mask: 1,
+            root_materialization_required: false,
+        },
+        crate::stencil_select::RegionAbi::ArrayNumericLoop => crate::stencil_select::AbiContract {
+            context_arg_words: 1,
+            preserves_vm_registers: false,
+            may_call_helper: false,
+            interruptible_backedge: true,
+            hardware_clobber_mask: 0x0007,
+            live_out_mask: 0x0003,
+            root_materialization_required: false,
+        },
+    }
+}
+"#;
     let mut generated = String::from(
         r#"
 // Generated from REGION_DECLARATIONS.  The declaration is the sole source of
@@ -1323,6 +1368,8 @@ const EXECUTABLE: bool = cfg!(any(target_arch = "x86_64", target_arch = "aarch64
 const DISPATCH_EXECUTABLE: bool = cfg!(target_arch = "x86_64");
 "#,
     );
+    generated.push_str(abi_contracts);
+    generated.push('\n');
     generated.push_str(&canonical_bytes);
     generated.push('\n');
     generated.push_str(&canonical_holes);
