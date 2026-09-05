@@ -398,7 +398,7 @@ fn compile_assembly_fragment(
 }
 
 fn aarch64_head_source() -> &'static str {
-    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_head\nq_fallthrough_head:\n  fadd d0, d0, d1\n  b q_fallthrough_tail\nq_fallthrough_head_end:\n\"#);\n"
+    "#![no_std]\nuse core::arch::global_asm;\nglobal_asm!(r#\"\n.text\n.p2align 2\n.globl q_fallthrough_head\nq_fallthrough_head:\n  fadd d0, d0, d1\n  b q_fallthrough_tail\n  b q_fallthrough_tail\nq_fallthrough_head_end:\n\"#);\n"
 }
 
 fn aarch64_tail_source() -> &'static str {
