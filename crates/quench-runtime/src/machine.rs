@@ -1470,15 +1470,15 @@ pub struct TierProfile {
 #[derive(Clone, Copy)]
 enum InstalledBinaryEntry {
     Unpublished,
-    F64Local(extern "C" fn(f64, f64) -> f64),
+    F64Local(usize),
     F64Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> f64>),
-    BoolLocal(extern "C" fn(f64, f64) -> u64),
+    BoolLocal(usize),
     BoolShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> u64>),
-    I32Local(extern "C" fn(i32, i32) -> i32),
+    I32Local(usize),
     I32Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(i32, i32) -> i32>),
-    U32Local(extern "C" fn(u32, u32) -> u32),
+    U32Local(usize),
     U32Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(u32, u32) -> u32>),
-    TaggedLocal(extern "C" fn(u64, u64) -> u64),
+    TaggedLocal(usize),
     TaggedShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64, u64) -> u64>),
 }
 
@@ -1716,9 +1716,14 @@ impl NativeBinaryPlan {
             .tagged_key
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
         if self.shared_arena.is_none() {
-            if let InstalledBinaryEntry::TaggedLocal(entry) = self.installed {
-                self.note_native_entry();
-                return Ok(entry(lhs, rhs) != 0);
+            if let InstalledBinaryEntry::TaggedLocal(address) = self.installed {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Ok(entry) = arena.word_pair_bool_entry(address) {
+                        self.note_native_entry();
+                        return Ok(entry(lhs, rhs) != 0);
+                    }
+                }
+                self.installed = InstalledBinaryEntry::Unpublished;
             }
         }
         if let (Some(shared), InstalledBinaryEntry::TaggedShared(owned)) =
@@ -1766,7 +1771,7 @@ impl NativeBinaryPlan {
         let address = arena.render_or_get(&mut self.cache, key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_pair_bool_entry(address)?;
-        self.installed = InstalledBinaryEntry::TaggedLocal(entry);
+        self.installed = InstalledBinaryEntry::TaggedLocal(address);
         self.note_native_entry();
         Ok(entry(lhs, rhs) != 0)
     }
@@ -1782,13 +1787,23 @@ impl NativeBinaryPlan {
             let right = number_to_int32(rhs);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if self.shared_arena.is_none() {
-                if let InstalledBinaryEntry::I32Local(entry) = self.installed {
-                    self.note_native_entry();
-                    return Ok(f64::from(entry(left, right)));
+                if let InstalledBinaryEntry::I32Local(address) = self.installed {
+                    if let Some(arena) = self.arena.as_ref() {
+                        if let Ok(entry) = arena.i32_entry(address) {
+                            self.note_native_entry();
+                            return Ok(f64::from(entry(left, right)));
+                        }
+                    }
+                    self.installed = InstalledBinaryEntry::Unpublished;
                 }
-                if let InstalledBinaryEntry::U32Local(entry) = self.installed {
-                    self.note_native_entry();
-                    return Ok(f64::from(entry(left as u32, right as u32)));
+                if let InstalledBinaryEntry::U32Local(address) = self.installed {
+                    if let Some(arena) = self.arena.as_ref() {
+                        if let Ok(entry) = arena.u32_entry(address) {
+                            self.note_native_entry();
+                            return Ok(f64::from(entry(left as u32, right as u32)));
+                        }
+                    }
+                    self.installed = InstalledBinaryEntry::Unpublished;
                 }
             }
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1925,13 +1940,13 @@ impl NativeBinaryPlan {
                             self.installed = arena
                                 .u32_entry(address)
                                 .ok()
-                                .map(InstalledBinaryEntry::U32Local)
+                                .map(|_| InstalledBinaryEntry::U32Local(address))
                                 .unwrap_or(InstalledBinaryEntry::Unpublished);
                         } else {
                             self.installed = arena
                                 .i32_entry(address)
                                 .ok()
-                                .map(InstalledBinaryEntry::I32Local)
+                                .map(|_| InstalledBinaryEntry::I32Local(address))
                                 .unwrap_or(InstalledBinaryEntry::Unpublished);
                         }
                     }
@@ -1950,9 +1965,14 @@ impl NativeBinaryPlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() && !self.returns_boolean {
-            if let InstalledBinaryEntry::F64Local(entry) = self.installed {
-                self.note_native_entry();
-                return Ok(unsafe { invoke_f64x2_entry(entry, lhs, rhs) });
+            if let InstalledBinaryEntry::F64Local(address) = self.installed {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Ok(entry) = arena.f64_entry(address) {
+                        self.note_native_entry();
+                        return Ok(unsafe { invoke_f64x2_entry(entry, lhs, rhs) });
+                    }
+                }
+                self.installed = InstalledBinaryEntry::Unpublished;
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2113,7 +2133,7 @@ impl NativeBinaryPlan {
                         self.installed = arena
                             .f64_entry(address)
                             .ok()
-                            .map(InstalledBinaryEntry::F64Local)
+                            .map(|_| InstalledBinaryEntry::F64Local(address))
                             .unwrap_or(InstalledBinaryEntry::Unpublished);
                     }
                 }
@@ -2178,11 +2198,11 @@ fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
 #[derive(Clone, Copy)]
 enum InstalledTruthinessEntry {
     Unpublished,
-    NumberLocal(extern "C" fn(f64) -> u64),
+    NumberLocal(usize),
     NumberShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> u64>),
-    WordLocal(extern "C" fn(u64) -> u64),
+    WordLocal(usize),
     WordShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
-    PointerLocal(extern "C" fn(u64) -> u64),
+    PointerLocal(usize),
     PointerShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
 }
 
@@ -2308,12 +2328,17 @@ impl NativeTruthinessPlan {
                 }
             };
         }
-        if let InstalledTruthinessEntry::NumberLocal(entry) = self.installed {
-            #[cfg(test)]
-            {
-                self.native_entry_count = self.native_entry_count.saturating_add(1);
+        if let InstalledTruthinessEntry::NumberLocal(address) = self.installed {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Ok(entry) = arena.bool_unary_entry(address) {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
+                    return Ok(entry(value) != 0);
+                }
             }
-            return Ok(entry(value) != 0);
+            self.installed = InstalledTruthinessEntry::Unpublished;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2328,7 +2353,7 @@ impl NativeTruthinessPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.bool_unary_entry(address)?;
-        self.installed = InstalledTruthinessEntry::NumberLocal(entry);
+        self.installed = InstalledTruthinessEntry::NumberLocal(address);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2376,12 +2401,17 @@ impl NativeTruthinessPlan {
             }
             return Ok(result != 0);
         }
-        if let InstalledTruthinessEntry::WordLocal(entry) = self.installed {
-            #[cfg(test)]
-            {
-                self.native_entry_count = self.native_entry_count.saturating_add(1);
+        if let InstalledTruthinessEntry::WordLocal(address) = self.installed {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Ok(entry) = arena.word_bool_entry(address) {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
+                    return Ok(entry(value) != 0);
+                }
             }
-            return Ok(entry(value) != 0);
+            self.installed = InstalledTruthinessEntry::Unpublished;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2395,7 +2425,7 @@ impl NativeTruthinessPlan {
         let address = arena.render_or_get(&mut self.cache, self.word_key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
-        self.installed = InstalledTruthinessEntry::WordLocal(entry);
+        self.installed = InstalledTruthinessEntry::WordLocal(address);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2436,9 +2466,14 @@ impl NativeTruthinessPlan {
             self.note_entry();
             return Ok(result != 0);
         }
-        if let InstalledTruthinessEntry::PointerLocal(entry) = self.installed {
-            self.note_entry();
-            return Ok(entry(value) != 0);
+        if let InstalledTruthinessEntry::PointerLocal(address) = self.installed {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Ok(entry) = arena.word_bool_entry(address) {
+                    self.note_entry();
+                    return Ok(entry(value) != 0);
+                }
+            }
+            self.installed = InstalledTruthinessEntry::Unpublished;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2452,7 +2487,7 @@ impl NativeTruthinessPlan {
         let address = arena.render_or_get(&mut self.cache, self.pointer_key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
-        self.installed = InstalledTruthinessEntry::PointerLocal(entry);
+        self.installed = InstalledTruthinessEntry::PointerLocal(address);
         self.note_entry();
         Ok(entry(value) != 0)
     }
@@ -2482,7 +2517,7 @@ impl std::fmt::Debug for NativeTruthinessPlan {
 #[derive(Clone, Copy)]
 enum InstalledNullishEntry {
     Unpublished,
-    Local(extern "C" fn(u64) -> u64),
+    Local(usize),
     Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
 }
 
@@ -2587,12 +2622,17 @@ impl NativeNullishPlan {
             }
             return result;
         }
-        if let InstalledNullishEntry::Local(entry) = self.installed {
-            #[cfg(test)]
-            {
-                self.native_entry_count = self.native_entry_count.saturating_add(1);
+        if let InstalledNullishEntry::Local(address) = self.installed {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Ok(entry) = arena.word_bool_entry(address) {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
+                    return Ok(entry(bits) != 0);
+                }
             }
-            return Ok(entry(bits) != 0);
+            self.installed = InstalledNullishEntry::Unpublished;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2608,7 +2648,7 @@ impl NativeNullishPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.word_bool_entry(address)?;
-        self.installed = InstalledNullishEntry::Local(entry);
+        self.installed = InstalledNullishEntry::Local(address);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2640,7 +2680,7 @@ impl std::fmt::Debug for NativeNullishPlan {
 #[derive(Clone, Copy)]
 enum InstalledConstantEntry {
     Unpublished,
-    Local(extern "C" fn() -> u64),
+    Local(usize),
     Shared(crate::stencil_arena::OwnedEntry<extern "C" fn() -> u64>),
 }
 
@@ -2745,12 +2785,17 @@ impl NativeLoadConstPlan {
                 }
             };
         }
-        if let InstalledConstantEntry::Local(entry) = self.installed {
-            #[cfg(test)]
-            {
-                self.native_entry_count = self.native_entry_count.saturating_add(1);
+        if let InstalledConstantEntry::Local(address) = self.installed {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Ok(entry) = arena.constant_word_entry(address) {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
+                    return Ok(entry());
+                }
             }
-            return Ok(entry());
+            self.installed = InstalledConstantEntry::Unpublished;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2763,13 +2808,13 @@ impl NativeLoadConstPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
-        let entry = arena.constant_word_entry(address)?;
-        self.installed = InstalledConstantEntry::Local(entry);
+        arena.constant_word_entry(address)?;
+        self.installed = InstalledConstantEntry::Local(address);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
         }
-        Ok(entry())
+        Ok(arena.constant_word_entry(address)?())
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -2789,9 +2834,9 @@ enum NativeUnaryKind {
 #[derive(Clone, Copy)]
 enum InstalledUnaryEntry {
     Unpublished,
-    IntegerLocal(extern "C" fn(i32) -> i32),
+    IntegerLocal(usize),
     IntegerShared(crate::stencil_arena::OwnedEntry<extern "C" fn(i32) -> i32>),
-    NumberLocal(extern "C" fn(f64) -> f64),
+    NumberLocal(usize),
     NumberShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> f64>),
 }
 
@@ -2924,9 +2969,14 @@ impl NativeUnaryPlan {
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x8000_0000_0000_0000);
-        if let InstalledUnaryEntry::NumberLocal(entry) = self.installed {
-            self.note_entry();
-            return Ok(entry(value));
+        if let InstalledUnaryEntry::NumberLocal(address) = self.installed {
+            if let Some(arena) = self.arena.as_ref() {
+                if let Ok(entry) = arena.f64_unary_entry(address) {
+                    self.note_entry();
+                    return Ok(entry(value));
+                }
+            }
+            self.installed = InstalledUnaryEntry::Unpublished;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2940,7 +2990,7 @@ impl NativeUnaryPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.f64_unary_entry(address)?;
-        self.installed = InstalledUnaryEntry::NumberLocal(entry);
+        self.installed = InstalledUnaryEntry::NumberLocal(address);
         self.note_entry();
         Ok(entry(value))
     }
@@ -3014,7 +3064,7 @@ impl NativeUnaryPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
         let entry = arena.i32_unary_entry(address)?;
-        self.installed = InstalledUnaryEntry::IntegerLocal(entry);
+        self.installed = InstalledUnaryEntry::IntegerLocal(address);
         let result = entry(operand);
         self.note_entry();
         Ok(f64::from(result))
@@ -3028,7 +3078,7 @@ impl NativeUnaryPlan {
 #[derive(Clone, Copy)]
 enum InstalledF64x3Entry {
     Unpublished,
-    Local(extern "C" fn(f64, f64, f64) -> f64),
+    Local(usize),
     Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>),
 }
 
@@ -3212,7 +3262,7 @@ impl NativeAddChainPlan {
                     self.installed = arena
                         .f64x3_entry(address)
                         .ok()
-                        .map(InstalledF64x3Entry::Local)
+                        .map(|_| InstalledF64x3Entry::Local(address))
                         .unwrap_or(InstalledF64x3Entry::Unpublished);
                 }
             }
@@ -3233,10 +3283,15 @@ impl NativeAddChainPlan {
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         if self.shared_arena.is_none() {
-            if let InstalledF64x3Entry::Local(entry) = self.installed {
-                let result = unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) };
-                self.note_entry();
-                return Ok(result);
+            if let InstalledF64x3Entry::Local(address) = self.installed {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Ok(entry) = arena.f64x3_entry(address) {
+                        let result = unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) };
+                        self.note_entry();
+                        return Ok(result);
+                    }
+                }
+                self.installed = InstalledF64x3Entry::Unpublished;
             }
         }
         let key = crate::stencil_select::add_chain_region_key();
@@ -3281,7 +3336,7 @@ impl std::fmt::Debug for NativeAddChainPlan {
 #[derive(Clone, Copy)]
 enum InstalledWordEntry {
     Unpublished,
-    Local(extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
+    Local(usize),
     Shared(crate::stencil_arena::OwnedEntry<
         extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
     >),
@@ -3382,10 +3437,15 @@ impl NativeMovePlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
-            if let InstalledWordEntry::Local(entry) = self.installed {
-                let value = entry(source);
-                self.note_entry();
-                return Ok(value);
+            if let InstalledWordEntry::Local(address) = self.installed {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Ok(entry) = arena.tagged_word_entry(address) {
+                        let value = entry(source);
+                        self.note_entry();
+                        return Ok(value);
+                    }
+                }
+                self.installed = InstalledWordEntry::Unpublished;
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -3476,7 +3536,7 @@ impl NativeMovePlan {
                 if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
                     self.installed = arena
                         .tagged_word_entry(address)
-                        .map(InstalledWordEntry::Local)
+                        .map(|_| InstalledWordEntry::Local(address))
                         .unwrap_or(InstalledWordEntry::Unpublished);
                 }
             }
@@ -3519,7 +3579,7 @@ impl std::fmt::Debug for NativeMovePlan {
 #[derive(Clone, Copy)]
 enum InstalledPropertyEntry {
     Unpublished,
-    Local(extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
+    Local(usize),
     Shared(crate::stencil_arena::OwnedEntry<
         extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
     >),
@@ -3592,12 +3652,17 @@ impl NativePropertyPlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
-            if let InstalledPropertyEntry::Local(entry) = self.installed {
-                #[cfg(test)]
-                {
-                    self.native_entry_count = self.native_entry_count.saturating_add(1);
+            if let InstalledPropertyEntry::Local(address) = self.installed {
+                if let Some(arena) = self.arena.as_ref() {
+                    if let Ok(entry) = arena.tagged_word_entry(address) {
+                        #[cfg(test)]
+                        {
+                            self.native_entry_count = self.native_entry_count.saturating_add(1);
+                        }
+                        return Ok(entry(slot.cast()));
+                    }
                 }
-                return Ok(entry(slot.cast()));
+                self.installed = InstalledPropertyEntry::Unpublished;
             }
         }
         let key = crate::stencil_select::property_region_key();
@@ -3691,7 +3756,7 @@ impl NativePropertyPlan {
                     self.installed = arena
                         .tagged_word_entry(address)
                         .ok()
-                        .map(InstalledPropertyEntry::Local)
+                        .map(|_| InstalledPropertyEntry::Local(address))
                         .unwrap_or(InstalledPropertyEntry::Unpublished);
                 }
             }
