@@ -2993,6 +2993,107 @@ impl NativeAddChainPlan {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn execute_shared_cached(
+        &mut self,
+        lhs: f64,
+        rhs: f64,
+        third: f64,
+    ) -> Result<Option<f64>, crate::stencil_arena::ArenaError> {
+        let (Some(shared), Some(owned)) = (self.shared_arena.clone(), self.shared_entry)
+        else {
+            return Ok(None);
+        };
+        let result = shared.borrow().with_owned(owned, |entry| unsafe {
+            invoke_f64x3_entry(entry, lhs, rhs, third)
+        });
+        match result {
+            Ok(value) => {
+                self.note_entry();
+                Ok(Some(value))
+            }
+            Err(_) => {
+                self.shared_entry = None;
+                Ok(None)
+            }
+        }
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn render_shared(
+        &mut self,
+        key: crate::stencil_fact::RegionKey,
+        values: &crate::stencil_fact::PatchValues,
+        lhs: f64,
+        rhs: f64,
+        third: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let shared = self
+            .shared_arena
+            .clone()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let rendered = (|| -> Result<
+            (usize, extern "C" fn(f64, f64, f64) -> f64),
+            crate::stencil_arena::ArenaError,
+        > {
+            let mut slab = shared.borrow_mut();
+            let stencil = crate::stencil_select::select_stencil(key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let address = slab.render_or_get(&mut self.cache, key, stencil, values)?;
+            slab.make_executable(address)?;
+            Ok((address, slab.f64x3_entry(address)?))
+        })();
+        let (address, entry) = match rendered {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                self.cache.clear();
+                self.lifecycle.reset();
+                return Err(error);
+            }
+        };
+        let owned = shared.borrow().owned_entry(address, entry)?;
+        self.shared_entry = Some(owned);
+        let result = shared.borrow().with_owned(owned, |entry| unsafe {
+            invoke_f64x3_entry(entry, lhs, rhs, third)
+        });
+        if result.is_ok() {
+            self.note_entry();
+        }
+        result
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn render_local(
+        &mut self,
+        key: crate::stencil_fact::RegionKey,
+        values: &crate::stencil_fact::PatchValues,
+        lhs: f64,
+        rhs: f64,
+        third: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let result = self
+            .arena
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
+            .render_selected_f64x3(&mut self.cache, key, values, lhs, rhs, third);
+        if result.is_ok() {
+            self.note_entry();
+            if let Some(arena) = self.arena.as_ref() {
+                if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
+                    self.entry = arena.f64x3_entry(address).ok();
+                }
+            }
+        } else {
+            self.arena.take();
+            self.cache.clear();
+            self.lifecycle.reset();
+        }
+        result
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) fn execute(
         &mut self,
@@ -3013,71 +3114,15 @@ impl NativeAddChainPlan {
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
         }
-        if let (Some(shared), Some(owned)) =
-            (self.shared_arena.clone(), self.shared_entry)
-        {
-            match shared.borrow().with_owned(owned, |entry| unsafe {
-                invoke_f64x3_entry(entry, lhs, rhs, third)
-            }) {
-                Ok(value) => {
-                    self.note_entry();
-                    return Ok(value);
-                }
-                Err(_) => self.shared_entry = None,
-            }
+        if let Some(value) = self.execute_shared_cached(lhs, rhs, third)? {
+            return Ok(value);
         }
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        if let Some(shared) = self.shared_arena.clone() {
-            let rendered = (|| -> Result<
-                (usize, extern "C" fn(f64, f64, f64) -> f64),
-                crate::stencil_arena::ArenaError,
-            > {
-                let mut slab = shared.borrow_mut();
-                let stencil = crate::stencil_select::select_stencil(key)
-                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
-                slab.make_executable(address)?;
-                Ok((address, slab.f64x3_entry(address)?))
-            })();
-            let (address, entry) = match rendered {
-                Ok(rendered) => rendered,
-                Err(error) => {
-                    self.cache.clear();
-                    self.lifecycle.reset();
-                    return Err(error);
-                }
-            };
-            let owned = shared.borrow().owned_entry(address, entry)?;
-            self.shared_entry = Some(owned);
-            let result = shared.borrow().with_owned(owned, |entry| unsafe {
-                invoke_f64x3_entry(entry, lhs, rhs, third)
-            });
-            if result.is_ok() {
-                self.note_entry();
-            }
-            return result;
+        let site = self.site.clone();
+        let values = crate::stencil_fact::PatchValues::from_site(&site);
+        if self.shared_arena.is_some() {
+            return self.render_shared(key, &values, lhs, rhs, third);
         }
-        if self.arena.is_none() {
-            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
-        }
-        let result = self
-            .arena
-            .as_mut()
-            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
-            .render_selected_f64x3(&mut self.cache, key, &values, lhs, rhs, third);
-        if result.is_ok() {
-            self.note_entry();
-            if let Some(arena) = self.arena.as_ref() {
-                if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
-                    self.entry = arena.f64x3_entry(address).ok();
-                }
-            }
-        } else {
-            self.arena.take();
-            self.cache.clear();
-            self.lifecycle.reset();
-        }
-        result
+        self.render_local(key, &values, lhs, rhs, third)
     }
 }
 
