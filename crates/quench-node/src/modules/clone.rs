@@ -2,6 +2,7 @@
 
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn deep_clone(value: Value) -> Value {
@@ -101,6 +102,116 @@ pub fn deep_clone(value: Value) -> Value {
             Value::ArrayBuffer(Rc::new(copy))
         }
         scalar => scalar,
+    }
+}
+
+/// Clone values crossing the in-process child IPC boundary.
+///
+/// The ordinary structured-clone helper predates child IPC and is intentionally
+/// permissive about host values.  IPC's advanced codec has two additional
+/// observable rules: object graphs may contain cycles, and host objects are
+/// serialized as ordinary objects containing their own enumerable properties.
+/// Keep those rules at this boundary so structuredClone callers retain their
+/// existing behavior.
+pub fn advanced_clone(value: Value) -> Value {
+    let mut seen = HashMap::new();
+    advanced_clone_inner(value, &mut seen)
+}
+
+fn advanced_clone_inner(value: Value, seen: &mut HashMap<u64, Value>) -> Value {
+    // V8's advanced serializer preserves the observable Error fields even
+    // though `message` and `stack` are non-enumerable. Recreate the matching
+    // built-in error before falling back to ordinary enumerable properties.
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        if let Value::String(name) = quench_runtime::execute::get_property(&value, "name") {
+            if matches!(
+                name.as_str(),
+                "Error"
+                    | "TypeError"
+                    | "RangeError"
+                    | "ReferenceError"
+                    | "SyntaxError"
+                    | "URIError"
+            ) {
+                let global = quench_runtime::vm::current_global_object();
+                let constructor = quench_runtime::execute::get_property(&global, &name);
+                let message = quench_runtime::execute::get_property(&value, "message");
+                if let Ok(mut clone) = quench_runtime::execute::construct_value(&constructor, &[message]) {
+                    let stack = quench_runtime::execute::get_property(&value, "stack");
+                    clone = quench_runtime::execute::set_property(clone, "stack", stack);
+                    return clone;
+                }
+            }
+        }
+    }
+    match &value {
+        Value::Object(_) => {
+            let identity = value.object_identity().unwrap_or(0);
+            if identity != 0 {
+                if let Some(clone) = seen.get(&identity) {
+                    return clone.clone();
+                }
+            }
+            let clone = host_api::object(Vec::new());
+            if identity != 0 {
+                seen.insert(identity, clone.clone());
+            }
+            for name in quench_runtime::execute::own_enumerable_keys(&value) {
+                let item = quench_runtime::execute::get_property(&value, &name);
+                quench_runtime::execute::set_property_in_place(
+                    &clone,
+                    &name,
+                    advanced_clone_inner(item, seen),
+                );
+            }
+            clone
+        }
+        Value::Array(array) => {
+            let identity = value.object_identity().unwrap_or(0);
+            if identity != 0 {
+                if let Some(clone) = seen.get(&identity) {
+                    return clone.clone();
+                }
+            }
+            let clone = host_api::array(Vec::new());
+            if identity != 0 {
+                seen.insert(identity, clone.clone());
+            }
+            for index in 0..array.logical_len() {
+                let item = quench_runtime::execute::get_property(&value, &index.to_string());
+                quench_runtime::execute::set_property_in_place(
+                    &clone,
+                    &index.to_string(),
+                    advanced_clone_inner(item, seen),
+                );
+            }
+            clone
+        }
+        // A MessagePort is represented by a host capability in this runtime.
+        // The advanced IPC codec spreads such a host object into a plain object
+        // instead of leaking the sender's callable identity into the child.
+        Value::HostCapability(_) => {
+            let identity = value.object_identity().unwrap_or(0);
+            if identity != 0 {
+                if let Some(clone) = seen.get(&identity) {
+                    return clone.clone();
+                }
+            }
+            let clone = host_api::object(Vec::new());
+            if identity != 0 {
+                seen.insert(identity, clone.clone());
+            }
+            for name in quench_runtime::execute::own_enumerable_keys(&value) {
+                let item = quench_runtime::execute::get_property(&value, &name);
+                quench_runtime::execute::set_property_in_place(
+                    &clone,
+                    &name,
+                    advanced_clone_inner(item, seen),
+                );
+            }
+            clone
+        }
+        _ => deep_clone(value),
     }
 }
 
