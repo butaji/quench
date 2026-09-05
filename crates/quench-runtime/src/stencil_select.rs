@@ -509,6 +509,7 @@ fn generated_physical_view(
     if !metadata_matches
         || !effects_match
         || !artifact.stencil.validate()
+        || !relocations_match(artifact.stencil, artifact.relocations)
         || !artifact.fallthrough.is_none_or(|stencil| stencil.validate())
     {
         return None;
@@ -530,6 +531,15 @@ fn generated_physical_view(
         template_calls_helper: artifact.template_calls_helper,
         target: Some(artifact.target),
         fingerprint: Some(artifact.fingerprint),
+    })
+}
+
+fn relocations_match(stencil: Stencil, relocations: &[PhysicalRelocation]) -> bool {
+    relocations.iter().all(|relocation| {
+        !relocation.target.is_empty()
+            && stencil.holes.iter().any(|hole| {
+                hole.offset == relocation.offset && hole.kind == relocation.kind
+            })
     })
 }
 
@@ -1374,6 +1384,30 @@ mod tests {
             fallthrough: None,
             fallthrough_entry: 0,
         };
+        static BAD_RELOCATION: BuildStencilArtifact = BuildStencilArtifact {
+            name: "add_const",
+            artifact_id: "add_const@test",
+            key: RegionKey(0),
+            target: TARGET,
+            compiler: "test",
+            fingerprint: "test",
+            abi: RegionAbi::Scalar,
+            entry: 0,
+            external_entries: &[0],
+            has_fallthrough: false,
+            executable: true,
+            template_calls_helper: false,
+            bytes: BYTES,
+            data: &[],
+            relocations: &[PhysicalRelocation {
+                offset: 4,
+                kind: crate::stencil_fact::HoleKind::Branch26,
+                target: "q_missing",
+            }],
+            stencil: Stencil { bytes: BYTES, holes: &[] },
+            fallthrough: None,
+            fallthrough_entry: 0,
+        };
         let record = CANONICAL_REGION_TABLE
             .iter()
             .find(|record| record.name == "add_const")
@@ -1383,6 +1417,7 @@ mod tests {
         assert!(generated_physical_view(record.key, record, &BAD_ENTRIES).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_LAYOUT).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_ABI).is_none());
+        assert!(generated_physical_view(record.key, record, &BAD_RELOCATION).is_none());
 
         static BAD_TARGET: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
