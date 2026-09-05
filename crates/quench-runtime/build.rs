@@ -1516,7 +1516,8 @@ fn main() {
 /// Set `QUENCH_VERIFY_STENCIL_ENCODINGS=1` to compare Rust global_asm output
 /// with the generated words.
 fn verify_stencil_encodings() {
-    let root = env::temp_dir().join(format!("quench-stencil-{}", std::process::id()));
+    let root = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR for stencil verification"))
+        .join(format!("verify-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create stencil verification directory");
     let arm_source = root.join("arm.rs");
     let arm_object = root.join("arm.o");
