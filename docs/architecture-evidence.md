@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `4c763fe88` (cleanup files remain
+Evidence below is bound to source revision `e4ca09186` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -40,6 +40,13 @@ library remains green (**4 passed**) at
 `/tmp/quench-node-full-20260905-negate-v6.log`. The ordinary-source ARM loop
 check remains a real native-path test (**1 passed**) at
 `/tmp/quench-arm-loop-20260905-v7.log`.
+
+Shared scalar plans now retain typed `OwnedEntry` capabilities for f64, i32 and
+u32 entries rather than parallel raw address/owner fields; eviction/rebuild is
+covered by `/tmp/quench-scalar-owned-focused-20260905-v2.log` and
+`/tmp/quench-scalar-owned-int-20260905.log` (1 passed each), with the current
+full runtime at **733 passed, 0 failed, 1 ignored**
+(`/tmp/quench-runtime-full-20260905-scalar-owned-v3.log`).
 
 Logical-not now reuses the corrected truthiness entries for proven numbers and
 tagged words; the ARM64 zero setup is encoded as `fmov d1, xzr` and is covered
