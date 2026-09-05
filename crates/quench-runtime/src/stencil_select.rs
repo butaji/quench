@@ -325,9 +325,23 @@ pub fn select_stencil(key: RegionKey) -> Option<&'static Stencil> {
     let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
     BUILD_STENCIL_ARTIFACTS
         .iter()
-        .find(|artifact| artifact.name == record.name)
+        .find(|artifact| {
+            artifact.name == record.name && artifact_target_matches_host(artifact.target)
+        })
         .map(|artifact| &artifact.stencil)
         .or(Some(&record.stencil))
+}
+
+fn artifact_target_matches_host(target: &str) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    return target.starts_with("aarch64");
+    #[cfg(target_arch = "x86_64")]
+    return target.starts_with("x86_64");
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = target;
+        false
+    }
 }
 
 pub fn select_region(key: RegionKey) -> Option<&'static RegionRecord> {
