@@ -266,6 +266,20 @@ impl SharedStencilSlab {
         Ok(address)
     }
 
+    pub fn render_physical_view_or_get<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+    ) -> Result<usize, ArenaError> {
+        let selected = crate::stencil_select::select_physical_for_abi(view.key, view.abi)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        if !view.matches(&selected) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.render_or_get(cache, view.key, view.stencil, values)
+    }
+
     fn slab_for(&self, address: usize) -> Option<&StencilArena> {
         self.slabs.iter().find(|slab| slab.owns_address(address))
     }
@@ -962,6 +976,20 @@ impl StencilArena {
         Ok(cache.insert_owned(key, signature, address, self.id))
     }
 
+    pub fn render_physical_view_or_get<const N: usize>(
+        &mut self,
+        cache: &mut RenderedRegionCache,
+        view: crate::stencil_select::PhysicalStencilView,
+        values: &PatchValues<'_, N>,
+    ) -> Result<usize, ArenaError> {
+        let selected = crate::stencil_select::select_physical_for_abi(view.key, view.abi)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        if !view.matches(&selected) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.render_or_get(cache, view.key, view.stencil, values)
+    }
+
     fn record_abi(&self, address: usize, key: crate::stencil_fact::RegionKey) {
         if let Some(view) = crate::stencil_select::select_physical(key) {
             self.published_abis.borrow_mut().insert(address, view.abi);
@@ -1079,7 +1107,7 @@ impl StencilArena {
             }
             return result;
         }
-        let address = match self.render_or_get(cache, key, stencil, values) {
+        let address = match self.render_physical_view_or_get(cache, view, values) {
             Ok(address) => address,
             Err(_) => return fallback(),
         };
@@ -1247,7 +1275,7 @@ impl StencilArena {
         {
             return Err(ArenaError::ProtectionFailed);
         }
-        let address = self.render_or_get(cache, key, view.stencil, values)?;
+        let address = self.render_physical_view_or_get(cache, view, values)?;
         self.make_executable()?;
         let entry = self.f64x3_entry(address)?;
         let value = entry(lhs, rhs, third);
@@ -2429,6 +2457,26 @@ mod tests {
         let values = PatchValues::from_site(&site);
         assert_eq!(
             arena.render_or_get(&mut cache, key, &record.stencil, &values),
+            Err(ArenaError::ProtectionFailed)
+        );
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn physical_view_mismatch_is_rejected_before_allocation() {
+        let key = crate::stencil_select::add_const_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("physical view");
+        let bad = crate::stencil_select::PhysicalStencilView {
+            abi: crate::stencil_select::RegionAbi::TaggedWord,
+            ..view
+        };
+        let site = QuickeningSite::<2>::new(Opcode::AddConst);
+        let values = PatchValues::from_site(&site);
+        let mut arena = StencilArena::new(4096).expect("arena");
+        let mut cache = RenderedRegionCache::new();
+        assert_eq!(
+            arena.render_physical_view_or_get(&mut cache, bad, &values),
             Err(ArenaError::ProtectionFailed)
         );
         assert_eq!(arena.used(), 0);
