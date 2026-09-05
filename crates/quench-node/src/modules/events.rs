@@ -1156,7 +1156,10 @@ pub fn new_emitter_object(state: &Rc<RefCell<HostState>>) -> Result<Value, VmErr
     new_emitter(state, &[])
 }
 
-fn install_emitter_props(mut object: Value, include_constructor: bool) -> Result<Value, VmError> {
+pub(crate) fn install_emitter_props(
+    mut object: Value,
+    include_constructor: bool,
+) -> Result<Value, VmError> {
     for (key, value) in emitter_props()
         .into_iter()
         .filter(|(key, _)| include_constructor || *key != "constructor")
