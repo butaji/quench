@@ -752,6 +752,15 @@ fn execute_composed_array_get_inc(
     if instruction.opcode != crate::ir::Opcode::AGetIInc || instruction.flags != 0 {
         return Ok(None);
     }
+    // The canonical operation increments `c` before writing the loaded value
+    // to `a`.  A destructive `a == c` alias therefore leaves the loaded value
+    // in the index register; the raw kernel publishes `next_index` after the
+    // result and would otherwise change the observable final value.  Reject
+    // this relationship before entry so the ordinary handler preserves the
+    // sequential write order.
+    if instruction.a == instruction.c {
+        return Ok(None);
+    }
     let Some(index) = registers.read_array_index(usize::from(instruction.c)) else {
         return Ok(None);
     };
@@ -4950,6 +4959,44 @@ mod compact_handler_tests {
         )
         .expect("canonical get-inc coercion fallback");
         assert!(!region.borrow().last_native_execution());
+
+        // When the destination aliases the induction register, canonical
+        // order leaves the loaded element in that register after incrementing
+        // it.  The raw body must reject this destructive alias before entry;
+        // publishing its next-index field after the result would be wrong.
+        let alias_code = crate::machine::ExecutableCode::from_ops(vec![
+            Op::GetPropertyDynamic {
+                dst: 2,
+                object: 1,
+                key: 2,
+            },
+        ]);
+        let alias_view = alias_code.code();
+        alias_view.quicken_instruction(0, crate::ir::Opcode::AGetIInc, 0, 0, 0);
+        let alias_plan = crate::machine::BaselinePlan::compile_for_test(
+            alias_view,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let alias_region = alias_plan.native_region_at(0).expect("alias region");
+        let alias_array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(7.0),
+        ])));
+        let mut alias_registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            alias_array,
+            Value::Number(0.0),
+        ]);
+        crate::vm::execute_baseline_code_from(
+            alias_view,
+            &alias_plan,
+            0,
+            &mut alias_registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("canonical aliased get-inc");
+        assert_eq!(alias_registers.read(2), Some(Value::Number(7.0)));
+        assert!(!alias_region.borrow().last_native_execution());
     }
 
     #[cfg(target_arch = "aarch64")]
