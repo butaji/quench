@@ -35,7 +35,11 @@ clone while retaining the same typed patch values; focused and full evidence is
 `/tmp/quench-negate-focused-20260905-v6.log` and
 `/tmp/quench-runtime-full-20260905-negate-v6.log` (**732 passed, 0 failed, 1
 ignored**). The separate trace build remains green at **744 passed, 0 failed,
-1 ignored** (`/tmp/quench-runtime-trace-20260905-negate-v6.log`).
+1 ignored** (`/tmp/quench-runtime-trace-20260905-negate-v6.log`); the host
+library remains green (**4 passed**) at
+`/tmp/quench-node-full-20260905-negate-v6.log`. The ordinary-source ARM loop
+check remains a real native-path test (**1 passed**) at
+`/tmp/quench-arm-loop-20260905-v7.log`.
 
 Logical-not now reuses the corrected truthiness entries for proven numbers and
 tagged words; the ARM64 zero setup is encoded as `fmov d1, xzr` and is covered
