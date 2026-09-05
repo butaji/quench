@@ -2185,6 +2185,153 @@ impl std::fmt::Debug for NativeTruthinessPlan {
     }
 }
 
+/// Tagged-word nullish predicate. The byte template compares the raw execute
+/// word against the canonical Null/Undefined payloads; all other unary
+/// coercions remain on the ordinary semantic handler.
+pub(crate) struct NativeNullishPlan {
+    key: crate::stencil_fact::RegionKey,
+    arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
+    cache: crate::stencil_select::RenderedRegionCache,
+    site: crate::quickening::QuickeningSite<4>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    entry: Option<extern "C" fn(u64) -> u64>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    shared_entry: Option<(usize, extern "C" fn(u64) -> u64)>,
+    #[cfg(test)]
+    native_entry_count: u64,
+}
+
+impl NativeNullishPlan {
+    fn new_with_shared(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(instruction, policy)?;
+        plan.shared_arena = Some(shared);
+        Some(plan)
+    }
+
+    fn new(
+        instruction: crate::ir::Instruction,
+        policy: crate::stencil_policy::ExecutionPolicy,
+    ) -> Option<Self> {
+        let key = crate::stencil_select::nullish_word_region_key();
+        (policy.native_leaves
+            && instruction.opcode == crate::ir::Opcode::Unary
+            && instruction.flags
+                == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+            && crate::stencil_select::select_region(key).is_some_and(|record| {
+                record.executable
+                    && record.abi == crate::stencil_select::RegionAbi::ScalarWordBool
+                    && validate_physical_template(record).is_ok()
+            }))
+            .then_some(Self {
+                key,
+                arena: None,
+                shared_arena: None,
+                cache: crate::stencil_select::RenderedRegionCache::new(),
+                site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Unary),
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                entry: None,
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                shared_entry: None,
+                #[cfg(test)]
+                native_entry_count: 0,
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn execute(
+        &mut self,
+        bits: u64,
+    ) -> Result<bool, crate::stencil_arena::ArenaError> {
+        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
+            .with_constant_bits(0x7ff8_4000_0000_0003);
+        if let Some(shared) = self.shared_arena.clone() {
+            if let Some((address, entry)) = self.shared_entry {
+                if let Ok(result) = shared.borrow().with_active(address, || entry(bits)) {
+                    #[cfg(test)]
+                    {
+                        self.native_entry_count = self.native_entry_count.saturating_add(1);
+                    }
+                    return Ok(result != 0);
+                }
+                self.shared_entry = None;
+            }
+            let (address, entry) = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(self.key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                slab.make_executable(address)?;
+                (address, slab.word_bool_entry(address)?)
+            };
+            self.shared_entry = Some((address, entry));
+            let result = shared
+                .borrow()
+                .with_active(address, || entry(bits))
+                .map(|result| result != 0);
+            if result.is_ok() {
+                #[cfg(test)]
+                {
+                    self.native_entry_count = self.native_entry_count.saturating_add(1);
+                }
+            }
+            return result;
+        }
+        if let Some(entry) = self.entry {
+            #[cfg(test)]
+            {
+                self.native_entry_count = self.native_entry_count.saturating_add(1);
+            }
+            return Ok(entry(bits) != 0);
+        }
+        if self.arena.is_none() {
+            self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
+        }
+        let arena = self
+            .arena
+            .as_mut()
+            .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+        let stencil = crate::stencil_select::select_stencil(self.key)
+            .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+        let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+        arena.make_executable()?;
+        let entry = arena.word_bool_entry(address)?;
+        self.entry = Some(entry);
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
+        Ok(entry(bits) != 0)
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub(crate) fn execute(
+        &mut self,
+        _bits: u64,
+    ) -> Result<bool, crate::stencil_arena::ArenaError> {
+        Err(crate::stencil_arena::ArenaError::ProtectionFailed)
+    }
+}
+
+impl std::fmt::Debug for NativeNullishPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeNullishPlan")
+            .field("key", &self.key)
+            .field("cache_len", &self.cache.len())
+            .finish()
+    }
+}
+
 /// Native primitive constant leaf. Heap-owning constants stay on the
 /// canonical loader; this body only publishes an immutable tagged word.
 pub(crate) struct NativeLoadConstPlan {
@@ -3417,6 +3564,9 @@ impl NativeRegionPlan {
                     record.abi,
                     crate::stencil_select::RegionAbi::Scalar
                         | crate::stencil_select::RegionAbi::TaggedWord
+                        | crate::stencil_select::RegionAbi::ConstantWord
+                        | crate::stencil_select::RegionAbi::ScalarBool
+                        | crate::stencil_select::RegionAbi::ScalarWordBool
                         | crate::stencil_select::RegionAbi::ScalarI32
                         | crate::stencil_select::RegionAbi::ScalarU32
                 )
@@ -3505,6 +3655,9 @@ impl NativeRegionPlan {
                 contract.abi,
                 crate::stencil_select::RegionAbi::Scalar
                     | crate::stencil_select::RegionAbi::TaggedWord
+                    | crate::stencil_select::RegionAbi::ConstantWord
+                    | crate::stencil_select::RegionAbi::ScalarBool
+                    | crate::stencil_select::RegionAbi::ScalarWordBool
                     | crate::stencil_select::RegionAbi::ScalarI32
                     | crate::stencil_select::RegionAbi::ScalarU32
             ) {
@@ -3536,6 +3689,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::TaggedWord => "tagged_word",
                 crate::stencil_select::RegionAbi::ConstantWord => "constant_word",
                 crate::stencil_select::RegionAbi::ScalarBool => "scalar_bool",
+                crate::stencil_select::RegionAbi::ScalarWordBool => "scalar_word_bool",
                 crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
                 crate::stencil_select::RegionAbi::ScalarU32 => "scalar_u32",
             };
@@ -3610,6 +3764,11 @@ impl NativeRegionPlan {
                         "scalar-bool ABI cannot enter a region context".into(),
                     ));
                 }
+                crate::stencil_select::RegionAbi::ScalarWordBool => {
+                    return Err(NativeDispatchError::Physical(
+                        "scalar-word-bool ABI cannot enter a region context".into(),
+                    ));
+                }
                 crate::stencil_select::RegionAbi::ScalarI32 => {
                     return Err(NativeDispatchError::Physical(
                         "scalar i32 ABI cannot enter a region context".into(),
@@ -3674,6 +3833,7 @@ pub(crate) struct BaselinePlan {
     native_binary: Rc<[Option<Rc<RefCell<NativeBinaryPlan>>>]>,
     native_load_const: Rc<[Option<Rc<RefCell<NativeLoadConstPlan>>>]>,
     native_truthiness: Rc<[Option<Rc<RefCell<NativeTruthinessPlan>>>]>,
+    native_nullish: Rc<[Option<Rc<RefCell<NativeNullishPlan>>>]>,
     native_unary: Rc<[Option<Rc<RefCell<NativeUnaryPlan>>>]>,
     native_add_chains: Rc<[Option<Rc<RefCell<NativeAddChainPlan>>>]>,
     native_move: Rc<[Option<Rc<RefCell<NativeMovePlan>>>]>,
@@ -3857,6 +4017,18 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let native_nullish = entries
+            .iter()
+            .map(|entry| {
+                NativeNullishPlan::new_with_shared(
+                    entry.instruction,
+                    policy,
+                    Rc::clone(&shared_region_arena),
+                )
+                .map(|native| Rc::new(RefCell::new(native)))
+            })
+            .collect::<Vec<_>>()
+            .into();
         let native_unary = entries
             .iter()
             .map(|entry| {
@@ -3977,6 +4149,7 @@ impl BaselinePlan {
                                     | crate::stencil_select::RegionAbi::TaggedWord
                                     | crate::stencil_select::RegionAbi::ConstantWord
                                     | crate::stencil_select::RegionAbi::ScalarBool
+                                    | crate::stencil_select::RegionAbi::ScalarWordBool
                                     | crate::stencil_select::RegionAbi::ScalarI32
                                     | crate::stencil_select::RegionAbi::ScalarU32
                             )
@@ -4004,6 +4177,7 @@ impl BaselinePlan {
             native_binary,
             native_load_const,
             native_truthiness,
+            native_nullish,
             native_unary,
             native_add_chains,
             native_move,
@@ -4040,6 +4214,13 @@ impl BaselinePlan {
         pc: usize,
     ) -> Option<&RefCell<NativeTruthinessPlan>> {
         self.native_truthiness.get(pc).and_then(Option::as_deref)
+    }
+
+    pub(crate) fn native_nullish_at(
+        &self,
+        pc: usize,
+    ) -> Option<&RefCell<NativeNullishPlan>> {
+        self.native_nullish.get(pc).and_then(Option::as_deref)
     }
 
     pub(crate) fn native_unary_at(&self, pc: usize) -> Option<&RefCell<NativeUnaryPlan>> {
@@ -4104,6 +4285,7 @@ pub(crate) struct OptimizingEntry {
     pub(crate) native_binary: Option<Rc<RefCell<NativeBinaryPlan>>>,
     pub(crate) native_load_const: Option<Rc<RefCell<NativeLoadConstPlan>>>,
     pub(crate) native_truthiness: Option<Rc<RefCell<NativeTruthinessPlan>>>,
+    pub(crate) native_nullish: Option<Rc<RefCell<NativeNullishPlan>>>,
     pub(crate) native_unary: Option<Rc<RefCell<NativeUnaryPlan>>>,
     pub(crate) native_move: Option<Rc<RefCell<NativeMovePlan>>>,
     pub(crate) native_load_local: Option<Rc<RefCell<NativeMovePlan>>>,
@@ -4133,6 +4315,7 @@ impl OptimizingPlan {
                 native_binary: baseline.native_binary.get(pc).and_then(Clone::clone),
                 native_load_const: baseline.native_load_const.get(pc).and_then(Clone::clone),
                 native_truthiness: baseline.native_truthiness.get(pc).and_then(Clone::clone),
+                native_nullish: baseline.native_nullish.get(pc).and_then(Clone::clone),
                 native_unary: baseline.native_unary.get(pc).and_then(Clone::clone),
                 native_move: baseline.native_move.get(pc).and_then(Clone::clone),
                 native_load_local: baseline.native_load_local.get(pc).and_then(Clone::clone),
