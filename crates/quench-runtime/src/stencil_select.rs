@@ -257,6 +257,24 @@ impl PhysicalStencilView {
             template_calls_helper: self.template_calls_helper,
         }
     }
+
+    pub fn matches(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.abi == other.abi
+            && self.entry == other.entry
+            && self.external_entries == other.external_entries
+            && self.stencil.bytes == other.stencil.bytes
+            && self.stencil.holes == other.stencil.holes
+            && self.fallthrough.map(|(_, entry)| entry)
+                == other.fallthrough.map(|(_, entry)| entry)
+            && self.fallthrough.zip(other.fallthrough).is_none_or(|((left, _), (right, _))| {
+                left.bytes == right.bytes && left.holes == right.holes
+            })
+            && self.executable == other.executable
+            && self.template_calls_helper == other.template_calls_helper
+            && self.target == other.target
+            && self.fingerprint == other.fingerprint
+    }
 }
 
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
