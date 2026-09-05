@@ -601,6 +601,87 @@ impl NativeArrayKernelContext {
 }
 
 #[repr(C)]
+pub(crate) struct NativeArrayElementContext {
+    pub(crate) element: *const f64,
+    pub(crate) result: f64,
+}
+
+impl NativeArrayElementContext {
+    #[inline]
+    fn is_valid(&self) -> bool {
+        !self.element.is_null()
+            && (self.element as usize) % std::mem::align_of::<f64>() == 0
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn execute_composed_array_get(
+    region: &mut NativeRegionContext<'_>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    let code = region.code;
+    let pc = region.pc;
+    if region.registers.is_null() || region.operations.len() != 1 {
+        return Ok(None);
+    }
+    let registers = unsafe { &mut *region.registers };
+    let instruction = code.instruction(pc).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array get entry missing".into())
+    })?;
+    if instruction.opcode != crate::ir::Opcode::AGetI || instruction.flags != 0 {
+        return Ok(None);
+    }
+    let Some(index) = registers.read_array_index(usize::from(instruction.c)) else {
+        return Ok(None);
+    };
+    let Some(array) = registers
+        .read_array(usize::from(instruction.b))
+        .filter(|array| crate::locals::array_word_is_current(array))
+        .filter(|array| array.is_plain_dense_access())
+    else {
+        return Ok(None);
+    };
+    if !array.has_kernel_numeric_index(index) {
+        return Ok(None);
+    }
+    let words = array.numeric_kernel_words().ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array numeric storage missing".into())
+    })?;
+    let Some(element) = words.get(index) else {
+        return Ok(None);
+    };
+    let expected = *element;
+    let mut kernel = NativeArrayElementContext {
+        element: element as *const f64,
+        result: expected,
+    };
+    if !kernel.is_valid() {
+        return Ok(None);
+    }
+    region.native_entered = true;
+    let status = invoke((&mut kernel as *mut NativeArrayElementContext).cast())
+        .map_err(|error| {
+            crate::machine::NativeDispatchError::Committed(format!(
+                "array get execution failed after entry: {error:?}"
+            ))
+    })?;
+    drop(words);
+    if status != NATIVE_DISPATCH_OK {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array get returned invalid status".into(),
+        ));
+    }
+    if kernel.result.to_bits() != expected.to_bits() {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array get changed the proven element".into(),
+        ));
+    }
+    registers.write_number(usize::from(instruction.a), kernel.result);
+    crate::execution_trace::stencil_iterations(code, pc, "composed_array_get", 1);
+    Ok(Some(handler_transition(pc, None)))
+}
+
+#[repr(C)]
 pub(crate) struct NativeArrayLoopContext {
     pub data: *mut f64,
     pub len: usize,
@@ -632,6 +713,10 @@ pub(crate) fn execute_composed_array_kernel(
     region: &mut NativeRegionContext<'_>,
     invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    #[cfg(target_arch = "aarch64")]
+    if region.operations == [crate::ir::Opcode::AGetI] {
+        return execute_composed_array_get(region, invoke);
+    }
     let code = region.code;
     let pc = region.pc;
     // The typed region ABI carries a borrowed register window.  A malformed
@@ -4318,6 +4403,79 @@ mod compact_handler_tests {
                 .native_entry_count(),
             0
         );
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn rendered_array_get_executes_native_bytes_for_dense_numeric_slot() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![Op::GetPropertyDynamic {
+            dst: 0,
+            object: 1,
+            key: 2,
+        }]);
+        let code = executable.code();
+        code.quicken_instruction(0, crate::ir::Opcode::AGetI, 0, 0, 0);
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(4.5),
+            Value::Number(-0.0),
+        ])));
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            array,
+            Value::Number(1.0),
+        ]);
+        let context = crate::vm::current_context_or_default();
+        let mut region = crate::machine::NativeRegionPlan::new_for_test(
+            crate::stencil_select::array_get_number_region_key(),
+        )
+        .expect("array-get native declaration");
+        let transition = region
+            .execute(code, 0, &mut registers, &context)
+            .expect("native dense array get");
+        assert!(region.last_native_execution());
+        assert_eq!(transition.next_pc, 1);
+        assert_eq!(registers.read(0), Some(Value::Number(-0.0)));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn baseline_driver_routes_index_get_through_typed_native_region() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![Op::GetPropertyDynamic {
+            dst: 0,
+            object: 1,
+            key: 2,
+        }]);
+        let code = executable.code();
+        code.quicken_instruction(0, crate::ir::Opcode::AGetI, 0, 0, 0);
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let region = plan.native_region_at(0).expect("typed array region admission");
+        assert_eq!(
+            region.borrow().key_for_test(),
+            crate::stencil_select::array_get_number_region_key()
+        );
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(8.25),
+        ])));
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            array,
+            Value::Number(0.0),
+        ]);
+        let context = crate::vm::current_context_or_default();
+        crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("baseline typed array region");
+        assert_eq!(registers.read(0), Some(Value::Number(8.25)));
+        assert!(region.borrow().last_native_execution());
     }
 
     #[test]

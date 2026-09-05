@@ -93,6 +93,33 @@ const fn aarch64_ldr_x0_x0() -> u32 {
     0xF940_0000
 }
 
+/// AArch64 unsigned-immediate load/store encoders used by raw array records.
+/// Offsets are bytes and must be naturally aligned for the operand width.
+const fn aarch64_ldr_x(rt: u8, rn: u8, byte_offset: u16) -> u32 {
+    0xF940_0000
+        | (((byte_offset as u32 / 8) & 0xFFF) << 10)
+        | (((rn as u32) & 0x1F) << 5)
+        | (rt as u32 & 0x1F)
+}
+
+const fn aarch64_ldr_d(rt: u8, rn: u8, byte_offset: u16) -> u32 {
+    0xFD40_0000
+        | (((byte_offset as u32 / 8) & 0xFFF) << 10)
+        | (((rn as u32) & 0x1F) << 5)
+        | (rt as u32 & 0x1F)
+}
+
+const fn aarch64_str_d(rt: u8, rn: u8, byte_offset: u16) -> u32 {
+    0xFD00_0000
+        | (((byte_offset as u32 / 8) & 0xFFF) << 10)
+        | (((rn as u32) & 0x1F) << 5)
+        | (rt as u32 & 0x1F)
+}
+
+const fn aarch64_mov_w_imm0(imm: u16) -> u32 {
+    0x5280_0000 | (((imm as u32) & 0xFFFF) << 5)
+}
+
 /// AArch64 BR X16, ARM ARM C6.2.34.
 const fn aarch64_br_x16() -> u32 {
     0xD61F_0200
@@ -151,6 +178,17 @@ const fn aarch64_dispatch_bytes() -> [u8; 16] {
     // LDR X16, #8; BR X16; followed by the patchable bridge pointer.
     put32(&mut out, 0, aarch64_ldr_x16_literal(8));
     put32(&mut out, 4, aarch64_br_x16());
+    out
+}
+
+const fn aarch64_array_get_number_bytes() -> [u8; 20] {
+    let mut out = [0; 20];
+    // x0 = NativeArrayElementContext*, x1 = element pointer.
+    put32(&mut out, 0, aarch64_ldr_x(1, 0, 0));
+    put32(&mut out, 4, aarch64_ldr_d(0, 1, 0));
+    put32(&mut out, 8, aarch64_str_d(0, 0, 8));
+    put32(&mut out, 12, aarch64_mov_w_imm0(1));
+    put32(&mut out, 16, aarch64_ret());
     out
 }
 
@@ -410,6 +448,7 @@ const fn aarch64_ordered_compare_bytes(cset: u32) -> [u8; 20] {
 const AARCH64_LOOP_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_ret());
 const AARCH64_PROPERTY_BYTES: [u8; 8] = aarch64_pair(aarch64_ldr_x0_x0(), aarch64_ret());
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
+const AARCH64_ARRAY_GET_NUMBER_BYTES: [u8; 20] = aarch64_array_get_number_bytes();
 const AARCH64_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_b());
 const AARCH64_SUBTRACT_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_ret());
 const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_ret());
@@ -1054,6 +1093,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         portable_bytes: &[0xC3],
         holes: &[(2, 8, "Ptr64")],
         aarch64_holes: &[(8, 8, "Ptr64")],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "array_get_number",
+        // ARM64 performs the proven dense numeric load from an explicit
+        // element pointer; other targets retain the complete bridge.
+        operations: &["AGetI"],
+        abi: DeclAbi::ArrayKernel,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_GET_NUMBER_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
         entry: 0,
         external_entries: &[0],
     },
