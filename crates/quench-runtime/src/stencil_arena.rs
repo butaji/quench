@@ -99,6 +99,7 @@ pub struct SharedStencilSlab {
 #[derive(Clone, Copy)]
 pub(crate) struct EntryToken<F: Copy> {
     address: usize,
+    entry_address: usize,
     owner: u64,
     abi: crate::stencil_select::RegionAbi,
     entry: F,
@@ -116,7 +117,7 @@ macro_rules! typed_owned_entry {
         ) -> Result<EntryToken<$ty>, ArenaError> {
             let entry = self.$entry(address)?;
             let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
-            Ok(EntryToken { address, owner, abi: $abi, entry })
+            Ok(EntryToken { address, entry_address: entry as usize, owner, abi: $abi, entry })
         }
     };
 }
@@ -257,6 +258,9 @@ impl SharedStencilSlab {
         invoke: impl FnOnce(F) -> R,
     ) -> Result<R, ArenaError> {
         if self.owner_for(owned.address) != Some(owned.owner) {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        if owned.entry_address != owned.address {
             return Err(ArenaError::ProtectionFailed);
         }
         self.slab_for(owned.address)
@@ -1764,6 +1768,7 @@ mod tests {
         let owner = pool.owner_for(address).unwrap();
         let stale = EntryToken {
             address,
+            entry_address: entry as usize,
             owner: owner.wrapping_add(1),
             abi: crate::stencil_select::RegionAbi::Scalar,
             entry,
@@ -1773,12 +1778,14 @@ mod tests {
             .is_err());
         let live = EntryToken {
             address,
+            entry_address: entry as usize,
             owner,
             abi: crate::stencil_select::RegionAbi::Scalar,
             entry,
         };
         let wrong_abi = EntryToken {
             address,
+            entry_address: entry as usize,
             owner,
             abi: crate::stencil_select::RegionAbi::ScalarBool,
             entry,
@@ -1788,6 +1795,29 @@ mod tests {
             .is_err());
         let value = pool.with_owned(live, |entry| entry(2.0, 3.0)).unwrap();
         assert_eq!(value, 5.0);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn owned_entry_rejects_pointer_address_pairing_within_owner() {
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).expect("add key");
+        let record = crate::stencil_select::select_region(key).expect("add row");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let first = pool.render_or_get(&mut cache, key, &record.stencil, &values).unwrap();
+        pool.make_executable(first).unwrap();
+        let second_key = crate::stencil_fact::RegionKey(key.value().wrapping_add(1));
+        let second = pool
+            .render_or_get(&mut cache, second_key, &record.stencil, &values)
+            .unwrap();
+        pool.make_executable(second).unwrap();
+        let first_token = pool.owned_f64_entry(first).unwrap();
+        let forged = EntryToken { address: second, ..first_token };
+        assert!(pool
+            .with_owned(forged, |_| panic!("mismatched entry was invoked"))
+            .is_err());
     }
 
     #[cfg(target_arch = "aarch64")]
