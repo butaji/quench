@@ -84,6 +84,9 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
         .expect("Rust stencil text section");
     let section_index = section.index();
     let bytes = section.uncompressed_data().expect("read Rust stencil text");
+    assert_eq!(section.size() as usize, bytes.len(), "Rust stencil text size is ambiguous");
+    assert_eq!(section.align() % 4, 0, "Rust stencil text alignment is invalid");
+    assert!(section.relocations().next().is_none(), "leaf Rust stencil has an undeclared relocation");
     let symbols = file.symbols().filter(|symbol| symbol.section_index() == Some(section_index)).filter(|symbol| symbol.name().ok().is_some_and(|value| value.trim_start_matches('_') == name)).collect::<Vec<_>>();
     assert_eq!(symbols.len(), 1, "Rust stencil entry symbol must be unique");
     let symbol = &symbols[0];
