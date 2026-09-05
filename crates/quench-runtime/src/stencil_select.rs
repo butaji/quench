@@ -440,6 +440,19 @@ mod generated_region_admission_tests {
     }
 
     #[test]
+    fn raw_array_rows_advertise_execution_only_for_their_emitter_target() {
+        for record in CANONICAL_REGION_TABLE {
+            if matches!(record.abi, RegionAbi::ArrayKernel) {
+                assert_eq!(
+                    record.executable,
+                    cfg!(target_arch = "aarch64"),
+                    "raw array ABI must not route trampoline bytes as a kernel"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn generated_contracts_reuse_opcode_effects_and_entry_rules() {
         let scalar = select_region(loop_region_key())
             .expect("scalar row")
