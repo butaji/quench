@@ -1,4 +1,8 @@
-use std::{env, fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use object::read::{Object, ObjectSection, ObjectSymbol};
 use object::SectionKind;
@@ -10,13 +14,12 @@ const HEADER: &str = "/// Rust object artifacts generated at build time.\n";
 
 pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
     let target = env::var("TARGET").unwrap_or_default();
-    let generated = if env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some()
-        && supports_target(&target)
-    {
-        extract_objects(declarations)
-    } else {
-        empty_artifacts()
-    };
+    let generated =
+        if env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some() && supports_target(&target) {
+            extract_objects(declarations)
+        } else {
+            empty_artifacts()
+        };
     fs::write(out_dir.join("stencil_artifacts.rs"), generated)
         .expect("write generated stencil artifacts");
 }
@@ -55,12 +58,23 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
             .is_some_and(|name| name == ".text" || name == "__text")
     });
     let section = sections.next().expect("Rust assembly text section");
-    assert!(sections.next().is_none(), "assembly verifier found multiple text sections");
-    let bytes = section.uncompressed_data().expect("read Rust assembly text");
-    assert!(!bytes.is_empty() && bytes.len() % 4 == 0, "assembly verifier found invalid instruction bounds");
+    assert!(
+        sections.next().is_none(),
+        "assembly verifier found multiple text sections"
+    );
+    let bytes = section
+        .uncompressed_data()
+        .expect("read Rust assembly text");
+    assert!(
+        !bytes.is_empty() && bytes.len() % 4 == 0,
+        "assembly verifier found invalid instruction bounds"
+    );
     for word in expected {
         let needle = word.to_le_bytes();
-        assert!(bytes.chunks_exact(4).any(|chunk| chunk == needle), "assembly word {word:08x} missing from extracted text");
+        assert!(
+            bytes.chunks_exact(4).any(|chunk| chunk == needle),
+            "assembly word {word:08x} missing from extracted text"
+        );
     }
 }
 
@@ -78,7 +92,10 @@ pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
             .is_some_and(|name| name == ".text" || name == "__text")
     });
     let section = sections.next().expect("Rust assembly text section");
-    assert!(sections.next().is_none(), "assembly verifier found multiple text sections");
+    assert!(
+        sections.next().is_none(),
+        "assembly verifier found multiple text sections"
+    );
     let section_index = section.index();
     let mut previous = 0;
     for name in names {
@@ -98,7 +115,10 @@ pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
             .checked_sub(section.address())
             .expect("assembly symbol precedes text") as usize;
         assert!(offset >= previous, "assembly symbols are out of order");
-        assert!(offset < section.size() as usize, "assembly symbol is outside text");
+        assert!(
+            offset < section.size() as usize,
+            "assembly symbol is outside text"
+        );
         previous = offset;
     }
 }
@@ -112,7 +132,14 @@ fn empty_artifacts() -> String {
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let target = env::var("TARGET").expect("TARGET for stencil object generation");
     let compiler = rustc_path();
-    let flags = ["--crate-type=lib", "--emit=obj", "-Copt-level=2", "-Cpanic=abort", "-Coverflow-checks=off", "--edition=2021"];
+    let flags = [
+        "--crate-type=lib",
+        "--emit=obj",
+        "-Copt-level=2",
+        "-Cpanic=abort",
+        "-Coverflow-checks=off",
+        "--edition=2021",
+    ];
     let rustflags = effective_rustflags();
     let fingerprint = fingerprint(&target, &compiler, &flags, declarations);
     let root = unique_directory();
@@ -134,7 +161,13 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
             declaration,
             recipe,
         );
-        let (constant, row) = render_artifact(declaration.name, &target, &compiler, &fingerprint, &artifact);
+        let (constant, row) = render_artifact(
+            declaration.name,
+            &target,
+            &compiler,
+            &fingerprint,
+            &artifact,
+        );
         constants.push(constant);
         rows.push(row);
     }
@@ -187,7 +220,10 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     assert_no_relocations(&file, "Rust stencil");
     for symbol in file.symbols() {
         if matches!(symbol.section(), SymbolSection::Undefined) {
-            panic!("Rust stencil has undeclared external symbol {:?}", symbol.name());
+            panic!(
+                "Rust stencil has undeclared external symbol {:?}",
+                symbol.name()
+            );
         }
     }
     let mut sections = file.sections().filter(|section| {
@@ -197,21 +233,50 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
             .is_some_and(|name| name == ".text" || name == "__text")
     });
     let section = sections.next().expect("Rust stencil text section");
-    assert!(sections.next().is_none(), "Rust stencil has multiple text sections");
+    assert!(
+        sections.next().is_none(),
+        "Rust stencil has multiple text sections"
+    );
     let section_index = section.index();
     let bytes = section.uncompressed_data().expect("read Rust stencil text");
-    assert_eq!(section.size() as usize, bytes.len(), "Rust stencil text size is ambiguous");
-    assert_eq!(section.align() % 4, 0, "Rust stencil text alignment is invalid");
-    let symbols = file.symbols().filter(|symbol| symbol.section_index() == Some(section_index)).filter(|symbol| symbol.name().ok().is_some_and(|value| value.trim_start_matches('_') == name)).collect::<Vec<_>>();
+    assert_eq!(
+        section.size() as usize,
+        bytes.len(),
+        "Rust stencil text size is ambiguous"
+    );
+    assert_eq!(
+        section.align() % 4,
+        0,
+        "Rust stencil text alignment is invalid"
+    );
+    let symbols = file
+        .symbols()
+        .filter(|symbol| symbol.section_index() == Some(section_index))
+        .filter(|symbol| {
+            symbol
+                .name()
+                .ok()
+                .is_some_and(|value| value.trim_start_matches('_') == name)
+        })
+        .collect::<Vec<_>>();
     assert_eq!(symbols.len(), 1, "Rust stencil entry symbol must be unique");
     assert_no_other_global_text_symbols(&file, section_index, name);
     let symbol = &symbols[0];
-    let offset = symbol.address().checked_sub(section.address()).expect("stencil symbol precedes text");
+    let offset = symbol
+        .address()
+        .checked_sub(section.address())
+        .expect("stencil symbol precedes text");
     let size = symbol.size();
     assert!(offset == 0, "Rust stencil entry is not at section start");
-    assert!(size == 0 || size as usize == bytes.len(), "Rust stencil has ambiguous symbol bounds");
+    assert!(
+        size == 0 || size as usize == bytes.len(),
+        "Rust stencil has ambiguous symbol bounds"
+    );
     let output = bytes.to_vec();
-    assert!(!output.is_empty() && output.len() % 4 == 0, "Rust stencil has invalid instruction bounds");
+    assert!(
+        !output.is_empty() && output.len() % 4 == 0,
+        "Rust stencil has invalid instruction bounds"
+    );
     output
 }
 
@@ -225,7 +290,10 @@ fn assert_no_other_global_text_symbols<'data>(
             continue;
         }
         let name = symbol.name().unwrap_or_default().trim_start_matches('_');
-        assert_eq!(name, entry_name, "Rust stencil has another global text symbol {name:?}");
+        assert_eq!(
+            name, entry_name,
+            "Rust stencil has another global text symbol {name:?}"
+        );
     }
 }
 
@@ -234,7 +302,10 @@ fn assert_single_text_section<'data>(file: &object::File<'data>) {
         .sections()
         .filter(|section| section.kind() == SectionKind::Text)
         .count();
-    assert_eq!(text_sections, 1, "Rust stencil must have one executable text section");
+    assert_eq!(
+        text_sections, 1,
+        "Rust stencil must have one executable text section"
+    );
 }
 
 fn assert_target_architecture<'data>(file: &object::File<'data>, target: Option<&str>) {
@@ -248,17 +319,28 @@ fn assert_target_architecture<'data>(file: &object::File<'data>, target: Option<
         }
     });
     if let Some(expected) = expected {
-        assert_eq!(file.architecture(), expected, "Rust stencil target architecture mismatch");
+        assert_eq!(
+            file.architecture(),
+            expected,
+            "Rust stencil target architecture mismatch"
+        );
     }
 }
 
 fn reject_unwind_or_tls_sections<'data>(file: &object::File<'data>) {
     for section in file.sections() {
         let name = section.name().unwrap_or_default();
-        assert!(!matches!(name, ".eh_frame" | "__eh_frame" | ".gcc_except_table"),
-            "Rust leaf carries an unsupported unwind section {name}");
-        assert!(!matches!(section.kind(), SectionKind::Tls | SectionKind::UninitializedTls | SectionKind::TlsVariables),
-            "Rust leaf carries unsupported TLS data");
+        assert!(
+            !matches!(name, ".eh_frame" | "__eh_frame" | ".gcc_except_table"),
+            "Rust leaf carries an unsupported unwind section {name}"
+        );
+        assert!(
+            !matches!(
+                section.kind(),
+                SectionKind::Tls | SectionKind::UninitializedTls | SectionKind::TlsVariables
+            ),
+            "Rust leaf carries unsupported TLS data"
+        );
     }
 }
 
@@ -282,14 +364,23 @@ fn render_artifact(
     fingerprint: &str,
     bytes: &[u8],
 ) -> (String, String) {
-    let code = bytes.iter().map(|byte| format!("0x{byte:02x}")).collect::<Vec<_>>().join(", ");
+    let code = bytes
+        .iter()
+        .map(|byte| format!("0x{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let identifier = name.to_ascii_uppercase();
     let constant = format!("const BYTES_{identifier}: &[u8] = &[{code}];");
     let row = format!("    BuildStencilArtifact {{ name: {name:?}, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: &[] }} }},");
     (constant, row)
 }
 
-fn fingerprint(target: &str, compiler: &str, flags: &[&str], declarations: &[RegionDeclaration]) -> String {
+fn fingerprint(
+    target: &str,
+    compiler: &str,
+    flags: &[&str],
+    declarations: &[RegionDeclaration],
+) -> String {
     let version = command_output(Command::new(compiler).arg("-vV"), "read rustc identity");
     let features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
     let rustflags = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
@@ -318,7 +409,10 @@ fn fingerprint(target: &str, compiler: &str, flags: &[&str], declarations: &[Reg
 }
 
 fn rustc_path() -> String {
-    env::var_os("QUENCH_RUSTC").or_else(|| env::var_os("RUSTC")).map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| "rustc".to_owned())
+    env::var_os("QUENCH_RUSTC")
+        .or_else(|| env::var_os("RUSTC"))
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "rustc".to_owned())
 }
 
 fn effective_rustflags() -> Vec<String> {
@@ -331,13 +425,18 @@ fn effective_rustflags() -> Vec<String> {
 }
 
 fn unique_directory() -> OwnedDirectory {
-    let base = env::var_os("OUT_DIR").map(PathBuf::from).expect("OUT_DIR for Rust stencil artifacts");
+    let base = env::var_os("OUT_DIR")
+        .map(PathBuf::from)
+        .expect("OUT_DIR for Rust stencil artifacts");
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock before epoch")
         .as_nanos();
     for attempt in 0..8u8 {
-        let directory = base.join(format!("stencil-objects-{stamp}-{}-{attempt}", std::process::id()));
+        let directory = base.join(format!(
+            "stencil-objects-{stamp}-{}-{attempt}",
+            std::process::id()
+        ));
         if fs::create_dir(&directory).is_ok() {
             return OwnedDirectory { path: directory };
         }
@@ -346,12 +445,20 @@ fn unique_directory() -> OwnedDirectory {
 }
 
 fn run(command: &mut Command, description: &str) {
-    let status = command.status().unwrap_or_else(|error| panic!("{description} failed: {error}"));
+    let status = command
+        .status()
+        .unwrap_or_else(|error| panic!("{description} failed: {error}"));
     assert!(status.success(), "{description} exited with {status}");
 }
 
 fn command_output(command: &mut Command, description: &str) -> String {
-    let output = command.output().unwrap_or_else(|error| panic!("{description} failed: {error}"));
-    assert!(output.status.success(), "{description} exited with {}", output.status);
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("{description} failed: {error}"));
+    assert!(
+        output.status.success(),
+        "{description} exited with {}",
+        output.status
+    );
     String::from_utf8(output.stdout).expect("Rust tool output is UTF-8")
 }
