@@ -1158,7 +1158,12 @@ pub(crate) fn execute_optimized_code_step_from(
         if let Some((lhs, rhs)) = operands {
             if let Ok(result) = native.borrow_mut().execute(lhs, rhs) {
                 crate::execution_trace::stencil_observation(code, start, "binary", true);
-                write_value(registers, instruction.a, Value::Number(result));
+                let value = if native.borrow().returns_boolean() {
+                    Value::Boolean(result != 0.0)
+                } else {
+                    Value::Number(result)
+                };
+                write_value(registers, instruction.a, value);
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 return Ok((crate::completion::Completion::Normal, start + 1));
             }
@@ -1501,7 +1506,11 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                         code, pc, "binary", true,
                     );
                     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-                    let value = Value::Number(result);
+                    let value = if native.borrow().returns_boolean() {
+                        Value::Boolean(result != 0.0)
+                    } else {
+                        Value::Number(result)
+                    };
                     write_value(registers, instruction.a, value);
                     pc += 1;
                     continue;
