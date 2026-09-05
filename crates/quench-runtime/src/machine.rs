@@ -3672,7 +3672,7 @@ fn validate_physical_template(
     if !record.stencil.validate() {
         return Err("native region stencil layout or relocation is invalid".into());
     }
-    let physical_calls_helper = stencil_contains_call(record.stencil.bytes);
+    let physical_calls_helper = crate::stencil_physical::contains_call(record.stencil.bytes);
     if physical_calls_helper != contract.template_calls_helper {
         return Err(format!(
             "template helper-call effect disagrees with generated declaration (bytes={}, declaration={})",
@@ -3700,7 +3700,7 @@ fn validate_physical_template(
         }
     }
     if abi.interruptible_backedge
-        && !stencil_contains_interrupt_checkpoint(record.stencil.bytes)
+        && !crate::stencil_physical::contains_interrupt_checkpoint(record.stencil.bytes)
     {
         return Err("interruptible region has no verified native checkpoint".into());
     }
@@ -3724,7 +3724,7 @@ fn validate_physical_template(
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
     ) {
-        let actual = physical_template_clobber_mask(record.stencil.bytes);
+        let actual = crate::stencil_physical::simd_clobber_mask(record.stencil.bytes);
         if actual & !abi.hardware_clobber_mask != 0 {
             return Err(format!(
                 "raw ABI declares clobber mask {:04x}, template uses undeclared {:04x}",
@@ -3732,7 +3732,7 @@ fn validate_physical_template(
                 actual & !abi.hardware_clobber_mask
             ));
         }
-        let actual_gpr = physical_template_gpr_clobber_mask(record.stencil.bytes);
+        let actual_gpr = crate::stencil_physical::gpr_clobber_mask(record.stencil.bytes);
         if actual_gpr & !abi.hardware_gpr_clobber_mask != 0 {
             return Err(format!(
                 "raw ABI declares GPR clobber mask {:04x}, template uses undeclared {:04x}",
@@ -3742,72 +3742,6 @@ fn validate_physical_template(
         }
     }
     Ok(())
-}
-
-/// Derive the SIMD scratch set used by the raw ARM templates from their
-/// encoded destination registers.  Scalar leaves intentionally skip this
-/// check: their C ABI treats caller-saved SIMD registers as non-VM state.
-fn physical_template_clobber_mask(bytes: &[u8]) -> u16 {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return bytes
-            .chunks_exact(4)
-            .filter_map(|word| {
-                let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-                let fp_load = encoded & 0xFFC0_0000 == 0xFD40_0000;
-                let fp_arith = encoded & 0xFF20_FC00 == 0x1E20_2800;
-                let fp_move = encoded & 0xFF20_FC00 == 0x1E20_4000;
-                (fp_load || fp_arith || fp_move).then_some(encoded & 0x1f)
-            })
-            .fold(0u16, |mask, register| {
-                if register < 16 {
-                    mask | (1u16 << register)
-                } else {
-                    // The compact contract cannot represent high SIMD
-                    // registers; force a fail-closed mismatch instead of
-                    // silently dropping the physical write.
-                    u16::MAX
-                }
-            });
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        let _ = bytes;
-        0
-    }
-}
-
-/// Derive integer register writes from the small AArch64 raw-template subset.
-/// Loads, adds and move-immediates are the only GPR-producing instructions we
-/// admit today; unknown encodings contribute no bits and are rejected by the
-/// declaration/byte-shape checks before publication.
-fn physical_template_gpr_clobber_mask(bytes: &[u8]) -> u16 {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return bytes
-            .chunks_exact(4)
-            .filter_map(|word| {
-                let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-                let writes_rt = encoded & 0xFFC0_0000 == 0xF940_0000
-                    || encoded & 0xFFE0_0000 == 0x8B00_0000
-                    || encoded & 0xFFC0_0000 == 0x9100_0000
-                    || encoded & 0xFFE0_0000 == 0x5280_0000
-                    || encoded & 0xFFC0_0000 == 0x3940_0000;
-                writes_rt.then_some(encoded & 0x1f)
-            })
-            .fold(0u16, |mask, register| {
-                if register < 16 {
-                    mask | (1u16 << register)
-                } else {
-                    u16::MAX
-                }
-            });
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        let _ = bytes;
-        0
-    }
 }
 
 fn abi_pointer_hole_contract(abi: crate::stencil_select::RegionAbi) -> usize {
@@ -3820,58 +3754,6 @@ fn raw_region_declares_allocation(contract: crate::stencil_select::RegionContrac
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
     ) && contract.has_effect(crate::facts::OperationEffect::Allocate)
-}
-
-/// Detect direct helper calls in the physical template independently of the
-/// semantic ABI declaration. This is intentionally conservative: a possible
-/// call rejects a raw no-helper ABI, while helper-capable bridges remain valid.
-fn stencil_contains_call(bytes: &[u8]) -> bool {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return bytes.chunks_exact(4).any(|word| {
-            let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-            encoded & 0xFC00_0000 == 0x9400_0000
-                || encoded & 0xFFFF_FC1F == 0xD63F_0000
-                || encoded & 0xFFFF_FC1F == 0xD61F_0000
-        });
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        return bytes.first().is_some_and(|byte| *byte == 0xE8)
-            || bytes.windows(2).any(|window| {
-                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18 | 0x20 | 0x28)
-            });
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    {
-        let _ = bytes;
-        false
-    }
-}
-
-/// Check the physical poll sequence independently of the ABI declaration.
-/// The declaration says a region *requires* interruption; this scan proves
-/// that the selected target template actually contains the load/conditional
-/// branch used by the raw loop. Other targets reject until they provide an
-/// equivalent checkpoint rather than inheriting an unverified capability.
-fn stencil_contains_interrupt_checkpoint(bytes: &[u8]) -> bool {
-    #[cfg(target_arch = "aarch64")]
-    {
-        let words: Vec<u32> = bytes
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-            .collect();
-        return words.windows(3).any(|window| {
-            window[0] == 0xF940_1805
-                && window[1] == 0x3940_00A6
-                && window[2] & 0xFF00_001F == 0x3500_0006
-        });
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        let _ = bytes;
-        false
-    }
 }
 
 impl NativeRegionPlan {
@@ -5917,12 +5799,12 @@ mod tests {
     #[test]
     fn interruptible_template_requires_a_physical_checkpoint() {
         let absent = [0u8; 12];
-        assert!(!super::stencil_contains_interrupt_checkpoint(&absent));
+        assert!(!crate::stencil_physical::contains_interrupt_checkpoint(&absent));
         #[cfg(target_arch = "aarch64")]
         {
             let words = [0xF940_1805u32, 0x3940_00A6, 0x3500_0006];
             let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
-            assert!(super::stencil_contains_interrupt_checkpoint(&bytes));
+            assert!(crate::stencil_physical::contains_interrupt_checkpoint(&bytes));
         }
     }
 
@@ -5969,7 +5851,7 @@ mod tests {
     fn generated_template_call_effects_match_target_decoder() {
         for record in crate::stencil_select::region_records() {
             assert_eq!(
-                super::stencil_contains_call(record.stencil.bytes),
+                crate::stencil_physical::contains_call(record.stencil.bytes),
                 record.template_calls_helper,
                 "generated helper-call effect drifted for {}",
                 record.name
