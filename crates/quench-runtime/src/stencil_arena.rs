@@ -3213,18 +3213,44 @@ mod tests {
         assert_eq!(status, 0xD15A_7C1u64);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn allocation_lease_dispatch_releases_pool_borrow_before_helper_reentry() {
         struct Reentry<'a> {
             pool: &'a std::rc::Rc<std::cell::RefCell<SharedStencilSlab>>,
+            nested: EntryToken<extern "C" fn(f64, f64) -> f64>,
+            effects: std::cell::Cell<u32>,
         }
 
         extern "C" fn helper(context: *mut std::ffi::c_void) -> u64 {
             let state = unsafe { &*(context as *const Reentry<'_>) };
+            state.effects.set(state.effects.get().saturating_add(1));
+            {
+                let mut pool = state.pool.borrow_mut();
+                let retired = pool.evict_idle(1);
+                assert_eq!(retired, 0, "outer lease must retain published code");
+            }
+            let nested = SharedStencilSlab::acquire_owned(state.pool, state.nested)
+                .expect("nested typed lease");
+            let nested_result = nested
+                .invoke(|entry| entry(2.0, 3.0))
+                .expect("nested native entry");
+            assert_eq!(nested_result, 5.0);
             let mut pool = state.pool.borrow_mut();
-            let retired = pool.evict_idle(1);
-            assert_eq!(retired, 0, "active lease must retain the published slab");
+            assert_eq!(pool.active_leases(), 1, "outer lease survives nested return");
+            let fresh = Stencil {
+                bytes: &[0, 0, 0, 0],
+                holes: &[],
+            };
+            let mut cache = RenderedRegionCache::new();
+            assert!(pool
+                .render_or_get(
+                    &mut cache,
+                    crate::stencil_fact::RegionKey(0xbee),
+                    &fresh,
+                    &PatchValues::from_site(&QuickeningSite::<2>::new(Opcode::Add)),
+                )
+                .is_ok());
             0xB0B0_7E5u64
         }
 
@@ -3241,7 +3267,24 @@ mod tests {
             .render_or_get(&mut RenderedRegionCache::new(), key, &record.stencil, &values)
             .unwrap();
         shared.borrow_mut().make_executable(address).unwrap();
-        let state = Reentry { pool: &shared };
+        let nested_key = crate::stencil_select::numeric_region_key(Opcode::Add).unwrap();
+        let nested_record = crate::stencil_select::select_region(nested_key).unwrap();
+        let nested_address = shared
+            .borrow_mut()
+            .render_or_get(
+                &mut RenderedRegionCache::new(),
+                nested_key,
+                &nested_record.stencil,
+                &PatchValues::from_site(&QuickeningSite::<2>::new(Opcode::Add)),
+            )
+            .unwrap();
+        shared.borrow_mut().make_executable(nested_address).unwrap();
+        let nested = shared.borrow().owned_f64_entry(nested_address).unwrap();
+        let state = Reentry {
+            pool: &shared,
+            nested,
+            effects: std::cell::Cell::new(0),
+        };
         let lease = SharedStencilSlab::acquire_address_lease(
             &shared,
             address,
@@ -3252,6 +3295,7 @@ mod tests {
             .invoke_dispatch((&state as *const Reentry<'_>).cast_mut().cast())
             .unwrap();
         assert_eq!(status, 0xB0B0_7E5u64);
+        assert_eq!(state.effects.get(), 1, "helper side effect must run once");
         assert_eq!(shared.borrow().active_leases(), 0);
     }
 
