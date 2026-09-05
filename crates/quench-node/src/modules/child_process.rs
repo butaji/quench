@@ -4,7 +4,7 @@
 //! CLI without a shell.
 
 use std::io::Write;
-use std::process::{Child, Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -65,7 +65,10 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
         process.env("QUENCH_CHILD_RUNNER", "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
-    let process = process.spawn()?;
+    let process = process
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
     wait_with_timeout(process, options)
 }
 
