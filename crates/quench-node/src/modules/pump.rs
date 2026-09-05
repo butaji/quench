@@ -553,8 +553,18 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         Err(error) if task.process_scope != 0 => {
             let handled = crate::modules::pump::handle_uncaught(state, error)
                 .and_then(|_| crate::modules::pump::run_uncaught(state));
-            let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, 1)?;
-            handled.map(|_| ())
+            let code = if let Err(error) = &handled {
+                quench_runtime::execute::set_property_in_place(
+                    &process,
+                    "\0forkStderr",
+                    Value::String(format!("{}\n", error.render())),
+                );
+                7
+            } else {
+                1
+            };
+            let _ = crate::modules::cluster::fail_fork_process(state, task.process_scope, code)?;
+            Ok(())
         }
         result => result,
     };
@@ -667,8 +677,18 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         Err(error) if process_scope != 0 => {
             let handled = crate::modules::pump::handle_uncaught(state, error)
                 .and_then(|_| crate::modules::pump::run_uncaught(state));
-            let _ = crate::modules::cluster::fail_fork_process(state, process_scope, 1)?;
-            handled.map(|_| ())
+            let code = if let Err(error) = &handled {
+                quench_runtime::execute::set_property_in_place(
+                    &process,
+                    "\0forkStderr",
+                    Value::String(format!("{}\n", error.render())),
+                );
+                7
+            } else {
+                1
+            };
+            let _ = crate::modules::cluster::fail_fork_process(state, process_scope, code)?;
+            Ok(())
         }
         result => result,
     };

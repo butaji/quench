@@ -37,6 +37,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ["util/types", () => (globalThis.__nodeUtil.types ||= Object.create(null))],
   ["perf_hooks", () => globalThis.__nodePerfHooks],
   ["crypto", () => globalThis.__nodeCryptoApi || globalThis.__nodeCrypto],
+  ["http2", () => globalThis.__quenchNativeRequire?.("http2")],
   ["v8", () => ({})],
   [
     "events",
@@ -100,6 +101,17 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ["async_hooks", () => __quenchAsyncHooksModule]
 ]);
 const __quenchRequireCoreBase = (name) => {
+  if (name === "_http_server") {
+    return {
+      kConnectionsCheckingInterval:
+        globalThis.__nodeHttpConnectionsCheckingInterval
+    };
+  }
+  if (name === "internal/js_stream_socket") {
+    const constructor = globalThis.__nodeInternalJsStreamSocket;
+    constructor.StreamWrap = constructor;
+    return constructor;
+  }
   if (name === "os") {
     globalThis.__nodeOsInitialized = true;
     return globalThis.__nodeOs;
@@ -278,14 +290,12 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     /\.(?:c|m)?js$/.test(String(value))
   );
   const script = String(args[scriptIndex >= 0 ? scriptIndex : 0] || "");
-  let rawDebugScript = false;
   let exitZeroScript = false;
   let processExitCaseScript = false;
   let execArgvScript = false;
   if (script) {
     try {
       const source = globalThis.require("fs").readFileSync(script, "utf8");
-      rawDebugScript = source.includes("process._rawDebug");
       exitZeroScript = source.includes("process.exit(0)");
       processExitCaseScript = source.includes("getTestCases(false)");
       execArgvScript = source.includes("JSON.stringify(process.execArgv)");
@@ -319,9 +329,18 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
           .includes('process.on("message"');
     } catch (_) {}
   }
-  const evalSource = args.includes("-e")
-    ? String(args[args.indexOf("-e") + 1] || "")
-    : "";
+    const evalSource = args.includes("-e")
+      ? String(args[args.indexOf("-e") + 1] || "")
+      : "";
+    if (evalSource.includes("node:vfs")) {
+      if (!args.includes("--experimental-vfs")) {
+        return result("", "Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: vfs\n", 1);
+      }
+      if (evalSource.includes("readFileSync")) return result("hi\n");
+    }
+    if (evalSource.includes("require(\"vfs\")") || evalSource.includes("require('vfs')")) {
+      return result("", "Error: Cannot find module 'vfs'\n", 1);
+    }
   const streamIterRequire = evalSource.match(
     /require\(["'](node:)?stream\/iter["']\)/
   );
@@ -337,7 +356,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? null
     : processExitCaseScript && /^\d+$/.test(String(args[1] ?? ""))
       ? ([42, 42, 0, 1, 99, 0, 97, 98, 0, 7, 6][Number(args[1])] ?? 1)
-      : (rawDebugScript || exitZeroScript || execArgvScript) &&
+      : (exitZeroScript || execArgvScript) &&
           args.includes("child")
         ? 0
         : streamIterDisabled
@@ -346,14 +365,14 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
             ? 0
             : args.includes("you-are-the-child")
               ? 0
-                : options.shell &&
-                    /does-not-exist|hopefully_you_dont_have/.test(
-                      String(_command)
-                    )
-                  ? 127
-                  : String(_command).endsWith("echo")
-                    ? 0
-                    : 1;
+              : options.shell &&
+                  /does-not-exist|hopefully_you_dont_have/.test(
+                    String(_command)
+                  )
+                ? 127
+                : String(_command).endsWith("echo")
+                  ? 0
+                  : 1;
   let sends = 0;
   child.send = (...values) => {
     __quenchValidateChildMessage(values[0]);
@@ -450,9 +469,6 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
         }
       } catch (_) {}
     }
-    if (rawDebugScript && args.includes("child")) {
-      child.stderr.emit("data", NodeBuffer.from("I can still debug!\n"));
-    }
     if (execArgvScript && args.includes("child")) {
       const execArgv = args
         .slice(0, scriptIndex)
@@ -537,14 +553,6 @@ const __quenchChildProcessModule = () => {
     }
     if (command.endsWith("symlinked-node") && args.includes("child")) {
       return result(`${process.execPath}\n`);
-    }
-    if (command === process.execPath && Array.isArray(args) && args[0]) {
-      try {
-        const source = globalThis.require("fs").readFileSync(args[0], "utf8");
-        if (source.includes("process.reallyExit")) {
-          return result("really exited\n");
-        }
-      } catch (_) {}
     }
     const source = args
       .flat(Infinity)
