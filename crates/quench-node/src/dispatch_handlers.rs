@@ -9559,6 +9559,21 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
+    let script = match &script {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let href = execute::get_property(&script, "href");
+            if let Value::String(href) = href {
+                crate::modules::url_file::file_url_to_path(
+                    state,
+                    None,
+                    &[Value::String(href)],
+                )?
+            } else {
+                script.clone()
+            }
+        }
+        _ => script,
+    };
     let script_text = match &script {
         Value::String(_) | Value::StringUnits(_) => execute::to_js_string(&script).ok(),
         _ => None,
