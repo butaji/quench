@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `375445281` (cleanup files remain
+Evidence below is bound to source revision `870c25d0d` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -40,3 +40,5 @@ The host/API boundary also compiles against this source (`cargo check -p
 quench-node --no-default-features`, `/tmp/quench-node-check-20260905-fused-update.log`).
 The same host check was repeated after the constant-update admission
 (`/tmp/quench-node-check-20260905-fused-const-update.log`).
+The indexed-increment body is exercised through ordinary baseline routing with
+numeric output and string-index fallback (`/tmp/quench-get-inc-native-20260905.log`).
