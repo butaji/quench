@@ -1184,7 +1184,11 @@ pub(crate) fn execute_composed_array_numeric_loop(
         return Ok(None);
     }
     let registers = unsafe { &mut *region.registers };
-    if region.operations.len() != 19 {
+    if !region_matches_generated_array_decl(
+        region,
+        crate::stencil_select::array_numeric_loop_region_key(),
+    ) || region.operations.len() != 19
+    {
         return Ok(None);
     }
     let instructions = (0..19)
