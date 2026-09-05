@@ -2036,8 +2036,7 @@ fn native_move_uses_rendered_address_without_remapping() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
         opcode: crate::ir::Opcode::Move,
-        entry: None,
-        shared_entry: None,
+        installed: super::InstalledWordEntry::Unpublished,
         native_entry_count: 0,
     };
     let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
@@ -2067,12 +2066,12 @@ fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
     let source = crate::tagged_value::TaggedValue::from_bits(0xCAFE_BABE);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     let used = shared.borrow().used();
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledWordEntry::Shared(_)));
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledWordEntry::Shared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
