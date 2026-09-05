@@ -10,7 +10,14 @@ fn generated_artifact_target_is_selected_as_one_physical_view() {
         assert!(view.generated);
         assert_eq!(view.key, artifact.key);
         assert_eq!(view.abi, artifact.abi);
+        assert_eq!(view.entry, artifact.entry);
+        assert_eq!(view.external_entries, artifact.external_entries);
+        assert_eq!(view.executable, artifact.executable);
+        assert_eq!(view.template_calls_helper, artifact.template_calls_helper);
+        assert_eq!(view.target, Some(artifact.target));
         assert_eq!(view.stencil.bytes, artifact.stencil.bytes);
+        assert_eq!(view.stencil.holes, artifact.stencil.holes);
+        assert_eq!(view.fallthrough.map(|(_, entry)| entry), artifact.fallthrough.map(|_| artifact.fallthrough_entry));
         assert_eq!(view.fingerprint, Some(artifact.fingerprint));
     }
 }
