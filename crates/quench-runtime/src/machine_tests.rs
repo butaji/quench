@@ -414,6 +414,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
         returns_boolean: false,
         integer_op: None,
+        integer_unsigned: false,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
     assert!(plan.arena.is_none());
@@ -431,8 +432,10 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
         returns_boolean: false,
         integer_op: None,
+        integer_unsigned: false,
         entry: None,
         int_entry: None,
+        uint_entry: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     assert!(plan.entry.is_some());
@@ -501,6 +504,9 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
         (crate::ops::BinaryOp::BitwiseAnd, 0xF0F0_i32, 0x0FF0_i32, 0x00F0_i32),
         (crate::ops::BinaryOp::BitwiseOr, 0xF000_i32, 0x00F0_i32, 0xF0F0_i32),
         (crate::ops::BinaryOp::BitwiseXor, -1_i32, 0x0F0F_i32, !0x0F0F_i32),
+        (crate::ops::BinaryOp::ShiftLeft, 1_i32, 32_i32, 1_i32),
+        (crate::ops::BinaryOp::ShiftRight, -8_i32, 1_i32, -4_i32),
+        (crate::ops::BinaryOp::ShiftRightZeroFill, -1_i32, 1_i32, 2_147_483_647_i32),
     ] {
         let mut plan = super::NativeBinaryPlan::new(
             crate::ir::Instruction {
