@@ -53,8 +53,12 @@ pub const MAX_ARENA_BYTES: usize = 1 << 20;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhysicalExecutionWitness {
     pub key: crate::stencil_fact::RegionKey,
+    pub name: &'static str,
     pub generated: bool,
     pub fingerprint: Option<&'static str>,
+    pub abi: crate::stencil_select::RegionAbi,
+    pub entry: u16,
+    pub byte_len: usize,
 }
 
 #[inline]
@@ -552,8 +556,12 @@ impl StencilArena {
         self.last_physical_execution
             .set(Some(PhysicalExecutionWitness {
                 key: view.key,
+                name: view.record.name,
                 generated: view.generated,
                 fingerprint: view.fingerprint,
+                abi: view.abi,
+                entry: view.entry,
+                byte_len: view.stencil.bytes.len(),
             }));
     }
 
@@ -2025,6 +2033,7 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
         let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
         assert_eq!(
             arena.render_selected_f64(&mut cache, key, &values, 20.5, 22.25, || Ok(7.0)),
             Ok(42.75)
@@ -2364,6 +2373,7 @@ mod tests {
         let site = QuickeningSite::<2>::new(Opcode::Add);
         let values = PatchValues::from_site(&site);
         let key = crate::stencil_select::fallthrough_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("fallthrough view");
         assert_eq!(
             arena.render_selected_f64(&mut cache, key, &values, 1.25, 2.75, || Ok(0.0)),
             Ok(4.0)
@@ -2379,6 +2389,10 @@ mod tests {
             .last_physical_execution()
             .expect("fallthrough must execute selected bytes");
         assert_eq!(witness.key, key);
+        assert_eq!(witness.name, "fallthrough");
+        assert_eq!(witness.abi, crate::stencil_select::RegionAbi::Scalar);
+        assert_eq!(witness.entry, view.entry);
+        assert_eq!(witness.byte_len, view.stencil.bytes.len());
         #[cfg(quench_generated_stencil_artifacts)]
         assert!(witness.generated);
     }
@@ -2446,8 +2460,12 @@ mod tests {
             .last_physical_execution()
             .expect("successful entry witness");
         assert_eq!(witness.key, key);
+        assert_eq!(witness.name, view.record.name);
         assert!(witness.generated);
         assert_eq!(witness.fingerprint, view.fingerprint);
+        assert_eq!(witness.abi, view.abi);
+        assert_eq!(witness.entry, view.entry);
+        assert_eq!(witness.byte_len, view.stencil.bytes.len());
     }
 
     #[cfg(quench_generated_stencil_artifacts)]
