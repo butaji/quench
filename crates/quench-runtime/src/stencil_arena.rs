@@ -1356,6 +1356,14 @@ mod tests {
         };
         for raw_key in 0..=MAX_SHARED_SLAB_BYTES / MAX_ARENA_BYTES {
             let key = crate::stencil_fact::RegionKey(200 + raw_key as u64);
+            if raw_key == MAX_SHARED_SLAB_BYTES / MAX_ARENA_BYTES {
+                pool.active_dispatches.set(1);
+                assert_eq!(
+                    pool.render_or_get(&mut cache, key, &stencil, &values),
+                    Err(ArenaError::Exhausted)
+                );
+                pool.active_dispatches.set(0);
+            }
             let address = pool.render_or_get(&mut cache, key, &stencil, &values).unwrap();
             pool.make_executable(address).unwrap();
         }
