@@ -546,6 +546,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         },
         installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
+        last_native_view: None,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
     assert!(plan.arena.is_none());
@@ -567,6 +568,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         },
         installed: super::InstalledBinaryEntry::Unpublished,
         native_entry_count: 0,
+        last_native_view: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     assert!(matches!(plan.installed, super::InstalledBinaryEntry::F64Local(_)));
@@ -1835,6 +1837,17 @@ fn ordinary_source_lowering_executes_generated_add_const_view() {
         .expect("generated AddConst execution");
         assert_eq!(registers.read(usize::from(instruction.a)), Some(crate::value::Value::Number(5.75)));
         assert!(native.borrow().native_entry_count > 0);
+        let witness = native
+            .borrow()
+            .last_native_view()
+            .expect("invocation-local physical view witness");
+        assert!(witness.generated);
+        assert_eq!(witness.key, physical.key);
+        assert_eq!(witness.abi, physical.abi);
+        assert_eq!(witness.entry, physical.entry);
+        assert_eq!(witness.stencil.bytes, physical.stencil.bytes);
+        assert_eq!(witness.stencil.holes, physical.stencil.holes);
+        assert_eq!(witness.fingerprint, physical.fingerprint);
         executed = true;
     };
     inspect(program.code());
