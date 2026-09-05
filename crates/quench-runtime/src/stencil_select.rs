@@ -243,6 +243,22 @@ pub struct PhysicalStencilView {
     pub fingerprint: Option<&'static str>,
 }
 
+impl PhysicalStencilView {
+    /// Rebuild the semantic contract with the selected physical boundary.
+    /// Operation effects remain borrowed from the canonical record; physical
+    /// ABI/layout facts come only from this view.
+    pub const fn contract(&self) -> RegionContract {
+        RegionContract {
+            abi: self.abi,
+            operations: self.record.operations,
+            entry: self.entry,
+            external_entries: self.external_entries,
+            executable: self.executable,
+            template_calls_helper: self.template_calls_helper,
+        }
+    }
+}
+
 /// Disposable, fixed-capacity memo table.  Replacement is round-robin and is
 /// independent of workload identity, source paths, and hotness thresholds.
 #[derive(Clone, Debug)]
