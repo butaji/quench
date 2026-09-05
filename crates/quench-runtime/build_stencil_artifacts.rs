@@ -50,6 +50,16 @@ struct ExtractedRelocation {
     target: &'static str,
 }
 
+#[derive(Clone, Copy)]
+struct ExpectedRelocation {
+    section: SectionKind,
+    offset: u16,
+    width: usize,
+    kind: &'static str,
+    target: &'static str,
+    addend: i64,
+}
+
 struct ParsedFragment {
     bytes: Vec<u8>,
     relocations: Vec<ExtractedRelocation>,
@@ -205,7 +215,6 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
                     "array_numeric_loop",
                     aarch64_array_loop_source(),
                     &[],
-                    None,
                 )
                 .bytes,
                 fallthrough: None,
@@ -303,6 +312,18 @@ fn compile_fragment_pair(
             relocations: Vec::new(),
         };
     }
+    let expected = declaration
+        .aarch64_holes
+        .iter()
+        .map(|(offset, width, kind)| ExpectedRelocation {
+            section: SectionKind::Text,
+            offset: *offset,
+            width: *width,
+            kind,
+            target: "q_fallthrough_tail",
+            addend: 0,
+        })
+        .collect::<Vec<_>>();
     let head = compile_assembly_fragment(
         root,
         target,
@@ -311,8 +332,7 @@ fn compile_fragment_pair(
         rustflags,
         "fallthrough_head",
         aarch64_head_source(),
-        declaration.aarch64_holes,
-        Some("q_fallthrough_tail"),
+        &expected,
     );
     let tail = compile_assembly_fragment(
         root,
@@ -323,7 +343,6 @@ fn compile_fragment_pair(
         "fallthrough_tail",
         aarch64_tail_source(),
         &[],
-        None,
     );
     ExtractedObject {
         bytes: head.bytes,
@@ -340,8 +359,7 @@ fn compile_assembly_fragment(
     rustflags: &[String],
     name: &str,
     source_text: &str,
-    expected_relocations: &[(u16, usize, &'static str)],
-    target_symbol: Option<&'static str>,
+    expected_relocations: &[ExpectedRelocation],
 ) -> ParsedFragment {
     let source = root.join(format!("{name}.rs"));
     let object = root.join(format!("{name}.o"));
@@ -358,7 +376,6 @@ fn compile_assembly_fragment(
         &format!("q_{name}"),
         &format!("q_{name}_end"),
         expected_relocations,
-        target_symbol,
     )
 }
 
@@ -497,8 +514,7 @@ fn parse_object_range(
     path: &Path,
     name: &str,
     end_name: &str,
-    expected_relocations: &[(u16, usize, &'static str)],
-    target_symbol: Option<&'static str>,
+    expected_relocations: &[ExpectedRelocation],
 ) -> ParsedFragment {
     let data = fs::read(path).expect("read Rust fragment object");
     let file = object::File::parse(&*data).expect("parse Rust fragment object");
@@ -508,7 +524,6 @@ fn parse_object_range(
     let relocations = validate_fragment_relocations(
         &file,
         expected_relocations,
-        target_symbol,
         "Rust fragment",
     );
     let (start_section, start_address) = find_text_symbol(&file, name);
@@ -548,13 +563,13 @@ fn parse_object_range(
 
 fn validate_fragment_relocations(
     file: &object::File<'_>,
-    expected: &[(u16, usize, &'static str)],
-    target_symbol: Option<&'static str>,
+    expected: &[ExpectedRelocation],
     context: &str,
 ) -> Vec<ExtractedRelocation> {
     let mut records = Vec::new();
     if let object::File::MachO64(macho) = file {
         let mut relocation_count = 0;
+        let mut consumed = vec![false; expected.len()];
         for section in macho.sections() {
             let text_section = section.kind() == SectionKind::Text;
             for relocation in section
@@ -566,11 +581,10 @@ fn validate_fragment_relocations(
                     "Mach-O fragment relocation targets non-text data"
                 );
                 let info = relocation.info(Endianness::Little);
-                let expected_target = target_symbol.expect("declared Mach-O relocation target");
-                let (expected_offset, _, expected_kind) = expected
-                    .first()
-                    .copied()
-                    .expect("declared Mach-O relocation hole");
+                assert!(
+                    info.r_address >= 0 && info.r_address <= i64::from(u16::MAX),
+                    "Mach-O relocation offset is outside the declared range"
+                );
                 let target = macho
                     .symbol_by_index(object::SymbolIndex(info.r_symbolnum as usize))
                     .expect("Mach-O fragment relocation symbol")
@@ -581,15 +595,28 @@ fn validate_fragment_relocations(
                     info.r_extern,
                     "Mach-O fragment relocation must name a symbol"
                 );
-                assert_eq!(info.r_address, u32::from(expected_offset));
-                assert_eq!(target, expected_target);
+                let expected_index = expected
+                    .iter()
+                    .enumerate()
+                    .find(|(index, item)| {
+                        !consumed[*index]
+                            && item.section == section.kind()
+                            && item.offset == info.r_address as u16
+                            && item.target == target
+                            && item.kind == "Branch26"
+                    })
+                    .map(|(index, _)| index)
+                    .expect("undeclared or duplicate Mach-O fragment relocation");
+                let item = expected[expected_index];
+                assert_eq!(item.addend, 0, "Mach-O branch addend must be zero");
+                assert_eq!(item.width, 4, "Mach-O branch hole width must be four bytes");
                 assert_eq!(info.r_type, object::macho::ARM64_RELOC_BRANCH26);
                 assert!(info.r_pcrel && info.r_length == 2);
-                assert_eq!(expected_kind, "Branch26");
+                consumed[expected_index] = true;
                 records.push(ExtractedRelocation {
-                    offset: expected_offset,
-                    kind: expected_kind,
-                    target: target_symbol.expect("declared relocation target"),
+                    offset: item.offset,
+                    kind: item.kind,
+                    target: item.target,
                 });
                 relocation_count += 1;
             }
@@ -599,6 +626,7 @@ fn validate_fragment_relocations(
             expected.len(),
             "{context} relocation count mismatch"
         );
+        assert!(consumed.into_iter().all(|matched| matched), "{context} missing relocation");
         return records;
     }
     let text_index = file
@@ -627,22 +655,28 @@ fn validate_fragment_relocations(
                 .to_owned(),
             _ => panic!("{context} relocation does not name a declared symbol"),
         };
-        let Some((expected_offset, _width, expected_kind)) = expected
+        let Some(item) = expected
             .iter()
-            .find(|(expected_offset, _, _)| u64::from(*expected_offset) == offset)
+            .find(|item| {
+                !records.iter().any(|record| record.offset == item.offset)
+                    && item.section == SectionKind::Text
+                    && u64::from(item.offset) == offset
+                    && item.target == target_name
+            })
         else {
             panic!("{context} relocation at {offset:#x} is undeclared")
         };
-        assert_eq!(Some(target_name.as_str()), target_symbol);
-        assert_eq!(*expected_kind, "Branch26");
-        assert_eq!(u64::from(*expected_offset), offset);
+        assert_eq!(item.kind, "Branch26");
+        assert_eq!(item.width, 4, "branch hole width must be four bytes");
+        assert_eq!(item.addend, relocation.addend());
+        assert_eq!(u64::from(item.offset), offset);
         assert_eq!(relocation.kind(), RelocationKind::PltRelative);
         assert_eq!(relocation.encoding(), RelocationEncoding::AArch64Call);
         assert_eq!(relocation.size(), 26);
         records.push(ExtractedRelocation {
-            offset: *expected_offset as u16,
-            kind: *expected_kind,
-            target: target_symbol.expect("declared relocation target"),
+            offset: item.offset,
+            kind: item.kind,
+            target: item.target,
         });
     }
     let relocation_count = file
@@ -654,6 +688,7 @@ fn validate_fragment_relocations(
         expected.len(),
         "{context} relocation count mismatch"
     );
+    assert_eq!(records.len(), expected.len(), "{context} missing relocation");
     records
 }
 
