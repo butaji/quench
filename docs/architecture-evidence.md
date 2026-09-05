@@ -97,4 +97,4 @@ physical code; focused coverage is **1 passed**
 `69f34f47e` is **722 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-full-20260905-retire-distinction.log`).
 The host library regression suite also passes at this implementation state:
-**4 passed, 0 failed** (`/tmp/quench-node-full-20260905-stencil-gate.log`).
+**4 passed, 0 failed** (`/tmp/quench-node-full-20260905-generated-abi.log`).
