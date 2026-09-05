@@ -45,5 +45,5 @@ covered by `ordinary_source_prototype_property_lookup_preserves_semantics`
 (`/tmp/quench-prototype-source-20260905.log`).
 Latest post-guard runtime regression: **701 passed, 0 failed, 1 ignored** at
 `80d00a941` (`/tmp/quench-runtime-full-20260905-prototype-guard.log`).
-The same suite at current source `079635d56` is **706 passed, 0 failed, 1
-ignored** (`/tmp/quench-runtime-full-20260905-identity-word.log`).
+The same suite at current source `079635d56` is **707 passed, 0 failed, 1
+ignored** (`/tmp/quench-runtime-full-20260905-identity-final.log`).
