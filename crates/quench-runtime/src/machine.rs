@@ -3791,17 +3791,7 @@ impl NativeRegionPlan {
             record.executable
                 && !record.operations.is_empty()
                 && validate_physical_template(record).is_ok()
-                && !matches!(
-                    record.abi,
-                    crate::stencil_select::RegionAbi::Scalar
-                        | crate::stencil_select::RegionAbi::TaggedWord
-                        | crate::stencil_select::RegionAbi::ConstantWord
-                        | crate::stencil_select::RegionAbi::ScalarBool
-                        | crate::stencil_select::RegionAbi::ScalarWordBool
-                        | crate::stencil_select::RegionAbi::ScalarWordPairBool
-                        | crate::stencil_select::RegionAbi::ScalarI32
-                        | crate::stencil_select::RegionAbi::ScalarU32
-                )
+                && record.abi.accepts_region_context()
         })?;
         Some(Self {
             arena: Some(arena),
@@ -3883,17 +3873,7 @@ impl NativeRegionPlan {
             // closed if metadata and the selected invocation path disagree;
             // an opcode-prefix match is never sufficient to pass a scalar
             // or raw-array entry a NativeRegionContext pointer.
-            if matches!(
-                contract.abi,
-                crate::stencil_select::RegionAbi::Scalar
-                    | crate::stencil_select::RegionAbi::TaggedWord
-                    | crate::stencil_select::RegionAbi::ConstantWord
-                    | crate::stencil_select::RegionAbi::ScalarBool
-                    | crate::stencil_select::RegionAbi::ScalarWordBool
-                    | crate::stencil_select::RegionAbi::ScalarWordPairBool
-                    | crate::stencil_select::RegionAbi::ScalarI32
-                    | crate::stencil_select::RegionAbi::ScalarU32
-            ) {
+            if !contract.abi.accepts_region_context() {
                 return Err(NativeDispatchError::Physical(
                     "native fused region ABI metadata mismatch".into(),
                 ));
@@ -4419,19 +4399,7 @@ impl BaselinePlan {
                         // plans and must never be passed a
                         // NativeRegionContext pointer merely because their
                         // opcode prefix matches this window.
-                        if !record.executable
-                            || matches!(
-                                record.abi,
-                                    crate::stencil_select::RegionAbi::Scalar
-                                    | crate::stencil_select::RegionAbi::TaggedWord
-                                    | crate::stencil_select::RegionAbi::ConstantWord
-                                    | crate::stencil_select::RegionAbi::ScalarBool
-                                    | crate::stencil_select::RegionAbi::ScalarWordBool
-                                    | crate::stencil_select::RegionAbi::ScalarWordPairBool
-                                    | crate::stencil_select::RegionAbi::ScalarI32
-                                    | crate::stencil_select::RegionAbi::ScalarU32
-                            )
-                        {
+                        if !record.executable || !record.abi.accepts_region_context() {
                             return false;
                         }
                         region_admission_matches(&entries, pc, record)
