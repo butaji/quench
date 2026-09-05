@@ -1484,6 +1484,18 @@ mod tests {
     }
 
     #[test]
+    fn proven_word_pointer_rejects_cells_and_tdz() {
+        let environment = Environment::new();
+        environment.set(0, Value::Number(3.0));
+        assert!(environment.proven_word_ptr(0).is_some());
+        environment.ensure_slot(1).store.bridge(0);
+        environment.set(1, Value::Number(4.0));
+        assert!(environment.proven_word_ptr(1).is_none());
+        environment.mark_uninitialized(2);
+        assert!(environment.proven_word_ptr(2).is_none());
+    }
+
+    #[test]
     fn numeric_update_mutates_direct_and_bridged_slots_once() {
         let direct = SlotStore::from_values(vec![Value::Number(4.0)]);
         assert_eq!(direct.update_number(0, 1.0), Some((4.0, 5.0)));
