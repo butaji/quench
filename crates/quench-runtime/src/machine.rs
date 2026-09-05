@@ -4171,20 +4171,6 @@ fn region_admission_matches(
     })
 }
 
-/// Prefer a physically specialized ABI when several declarations describe
-/// the same residual opcode span.  The ranking is a generated-contract
-/// property (raw kernels before bridges), not a benchmark- or opcode-shaped
-/// allowlist; scalar entries remain on their typed leaf plans.
-#[inline]
-fn region_abi_priority(abi: crate::stencil_select::RegionAbi) -> u8 {
-    match abi {
-        crate::stencil_select::RegionAbi::ArrayNumericLoop => 3,
-        crate::stencil_select::RegionAbi::ArrayKernel => 2,
-        crate::stencil_select::RegionAbi::Bridge => 1,
-        _ => 0,
-    }
-}
-
 impl BaselinePlan {
     #[cfg(test)]
     pub(crate) fn compile_for_test(
@@ -4404,7 +4390,7 @@ impl BaselinePlan {
                         }
                         region_admission_matches(&entries, pc, record)
                     })
-                    .max_by_key(|record| region_abi_priority(record.abi))
+                    .max_by_key(|record| record.abi.priority())
                     .and_then(|record| {
                         NativeRegionPlan::new_with_arena(
                             record.key,
