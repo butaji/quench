@@ -3348,6 +3348,15 @@ impl std::fmt::Debug for NativeAddChainPlan {
 /// Optional native leaf for a pure register-word move. The machine code only
 /// copies the canonical eight-byte word; the Rust destination write performs
 /// the retain/release edge, so pointer-backed values remain ownership-safe.
+#[derive(Clone, Copy)]
+enum InstalledWordEntry {
+    Unpublished,
+    Local(extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
+    Shared(crate::stencil_arena::OwnedEntry<
+        extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+    >),
+}
+
 pub(crate) struct NativeMovePlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
@@ -3355,10 +3364,7 @@ pub(crate) struct NativeMovePlan {
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>>,
+    installed: InstalledWordEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -3366,8 +3372,7 @@ pub(crate) struct NativeMovePlan {
 impl NativeMovePlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.shared_entry = None;
-        self.entry = None;
+        self.installed = InstalledWordEntry::Unpublished;
         self.cache.clear();
         self.lifecycle.reset();
     }
@@ -3418,9 +3423,7 @@ impl NativeMovePlan {
             site: crate::quickening::QuickeningSite::new(instruction.opcode),
             opcode: instruction.opcode,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry: None,
+            installed: InstalledWordEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -3449,15 +3452,15 @@ impl NativeMovePlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
-            if let Some(entry) = self.entry {
+            if let InstalledWordEntry::Local(entry) = self.installed {
                 let value = entry(source);
                 self.note_entry();
                 return Ok(value);
             }
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let (Some(shared), Some(owned)) =
-            (self.shared_arena.clone(), self.shared_entry)
+        if let (Some(shared), InstalledWordEntry::Shared(owned)) =
+            (self.shared_arena.clone(), self.installed)
         {
             match shared.borrow().with_owned(owned, |entry| entry(source)) {
                 Ok(value) => {
@@ -3500,7 +3503,7 @@ impl NativeMovePlan {
                 }
             };
             let owned = shared.borrow().owned_tagged_word_entry(address)?;
-            self.shared_entry = Some(owned);
+            self.installed = InstalledWordEntry::Shared(owned);
             let result = shared.borrow().with_owned(owned, |entry| entry(source));
             return match result {
                 Ok(value) => {
@@ -3541,7 +3544,10 @@ impl NativeMovePlan {
         if result.is_ok() {
             if let Some(arena) = self.arena.as_ref() {
                 if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
-                    self.entry = arena.tagged_word_entry(address).ok();
+                    self.installed = arena
+                        .tagged_word_entry(address)
+                        .map(InstalledWordEntry::Local)
+                        .unwrap_or(InstalledWordEntry::Unpublished);
                 }
             }
         }
@@ -3551,8 +3557,7 @@ impl NativeMovePlan {
             self.lifecycle.reset();
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.entry = None;
-                self.shared_entry = None;
+                self.installed = InstalledWordEntry::Unpublished;
             }
         }
         result
