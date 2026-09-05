@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `40956f49b` (cleanup files remain
+Evidence below is bound to source revision `01ee8b776` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -45,6 +45,12 @@ The shared constant-word entry now has direct owner-eviction/rebuild coverage:
 `/tmp/quench-shared-constant-owner-20260905.log` (1 passed), with the full
 runtime at **736 passed, 0 failed, 1 ignored** in
 `/tmp/quench-runtime-full-20260905-shared-constant.log`.
+
+Native unary negate/bitwise-not shared entries now clear their owned entry,
+cache and lifecycle after a publication-owner failure. Focused unary coverage
+passes at `/tmp/quench-unary-owner-tests-20260905.log` (1 passed); full runtime
+is **736 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-unary-owner.log`.
 
 Latest source-only cache-hit refinement is at `43c8b2da0`: fused Add-chain
 cache hits now defer `PatchValues` construction until a render is required,
