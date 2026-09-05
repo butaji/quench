@@ -9,13 +9,20 @@ use super::RegionDeclaration;
 const HEADER: &str = "/// Rust object artifacts generated at build time.\n";
 
 pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
-    let generated = if env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some() {
+    let target = env::var("TARGET").unwrap_or_default();
+    let generated = if env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some()
+        && supports_target(&target)
+    {
         extract_objects(declarations)
     } else {
         empty_artifacts()
     };
     fs::write(out_dir.join("stencil_artifacts.rs"), generated)
         .expect("write generated stencil artifacts");
+}
+
+fn supports_target(target: &str) -> bool {
+    target.starts_with("aarch64") || target.starts_with("x86_64")
 }
 
 struct OwnedDirectory {
