@@ -2964,8 +2964,25 @@ fn validate_physical_template(
     if !record.stencil.validate() {
         return Err("native region stencil layout or relocation is invalid".into());
     }
-    if stencil_contains_call(record.stencil.bytes) && !abi.may_call_helper {
-        return Err("native stencil contains a call outside its ABI contract".into());
+    if stencil_contains_call(record.stencil.bytes) {
+        if !abi.may_call_helper {
+            return Err("native stencil contains a call outside its ABI contract".into());
+        }
+        // A helper-capable entry must also have a semantic boundary in the
+        // canonical operation facts.  The call bit alone is not proof that
+        // roots, exceptions, re-entry, or observable effects were discharged.
+        // Control transitions are boundaries too: a bridge may call the
+        // canonical handler for a Return/Jump even when that operation is not
+        // allocating or throwing.
+        let declared_boundary = contract.requires_semantic_boundary()
+            || contract.has_effect(crate::facts::OperationEffect::Control)
+            || contract.has_effect(crate::facts::OperationEffect::ReadHeap)
+            || contract.has_effect(crate::facts::OperationEffect::WriteHeap);
+        if !declared_boundary || !abi.root_materialization_required {
+            return Err(
+                "helper call lacks a declared semantic boundary and root contract".into(),
+            );
+        }
     }
     if abi.interruptible_backedge
         && !stencil_contains_interrupt_checkpoint(record.stencil.bytes)
@@ -5012,6 +5029,31 @@ mod tests {
             executable: true,
         };
         assert!(super::validate_physical_template(&scalar_call).is_err());
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    #[test]
+    fn physical_helper_call_requires_semantic_boundary_and_roots() {
+        let bridge = crate::stencil_select::select_region(
+            crate::stencil_select::dispatch_region_key(),
+        )
+        .expect("generated bridge declaration");
+        static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Move];
+        static ENTRIES: [u16; 1] = [0];
+        let pure_bridge = crate::stencil_select::RegionRecord {
+            key: crate::stencil_fact::RegionKey(2),
+            stencil: bridge.stencil,
+            operations: &OPS,
+            entry: 0,
+            external_entries: &ENTRIES,
+            fallthrough: None,
+            abi: crate::stencil_select::RegionAbi::Bridge,
+            executable: true,
+        };
+        assert!(
+            super::validate_physical_template(&pure_bridge).is_err(),
+            "a physical helper call must not be admitted for a pure operation"
+        );
     }
 
     #[test]
