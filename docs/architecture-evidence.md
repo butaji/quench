@@ -63,6 +63,10 @@ Scalar and fallthrough stencil execution now removes the cache entry after a
 physical execution failure before taking fallback; the 32 arena ownership,
 cache, publication, and failure tests pass at
 `/tmp/quench-stencil-arena-tests-20260905.log`.
+The full normal runtime remains **734 passed, 0 failed, 1 ignored** and the
+execution-trace suite **748 passed, 0 failed, 1 ignored** at
+`/tmp/quench-runtime-full-20260905-arena-failure-cleanup.log` and
+`/tmp/quench-runtime-trace-20260905-arena-failure-cleanup.log`.
 
 The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
