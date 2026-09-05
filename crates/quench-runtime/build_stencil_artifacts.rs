@@ -627,6 +627,20 @@ fn validate_fragment_relocations(
                 assert_eq!(item.width, 4, "Mach-O branch hole width must be four bytes");
                 assert_eq!(info.r_type, object::macho::ARM64_RELOC_BRANCH26);
                 assert!(info.r_pcrel && info.r_length == 2);
+                let bytes = section
+                    .uncompressed_data()
+                    .expect("read Mach-O relocation section");
+                let start = usize::try_from(info.r_address).expect("nonnegative relocation offset");
+                let instruction = bytes
+                    .get(start..start + 4)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u32::from_le_bytes)
+                    .expect("Mach-O branch relocation lies within text");
+                assert_eq!(
+                    instruction & 0x03ff_ffff,
+                    0,
+                    "Mach-O Branch26 implicit addend must be zero"
+                );
                 consumed[expected_index] = true;
                 records.push(ExtractedRelocation {
                     offset: item.offset,
