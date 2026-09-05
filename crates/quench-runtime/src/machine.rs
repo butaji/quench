@@ -1471,15 +1471,15 @@ pub struct TierProfile {
 enum InstalledBinaryEntry {
     Unpublished,
     F64Local(usize),
-    F64Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> f64>),
+    F64Shared(crate::stencil_arena::EntryToken<extern "C" fn(f64, f64) -> f64>),
     BoolLocal(usize),
-    BoolShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64) -> u64>),
+    BoolShared(crate::stencil_arena::EntryToken<extern "C" fn(f64, f64) -> u64>),
     I32Local(usize),
-    I32Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(i32, i32) -> i32>),
+    I32Shared(crate::stencil_arena::EntryToken<extern "C" fn(i32, i32) -> i32>),
     U32Local(usize),
-    U32Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(u32, u32) -> u32>),
+    U32Shared(crate::stencil_arena::EntryToken<extern "C" fn(u32, u32) -> u32>),
     TaggedLocal(usize),
-    TaggedShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64, u64) -> u64>),
+    TaggedShared(crate::stencil_arena::EntryToken<extern "C" fn(u64, u64) -> u64>),
 }
 
 pub(crate) struct NativeBinaryPlan {
@@ -2199,11 +2199,11 @@ fn constant_word_bits(constant: &crate::ops::Constant) -> Option<u64> {
 enum InstalledTruthinessEntry {
     Unpublished,
     NumberLocal(usize),
-    NumberShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> u64>),
+    NumberShared(crate::stencil_arena::EntryToken<extern "C" fn(f64) -> u64>),
     WordLocal(usize),
-    WordShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
+    WordShared(crate::stencil_arena::EntryToken<extern "C" fn(u64) -> u64>),
     PointerLocal(usize),
-    PointerShared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
+    PointerShared(crate::stencil_arena::EntryToken<extern "C" fn(u64) -> u64>),
 }
 
 pub(crate) struct NativeTruthinessPlan {
@@ -2518,7 +2518,7 @@ impl std::fmt::Debug for NativeTruthinessPlan {
 enum InstalledNullishEntry {
     Unpublished,
     Local(usize),
-    Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(u64) -> u64>),
+    Shared(crate::stencil_arena::EntryToken<extern "C" fn(u64) -> u64>),
 }
 
 pub(crate) struct NativeNullishPlan {
@@ -2681,7 +2681,7 @@ impl std::fmt::Debug for NativeNullishPlan {
 enum InstalledConstantEntry {
     Unpublished,
     Local(usize),
-    Shared(crate::stencil_arena::OwnedEntry<extern "C" fn() -> u64>),
+    Shared(crate::stencil_arena::EntryToken<extern "C" fn() -> u64>),
 }
 
 pub(crate) struct NativeLoadConstPlan {
@@ -2843,9 +2843,9 @@ enum NativeUnaryKind {
 enum InstalledUnaryEntry {
     Unpublished,
     IntegerLocal(usize),
-    IntegerShared(crate::stencil_arena::OwnedEntry<extern "C" fn(i32) -> i32>),
+    IntegerShared(crate::stencil_arena::EntryToken<extern "C" fn(i32) -> i32>),
     NumberLocal(usize),
-    NumberShared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64) -> f64>),
+    NumberShared(crate::stencil_arena::EntryToken<extern "C" fn(f64) -> f64>),
 }
 
 pub(crate) struct NativeUnaryPlan {
@@ -3087,7 +3087,7 @@ impl NativeUnaryPlan {
 enum InstalledF64x3Entry {
     Unpublished,
     Local(usize),
-    Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>),
+    Shared(crate::stencil_arena::EntryToken<extern "C" fn(f64, f64, f64) -> f64>),
 }
 
 pub(crate) struct NativeAddChainPlan {
@@ -3182,7 +3182,7 @@ impl NativeAddChainPlan {
         &mut self,
         key: crate::stencil_fact::RegionKey,
         values: &crate::stencil_fact::PatchValues,
-    ) -> Result<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>, crate::stencil_arena::ArenaError> {
+    ) -> Result<crate::stencil_arena::EntryToken<extern "C" fn(f64, f64, f64) -> f64>, crate::stencil_arena::ArenaError> {
         let shared = self
             .shared_arena
             .clone()
@@ -3345,7 +3345,7 @@ impl std::fmt::Debug for NativeAddChainPlan {
 enum InstalledWordEntry {
     Unpublished,
     Local(usize),
-    Shared(crate::stencil_arena::OwnedEntry<
+    Shared(crate::stencil_arena::EntryToken<
         extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
     >),
 }
@@ -3588,7 +3588,7 @@ impl std::fmt::Debug for NativeMovePlan {
 enum InstalledPropertyEntry {
     Unpublished,
     Local(usize),
-    Shared(crate::stencil_arena::OwnedEntry<
+    Shared(crate::stencil_arena::EntryToken<
         extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
     >),
 }
