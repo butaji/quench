@@ -1643,7 +1643,15 @@ impl NativeBinaryPlan {
         if !policy.native_leaves
             || instruction.opcode != crate::ir::Opcode::Binary
             || !crate::stencil_select::select_region(key)
-                .is_some_and(|record| record.executable)
+                .is_some_and(|record| {
+                    record.executable
+                        && record.abi
+                            == if unsigned {
+                                crate::stencil_select::RegionAbi::ScalarU32
+                            } else {
+                                crate::stencil_select::RegionAbi::ScalarI32
+                            }
+                })
         {
             return None;
         }
