@@ -4281,6 +4281,14 @@ impl NativeRegionPlan {
                 registers,
                 context,
             );
+            #[cfg(not(target_arch = "aarch64"))]
+            if matches!(
+                record.abi,
+                crate::stencil_select::RegionAbi::ArrayKernel
+                    | crate::stencil_select::RegionAbi::ArrayNumericLoop
+            ) {
+                return crate::vm::execute_region_fallback(&mut region);
+            }
             // The array block has a direct raw numeric entry on AArch64. Its
             // ABI context contains only proven backing words and scalar
             // operands; no VM object or Rust reference crosses the boundary.
@@ -4290,7 +4298,11 @@ impl NativeRegionPlan {
             match record.abi {
                 crate::stencil_select::RegionAbi::ArrayKernel => {
                     let physical = crate::vm::execute_composed_array_kernel(&mut region, |raw| {
-                        arena.borrow().execute_dispatch(address, raw)
+                        arena.borrow().execute_dispatch_with_abi(
+                            address,
+                            raw,
+                            crate::stencil_select::RegionAbi::ArrayKernel,
+                        )
                     });
                     self.last_native_execution |= region.native_entered;
                     if let Some(result) = physical? {
@@ -4304,7 +4316,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayNumericLoop => {
                     let physical =
                         crate::vm::execute_composed_array_numeric_loop(&mut region, |raw| {
-                            arena.borrow().execute_dispatch(address, raw)
+                            arena.borrow().execute_dispatch_with_abi(
+                                address,
+                                raw,
+                                crate::stencil_select::RegionAbi::ArrayNumericLoop,
+                            )
                         });
                     self.last_native_execution |= region.native_entered;
                     if let Some(result) = physical? {

@@ -100,6 +100,7 @@ pub struct SharedStencilSlab {
 pub(crate) struct OwnedEntry<F: Copy> {
     address: usize,
     owner: u64,
+    abi: crate::stencil_select::RegionAbi,
     entry: F,
 }
 
@@ -108,13 +109,13 @@ struct ActiveUse<'a> {
 }
 
 macro_rules! typed_owned_entry {
-    ($name:ident, $entry:ident, $ty:ty) => {
+    ($name:ident, $entry:ident, $ty:ty, $abi:expr) => {
         pub(crate) fn $name(
             &self,
             address: usize,
         ) -> Result<OwnedEntry<$ty>, ArenaError> {
             let entry = self.$entry(address)?;
-            self.owned_entry(address, entry)
+            self.owned_entry(address, entry, $abi)
         }
     };
 }
@@ -240,23 +241,24 @@ impl SharedStencilSlab {
         &self,
         address: usize,
         entry: F,
+        abi: crate::stencil_select::RegionAbi,
     ) -> Result<OwnedEntry<F>, ArenaError> {
         let owner = self.owner_for(address).ok_or(ArenaError::ProtectionFailed)?;
-        Ok(OwnedEntry { address, owner, entry })
+        Ok(OwnedEntry { address, owner, abi, entry })
     }
 
-    typed_owned_entry!(owned_f64_entry, f64_entry, extern "C" fn(f64, f64) -> f64);
-    typed_owned_entry!(owned_f64x3_entry, f64x3_entry, extern "C" fn(f64, f64, f64) -> f64);
-    typed_owned_entry!(owned_bool_entry, bool_entry, extern "C" fn(f64, f64) -> u64);
-    typed_owned_entry!(owned_i32_entry, i32_entry, extern "C" fn(i32, i32) -> i32);
-    typed_owned_entry!(owned_u32_entry, u32_entry, extern "C" fn(u32, u32) -> u32);
-    typed_owned_entry!(owned_f64_unary_entry, f64_unary_entry, extern "C" fn(f64) -> f64);
-    typed_owned_entry!(owned_i32_unary_entry, i32_unary_entry, extern "C" fn(i32) -> i32);
-    typed_owned_entry!(owned_bool_unary_entry, bool_unary_entry, extern "C" fn(f64) -> u64);
-    typed_owned_entry!(owned_word_bool_entry, word_bool_entry, extern "C" fn(u64) -> u64);
-    typed_owned_entry!(owned_word_pair_bool_entry, word_pair_bool_entry, extern "C" fn(u64, u64) -> u64);
-    typed_owned_entry!(owned_constant_word_entry, constant_word_entry, extern "C" fn() -> u64);
-    typed_owned_entry!(owned_tagged_word_entry, tagged_word_entry, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64);
+    typed_owned_entry!(owned_f64_entry, f64_entry, extern "C" fn(f64, f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
+    typed_owned_entry!(owned_f64x3_entry, f64x3_entry, extern "C" fn(f64, f64, f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
+    typed_owned_entry!(owned_bool_entry, bool_entry, extern "C" fn(f64, f64) -> u64, crate::stencil_select::RegionAbi::ScalarBool);
+    typed_owned_entry!(owned_i32_entry, i32_entry, extern "C" fn(i32, i32) -> i32, crate::stencil_select::RegionAbi::ScalarI32);
+    typed_owned_entry!(owned_u32_entry, u32_entry, extern "C" fn(u32, u32) -> u32, crate::stencil_select::RegionAbi::ScalarU32);
+    typed_owned_entry!(owned_f64_unary_entry, f64_unary_entry, extern "C" fn(f64) -> f64, crate::stencil_select::RegionAbi::Scalar);
+    typed_owned_entry!(owned_i32_unary_entry, i32_unary_entry, extern "C" fn(i32) -> i32, crate::stencil_select::RegionAbi::ScalarI32);
+    typed_owned_entry!(owned_bool_unary_entry, bool_unary_entry, extern "C" fn(f64) -> u64, crate::stencil_select::RegionAbi::ScalarBool);
+    typed_owned_entry!(owned_word_bool_entry, word_bool_entry, extern "C" fn(u64) -> u64, crate::stencil_select::RegionAbi::ScalarWordBool);
+    typed_owned_entry!(owned_word_pair_bool_entry, word_pair_bool_entry, extern "C" fn(u64, u64) -> u64, crate::stencil_select::RegionAbi::ScalarWordPairBool);
+    typed_owned_entry!(owned_constant_word_entry, constant_word_entry, extern "C" fn() -> u64, crate::stencil_select::RegionAbi::ConstantWord);
+    typed_owned_entry!(owned_tagged_word_entry, tagged_word_entry, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64, crate::stencil_select::RegionAbi::TaggedWord);
 
     pub(crate) fn with_owned<F: Copy, R>(
         &self,
@@ -266,6 +268,9 @@ impl SharedStencilSlab {
         if self.owner_for(owned.address) != Some(owned.owner) {
             return Err(ArenaError::ProtectionFailed);
         }
+        self.slab_for(owned.address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .require_abi(owned.address, owned.abi)?;
         self.with_active(owned.address, || invoke(owned.entry))
     }
 
@@ -408,8 +413,22 @@ impl SharedStencilSlab {
         address: usize,
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
+        self.execute_dispatch_with_abi(
+            address,
+            context,
+            crate::stencil_select::RegionAbi::Bridge,
+        )
+    }
+
+    pub(crate) fn execute_dispatch_with_abi(
+        &self,
+        address: usize,
+        context: *mut std::ffi::c_void,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<u64, ArenaError> {
         let slab = self.slab_for(address).ok_or(ArenaError::ProtectionFailed)?;
-        self.with_active(address, || slab.execute_dispatch(address, context))?
+        slab.require_abi(address, abi)?;
+        self.with_active(address, || slab.execute_dispatch_with_abi(address, context, abi))?
     }
 
     /// Execute a typed scalar entry while retaining the owning slab.  The
@@ -513,45 +532,25 @@ impl StencilArena {
     /// otherwise the complete ordinary path remains the only valid option.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_f64(&self, address: usize, lhs: f64, rhs: f64) -> Result<f64, ArenaError> {
-        let base = self.ptr as usize;
-        let end = base.saturating_add(self.cursor);
-        if !self.executable || address < base || address >= end {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let entry: extern "C" fn(f64, f64) -> f64 = unsafe { std::mem::transmute(address) };
+        let entry = self.f64_entry(address)?;
         Ok(entry(lhs, rhs))
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_bool(&self, address: usize, lhs: f64, rhs: f64) -> Result<bool, ArenaError> {
-        let base = self.ptr as usize;
-        let end = base.saturating_add(self.cursor);
-        if !self.executable || address < base || address >= end {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let entry: extern "C" fn(f64, f64) -> u64 = unsafe { std::mem::transmute(address) };
+        let entry = self.bool_entry(address)?;
         Ok(entry(lhs, rhs) != 0)
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_i32(&self, address: usize, lhs: i32, rhs: i32) -> Result<i32, ArenaError> {
-        let base = self.ptr as usize;
-        let end = base.saturating_add(self.cursor);
-        if !self.executable || address < base || address >= end {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let entry: extern "C" fn(i32, i32) -> i32 = unsafe { std::mem::transmute(address) };
+        let entry = self.i32_entry(address)?;
         Ok(entry(lhs, rhs))
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub fn execute_u32(&self, address: usize, lhs: u32, rhs: u32) -> Result<u32, ArenaError> {
-        let base = self.ptr as usize;
-        let end = base.saturating_add(self.cursor);
-        if !self.executable || address < base || address >= end {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let entry: extern "C" fn(u32, u32) -> u32 = unsafe { std::mem::transmute(address) };
+        let entry = self.u32_entry(address)?;
         Ok(entry(lhs, rhs))
     }
 
@@ -760,13 +759,10 @@ impl StencilArena {
         address: usize,
         word: *const crate::tagged_value::TaggedValue,
     ) -> Result<u64, ArenaError> {
-        let base = self.ptr as usize;
-        let end = base.saturating_add(self.cursor);
-        if !self.executable || address < base || address >= end || word.is_null() {
+        if word.is_null() {
             return Err(ArenaError::ProtectionFailed);
         }
-        let entry: extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64 =
-            unsafe { std::mem::transmute(address) };
+        let entry = self.tagged_word_entry(address)?;
         Ok(entry(word))
     }
 
@@ -780,11 +776,23 @@ impl StencilArena {
         address: usize,
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
-        let base = self.ptr as usize;
-        let end = base.saturating_add(self.cursor);
-        if !self.executable || address < base || address >= end || context.is_null() {
+        self.execute_dispatch_with_abi(
+            address,
+            context,
+            crate::stencil_select::RegionAbi::Bridge,
+        )
+    }
+
+    pub fn execute_dispatch_with_abi(
+        &self,
+        address: usize,
+        context: *mut std::ffi::c_void,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<u64, ArenaError> {
+        if context.is_null() {
             return Err(ArenaError::ProtectionFailed);
         }
+        self.require_abi(address, abi)?;
         let entry: extern "C" fn(*mut std::ffi::c_void) -> u64 =
             unsafe { std::mem::transmute(address) };
         Ok(entry(context))
@@ -1251,6 +1259,7 @@ impl StencilArena {
         // The displacement is internal to this arena and remains valid while
         // the cached address is owned by it. Match future calls on the
         // caller-visible patch facts, not on the newly allocated addresses.
+        self.record_abi(address, key);
         cache.insert_owned(key, signature, address, self.id);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
@@ -1382,6 +1391,7 @@ impl StencilArena {
                 return fallback();
             }
         };
+        self.record_abi(address, key);
         cache.insert_owned(key, signature, address, self.id);
         if self.make_executable().is_err() {
             cache.remove(key, signature, address);
@@ -1764,12 +1774,27 @@ mod tests {
         let stale = OwnedEntry {
             address,
             owner: owner.wrapping_add(1),
+            abi: crate::stencil_select::RegionAbi::Scalar,
             entry,
         };
         assert!(pool
             .with_owned(stale, |_| panic!("stale entry was invoked"))
             .is_err());
-        let live = OwnedEntry { address, owner, entry };
+        let live = OwnedEntry {
+            address,
+            owner,
+            abi: crate::stencil_select::RegionAbi::Scalar,
+            entry,
+        };
+        let wrong_abi = OwnedEntry {
+            address,
+            owner,
+            abi: crate::stencil_select::RegionAbi::ScalarBool,
+            entry,
+        };
+        assert!(pool
+            .with_owned(wrong_abi, |_| panic!("wrong ABI entry was invoked"))
+            .is_err());
         let value = pool.with_owned(live, |entry| entry(2.0, 3.0)).unwrap();
         assert_eq!(value, 5.0);
     }
@@ -1800,9 +1825,10 @@ mod tests {
         };
         assert_eq!(pool.active_dispatches(), 0);
         assert_eq!(
-            pool.execute_dispatch(
+            pool.execute_dispatch_with_abi(
                 address,
-                (&mut raw as *mut crate::vm::NativeArrayLoopContext).cast()
+                (&mut raw as *mut crate::vm::NativeArrayLoopContext).cast(),
+                crate::stencil_select::RegionAbi::ArrayNumericLoop,
             )
             .unwrap(),
             1
@@ -1810,6 +1836,34 @@ mod tests {
         assert_eq!(pool.active_dispatches(), 0);
         assert_eq!(pool.peak_dispatches(), 1);
         assert_eq!(data, vec![3.0, 4.0]);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn dispatch_requires_declared_abi_and_published_entry() {
+        extern "C" fn probe(context: *mut std::ffi::c_void) -> u64 {
+            assert!(!context.is_null());
+            0xA11Bu64
+        }
+        let key = crate::stencil_select::dispatch_region_key();
+        let record = crate::stencil_select::select_region(key).expect("array loop row");
+        let site = QuickeningSite::<2>::new(Opcode::Move);
+        let values = PatchValues::from_site(&site).with_pointer_bits(probe as *const () as usize);
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = pool
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        pool.make_executable(address).unwrap();
+        let mut marker = 0u8;
+        let context = (&mut marker as *mut u8).cast::<std::ffi::c_void>();
+        assert_eq!(pool.execute_dispatch(address, context).unwrap(), 0xA11B);
+        assert!(pool
+            .execute_dispatch_with_abi(address, context, crate::stencil_select::RegionAbi::ArrayKernel)
+            .is_err());
+        assert!(pool
+            .execute_dispatch_with_abi(address + 1, context, record.abi)
+            .is_err());
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

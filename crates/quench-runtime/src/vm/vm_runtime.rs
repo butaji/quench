@@ -5772,10 +5772,11 @@ mod compact_handler_tests {
             result: 4.0,
         };
         let status = arena
-            .execute_dispatch(
+            .execute_dispatch_with_abi(
                 address,
                 (&mut raw as *mut super::NativeArrayKernelContext)
                     .cast::<std::ffi::c_void>(),
+                crate::stencil_select::RegionAbi::ArrayKernel,
             )
             .expect("machine entry");
         assert_eq!(status, super::NATIVE_DISPATCH_OK);
@@ -5814,9 +5815,10 @@ mod compact_handler_tests {
                 interrupt: &interrupt,
             };
             let status = arena
-                .execute_dispatch(
+                .execute_dispatch_with_abi(
                     address,
                     (&mut raw as *mut super::NativeArrayLoopContext).cast::<std::ffi::c_void>(),
+                    crate::stencil_select::RegionAbi::ArrayNumericLoop,
                 )
                 .expect("execute native numeric loop");
             assert_eq!(status, super::NATIVE_DISPATCH_OK);
@@ -5851,9 +5853,10 @@ mod compact_handler_tests {
             interrupt: &interrupt,
         };
         let status = arena
-            .execute_dispatch(
+            .execute_dispatch_with_abi(
                 address,
                 (&mut raw as *mut super::NativeArrayLoopContext).cast::<std::ffi::c_void>(),
+                crate::stencil_select::RegionAbi::ArrayNumericLoop,
             )
             .expect("execute interruptible native loop");
         assert_eq!(status, super::NATIVE_DISPATCH_INTERRUPT);
