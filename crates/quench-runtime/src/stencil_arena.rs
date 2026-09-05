@@ -85,6 +85,24 @@ fn selected_chain_matches(key: crate::stencil_fact::RegionKey, head: &Stencil, t
         && view.stencil.holes == head.holes
         && expected_tail.bytes == tail.bytes
         && expected_tail.holes == tail.holes
+        && (!view.generated || generated_chain_relocation_is_declared(&view))
+}
+
+fn generated_chain_relocation_is_declared(
+    view: &crate::stencil_select::PhysicalStencilView,
+) -> bool {
+    let Some((_, offset)) = view.fallthrough else {
+        return false;
+    };
+    let expected_kind = if cfg!(target_arch = "aarch64") {
+        crate::stencil_fact::HoleKind::Branch26
+    } else {
+        crate::stencil_fact::HoleKind::Rel32
+    };
+    view.relocations.len() == 1
+        && view.relocations[0].offset == offset
+        && view.relocations[0].kind == expected_kind
+        && !view.relocations[0].target.is_empty()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
