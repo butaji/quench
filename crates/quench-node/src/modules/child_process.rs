@@ -588,10 +588,19 @@ pub fn spawn_sync(
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
     if timed_out {
+        let signal = options
+            .and_then(|value| execute::get_property_result(value, "killSignal").ok())
+            .map(|value| match value {
+                Value::String(signal) => signal,
+                Value::Number(number) if number == 9.0 => "SIGKILL".into(),
+                Value::Number(number) if number == 2.0 => "SIGINT".into(),
+                _ => "SIGTERM".into(),
+            })
+            .unwrap_or_else(|| "SIGTERM".into());
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(pid as f64)),
-            ("status".into(), Value::Number(143.0)),
-            ("signal".into(), Value::String("SIGTERM".into())),
+            ("status".into(), Value::Null),
+            ("signal".into(), Value::String(signal)),
             ("error".into(), coded_error_with_errno("ETIMEDOUT", -110.0)),
             (
                 "stdout".into(),
@@ -779,10 +788,7 @@ fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
         ),
         Value::String(signal) => {
             let normalized = signal.to_ascii_uppercase();
-            (
-                normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME",
-                "ERR_UNKNOWN_SIGNAL",
-            )
+            (known_signal(&normalized), "ERR_UNKNOWN_SIGNAL")
         }
         _ => (false, "ERR_INVALID_ARG_TYPE"),
     };
@@ -793,6 +799,34 @@ fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String(code.into())),
     ])))
+}
+
+fn known_signal(signal: &str) -> bool {
+    matches!(
+        signal,
+        "SIGTERM"
+            | "SIGKILL"
+            | "SIGINT"
+            | "SIGQUIT"
+            | "SIGHUP"
+            | "SIGSTOP"
+            | "SIGCONT"
+            | "SIGUSR1"
+            | "SIGUSR2"
+            | "SIGABRT"
+            | "SIGALRM"
+            | "SIGCHLD"
+            | "SIGPIPE"
+            | "SIGTRAP"
+            | "SIGTSTP"
+            | "SIGTTIN"
+            | "SIGTTOU"
+            | "SIGURG"
+            | "SIGVTALRM"
+            | "SIGXCPU"
+            | "SIGXFSZ"
+            | "SIGWINCH"
+    )
 }
 
 fn validate_numeric_range(options: &Value, key: &str, infinity_ok: bool) -> Result<(), VmError> {
