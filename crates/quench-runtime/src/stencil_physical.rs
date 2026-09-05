@@ -100,16 +100,37 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
 /// A byte-pattern hit is not an instruction proof: every word must be one of
 /// the declared load/store, arithmetic, branch, compare, move, or return
 /// forms before ABI effects are trusted.
-pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), &'static str> {
+pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), String> {
     #[cfg(target_arch = "aarch64")]
     {
         if bytes.len() % 4 != 0 {
-            return Err("raw stencil is not instruction aligned");
+            return Err("raw stencil is not instruction aligned".into());
         }
-        for word in bytes.chunks_exact(4) {
+        for (index, word) in bytes.chunks_exact(4).enumerate() {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             if !known_aarch64_raw_instruction(encoded) {
-                return Err("raw stencil contains an unknown instruction");
+                return Err(format!("raw stencil contains unknown instruction {encoded:08x} at {index}"));
+            }
+        }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    let _ = bytes;
+    Ok(())
+}
+
+/// Validate a hole-free AArch64 template before trusting its declared effect.
+/// Literal-pool templates are checked by their relocation/data contract and
+/// intentionally do not enter this instruction-only path.
+pub(crate) fn validate_aarch64_instruction_stream(bytes: &[u8]) -> Result<(), String> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        if bytes.len() % 4 != 0 {
+            return Err("AArch64 stencil is not instruction aligned".into());
+        }
+        for (index, word) in bytes.chunks_exact(4).enumerate() {
+            let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+            if !known_aarch64_instruction(encoded) {
+                return Err(format!("AArch64 stencil contains unknown instruction {encoded:08x} at {index}"));
             }
         }
     }
@@ -120,7 +141,13 @@ pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), &'stat
 
 #[cfg(target_arch = "aarch64")]
 fn known_aarch64_raw_instruction(encoded: u32) -> bool {
+    known_aarch64_instruction(encoded)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn known_aarch64_instruction(encoded: u32) -> bool {
     encoded == 0xD65F_03C0
+        || encoded == 0x9E67_03E1
         || encoded & 0xFFC0_0000 == 0xF940_0000
         || encoded & 0xFFC0_0000 == 0xF900_0000
         || encoded & 0xFFC0_0000 == 0xFD40_0000
@@ -133,6 +160,21 @@ fn known_aarch64_raw_instruction(encoded: u32) -> bool {
         || encoded & 0xFF00_0010 == 0x5400_0000
         || encoded & 0x7F00_0000 == 0x3500_0000
         || encoded & 0xFF20_FC00 == 0x1E20_2800
+        || encoded & 0xFF20_FC00 == 0x1E20_3800
+        || encoded & 0xFF20_FC00 == 0x1E20_4000
+        || encoded & 0xFF20_FC00 == 0x1E20_0800
+        || encoded & 0xFF20_FC00 == 0x1E20_1800
+        || encoded & 0xFF00_0000 == 0x5800_0000
+        || encoded & 0xFFFF_FC1F == 0xD61F_0000
+        || encoded & 0xFFFF_FC1F == 0xD63F_0000
+        || encoded & 0xFF20_FC00 == 0x1E20_2000
+        || encoded & 0xFFE0_07E0 == 0x1A80_07E0
+        || encoded & 0xFF00_0000 == 0x0A00_0000
+        || encoded & 0xFF00_0000 == 0x2A00_0000
+        || encoded & 0xFF00_0000 == 0x4A00_0000
+        || encoded & 0xFFE0_FC00 == 0x1AC0_2000
+        || encoded & 0xFFE0_FC00 == 0x1AC0_2400
+        || encoded & 0xFFE0_FC00 == 0x1AC0_2800
         || encoded & 0xFF20_FC00 == 0x1E20_4000
         || encoded & 0xFFE0_FC1F == 0xEB00_001F
 }
