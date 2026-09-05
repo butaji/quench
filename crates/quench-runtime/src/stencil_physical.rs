@@ -125,6 +125,7 @@ fn known_aarch64_raw_instruction(encoded: u32) -> bool {
         || encoded & 0xFFC0_0000 == 0xF900_0000
         || encoded & 0xFFC0_0000 == 0xFD40_0000
         || encoded & 0xFFC0_0000 == 0xFD00_0000
+        || encoded & 0xFFC0_0000 == 0x3940_0000
         || encoded & 0xFFE0_0000 == 0x8B00_0000
         || encoded & 0xFFC0_0000 == 0x9100_0000
         || encoded & 0xFF80_0000 == 0x5280_0000
