@@ -122,6 +122,7 @@ pub struct VmContext {
     persistent_host_values: Vec<String>,
     can_block: bool,
     source_text: Option<Rc<str>>,
+    interrupt: Rc<std::sync::atomic::AtomicBool>,
 }
 impl Default for VmContext {
     fn default() -> Self {
@@ -135,6 +136,7 @@ impl Default for VmContext {
             persistent_host_values: Vec::new(),
             can_block: false,
             source_text: None,
+            interrupt: Rc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -204,6 +206,20 @@ impl VmContext {
     pub fn with_source_text(mut self, source: impl Into<Rc<str>>) -> Self {
         self.source_text = Some(source.into());
         self
+    }
+
+    pub(crate) fn request_interrupt(&self) {
+        self.interrupt
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn clear_interrupt(&self) {
+        self.interrupt
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn interrupt_flag(&self) -> *const std::sync::atomic::AtomicBool {
+        Rc::as_ptr(&self.interrupt)
     }
 
     pub fn source_text(&self) -> Option<&str> {
