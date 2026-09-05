@@ -220,4 +220,53 @@ mod tests {
             Err(PatchError::UnsupportedOffset)
         );
     }
+
+    #[test]
+    fn aarch64_branch26_accepts_exact_signed_byte_limits() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let cases = [(0usize, 1usize << 27), ((1usize << 27) - 4, 0)];
+        for (target, next) in cases {
+            let values = PatchValues::from_site(&site)
+                .with_relative_target(target, next)
+                .expect("branch displacement fits signed rel32");
+            let mut bytes = [0xA5u8; 9];
+            bytes[4..8].copy_from_slice(&0x1400_0000u32.to_le_bytes());
+            write_branch26(&mut bytes, 4, &values).expect("exact branch limit is encodable");
+            assert_eq!(bytes[0], 0xA5);
+            assert_eq!(bytes[8], 0xA5);
+        }
+    }
+
+    #[test]
+    fn aarch64_branch26_rejects_each_limit_plus_four() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let cases = [(1usize << 27, 0usize), (0usize, (1usize << 27) + 4)];
+        for (target, next) in cases {
+            let values = PatchValues::from_site(&site)
+                .with_relative_target(target, next)
+                .expect("rel32 still represents the out-of-range branch");
+            let mut bytes = 0x1400_0000u32.to_le_bytes();
+            assert_eq!(
+                write_branch26(&mut bytes, 0, &values),
+                Err(PatchError::UnsupportedOffset)
+            );
+        }
+    }
+
+    #[test]
+    fn branch26_rejects_short_buffers_without_partial_write() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site)
+            .with_relative_target(16, 0)
+            .expect("branch displacement");
+        let mut bytes = [0xCCu8; 3];
+        assert_eq!(
+            write_branch26(&mut bytes, 0, &values),
+            Err(PatchError::OutOfBounds)
+        );
+        assert_eq!(bytes, [0xCC; 3]);
+        assert!(PatchValues::from_site(&site)
+            .with_relative_target(usize::MAX, 0)
+            .is_none());
+    }
 }
