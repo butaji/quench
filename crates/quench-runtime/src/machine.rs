@@ -2954,8 +2954,14 @@ impl NativeRegionPlan {
                 used_bytes,
                 capacity_bytes,
             );
-            let mut region =
-                crate::vm::NativeRegionContext::new(code, pc, operations, registers, context);
+            let mut region = crate::vm::NativeRegionContext::new_with_abi(
+                code,
+                pc,
+                operations,
+                record.abi,
+                registers,
+                context,
+            );
             // The array block has a direct raw numeric entry on AArch64. Its
             // ABI context contains only proven backing words and scalar
             // operands; no VM object or Rust reference crosses the boundary.
