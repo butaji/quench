@@ -1019,8 +1019,10 @@ fn ordinary_source_lowering_executes_numeric_negate_and_preserves_signed_zero() 
             policy,
         )
         .expect("direct numeric negate leaf");
-        assert_eq!(signed_zero.execute(0.0), Ok(-0.0));
-        assert_eq!(signed_zero.execute(-0.0), Ok(0.0));
+        let negated_zero = signed_zero.execute(0.0).expect("negate +0");
+        let restored_zero = signed_zero.execute(-0.0).expect("negate -0");
+        assert_eq!(negated_zero.to_bits(), (-0.0f64).to_bits());
+        assert_eq!(restored_zero.to_bits(), 0.0f64.to_bits());
         executed = true;
     };
     inspect(program.code());
