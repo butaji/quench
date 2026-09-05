@@ -230,6 +230,11 @@ pub struct PhysicalStencilView {
     pub record: &'static RegionRecord,
     pub stencil: &'static Stencil,
     pub generated: bool,
+    /// Stable identity of the selected physical artifact.
+    pub artifact_id: &'static str,
+    /// Immutable payload kept separate from executable code bytes.
+    pub data: &'static [u8],
+    pub compiler: Option<&'static str>,
     /// Identity and physical boundary facts travel with the selected bytes.
     /// Callers must not pair an artifact with independently looked-up record
     /// metadata after this point.
@@ -259,7 +264,11 @@ impl PhysicalStencilView {
     }
 
     pub fn matches(&self, other: &Self) -> bool {
-        self.key == other.key
+        std::ptr::eq(self.record, other.record)
+            && self.key == other.key
+            && self.artifact_id == other.artifact_id
+            && self.data == other.data
+            && self.compiler == other.compiler
             && self.abi == other.abi
             && self.entry == other.entry
             && self.external_entries == other.external_entries
@@ -412,16 +421,32 @@ pub fn select_physical_for_abi(
 
 pub fn select_physical(key: RegionKey) -> Option<PhysicalStencilView> {
     let record = CANONICAL_REGION_TABLE.iter().find(|record| record.key == key)?;
-    let Some(artifact) = BUILD_STENCIL_ARTIFACTS
-        .iter()
-        .find(|artifact| artifact.key == key && artifact.name == record.name)
-    else {
-        return Some(legacy_physical_view(key, record));
+    let artifact = match unique_artifact(BUILD_STENCIL_ARTIFACTS, key, record.name) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return Some(legacy_physical_view(key, record)),
+        Err(()) => return None,
     };
     // A matching identity reserves the generated representation.  If any
     // ABI, target, layout, or effect contract differs, fail closed instead of
     // silently substituting legacy bytes with generated metadata.
     generated_physical_view(key, record, artifact)
+}
+
+fn unique_artifact(
+    artifacts: &'static [BuildStencilArtifact],
+    key: RegionKey,
+    name: &str,
+) -> Result<Option<&'static BuildStencilArtifact>, ()> {
+    let mut matches = artifacts
+        .iter()
+        .filter(|artifact| artifact.key == key && artifact.name == name);
+    let Some(first) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(());
+    }
+    Ok(Some(first))
 }
 
 fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> PhysicalStencilView {
@@ -430,6 +455,9 @@ fn legacy_physical_view(key: RegionKey, record: &'static RegionRecord) -> Physic
         record,
         stencil: &record.stencil,
         generated: false,
+        artifact_id: record.name,
+        data: &[],
+        compiler: None,
         abi: record.abi,
         entry: record.entry,
         external_entries: record.external_entries,
@@ -451,6 +479,7 @@ fn generated_physical_view(
         .as_ref()
         .map(|stencil| (stencil, artifact.fallthrough_entry));
     let metadata_matches = artifact.name == record.name
+        && artifact_identity_matches(artifact, record)
         && artifact.key == key
         && artifact_target_matches_host(artifact.target)
         && !artifact.fingerprint.is_empty()
@@ -477,6 +506,9 @@ fn generated_physical_view(
         record,
         stencil: &artifact.stencil,
         generated: true,
+        artifact_id: artifact.artifact_id,
+        data: artifact.data,
+        compiler: Some(artifact.compiler),
         abi: artifact.abi,
         entry: artifact.entry,
         external_entries: artifact.external_entries,
@@ -486,6 +518,13 @@ fn generated_physical_view(
         target: Some(artifact.target),
         fingerprint: Some(artifact.fingerprint),
     })
+}
+
+fn artifact_identity_matches(artifact: &BuildStencilArtifact, record: &RegionRecord) -> bool {
+    let Some(suffix) = artifact.artifact_id.strip_prefix(record.name) else {
+        return false;
+    };
+    suffix.strip_prefix('@') == Some(artifact.fingerprint)
 }
 
 fn artifact_target_matches_host(target: &str) -> bool {
@@ -1205,6 +1244,7 @@ mod tests {
                 );
             }
             assert!(!artifact.fingerprint.is_empty());
+            assert!(artifact.artifact_id.starts_with(artifact.name));
             assert!(!artifact.target.is_empty());
             assert_eq!(artifact.abi, record.abi);
             assert_eq!(artifact.key, record.key);
@@ -1237,6 +1277,7 @@ mod tests {
         };
         static BAD_ENTRY: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            artifact_id: "bad-entry",
             key: RegionKey(0),
             target: "test",
             compiler: "test",
@@ -1248,12 +1289,14 @@ mod tests {
             executable: true,
             template_calls_helper: false,
             bytes: BYTES,
+            data: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
         };
         static BAD_ENTRIES: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            artifact_id: "bad-entries",
             key: RegionKey(0),
             target: "test",
             compiler: "test",
@@ -1265,12 +1308,14 @@ mod tests {
             executable: true,
             template_calls_helper: false,
             bytes: BYTES,
+            data: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
         };
         static BAD_LAYOUT: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            artifact_id: "bad-layout",
             key: RegionKey(0),
             target: TARGET,
             compiler: "test",
@@ -1282,12 +1327,14 @@ mod tests {
             executable: true,
             template_calls_helper: false,
             bytes: BYTES,
+            data: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 9,
         };
         static BAD_ABI: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            artifact_id: "bad-abi",
             key: RegionKey(0),
             target: TARGET,
             compiler: "test",
@@ -1299,6 +1346,7 @@ mod tests {
             executable: true,
             template_calls_helper: false,
             bytes: BYTES,
+            data: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
@@ -1307,6 +1355,7 @@ mod tests {
             .iter()
             .find(|record| record.name == "add_const")
             .expect("add_const row");
+        assert!(!artifact_identity_matches(&BAD_ENTRY, record));
         assert!(generated_physical_view(record.key, record, &BAD_ENTRY).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_ENTRIES).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_LAYOUT).is_none());
@@ -1314,6 +1363,7 @@ mod tests {
 
         static BAD_TARGET: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
+            artifact_id: "bad-target",
             key: RegionKey(0),
             target: "mismatched-target",
             compiler: "test",
@@ -1325,6 +1375,7 @@ mod tests {
             executable: true,
             template_calls_helper: false,
             bytes: BYTES,
+            data: &[],
             stencil: Stencil { bytes: BYTES, holes: &[] },
             fallthrough: None,
             fallthrough_entry: 0,
