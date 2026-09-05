@@ -636,7 +636,12 @@ pub(crate) fn proven_named_writable_slot(
         return None;
     }
     let data = registers.read_object(usize::from(object))?;
-    if data.has_replacement() || data.has_regexp_internal_slot() {
+    if data.has_replacement()
+        || data.has_regexp_internal_slot()
+        || data.is_dictionary()
+        || data.is_realm_global()
+        || data.is_script_global_view()
+    {
         return None;
     }
     let (layout, slot) = crate::machine::unpack_named_cache(cache.get())?;
