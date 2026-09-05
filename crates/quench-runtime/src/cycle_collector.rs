@@ -656,11 +656,17 @@ mod tests {
             Value::Object(Rc::clone(&object)),
         ]);
         let environment = Environment::new();
+        let before_frames = FRAME_ROOTS.with(|frames| frames.borrow().len());
         let guard = protect_frame(&registers, &environment);
+        assert_eq!(
+            FRAME_ROOTS.with(|frames| frames.borrow().len()),
+            before_frames + 1
+        );
         drop(object);
         collect_cycles();
         assert!(weak.upgrade().is_some(), "frame root was collected during bridge");
         drop(guard);
+        assert_eq!(FRAME_ROOTS.with(|frames| frames.borrow().len()), before_frames);
         drop(registers);
         collect_cycles();
         assert!(weak.upgrade().is_none(), "temporary frame root leaked past bridge exit");
