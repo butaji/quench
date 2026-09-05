@@ -191,6 +191,10 @@ const fn x86_i32_bitop(opcode: u8) -> [u8; 5] {
     [opcode, 0xF7, 0x89, 0xF8, 0xC3]
 }
 
+const fn x86_i32_unary_not() -> [u8; 5] {
+    [0x89, 0xF8, 0xF7, 0xD0, 0xC3]
+}
+
 const fn x86_compare_not_equal_bytes() -> [u8; 11] {
     [
         0x66, 0x0F, 0x2E, 0xC1, // ucomisd xmm0, xmm1
@@ -271,6 +275,7 @@ const X86_BITWISE_XOR_BYTES: [u8; 5] = x86_i32_bitop(0x31);
 const X86_SHIFT_LEFT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xE7, 0x89, 0xF8, 0xC3];
 const X86_SHIFT_RIGHT_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xFF, 0x89, 0xF8, 0xC3];
 const X86_SHIFT_RIGHT_ZERO_BYTES: [u8; 7] = [0x89, 0xF1, 0xD3, 0xEF, 0x89, 0xF8, 0xC3];
+const X86_BITWISE_NOT_BYTES: [u8; 5] = x86_i32_unary_not();
 const X86_DISPATCH_BYTES: [u8; 12] = x86_dispatch_bytes();
 
 const fn aarch64_fcmp_d() -> u32 {
@@ -296,6 +301,10 @@ const fn aarch64_cset_gt_w0() -> u32 {
 }
 const fn aarch64_cset_ge_w0() -> u32 {
     0x1A9F_B7E0
+}
+
+const fn aarch64_mvn_w0() -> u32 {
+    0x2A20_03E0
 }
 
 const fn aarch64_cset_vc_w1() -> u32 {
@@ -347,6 +356,7 @@ const AARCH64_SHIFT_RIGHT_BYTES: [u8; 8] =
     aarch64_pair(0x1AC1_2800, aarch64_ret());
 const AARCH64_SHIFT_RIGHT_ZERO_BYTES: [u8; 8] =
     aarch64_pair(0x1AC1_2400, aarch64_ret());
+const AARCH64_BITWISE_NOT_BYTES: [u8; 8] = aarch64_pair(aarch64_mvn_w0(), aarch64_ret());
 const X86_ADD_CHAIN_BYTES: [u8; 9] = {
     let first = x86_sse2_binary(0x58, 0, 1);
     let second = x86_sse2_binary(0x58, 0, 2);
@@ -678,6 +688,18 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "bitwise_not",
+        operations: &["Unary", "Return"],
+        abi: DeclAbi::ScalarI32,
+        x86_bytes: &X86_BITWISE_NOT_BYTES,
+        aarch64_bytes: &AARCH64_BITWISE_NOT_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "dispatch",
         // Every compact opcode has an executable entry.  The entry is a
         // generated trampoline into the canonical Rust handler; it carries
@@ -715,6 +737,7 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
             "GetPropertyQuickened",
             "GetNQuickened",
             "AGetIQuickened",
+            "Unary",
         ],
         abi: DeclAbi::Bridge,
         // movabs rax, <bridge>; jmp rax. The context pointer remains the

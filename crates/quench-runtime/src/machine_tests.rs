@@ -583,6 +583,92 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
     }
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_bitwise_not_i32_entry_preserves_to_int32_rules() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Unary,
+        flags: crate::ir::compact_unary_id(crate::ops::UnaryOp::BitwiseNot),
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeUnaryPlan::new(instruction, policy).expect("bitwise-not leaf");
+    for (input, expected) in [(0.0, -1.0), (1.5, -2.0), (f64::NAN, -1.0), (4_294_967_297.0, -2.0)] {
+        assert_eq!(plan.execute(input), Ok(expected));
+    }
+    assert!(plan.native_entry_count >= 4);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn ordinary_source_lowering_executes_bitwise_not_and_falls_back_for_string() {
+    let program = crate::reduce::reduce_source("var x = 1; x = ~x; x;")
+        .expect("bitwise-not source lowers");
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut executed = false;
+    let mut inspect = |view: crate::machine::CodeView<'_>| {
+        if executed {
+            return;
+        }
+        let Some(pc) = (0..view.len()).find(|pc| {
+            view.instruction(*pc).is_some_and(|instruction| {
+                instruction.opcode == crate::ir::Opcode::Unary
+                    && crate::ir::compact_unary_operator(instruction.flags)
+                        == Some(crate::ops::UnaryOp::BitwiseNot)
+            })
+        }) else {
+            return;
+        };
+        let plan = super::BaselinePlan::compile_for_test(view, policy);
+        let Some(native) = plan.native_unary_at(pc) else { return };
+        let instruction = view.instruction(pc).expect("unary instruction");
+        let mut registers = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        registers.write(usize::from(instruction.b), crate::value::Value::Number(1.0));
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        assert!(crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut registers,
+            &context,
+            std::rc::Rc::clone(&environment),
+        )
+        .is_ok());
+        assert_eq!(registers.read(usize::from(instruction.a)), Some(crate::value::Value::Number(-2.0)));
+        let before = native.borrow().native_entry_count;
+        let mut hostile = crate::register_file::RegisterFile::with_undefined(
+            usize::from(view.register_count()).max(8),
+        );
+        hostile.write(usize::from(instruction.b), crate::value::Value::String("1".into()));
+        assert!(crate::vm::execute_baseline_code_from(
+            view,
+            &plan,
+            pc,
+            &mut hostile,
+            &context,
+            environment,
+        )
+        .is_ok());
+        assert_eq!(hostile.read(usize::from(instruction.a)), Some(crate::value::Value::Number(-2.0)));
+        assert_eq!(native.borrow().native_entry_count, before);
+        executed = true;
+    };
+    inspect(program.code());
+    program.code().cold_ops().for_each(|(_, op)| {
+        op.visit_bodies(&mut |body| {
+            if let Some(view) = body.code() {
+                inspect(view);
+            }
+        });
+    });
+    assert!(executed, "ordinary source must execute the unary stencil");
+}
+
 #[test]
 fn region_verifier_rejects_physical_call_for_raw_abi() {
     #[cfg(target_arch = "aarch64")]
