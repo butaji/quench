@@ -1454,6 +1454,8 @@ pub(crate) fn execute_optimized_code_step_from(
                 crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
                 return Ok((crate::completion::Completion::Normal, start + 1));
             }
+            crate::execution_trace::stencil_observation(code, start, "property_store", false);
+            crate::execution_trace::leaf_rejection("optimizing_native_property_store");
         }
     }
     if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
