@@ -104,9 +104,9 @@ pub struct RegionRecord {
     pub external_entries: &'static [u16],
     pub fallthrough: Option<(&'static Stencil, u16)>,
     pub abi: RegionAbi,
-    /// Build-time decoder result for the selected target template.  Runtime
-    /// validation compares the emitted bytes against this declaration-derived
-    /// effect instead of treating `may_call_helper` as self-authenticating.
+    /// Canonical semantic-boundary fact for the selected template. Runtime
+    /// validation still checks physical instructions fail-closed; a branch is
+    /// not treated as a helper merely because its encoding resembles one.
     pub template_calls_helper: bool,
     /// Some regions describe IC data/layout but do not yet contain a complete
     /// executable semantic leaf.  Those rows remain selectable for auditing,
