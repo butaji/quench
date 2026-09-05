@@ -2790,34 +2790,40 @@ impl NativeUnaryPlan {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    fn execute_number(
+    fn execute_number_shared(
+        &mut self,
+        shared: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+        value: f64,
+        values: &crate::stencil_fact::PatchValues<'_, 4>,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        if let Some(owned) = self.shared_number_entry {
+            if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
+                self.note_entry();
+                return Ok(result);
+            }
+            self.shared_number_entry = None;
+        }
+        let (address, entry) = {
+            let mut slab = shared.borrow_mut();
+            let stencil = crate::stencil_select::select_stencil(self.key)
+                .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+            let address = slab.render_or_get(&mut self.cache, self.key, stencil, values)?;
+            slab.make_executable(address)?;
+            (address, slab.f64_unary_entry(address)?)
+        };
+        let owned = shared.borrow().owned_entry(address, entry)?;
+        self.shared_number_entry = Some(owned);
+        let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
+        self.note_entry();
+        Ok(result)
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn execute_number_local(
         &mut self,
         value: f64,
+        values: &crate::stencil_fact::PatchValues<'_, 4>,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site)
-            .with_constant_bits(0x8000_0000_0000_0000);
-        if let Some(shared) = self.shared_arena.clone() {
-            if let Some(owned) = self.shared_number_entry {
-                if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry(value)) {
-                    self.note_entry();
-                    return Ok(result);
-                }
-                self.shared_number_entry = None;
-            }
-            let (address, entry) = {
-                let mut slab = shared.borrow_mut();
-                let stencil = crate::stencil_select::select_stencil(self.key)
-                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
-                slab.make_executable(address)?;
-                (address, slab.f64_unary_entry(address)?)
-            };
-            let owned = shared.borrow().owned_entry(address, entry)?;
-            self.shared_number_entry = Some(owned);
-            let result = shared.borrow().with_owned(owned, |entry| entry(value))?;
-            self.note_entry();
-            return Ok(result);
-        }
         if let Some(entry) = self.number_entry {
             self.note_entry();
             return Ok(entry(value));
@@ -2837,6 +2843,20 @@ impl NativeUnaryPlan {
         self.number_entry = Some(entry);
         self.note_entry();
         Ok(entry(value))
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn execute_number(
+        &mut self,
+        value: f64,
+    ) -> Result<f64, crate::stencil_arena::ArenaError> {
+        let site = self.site.clone();
+        let values = crate::stencil_fact::PatchValues::from_site(&site)
+            .with_constant_bits(0x8000_0000_0000_0000);
+        if let Some(shared) = self.shared_arena.clone() {
+            return self.execute_number_shared(shared, value, &values);
+        }
+        self.execute_number_local(value, &values)
     }
 
     pub(crate) fn execute(&mut self, value: f64) -> Result<f64, crate::stencil_arena::ArenaError> {
