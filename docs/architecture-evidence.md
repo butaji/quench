@@ -30,6 +30,8 @@ ordinary-source execution, signed-zero, and coercive fallback coverage:
 0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-negate.log`) and
 execution-trace runtime is **743 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-trace-20260905-negate.log`).
+The helper split retains a clean non-trace regression (**731 passed, 0 failed,
+1 ignored**) at `/tmp/quench-runtime-full-20260905-negate-v2.log`.
 
 | Layer / family | Code and normal wiring | Executed evidence | Supported / safe boundary | Status and remaining gap |
 | --- | --- | --- | --- | --- |
