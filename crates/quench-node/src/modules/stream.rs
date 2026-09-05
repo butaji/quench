@@ -11,14 +11,13 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::registry::{
     SPEC_STREAM_ADD_ABORT_SIGNAL, SPEC_STREAM_COMPOSE, SPEC_STREAM_DESTROY, SPEC_STREAM_DUPLEX,
-    SPEC_STREAM_FINISHED, SPEC_STREAM_FINISHED_ABORT, SPEC_STREAM_FINISHED_CLEANUP,
-    SPEC_STREAM_FINISHED_EVENT, SPEC_STREAM_IS_DISTURBED, SPEC_STREAM_IS_ERRORED,
-    SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE, SPEC_STREAM_READABLE,
-    SPEC_STREAM_TRANSFORM, SPEC_STREAM_WRITABLE, SPEC_STREAM_DUPLEX_PAIR,
-    SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_DUPLEX_PAIR_UNCORK, SPEC_STREAM_DUPLEX_PAIR_FINAL,
-    SPEC_STREAM_WEB_PIPELINE_COMPLETE, SPEC_STREAM_WEB_PIPELINE_ERROR,
-    SPEC_STREAM_PROMISES_PIPELINE, SPEC_STREAM_PROMISES_FINISHED,
-    SPEC_STREAM_PROMISES_CALLBACK,
+    SPEC_STREAM_DUPLEX_PAIR, SPEC_STREAM_DUPLEX_PAIR_FINAL, SPEC_STREAM_DUPLEX_PAIR_UNCORK,
+    SPEC_STREAM_DUPLEX_PAIR_WRITE, SPEC_STREAM_FINISHED, SPEC_STREAM_FINISHED_ABORT,
+    SPEC_STREAM_FINISHED_CLEANUP, SPEC_STREAM_FINISHED_EVENT, SPEC_STREAM_IS_DISTURBED,
+    SPEC_STREAM_IS_ERRORED, SPEC_STREAM_IS_READABLE, SPEC_STREAM_IS_WRITABLE, SPEC_STREAM_PIPELINE,
+    SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
+    SPEC_STREAM_READABLE, SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE,
+    SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -245,7 +244,9 @@ fn strip_pipeline_options(args: &[Value]) -> Vec<Value> {
 }
 
 fn validate_finished_options(value: Option<&Value>) -> Result<(), VmError> {
-    let Some(options) = value else { return Ok(()); };
+    let Some(options) = value else {
+        return Ok(());
+    };
     let cleanup = execute::get_property(options, "cleanup");
     if !matches!(cleanup, Value::Undefined | Value::Boolean(_)) {
         return Err(pipeline_error(
@@ -541,6 +542,11 @@ fn pipeline_error(message: &str, code: &str) -> VmError {
     )
     .unwrap_or_else(|_| host_api::object(Vec::new()));
     execute::set_property_in_place(&error, "code", Value::String(code.into()));
+    execute::set_property_in_place(
+        &error,
+        "\0node_error_to_string_code",
+        Value::Boolean(true),
+    );
     VmError::Thrown(error)
 }
 
@@ -808,10 +814,7 @@ pub fn finished(
         Value::Undefined | Value::Null
     );
     let incoming_message = matches!(
-        execute::get_property(
-            &stream,
-            crate::modules::http::INCOMING_CLOSE_PENDING_PROP,
-        ),
+        execute::get_property(&stream, crate::modules::http::INCOMING_CLOSE_PENDING_PROP,),
         Value::Boolean(_)
     );
     let server_response = matches!(
@@ -851,8 +854,8 @@ pub fn finished(
             || quench_runtime::is_callable(&execute::get_property(&stream, "getWriter"))
             || quench_runtime::is_callable(&execute::get_property(&stream, "destroy"))
             || quench_runtime::is_callable(&execute::get_property(&stream, "pipe"))
-        || quench_runtime::is_callable(&execute::get_property(&stream, "write"))
-        || web_writable;
+            || quench_runtime::is_callable(&execute::get_property(&stream, "write"))
+            || web_writable;
     if !has_stream_state {
         return Err(pipeline_error(
             "The \"stream\" argument must be a stream",
@@ -916,11 +919,19 @@ pub fn finished(
         let then = execute::get_property(&closed, "then");
         let fulfilled = host_api::bound_capability_with_arguments(
             crate::host::capability_ref(SPEC_STREAM_FINISHED_EVENT),
-            vec![state_object.clone(), callback.clone(), Value::String("writable".into())],
+            vec![
+                state_object.clone(),
+                callback.clone(),
+                Value::String("writable".into()),
+            ],
         );
         let rejected = host_api::bound_capability_with_arguments(
             crate::host::capability_ref(SPEC_STREAM_FINISHED_EVENT),
-            vec![state_object.clone(), callback.clone(), Value::String("error".into())],
+            vec![
+                state_object.clone(),
+                callback.clone(),
+                Value::String("error".into()),
+            ],
         );
         execute::call(&then, &closed, &[fulfilled, rejected])?;
     }
@@ -1197,10 +1208,16 @@ pub fn compose(
         "_readableState",
         stream_mode(last, "readableObjectMode"),
     );
-    if matches!(execute::get_property(first, "writable"), Value::Boolean(false)) {
+    if matches!(
+        execute::get_property(first, "writable"),
+        Value::Boolean(false)
+    ) {
         execute::set_property_in_place(&composed, "writable", Value::Boolean(false));
     }
-    if matches!(execute::get_property(last, "readable"), Value::Boolean(false)) {
+    if matches!(
+        execute::get_property(last, "readable"),
+        Value::Boolean(false)
+    ) {
         execute::set_property_in_place(&composed, "readable", Value::Boolean(false));
     }
     Ok(composed)
@@ -1272,10 +1289,7 @@ pub fn duplex_pair_write(
         .cloned()
         .unwrap_or_else(|| Value::String("utf8".into()));
     let callback = args.get(4).cloned().unwrap_or(Value::Undefined);
-    let corked = execute::get_property(
-        &execute::get_property(source, "_writableState"),
-        "corked",
-    );
+    let corked = execute::get_property(&execute::get_property(source, "_writableState"), "corked");
     if matches!(corked, Value::Number(value) if value > 0.0) {
         let pending = match execute::get_property(source, "__pairPending") {
             Value::Array(_) => execute::get_property(source, "__pairPending"),
@@ -1367,7 +1381,10 @@ pub fn duplex_pair(
     if !quench_runtime::is_callable(&duplex) {
         return Err(VmError::NotCallable);
     }
-    let options = args.first().cloned().unwrap_or_else(|| host_api::object(Vec::new()));
+    let options = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
     let left = execute::construct_value(&duplex, std::slice::from_ref(&options))?;
     let right = execute::construct_value(&duplex, std::slice::from_ref(&options))?;
     for (source, destination) in [(left.clone(), right.clone()), (right.clone(), left.clone())] {
