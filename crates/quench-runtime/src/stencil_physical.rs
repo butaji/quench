@@ -14,7 +14,11 @@ pub(crate) fn contains_call(bytes: &[u8]) -> bool {
     }
     #[cfg(target_arch = "x86_64")]
     {
-        return bytes.first().is_some_and(|byte| *byte == 0xE8)
+        // This is deliberately conservative: without a full x86 decoder,
+        // every plausible CALL opcode is treated as a helper effect.  False
+        // positives reject a template; false negatives would misdeclare its
+        // ABI.  The scan still distinguishes FF /2 CALL from FF /4 JMP.
+        return bytes.windows(5).any(|window| window[0] == 0xE8)
             || bytes.windows(2).any(|window| {
                 // FF /2 is CALL r/m; /4 is JMP and must not be treated as a
                 // helper call merely because it shares the FF opcode.
