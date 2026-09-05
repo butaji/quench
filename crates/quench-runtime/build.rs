@@ -422,8 +422,12 @@ const fn aarch64_shift_w(base: u32, rd: u8, rn: u8, rm: u8) -> u32 {
     base | ((rm as u32) << 16) | ((rn as u32) << 5) | rd as u32
 }
 
+const fn aarch64_mvn_w(rd: u8, rm: u8) -> u32 {
+    0x2A20_0000 | ((rm as u32) << 16) | (31 << 5) | rd as u32
+}
+
 const fn aarch64_mvn_w0() -> u32 {
-    0x2A20_03E0
+    aarch64_mvn_w(0, 0)
 }
 
 const fn aarch64_cset_vc_w1() -> u32 {
