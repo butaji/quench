@@ -5,8 +5,8 @@ use std::{
 };
 
 use object::read::{Object, ObjectSection, ObjectSymbol};
-use object::SectionKind;
 use object::SymbolSection;
+use object::{BinaryFormat, SectionKind};
 
 use super::RegionDeclaration;
 
@@ -14,8 +14,8 @@ const HEADER: &str = "/// Rust object artifacts generated at build time.\n";
 
 pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
     let target = env::var("TARGET").unwrap_or_default();
-    let generation_enabled = env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some()
-        && supports_target(&target);
+    let generation_enabled =
+        env::var_os("QUENCH_GENERATE_STENCIL_OBJECTS").is_some() && supports_target(&target);
     if generation_enabled {
         println!("cargo:rustc-cfg=quench_generated_stencil_artifacts");
     }
@@ -52,9 +52,10 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
+    assert_target_format(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
-    assert_no_relocations(&file, "assembly verifier");
+    validate_relocations(&file, "assembly verifier");
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -86,9 +87,10 @@ pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
+    assert_target_format(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
-    assert_no_relocations(&file, "assembly verifier");
+    validate_relocations(&file, "assembly verifier");
     let mut sections = file.sections().filter(|section| {
         section
             .name()
@@ -238,9 +240,10 @@ fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let data = fs::read(path).expect("read Rust stencil object");
     let file = object::File::parse(&*data).expect("parse Rust stencil object");
     assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
+    assert_target_format(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     reject_unwind_or_tls_sections(&file);
-    assert_no_relocations(&file, "Rust stencil");
+    validate_relocations(&file, "Rust stencil");
     for symbol in file.symbols() {
         if matches!(symbol.section(), SymbolSection::Undefined) {
             panic!(
@@ -350,6 +353,22 @@ fn assert_target_architecture<'data>(file: &object::File<'data>, target: Option<
     }
 }
 
+fn assert_target_format<'data>(file: &object::File<'data>, target: Option<&str>) {
+    let Some(target) = target else { return };
+    let expected = if target.contains("-apple-") {
+        BinaryFormat::MachO
+    } else if target.contains("-windows-") {
+        BinaryFormat::Coff
+    } else {
+        BinaryFormat::Elf
+    };
+    assert_eq!(
+        file.format(),
+        expected,
+        "Rust stencil object format does not match target {target}"
+    );
+}
+
 fn reject_unwind_or_tls_sections<'data>(file: &object::File<'data>) {
     for section in file.sections() {
         let name = section.name().unwrap_or_default();
@@ -367,9 +386,14 @@ fn reject_unwind_or_tls_sections<'data>(file: &object::File<'data>) {
     }
 }
 
-fn assert_no_relocations<'data>(file: &object::File<'data>, context: &str) {
+/// Validate every relocation, including local references.  Isolated Rust
+/// leaves currently declare no holes, so any relocation is rejected rather
+/// than silently dropping a local literal/helper reference. Composable
+/// templates will pass a catalog-derived allowlist here when their relocation
+/// records are represented in `Stencil` metadata.
+fn validate_relocations<'data>(file: &object::File<'data>, context: &str) {
     for section in file.sections() {
-        if let Some((offset, relocation)) = section.relocations().next() {
+        for (offset, relocation) in section.relocations() {
             panic!(
                 "{context} contains unsupported relocation at {offset:#x}: kind={:?} encoding={:?} size={}",
                 relocation.kind(),
