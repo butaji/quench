@@ -911,12 +911,32 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         entry: None,
+        shared_entry: None,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
     assert!(plan.entry.is_some());
     let used = plan.arena.as_ref().expect("rendered chain").used();
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
     assert_eq!(plan.arena.as_ref().expect("cached chain").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeAddChainPlan::new_with_arena(policy, shared.clone())
+        .expect("shared add chain");
+    assert_eq!(plan.execute(1.0, 2.0, 3.0), Ok(6.0));
+    let used = shared.borrow().used();
+    assert!(plan.shared_entry.is_some());
+    assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
+    assert_eq!(shared.borrow().used(), used);
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
+    assert!(plan.shared_entry.is_some());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -930,6 +950,7 @@ fn native_move_uses_rendered_address_without_remapping() {
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
         opcode: crate::ir::Opcode::Move,
         entry: None,
+        shared_entry: None,
     };
     let source = crate::tagged_value::TaggedValue::from_bits(0x1234_5678_9ABC_DEF0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
@@ -937,6 +958,33 @@ fn native_move_uses_rendered_address_without_remapping() {
     assert!(used > 0);
     assert_eq!(plan.execute(&source), Ok(source.bits()));
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_move_shared_entry_reuses_owner_and_recovers_after_eviction() {
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Move,
+        flags: 0,
+        a: 0,
+        b: 1,
+        c: 0,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeMovePlan::new_with_arena(instruction, policy, shared.clone())
+        .expect("shared move plan");
+    let source = crate::tagged_value::TaggedValue::from_bits(0xCAFE_BABE);
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
+    let used = shared.borrow().used();
+    assert!(plan.shared_entry.is_some());
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
+    assert_eq!(shared.borrow().used(), used);
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(&source), Ok(source.bits()));
+    assert!(plan.shared_entry.is_some());
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
