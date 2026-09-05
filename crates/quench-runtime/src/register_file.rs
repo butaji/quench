@@ -785,6 +785,19 @@ impl RegisterFile {
             .collect()
     }
 
+    /// Visit live frame roots without first allocating a temporary `Vec`.
+    /// Each decoded value owns exactly one retain for the duration of the
+    /// callback; callers that store it in a root set transfer that ownership
+    /// directly.  This keeps collector protection tied to the canonical word
+    /// layout and avoids a second frame snapshot representation.
+    pub(crate) fn visit_values(&self, mut visitor: impl FnMut(Value)) {
+        for &word in &self.words {
+            if let Some(value) = decode_owned(word) {
+                visitor(value);
+            }
+        }
+    }
+
     pub fn into_values(self) -> Vec<Value> {
         self.to_values()
     }
@@ -1205,6 +1218,20 @@ mod tests {
         assert!(destination.copy_from(0, &source, 0));
         assert_eq!(destination.read_number(0), Some(42.0));
         assert_eq!(source.read_number(0), Some(42.0));
+    }
+
+    #[test]
+    fn visiting_frame_roots_preserves_owned_values_without_snapshot_vector() {
+        let registers = RegisterFile::from_values(vec![
+            Value::Number(42.0),
+            Value::String("live".into()),
+            Value::Undefined,
+        ]);
+        let mut values = Vec::new();
+        registers.visit_values(|value| values.push(value));
+        assert_eq!(values.len(), registers.len());
+        assert_eq!(values[0], Value::Number(42.0));
+        assert_eq!(values[1], Value::String("live".into()));
     }
 
     #[test]
