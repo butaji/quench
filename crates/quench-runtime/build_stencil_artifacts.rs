@@ -160,7 +160,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         if !declaration.holes.is_empty() || !declaration.aarch64_holes.is_empty() {
             continue;
         }
-        let Some(recipe) = super::rust_leaf_recipe(declaration.operations) else {
+        let Some(recipe) = super::rust_leaf_recipe(declaration) else {
             continue;
         };
         let artifact = compile_one(
