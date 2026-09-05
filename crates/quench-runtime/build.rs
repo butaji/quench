@@ -1588,7 +1588,12 @@ fn verify_stencil_encodings() {
         source.write_all(b"\n\"#);\n").expect("close global_asm source");
     }
     run_tool(
-        Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())).args([
+        Command::new(
+            env::var_os("QUENCH_RUSTC")
+                .or_else(|| env::var_os("RUSTC"))
+                .unwrap_or_else(|| "rustc".into()),
+        )
+        .args([
             "--target", target.as_str(), "--crate-type=lib", "--emit=obj", "-Cpanic=abort",
             arm_source.to_str().expect("ARM source path"),
             "-o",

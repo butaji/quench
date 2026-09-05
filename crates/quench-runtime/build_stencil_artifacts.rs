@@ -18,6 +18,22 @@ pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
         .expect("write generated stencil artifacts");
 }
 
+struct OwnedDirectory {
+    path: PathBuf,
+}
+
+impl Drop for OwnedDirectory {
+    fn drop(&mut self) {
+        let Ok(entries) = fs::read_dir(&self.path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let _ = fs::remove_file(entry.path());
+        }
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
 pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
@@ -94,7 +110,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let mut constants = Vec::new();
     let mut rows = Vec::new();
     for declaration in declarations.iter().filter(|item| extractable(item)) {
-        let artifact = compile_one(&root, &target, &compiler, &flags, declaration);
+        let artifact = compile_one(&root.path, &target, &compiler, &flags, declaration);
         let (constant, row) = render_artifact(declaration.name, &target, &compiler, &fingerprint, &artifact);
         constants.push(constant);
         rows.push(row);
@@ -105,7 +121,6 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
         constants.join("\n"),
         rows.join("\n")
     );
-    let _ = fs::remove_dir_all(root);
     generated
 }
 
@@ -250,7 +265,7 @@ fn rustc_path() -> String {
     env::var_os("QUENCH_RUSTC").or_else(|| env::var_os("RUSTC")).map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| "rustc".to_owned())
 }
 
-fn unique_directory() -> PathBuf {
+fn unique_directory() -> OwnedDirectory {
     let base = env::var_os("OUT_DIR").map(PathBuf::from).expect("OUT_DIR for Rust stencil artifacts");
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -259,7 +274,7 @@ fn unique_directory() -> PathBuf {
     for attempt in 0..8u8 {
         let directory = base.join(format!("stencil-objects-{stamp}-{}-{attempt}", std::process::id()));
         if fs::create_dir(&directory).is_ok() {
-            return directory;
+            return OwnedDirectory { path: directory };
         }
     }
     panic!("cannot create unique Rust stencil object directory")
