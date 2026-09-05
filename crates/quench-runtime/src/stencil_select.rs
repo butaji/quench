@@ -80,6 +80,9 @@ region_abi_catalog! {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegionRecord {
+    /// Stable build-time declaration name used only for diagnostics and
+    /// storage attribution; semantic selection remains keyed by `RegionKey`.
+    pub name: &'static str,
     pub key: RegionKey,
     pub stencil: Stencil,
     pub operations: &'static [crate::ir::Opcode],
