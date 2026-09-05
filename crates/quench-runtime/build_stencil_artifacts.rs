@@ -21,6 +21,7 @@ pub(crate) fn generate(out_dir: &Path, declarations: &[RegionDeclaration]) {
 pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
+    assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     let mut sections = file.sections().filter(|section| {
         section
@@ -42,6 +43,7 @@ pub(crate) fn verify_words(path: &Path, expected: &[u32]) {
 pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
     let data = fs::read(path).expect("read Rust assembly object");
     let file = object::File::parse(&*data).expect("parse Rust assembly object");
+    assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     let mut sections = file.sections().filter(|section| {
         section
@@ -134,6 +136,7 @@ fn compile_one(root: &Path, target: &str, compiler: &str, flags: &[&str], declar
 fn parse_object(path: &Path, name: &str) -> Vec<u8> {
     let data = fs::read(path).expect("read Rust stencil object");
     let file = object::File::parse(&*data).expect("parse Rust stencil object");
+    assert_target_architecture(&file, env::var("TARGET").ok().as_deref());
     assert_single_text_section(&file);
     for symbol in file.symbols() {
         if matches!(symbol.section(), SymbolSection::Undefined) {
@@ -171,6 +174,21 @@ fn assert_single_text_section<'data>(file: &object::File<'data>) {
         .filter(|section| section.kind() == SectionKind::Text)
         .count();
     assert_eq!(text_sections, 1, "Rust stencil must have one executable text section");
+}
+
+fn assert_target_architecture<'data>(file: &object::File<'data>, target: Option<&str>) {
+    let expected = target.and_then(|triple| {
+        if triple.starts_with("aarch64") {
+            Some(object::Architecture::Aarch64)
+        } else if triple.starts_with("x86_64") {
+            Some(object::Architecture::X86_64)
+        } else {
+            None
+        }
+    });
+    if let Some(expected) = expected {
+        assert_eq!(file.architecture(), expected, "Rust stencil target architecture mismatch");
+    }
 }
 
 fn render_artifact(
