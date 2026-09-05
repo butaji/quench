@@ -304,6 +304,21 @@ impl RenderedRegionCache {
         true
     }
 
+    /// Remove every render owned by a retired executable slab.  Cache entries
+    /// are derived lookup data; dropping them at the same ownership boundary
+    /// keeps stale generations from consuming the bounded table or being
+    /// mistaken for a rebuild hit.
+    pub(crate) fn remove_owner(&mut self, owner: u64) -> usize {
+        let mut removed = 0;
+        for entry in &mut self.entries {
+            if entry.is_some_and(|rendered| rendered.owner == owner) {
+                *entry = None;
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     pub fn len(&self) -> usize {
         self.entries.iter().flatten().count()
     }
