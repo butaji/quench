@@ -3085,16 +3085,20 @@ impl NativeUnaryPlan {
 /// inputs in FP argument registers, performs the admitted sequence, and
 /// returns once at the region boundary. Register writes and all
 /// non-numeric/aliasing cases stay on the canonical path.
+#[derive(Clone, Copy)]
+enum InstalledF64x3Entry {
+    Unpublished,
+    Local(extern "C" fn(f64, f64, f64) -> f64),
+    Shared(crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>),
+}
+
 pub(crate) struct NativeAddChainPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(f64, f64, f64) -> f64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>>,
+    installed: InstalledF64x3Entry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -3102,8 +3106,7 @@ pub(crate) struct NativeAddChainPlan {
 impl NativeAddChainPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.shared_entry = None;
-        self.entry = None;
+        self.installed = InstalledF64x3Entry::Unpublished;
         self.cache.clear();
         self.lifecycle.reset();
     }
@@ -3130,10 +3133,7 @@ impl NativeAddChainPlan {
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry: None,
+            installed: InstalledF64x3Entry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -3159,7 +3159,8 @@ impl NativeAddChainPlan {
         rhs: f64,
         third: f64,
     ) -> Result<Option<f64>, crate::stencil_arena::ArenaError> {
-        let (Some(shared), Some(owned)) = (self.shared_arena.clone(), self.shared_entry)
+        let (Some(shared), InstalledF64x3Entry::Shared(owned)) =
+            (self.shared_arena.clone(), self.installed)
         else {
             return Ok(None);
         };
@@ -3208,7 +3209,7 @@ impl NativeAddChainPlan {
             }
         };
         let owned = shared.borrow().owned_f64x3_entry(address)?;
-        self.shared_entry = Some(owned);
+        self.installed = InstalledF64x3Entry::Shared(owned);
         Ok(owned)
     }
 
@@ -3268,7 +3269,11 @@ impl NativeAddChainPlan {
             self.note_entry();
             if let Some(arena) = self.arena.as_ref() {
                 if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
-                    self.entry = arena.f64x3_entry(address).ok();
+                    self.installed = arena
+                        .f64x3_entry(address)
+                        .ok()
+                        .map(InstalledF64x3Entry::Local)
+                        .unwrap_or(InstalledF64x3Entry::Unpublished);
                 }
             }
         } else {
@@ -3288,7 +3293,7 @@ impl NativeAddChainPlan {
         third: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         if self.shared_arena.is_none() {
-            if let Some(entry) = self.entry {
+            if let InstalledF64x3Entry::Local(entry) = self.installed {
                 let result = unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) };
                 self.note_entry();
                 return Ok(result);

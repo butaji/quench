@@ -1971,12 +1971,11 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
-        entry: None,
-        shared_entry: None,
+        installed: super::InstalledF64x3Entry::Unpublished,
         native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
-    assert!(plan.entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Local(_)));
     assert_eq!(plan.native_entry_count(), 1);
     let used = plan.arena.as_ref().expect("rendered chain").used();
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
@@ -2026,12 +2025,12 @@ fn native_add_chain_shared_entry_reuses_owner_after_eviction() {
         .expect("shared add chain");
     assert_eq!(plan.execute(1.0, 2.0, 3.0), Ok(6.0));
     let used = shared.borrow().used();
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Shared(_)));
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
     assert_eq!(shared.borrow().used(), used);
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 4.0, 8.0), Ok(14.0));
-    assert!(plan.shared_entry.is_some());
+    assert!(matches!(plan.installed, super::InstalledF64x3Entry::Shared(_)));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
