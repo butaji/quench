@@ -1167,6 +1167,31 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn executable_ordered_regions_reject_unordered_nan() {
+        let site = QuickeningSite::<2>::new(Opcode::Binary);
+        let values = PatchValues::from_site(&site);
+        let cases = [
+            (crate::stencil_select::compare_less_region_key(), 1.0, 2.0),
+            (crate::stencil_select::compare_less_equal_region_key(), 2.0, 2.0),
+            (crate::stencil_select::compare_greater_region_key(), 2.0, 1.0),
+            (crate::stencil_select::compare_greater_equal_region_key(), 2.0, 2.0),
+        ];
+        for (key, lhs, rhs) in cases {
+            let record = crate::stencil_select::select_region(key)
+                .expect("comparison declaration");
+            let mut arena = StencilArena::new(4096).unwrap();
+            let mut cache = RenderedRegionCache::new();
+            let address = arena
+                .render_or_get(&mut cache, key, &record.stencil, &values)
+                .unwrap();
+            arena.make_executable().unwrap();
+            assert!(arena.execute_bool(address, lhs, rhs).unwrap());
+            assert!(!arena.execute_bool(address, f64::NAN, rhs).unwrap());
+        }
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn executable_add_const_region_uses_patched_constant_data() {
         let mut arena = StencilArena::new(4096).unwrap();
         let mut cache = RenderedRegionCache::new();
