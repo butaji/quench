@@ -61,6 +61,7 @@ region_abi_catalog! {
     TaggedWord,
     ConstantWord,
     ScalarBool,
+    ScalarWordBool,
     ScalarI32,
     ScalarU32,
     Bridge,
@@ -392,6 +393,13 @@ mod generated_region_admission_tests {
                     assert!(matches!(
                         record.operations,
                         [crate::ir::Opcode::JumpIfFalse]
+                    ));
+                }
+                RegionAbi::ScalarWordBool => {
+                    assert!(matches!(record.stencil.bytes.len(), 27 | 32));
+                    assert!(matches!(
+                        record.operations,
+                        [crate::ir::Opcode::Unary, crate::ir::Opcode::Return]
                     ));
                 }
                 RegionAbi::ScalarI32 => {

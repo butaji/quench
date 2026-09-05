@@ -1339,6 +1339,24 @@ pub(crate) fn execute_optimized_code_step_from(
             return Ok((crate::completion::Completion::Normal, start + 1));
         }
     }
+    if instruction.opcode == crate::ir::Opcode::Unary
+        && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+    {
+        if let Some(native) = entry.native_nullish.as_ref() {
+            if let Some(bits) = registers.word_bits(usize::from(instruction.b)) {
+                if let Ok(result) = native.borrow_mut().execute(bits) {
+                    registers.write_boolean(usize::from(instruction.a), result);
+                    crate::execution_trace::stencil_observation(
+                        code, start, "nullish_word", true,
+                    );
+                    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                    return Ok((crate::completion::Completion::Normal, start + 1));
+                }
+            }
+            crate::execution_trace::stencil_observation(code, start, "nullish_word", false);
+            crate::execution_trace::leaf_rejection("optimizing_native_nullish_word");
+        }
+    }
     if instruction.opcode == crate::ir::Opcode::Unary {
         if let Some(native) = entry.native_unary.as_ref() {
             if let Some(value) = registers.read_number(usize::from(instruction.b)) {
@@ -1815,6 +1833,25 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                 }
                 crate::execution_trace::stencil_observation(code, pc, "move", false);
                 crate::execution_trace::leaf_rejection("native_move");
+            }
+        }
+        if instruction.opcode == crate::ir::Opcode::Unary
+            && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
+        {
+            if let Some(native) = plan.native_nullish_at(pc) {
+                if let Some(bits) = registers.word_bits(usize::from(instruction.b)) {
+                    if let Ok(result) = native.borrow_mut().execute(bits) {
+                        registers.write_boolean(usize::from(instruction.a), result);
+                        crate::execution_trace::stencil_observation(
+                            code, pc, "nullish_word", true,
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                        pc += 1;
+                        continue;
+                    }
+                }
+                crate::execution_trace::stencil_observation(code, pc, "nullish_word", false);
+                crate::execution_trace::leaf_rejection("native_nullish_word");
             }
         }
         if instruction.opcode == crate::ir::Opcode::Unary {
@@ -4942,6 +4979,55 @@ mod compact_handler_tests {
         );
         assert!(result.is_err(), "immutable stores must use the canonical throw path");
         assert_eq!(plan.native_store_local_at(1).unwrap().borrow().native_entry_count(), 1);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn baseline_nullish_unary_uses_native_word_predicate_and_falls_back() {
+        let function = crate::machine::FunctionCode::from_ops(vec![
+            Op::Unary {
+                dst: 0,
+                operator: crate::ops::UnaryOp::IsNullish,
+                src: 1,
+            },
+            Op::Return { src: 0 },
+        ]);
+        let code = function.code().expect("function code");
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        assert!(plan.native_nullish_at(0).is_some());
+        let context = crate::vm::current_context_or_default();
+        let environment = crate::environment::Environment::new();
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            Value::Undefined,
+            Value::Null,
+        ]);
+        let (completion, _) = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            environment.clone(),
+        )
+        .expect("native nullish predicate");
+        assert_eq!(completion, crate::completion::Completion::Return(Value::Boolean(true)));
+        assert_eq!(plan.native_nullish_at(0).unwrap().borrow().native_entry_count(), 1);
+
+        registers.write(1, Value::Number(3.0));
+        let (completion, _) = crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            environment,
+        )
+        .expect("native non-nullish predicate");
+        assert_eq!(completion, crate::completion::Completion::Return(Value::Boolean(false)));
+        assert_eq!(plan.native_nullish_at(0).unwrap().borrow().native_entry_count(), 2);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
