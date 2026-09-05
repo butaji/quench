@@ -733,6 +733,7 @@ pub fn generate_key(
             .unwrap_or_else(|| host_api::array(Vec::new()));
         let bits = match execute::get_property(&algorithm, "length") {
             Value::Number(value) if value.is_finite() && value > 0.0 => value as usize,
+            Value::Undefined => hmac_default_length(&algorithm).unwrap_or(256),
             _ => 256,
         };
         let data = vec![0_u8; bits.div_ceil(8)];
@@ -974,6 +975,16 @@ pub fn derive_key(
                 {
                     value as usize
                 }
+                Value::Undefined if name == "HMAC" => {
+                    let Some(length) = hmac_default_length(derived_algorithm) else {
+                        return Ok(settled(Err(error(
+                            Builtin::TypeError,
+                            Some("ERR_MISSING_OPTION"),
+                            "The \"length\" option is required",
+                        ))));
+                    };
+                    length
+                }
                 _ => {
                     return Ok(settled(Err(error(
                         Builtin::TypeError,
@@ -995,6 +1006,19 @@ pub fn derive_key(
     if !valid_length {
         return Ok(settled(Err(operation_error("Invalid key length"))));
     }
+    let normalized_derived_algorithm = if name == "HMAC"
+        && matches!(
+            execute::get_property(derived_algorithm, "length"),
+            Value::Undefined
+        ) {
+        execute::set_property(
+            derived_algorithm.clone(),
+            "length",
+            Value::Number(length as f64),
+        )
+    } else {
+        derived_algorithm.clone()
+    };
     if base_name.eq_ignore_ascii_case("PBKDF2") {
         let data = match pbkdf2_webcrypto(state, algorithm, args.get(1), length) {
             Ok(data) => data,
@@ -1007,7 +1031,13 @@ pub fn derive_key(
             .get(4)
             .cloned()
             .unwrap_or_else(|| host_api::array(Vec::new()));
-        let derived = key(&prototype, derived_algorithm.clone(), extractable, usages, Some(data));
+        let derived = key(
+            &prototype,
+            normalized_derived_algorithm.clone(),
+            extractable,
+            usages,
+            Some(data),
+        );
         return Ok(settled(Ok(key_metadata(derived, "secret", "raw"))));
     }
     let Some(hash) = algorithm_hash(algorithm) else {
@@ -1064,7 +1094,13 @@ pub fn derive_key(
         .get(4)
         .cloned()
         .unwrap_or_else(|| host_api::array(Vec::new()));
-    let derived = key(&prototype, derived_algorithm.clone(), extractable, usages, Some(data));
+    let derived = key(
+        &prototype,
+        normalized_derived_algorithm,
+        extractable,
+        usages,
+        Some(data),
+    );
     Ok(settled(Ok(key_metadata(derived, "secret", "raw"))))
 }
 
@@ -1173,6 +1209,17 @@ fn algorithm_hash(value: &Value) -> Option<String> {
             | "SHA3-256" | "SHA3-384" | "SHA3-512"
     )
     .then_some(normalized)
+}
+
+fn hmac_default_length(value: &Value) -> Option<usize> {
+    match algorithm_hash(value)?.as_str() {
+        "SHA-1" | "SHA-224" | "SHA-256" => Some(512),
+        "SHA-384" | "SHA-512" => Some(1024),
+        "SHA3-256" => Some(1088),
+        "SHA3-384" => Some(832),
+        "SHA3-512" => Some(576),
+        _ => None,
+    }
 }
 
 fn validate_hkdf_webcrypto(hash: &str, info_len: usize, output_len: usize) -> Option<VmError> {
