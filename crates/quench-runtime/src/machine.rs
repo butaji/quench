@@ -2098,7 +2098,7 @@ impl std::fmt::Debug for NativeDispatchPlan {
 /// region owns alternate JavaScript semantics, and any mismatch takes the
 /// ordinary per-instruction path.
 pub(crate) struct NativeRegionPlan {
-    arena: Option<crate::stencil_arena::StencilArena>,
+    arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
@@ -2115,6 +2115,17 @@ impl NativeRegionPlan {
         key: crate::stencil_fact::RegionKey,
         policy: crate::stencil_policy::ExecutionPolicy,
     ) -> Option<Self> {
+        let arena = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(4096).ok()?,
+        ));
+        Self::new_with_arena(key, policy, arena)
+    }
+
+    fn new_with_arena(
+        key: crate::stencil_fact::RegionKey,
+        policy: crate::stencil_policy::ExecutionPolicy,
+        arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
         let composed = crate::stencil_select::select_region(key).is_some_and(|record| {
             matches!(
                 record.abi,
@@ -2125,10 +2136,15 @@ impl NativeRegionPlan {
         Self::new_inner(
             key,
             policy.fused_regions || (policy.composed_regions && composed),
+            arena,
         )
     }
 
-    fn new_inner(key: crate::stencil_fact::RegionKey, enabled: bool) -> Option<Self> {
+    fn new_inner(
+        key: crate::stencil_fact::RegionKey,
+        enabled: bool,
+        arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
         if !enabled {
             return None;
         }
@@ -2138,7 +2154,7 @@ impl NativeRegionPlan {
                 && !matches!(record.abi, crate::stencil_select::RegionAbi::Scalar)
         })?;
         Some(Self {
-            arena: None,
+            arena: Some(arena),
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(record.operations[0]),
@@ -2159,7 +2175,10 @@ impl NativeRegionPlan {
 
     #[cfg(test)]
     pub(crate) fn new_for_test(key: crate::stencil_fact::RegionKey) -> Option<Self> {
-        Self::new_inner(key, true)
+        let arena = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(4096).ok()?,
+        ));
+        Self::new_inner(key, true, arena)
     }
 
     pub(crate) fn execute(
@@ -2183,19 +2202,8 @@ impl NativeRegionPlan {
                 "native fused region unavailable".into(),
             ));
         }
-        if self.arena.is_none() {
-            match crate::stencil_arena::StencilArena::new(4096) {
-                Ok(arena) => self.arena = Some(arena),
-                Err(error) => {
-                    self.lifecycle.reset();
-                    return Err(NativeDispatchError::Physical(format!(
-                        "native fused region mapping failed: {error:?}"
-                    )));
-                }
-            }
-        }
         let result = (|| {
-            let arena = self.arena.as_mut().ok_or_else(|| {
+            let arena = self.arena.as_ref().ok_or_else(|| {
                 NativeDispatchError::Physical("native fused region arena missing".into())
             })?;
             let record = crate::stencil_select::select_region(key).ok_or_else(|| {
@@ -2211,13 +2219,14 @@ impl NativeRegionPlan {
                 ));
             }
             let address = arena
+                .borrow_mut()
                 .render_or_get(&mut self.cache, key, &record.stencil, &values)
                 .map_err(|error| {
                     NativeDispatchError::Physical(format!(
                         "native fused region render failed: {error:?}"
                     ))
                 })?;
-            arena.make_executable().map_err(|error| {
+            arena.borrow_mut().make_executable(address).map_err(|error| {
                 NativeDispatchError::Physical(format!(
                     "native fused region protection failed: {error:?}"
                 ))
@@ -2233,7 +2242,7 @@ impl NativeRegionPlan {
             match record.abi {
                 crate::stencil_select::RegionAbi::ArrayKernel => {
                     let physical = crate::vm::execute_composed_array_kernel(&mut region, |raw| {
-                        arena.execute_dispatch(address, raw)
+                        arena.borrow().execute_dispatch(address, raw)
                     });
                     self.last_native_execution |= region.native_entered;
                     if let Some(result) = physical? {
@@ -2247,7 +2256,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayNumericLoop => {
                     let physical =
                         crate::vm::execute_composed_array_numeric_loop(&mut region, |raw| {
-                            arena.execute_dispatch(address, raw)
+                            arena.borrow().execute_dispatch(address, raw)
                         });
                     self.last_native_execution |= region.native_entered;
                     if let Some(result) = physical? {
@@ -2263,6 +2272,7 @@ impl NativeRegionPlan {
                 }
             }
             let status = arena
+                .borrow()
                 .execute_dispatch(
                     address,
                     (&mut region as *mut crate::vm::NativeRegionContext<'_>)
@@ -2276,7 +2286,10 @@ impl NativeRegionPlan {
             region.finish(status)
         })();
         if matches!(result, Err(NativeDispatchError::Physical(_))) {
-            self.arena.take();
+            // The arena is shared by every composed entry in this baseline
+            // plan. Retiring one region must discard only its cache/lifecycle
+            // metadata; dropping the shared owner here would invalidate other
+            // still-active entry pointers.
             self.cache.clear();
             self.lifecycle.reset();
         }
@@ -2292,7 +2305,10 @@ impl std::fmt::Debug for NativeRegionPlan {
             .field("operations", &self.operations)
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+                &self
+                    .arena
+                    .as_ref()
+                    .map_or(0, |arena| arena.borrow().used()),
             )
             .finish()
     }
@@ -2314,6 +2330,10 @@ pub(crate) struct BaselinePlan {
     native_property: Rc<[Option<Rc<RefCell<NativePropertyPlan>>>]>,
     native_dispatch: Rc<[Option<Rc<RefCell<NativeDispatchPlan>>>]>,
     native_regions: Rc<[Option<Rc<RefCell<NativeRegionPlan>>>]>,
+    /// All composed entries in one baseline view share a bounded slab owner.
+    /// Scalar leaves retain their narrower per-plan arenas until they acquire
+    /// an equally typed shared physical contract.
+    shared_region_arena: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
 }
 
 impl PartialEq for BaselinePlan {
@@ -2447,6 +2467,10 @@ impl BaselinePlan {
             })
             .collect::<Vec<_>>()
             .into();
+        let shared_region_arena = Rc::new(RefCell::new(
+            crate::stencil_arena::SharedStencilSlab::new(4096)
+                .expect("compile-time region slab capacity is valid"),
+        ));
         let native_regions = entries
             .iter()
             .enumerate()
@@ -2461,7 +2485,13 @@ impl BaselinePlan {
                                 .iter()
                                 .zip(record.operations.iter())
                                 .all(|(entry, opcode)| entry.instruction.opcode == *opcode))
-                        .then(|| NativeRegionPlan::new(key, policy))
+                        .then(|| {
+                            NativeRegionPlan::new_with_arena(
+                                key,
+                                policy,
+                                Rc::clone(&shared_region_arena),
+                            )
+                        })
                         .flatten()
                         .map(|region| Rc::new(RefCell::new(region)))
                     })
@@ -2477,6 +2507,7 @@ impl BaselinePlan {
             native_property,
             native_dispatch,
             native_regions,
+            shared_region_arena,
         }
     }
 
