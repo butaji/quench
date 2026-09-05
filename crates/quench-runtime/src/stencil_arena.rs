@@ -113,7 +113,7 @@ fn selected_chain_matches(
 fn generated_chain_relocation_is_declared(
     view: &crate::stencil_select::PhysicalStencilView,
 ) -> bool {
-    let Some((_, offset)) = view.fallthrough else {
+    let Some((_, _offset)) = view.fallthrough else {
         return false;
     };
     let expected_kind = if cfg!(target_arch = "aarch64") {
@@ -186,31 +186,65 @@ struct ActiveUse<'a> {
     owner: &'a SharedStencilSlab,
 }
 
-pub(crate) struct OwnedLease<F: Copy> {
+pub(crate) struct AllocationLease {
     owner: std::rc::Rc<std::cell::RefCell<SharedStencilSlab>>,
     state: std::rc::Rc<LeaseState>,
+    address: usize,
+    owner_id: u64,
+    abi: crate::stencil_select::RegionAbi,
+}
+
+impl AllocationLease {
+    pub(crate) fn invoke_dispatch(
+        self,
+        context: *mut std::ffi::c_void,
+    ) -> Result<u64, ArenaError> {
+        if context.is_null() {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        let entry = {
+            let pool = self
+                .owner
+                .try_borrow()
+                .map_err(|_| ArenaError::ProtectionFailed)?;
+            pool.dispatch_entry_with_abi(self.address, self.abi)?
+        };
+        Ok(entry(context))
+    }
+
+    pub(crate) fn invoke<R>(self, invoke: impl FnOnce() -> R) -> Result<R, ArenaError> {
+        let valid = self
+            .owner
+            .try_borrow()
+            .ok()
+            .is_some_and(|pool| {
+                pool.validate_address(self.address, self.owner_id, self.abi)
+                    .is_ok()
+            });
+        if !valid {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        Ok(invoke())
+    }
+}
+
+impl Drop for AllocationLease {
+    fn drop(&mut self) {
+        let active = self.state.active.get();
+        self.state.active.set(active.saturating_sub(1));
+        let _ = &self.owner;
+    }
+}
+
+pub(crate) struct OwnedLease<F: Copy> {
+    allocation: AllocationLease,
     token: EntryToken<F>,
 }
 
 impl<F: Copy> OwnedLease<F> {
     pub(crate) fn invoke<R>(self, invoke: impl FnOnce(F) -> R) -> Result<R, ArenaError> {
-        let valid = self
-            .owner
-            .try_borrow()
-            .ok()
-            .is_some_and(|pool| pool.validate_token(self.token).is_ok());
-        if !valid {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        Ok(invoke(self.token.entry))
-    }
-}
-
-impl<F: Copy> Drop for OwnedLease<F> {
-    fn drop(&mut self) {
-        let active = self.state.active.get();
-        self.state.active.set(active.saturating_sub(1));
-        let _ = &self.owner;
+        let token = self.token;
+        self.allocation.invoke(|| invoke(token.entry))
     }
 }
 
@@ -419,32 +453,73 @@ impl SharedStencilSlab {
         self.slab_for(address).map(StencilArena::id)
     }
 
-    fn validate_token<F: Copy>(&self, owned: EntryToken<F>) -> Result<(), ArenaError> {
-        if self.owner_for(owned.address) != Some(owned.owner)
-            || owned.entry_address != owned.address
-        {
+    fn validate_address(
+        &self,
+        address: usize,
+        owner: u64,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<(), ArenaError> {
+        if self.owner_for(address) != Some(owner) {
             return Err(ArenaError::ProtectionFailed);
         }
-        self.slab_for(owned.address)
+        self.slab_for(address)
             .ok_or(ArenaError::ProtectionFailed)?
-            .require_abi(owned.address, owned.abi)
+            .require_abi(address, abi)
+    }
+
+    fn validate_token<F: Copy>(&self, owned: EntryToken<F>) -> Result<(), ArenaError> {
+        if owned.entry_address != owned.address {
+            return Err(ArenaError::ProtectionFailed);
+        }
+        self.validate_address(owned.address, owned.owner, owned.abi)
+    }
+
+    pub(crate) fn acquire_lease(
+        owner: &std::rc::Rc<std::cell::RefCell<Self>>,
+        address: usize,
+        owner_id: u64,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<AllocationLease, ArenaError> {
+        let state = {
+            let pool = owner.borrow();
+            pool.validate_address(address, owner_id, abi)?;
+            std::rc::Rc::clone(&pool.lease_state)
+        };
+        let active = state.active.get().saturating_add(1);
+        state.active.set(active);
+        state.peak.set(state.peak.get().max(active));
+        Ok(AllocationLease {
+            owner: std::rc::Rc::clone(owner),
+            state,
+            address,
+            owner_id,
+            abi,
+        })
+    }
+
+    pub(crate) fn acquire_address_lease(
+        owner: &std::rc::Rc<std::cell::RefCell<Self>>,
+        address: usize,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<AllocationLease, ArenaError> {
+        let owner_id = owner
+            .borrow()
+            .owner_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        Self::acquire_lease(owner, address, owner_id, abi)
     }
 
     pub(crate) fn acquire_owned<F: Copy>(
         owner: &std::rc::Rc<std::cell::RefCell<Self>>,
         token: EntryToken<F>,
     ) -> Result<OwnedLease<F>, ArenaError> {
-        let state = {
+        {
             let pool = owner.borrow();
             pool.validate_token(token)?;
-            std::rc::Rc::clone(&pool.lease_state)
-        };
-        let active = state.active.get().saturating_add(1);
-        state.active.set(active);
-        state.peak.set(state.peak.get().max(active));
+        }
+        let allocation = Self::acquire_lease(owner, token.address, token.owner, token.abi)?;
         Ok(OwnedLease {
-            owner: std::rc::Rc::clone(owner),
-            state,
+            allocation,
             token,
         })
     }
@@ -623,9 +698,18 @@ impl SharedStencilSlab {
         context: *mut std::ffi::c_void,
         abi: crate::stencil_select::RegionAbi,
     ) -> Result<u64, ArenaError> {
+        self.slab_for(address).ok_or(ArenaError::ProtectionFailed)?;
+        let entry = self.dispatch_entry_with_abi(address, abi)?;
+        self.with_active(address, || entry(context))
+    }
+
+    pub(crate) fn dispatch_entry_with_abi(
+        &self,
+        address: usize,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<extern "C" fn(*mut std::ffi::c_void) -> u64, ArenaError> {
         let slab = self.slab_for(address).ok_or(ArenaError::ProtectionFailed)?;
-        slab.require_abi(address, abi)?;
-        self.with_active(address, || slab.execute_dispatch_with_abi(address, context, abi))?
+        slab.dispatch_entry_with_abi(address, abi)
     }
 
     /// Execute a typed scalar entry while retaining the owning slab.  The
@@ -1007,10 +1091,16 @@ impl StencilArena {
         if context.is_null() {
             return Err(ArenaError::ProtectionFailed);
         }
+        Ok(self.dispatch_entry_with_abi(address, abi)?(context))
+    }
+
+    pub(crate) fn dispatch_entry_with_abi(
+        &self,
+        address: usize,
+        abi: crate::stencil_select::RegionAbi,
+    ) -> Result<extern "C" fn(*mut std::ffi::c_void) -> u64, ArenaError> {
         self.require_abi(address, abi)?;
-        let entry: extern "C" fn(*mut std::ffi::c_void) -> u64 =
-            unsafe { std::mem::transmute(address) };
-        Ok(entry(context))
+        Ok(unsafe { std::mem::transmute(address) })
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -2145,6 +2235,40 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn raw_allocation_lease_protects_region_dispatch() {
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(
+            SharedStencilSlab::new(4096).expect("slab"),
+        ));
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).expect("add key");
+        let record = crate::stencil_select::select_region(key).expect("add row");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut cache = RenderedRegionCache::new();
+        let address = shared
+            .borrow_mut()
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .expect("render");
+        shared.borrow_mut().make_executable(address).expect("publish");
+        let lease = SharedStencilSlab::acquire_address_lease(
+            &shared,
+            address,
+            crate::stencil_select::RegionAbi::Scalar,
+        )
+        .expect("allocation lease");
+        let result = lease
+            .invoke(|| {
+                let mut pool = shared.borrow_mut();
+                assert_eq!(pool.active_leases(), 1);
+                assert_eq!(pool.evict_idle(0), 0);
+                9_u64
+            })
+            .expect("region dispatch lease");
+        assert_eq!(result, 9);
+        assert_eq!(shared.borrow().active_leases(), 0);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn active_lease_rejects_reclaim_that_would_drop_live_code() {
         let shared = std::rc::Rc::new(std::cell::RefCell::new(
             SharedStencilSlab::new(MAX_ARENA_BYTES).expect("slab"),
@@ -2978,6 +3102,48 @@ mod tests {
             .execute_dispatch(address, (&mut marker as *mut u8).cast())
             .unwrap();
         assert_eq!(status, 0xD15A_7C1u64);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn allocation_lease_dispatch_releases_pool_borrow_before_helper_reentry() {
+        struct Reentry<'a> {
+            pool: &'a std::rc::Rc<std::cell::RefCell<SharedStencilSlab>>,
+        }
+
+        extern "C" fn helper(context: *mut std::ffi::c_void) -> u64 {
+            let state = unsafe { &*(context as *const Reentry<'_>) };
+            let mut pool = state.pool.borrow_mut();
+            let retired = pool.evict_idle(1);
+            assert_eq!(retired, 0, "active lease must retain the published slab");
+            0xB0B0_7E5u64
+        }
+
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(
+            SharedStencilSlab::new(4096).unwrap(),
+        ));
+        let key = crate::stencil_select::dispatch_region_key();
+        let record = crate::stencil_select::select_region(key).unwrap();
+        let site = QuickeningSite::<2>::new(Opcode::Move);
+        let values = PatchValues::from_site(&site)
+            .with_pointer_bits(helper as *const () as usize);
+        let address = shared
+            .borrow_mut()
+            .render_or_get(&mut RenderedRegionCache::new(), key, &record.stencil, &values)
+            .unwrap();
+        shared.borrow_mut().make_executable(address).unwrap();
+        let state = Reentry { pool: &shared };
+        let lease = SharedStencilSlab::acquire_address_lease(
+            &shared,
+            address,
+            crate::stencil_select::RegionAbi::Bridge,
+        )
+        .unwrap();
+        let status = lease
+            .invoke_dispatch((&state as *const Reentry<'_>).cast_mut().cast())
+            .unwrap();
+        assert_eq!(status, 0xB0B0_7E5u64);
+        assert_eq!(shared.borrow().active_leases(), 0);
     }
 
     #[test]
