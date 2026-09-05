@@ -1140,7 +1140,11 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if let Some(native) = entry.native_binary.as_ref() {
-        let operands = if instruction.opcode == crate::ir::Opcode::AddConst {
+        let operands = if instruction.opcode == crate::ir::Opcode::IncI {
+            registers
+                .read_number(usize::from(instruction.b))
+                .map(|lhs| (lhs, 1.0))
+        } else if instruction.opcode == crate::ir::Opcode::AddConst {
             registers
                 .read_number(usize::from(instruction.b))
                 .and_then(|lhs| {
@@ -1479,7 +1483,11 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
         }
         if let Some(native) = plan.native_binary_at(pc) {
             let _leaf = crate::execution_trace::leaf_compact(instruction.opcode);
-            let operands = if instruction.opcode == crate::ir::Opcode::AddConst {
+            let operands = if instruction.opcode == crate::ir::Opcode::IncI {
+                registers
+                    .read_number(usize::from(instruction.b))
+                    .map(|lhs| (lhs, 1.0))
+            } else if instruction.opcode == crate::ir::Opcode::AddConst {
                 registers
                     .read_number(usize::from(instruction.b))
                     .and_then(|lhs| {
