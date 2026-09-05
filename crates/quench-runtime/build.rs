@@ -16,7 +16,7 @@ struct RegionDeclaration {
     external_entries: &'static [u32],
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DeclAbi {
     Scalar,
     TaggedWord,

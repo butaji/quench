@@ -49,7 +49,7 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     assert!(undefined.trim().is_empty(), "stencil object has undefined symbols: {undefined}");
     let bytes = extract_text(&objcopy, &object, &text);
     let symbols = output(Command::new(&nm).args(["-S", "--defined-only", object.to_str().unwrap()]), "read stencil symbols");
-    let fingerprint = fingerprint(&target, &compiler, &source_text);
+    let fingerprint = fingerprint(&target, &compiler, &source_text, declarations);
     let artifacts = artifacts(declarations, &symbols, &bytes, &target, &compiler, &fingerprint);
     cleanup(&root);
     artifacts
@@ -97,6 +97,10 @@ fn artifacts(
         let symbol = parse_symbol(symbols, &format!("q_{}", declaration.name), bytes.len());
         let end = symbol.offset.checked_add(symbol.size).expect("stencil symbol overflow");
         assert!(end <= bytes.len(), "stencil symbol exceeds text section");
+        if target.starts_with("aarch64") {
+            assert_eq!(symbol.offset % 4, 0, "AArch64 stencil is not aligned");
+            assert_eq!(symbol.size % 4, 0, "AArch64 stencil has partial instruction");
+        }
         let code = bytes[symbol.offset..end]
             .iter()
             .map(|byte| format!("0x{byte:02x}"))
@@ -148,10 +152,20 @@ fn symbol_offset(line: &str) -> Option<usize> {
     fields.first().and_then(|field| usize::from_str_radix(field, 16).ok())
 }
 
-fn fingerprint(target: &str, compiler: &str, source: &str) -> String {
+fn fingerprint(
+    target: &str,
+    compiler: &str,
+    source: &str,
+    declarations: &[RegionDeclaration],
+) -> String {
     let version = output(Command::new(compiler).arg("--version"), "read stencil compiler identity");
+    let schema = declarations
+        .iter()
+        .map(|declaration| format!("{}:{:?}:{:?}", declaration.name, declaration.abi, declaration.operations))
+        .collect::<Vec<_>>()
+        .join("|");
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in format!("{target}\n{version}\n{source}").bytes() {
+    for byte in format!("{target}\n{version}\n{source}\n{schema}\nabi-v2").bytes() {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
