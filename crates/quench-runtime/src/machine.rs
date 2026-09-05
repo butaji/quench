@@ -1735,7 +1735,7 @@ impl NativeBinaryPlan {
             if let Some(shared) = self.shared_arena.clone() {
                 if self.integer_unsigned {
                     let rendered = (|| -> Result<
-                        extern "C" fn(u32, u32) -> u32,
+                        (usize, extern "C" fn(u32, u32) -> u32),
                         crate::stencil_arena::ArenaError,
                     > {
                         let mut slab = shared.borrow_mut();
@@ -1743,21 +1743,24 @@ impl NativeBinaryPlan {
                             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                         let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
                         slab.make_executable(address)?;
-                        Ok(slab.u32_entry(address)?)
+                        Ok((address, slab.u32_entry(address)?))
                     })();
-                    let entry = match rendered {
-                        Ok(entry) => entry,
+                    let (address, entry) = match rendered {
+                        Ok(rendered) => rendered,
                         Err(error) => {
                             self.cache.clear();
                             self.lifecycle.reset();
                             return Err(error);
                         }
                     };
+                    let result = shared
+                        .borrow()
+                        .with_active(address, || entry(left as u32, right as u32))?;
                     self.note_native_entry();
-                    return Ok(f64::from(entry(left as u32, right as u32)));
+                    return Ok(f64::from(result));
                 }
                 let rendered = (|| -> Result<
-                    extern "C" fn(i32, i32) -> i32,
+                    (usize, extern "C" fn(i32, i32) -> i32),
                     crate::stencil_arena::ArenaError,
                 > {
                     let mut slab = shared.borrow_mut();
@@ -1765,18 +1768,19 @@ impl NativeBinaryPlan {
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                     let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
                     slab.make_executable(address)?;
-                    Ok(slab.i32_entry(address)?)
+                    Ok((address, slab.i32_entry(address)?))
                 })();
-                let entry = match rendered {
-                    Ok(entry) => entry,
+                let (address, entry) = match rendered {
+                    Ok(rendered) => rendered,
                     Err(error) => {
                         self.cache.clear();
                         self.lifecycle.reset();
                         return Err(error);
                     }
                 };
+                let result = shared.borrow().with_active(address, || entry(left, right))?;
                 self.note_native_entry();
-                return Ok(f64::from(entry(left, right)));
+                return Ok(f64::from(result));
             }
             if self.arena.is_none() {
                 self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -1850,17 +1854,18 @@ impl NativeBinaryPlan {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some(shared) = self.shared_arena.clone() {
             if self.returns_boolean {
-                let result = (|| {
+                let rendered = (|| {
                     let mut slab = shared.borrow_mut();
                     let stencil = crate::stencil_select::select_stencil(key)
                         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                     let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
                     slab.make_executable(address)?;
                     let entry = slab.bool_entry(address)?;
-                    Ok(entry(lhs, rhs) != 0)
+                    Ok((address, entry))
                 })();
-                return match result {
-                    Ok(value) => {
+                return match rendered {
+                    Ok((address, entry)) => {
+                        let value = shared.borrow().with_active(address, || entry(lhs, rhs) != 0)?;
                         self.note_native_entry();
                         Ok(if value { 1.0 } else { 0.0 })
                     }
@@ -1877,18 +1882,21 @@ impl NativeBinaryPlan {
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
-                slab.f64_entry(address)
+                Ok((address, slab.f64_entry(address)?))
             })();
-            let entry = match rendered {
-                Ok(entry) => entry,
+            let (address, entry) = match rendered {
+                Ok(rendered) => rendered,
                 Err(error) => {
                     self.cache.clear();
                     self.lifecycle.reset();
                     return Err(error);
                 }
             };
+            let result = shared
+                .borrow()
+                .with_active(address, || unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) })?;
             self.note_native_entry();
-            return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
+            return Ok(result);
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2041,7 +2049,7 @@ impl NativeAddChainPlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             let rendered = (|| -> Result<
-                extern "C" fn(f64, f64, f64) -> f64,
+                (usize, extern "C" fn(f64, f64, f64) -> f64),
                 crate::stencil_arena::ArenaError,
             > {
                 let mut slab = shared.borrow_mut();
@@ -2049,17 +2057,19 @@ impl NativeAddChainPlan {
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
-                Ok(slab.f64x3_entry(address)?)
+                Ok((address, slab.f64x3_entry(address)?))
             })();
-            let entry = match rendered {
-                Ok(entry) => entry,
+            let (address, entry) = match rendered {
+                Ok(rendered) => rendered,
                 Err(error) => {
                     self.cache.clear();
                     self.lifecycle.reset();
                     return Err(error);
                 }
             };
-            return Ok(unsafe { invoke_f64x3_preserve_none(entry, lhs, rhs, third) });
+            return shared.borrow().with_active(address, || unsafe {
+                invoke_f64x3_preserve_none(entry, lhs, rhs, third)
+            });
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -2176,7 +2186,7 @@ impl NativeMovePlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             let rendered = (|| -> Result<
-                extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+                (usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
                 crate::stencil_arena::ArenaError,
             > {
                 let mut slab = shared.borrow_mut();
@@ -2184,17 +2194,17 @@ impl NativeMovePlan {
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
-                Ok(slab.tagged_word_entry(address)?)
+                Ok((address, slab.tagged_word_entry(address)?))
             })();
-            let entry = match rendered {
-                Ok(entry) => entry,
+            let (address, entry) = match rendered {
+                Ok(rendered) => rendered,
                 Err(error) => {
                     self.cache.clear();
                     self.lifecycle.reset();
                     return Err(error);
                 }
             };
-            return Ok(entry(source));
+            return shared.borrow().with_active(address, || entry(source));
         }
         if self.arena.is_none() {
             match crate::stencil_arena::StencilArena::new(4096) {
@@ -2337,7 +2347,7 @@ impl NativePropertyPlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             let rendered = (|| -> Result<
-                extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+                (usize, extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
                 crate::stencil_arena::ArenaError,
             > {
                 let mut slab = shared.borrow_mut();
@@ -2345,17 +2355,17 @@ impl NativePropertyPlan {
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
                 let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
                 slab.make_executable(address)?;
-                Ok(slab.tagged_word_entry(address)?)
+                Ok((address, slab.tagged_word_entry(address)?))
             })();
-            let entry = match rendered {
-                Ok(entry) => entry,
+            let (address, entry) = match rendered {
+                Ok(rendered) => rendered,
                 Err(error) => {
                     self.cache.clear();
                     self.lifecycle.reset();
                     return Err(error);
                 }
             };
-            let bits = entry(slot.cast());
+            let bits = shared.borrow().with_active(address, || entry(slot.cast()))?;
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
