@@ -1696,7 +1696,7 @@ pub(crate) fn execute_optimized_code_step_from(
     // bridge validates the whole window before executing; a mismatch is a
     // physical miss and falls through to the ordinary per-instruction path,
     // never to a partially executed region.
-    if let Some(native) = entry.native_region.as_ref() {
+    if let Some(native) = entry.native_region() {
         let (result, native_executed) = {
             let mut plan = native.borrow_mut();
             let result = plan.execute(code, start, registers, context);
@@ -1796,7 +1796,7 @@ pub(crate) fn execute_optimized_code_step_from(
     // direct optimized step can avoid the baseline handler call entirely.
     match instruction.opcode {
         crate::ir::Opcode::LoadConst => {
-            if let Some(native) = entry.native_load_const.as_ref() {
+            if let Some(native) = entry.native_load_const() {
                 if let Ok(bits) = native.borrow_mut().execute() {
                     if registers
                         .write_tagged_bits(usize::from(instruction.a), bits)
@@ -1833,7 +1833,7 @@ pub(crate) fn execute_optimized_code_step_from(
             ));
         }
         crate::ir::Opcode::JumpIfFalse => {
-            if let Some(native) = entry.native_truthiness.as_ref() {
+            if let Some(native) = entry.native_truthiness() {
                 if let Some(truthy) = try_native_word_truthiness(
                     native,
                     registers,
@@ -1883,7 +1883,7 @@ pub(crate) fn execute_optimized_code_step_from(
     if instruction.opcode == crate::ir::Opcode::Unary
         && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not)
     {
-        if let Some(native) = entry.native_truthiness.as_ref() {
+        if let Some(native) = entry.native_truthiness() {
             if let Some(result) = try_native_logical_not(
                 native,
                 registers,
@@ -1899,7 +1899,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::LoadLocal {
-        if let Some(native) = entry.native_load_local.as_ref() {
+        if let Some(native) = entry.native_load_local() {
             let source = crate::locals::with_current_ref(|environment| {
                 environment.and_then(|environment| {
                     environment.proven_word_ptr(instruction.b)
@@ -1924,7 +1924,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::StoreLocal {
-        if let Some(native) = entry.native_store_local.as_ref() {
+        if let Some(native) = entry.native_store_local() {
             let can_store = crate::locals::with_current_ref(|environment| {
                 environment.is_some_and(|environment| {
                     environment.can_store_proven_tagged_bits(instruction.a)
@@ -1956,7 +1956,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::Move && instruction.flags == 0 {
-        if let Some(native) = entry.native_move.as_ref() {
+        if let Some(native) = entry.native_move() {
             if let Some(source) = registers.word_ptr(usize::from(instruction.b)) {
                 if let Ok(bits) = native.borrow_mut().execute(source) {
                     if registers
@@ -1981,7 +1981,7 @@ pub(crate) fn execute_optimized_code_step_from(
     if instruction.opcode == crate::ir::Opcode::Unary
         && instruction.flags == crate::ir::compact_unary_id(crate::ops::UnaryOp::IsNullish)
     {
-        if let Some(native) = entry.native_nullish.as_ref() {
+        if let Some(native) = entry.native_nullish() {
             if let Some(bits) = registers.word_bits(usize::from(instruction.b)) {
                 if let Ok(result) = native.borrow_mut().execute(bits) {
                     registers.write_boolean(usize::from(instruction.a), result);
@@ -1997,7 +1997,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::Unary {
-        if let Some(native) = entry.native_unary.as_ref() {
+        if let Some(native) = entry.native_unary() {
             if let Some(value) = registers.read_number(usize::from(instruction.b)) {
                 if let Ok(result) = native.borrow_mut().execute(value) {
                     write_value(registers, instruction.a, Value::Number(result));
@@ -2011,7 +2011,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::SetN && instruction.flags == 0 {
-        if let Some(native) = entry.native_store_property.as_ref() {
+        if let Some(native) = entry.native_store_property() {
             if try_native_property_store(
                 native,
                 code,
@@ -2034,7 +2034,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::GetN && instruction.flags == 0 {
-        if let Some(native) = entry.native_property.as_ref() {
+        if let Some(native) = entry.native_property() {
             let slot = registers
                 .read_object(usize::from(instruction.b))
                 .filter(|object| {
@@ -2081,7 +2081,7 @@ pub(crate) fn execute_optimized_code_step_from(
         }
     }
     if instruction.opcode == crate::ir::Opcode::Binary {
-        if let Some(native) = entry.native_binary.as_ref() {
+        if let Some(native) = entry.native_binary() {
             if let Some(result) = try_native_identity_compare(
                 native,
                 registers,
@@ -2095,7 +2095,7 @@ pub(crate) fn execute_optimized_code_step_from(
             }
         }
     }
-    if let Some(native) = entry.native_binary.as_ref() {
+    if let Some(native) = entry.native_binary() {
         let operands = if instruction.opcode == crate::ir::Opcode::AddConst {
             registers
                 .read_number(usize::from(instruction.b))
@@ -2151,7 +2151,7 @@ pub(crate) fn execute_optimized_code_step_from(
         );
         crate::execution_trace::leaf_rejection("optimizing_native_execution");
     }
-    if let Some(native) = entry.native_dispatch.as_ref() {
+    if let Some(native) = entry.native_dispatch() {
         match native
             .borrow_mut()
             .execute(code, start, entry.baseline, registers, context)
