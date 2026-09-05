@@ -2026,8 +2026,7 @@ fn native_move_uses_rendered_address_without_remapping() {
     let mut plan = super::NativeMovePlan {
         arena: None,
         shared_arena: None,
-        cache: crate::stencil_select::RenderedRegionCache::new(),
-        lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+        physical: super::PhysicalState::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Move),
         opcode: crate::ir::Opcode::Move,
         installed: super::InstalledWordEntry::Unpublished,
