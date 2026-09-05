@@ -12,14 +12,6 @@ pub const MAX_RENDERED_REGIONS: usize = 16;
 /// Physical calling convention declared by a stencil row.  Selection uses
 /// the same generated declaration for opcode shape and ABI, so a scalar leaf
 /// can never be accidentally invoked with the region-context pointer ABI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RegionAbi {
-    Scalar,
-    Bridge,
-    ArrayKernel,
-    ArrayNumericLoop,
-}
-
 /// Physical boundary properties shared by selection, validation, and the
 /// invocation wrappers.  These are consequences of the declared ABI, not a
 /// second semantic implementation of the operations.
@@ -42,34 +34,55 @@ pub struct AbiContract {
     pub interruptible_backedge: bool,
 }
 
-impl RegionAbi {
-    pub const fn contract(self) -> AbiContract {
-        match self {
-            Self::Scalar => AbiContract {
-                context_arg_words: 0,
-                preserves_vm_registers: true,
-                may_call_helper: false,
-                interruptible_backedge: false,
-            },
-            Self::Bridge => AbiContract {
-                context_arg_words: 1,
-                preserves_vm_registers: false,
-                may_call_helper: true,
-                interruptible_backedge: true,
-            },
-            Self::ArrayKernel => AbiContract {
-                context_arg_words: 1,
-                preserves_vm_registers: false,
-                may_call_helper: false,
-                interruptible_backedge: false,
-            },
-            Self::ArrayNumericLoop => AbiContract {
-                context_arg_words: 1,
-                preserves_vm_registers: false,
-                may_call_helper: false,
-                interruptible_backedge: false,
-            },
+macro_rules! region_abi_catalog {
+    ($( $name:ident {
+        context_arg_words: $words:literal,
+        preserves_vm_registers: $preserves:literal,
+        may_call_helper: $helpers:literal,
+        interruptible_backedge: $interruptible:literal
+    }),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub enum RegionAbi { $( $name ),+ }
+
+        impl RegionAbi {
+            pub const fn contract(self) -> AbiContract {
+                match self {
+                    $( Self::$name => AbiContract {
+                        context_arg_words: $words,
+                        preserves_vm_registers: $preserves,
+                        may_call_helper: $helpers,
+                        interruptible_backedge: $interruptible,
+                    }, )+
+                }
+            }
         }
+    };
+}
+
+region_abi_catalog! {
+    Scalar {
+        context_arg_words: 0,
+        preserves_vm_registers: true,
+        may_call_helper: false,
+        interruptible_backedge: false
+    },
+    Bridge {
+        context_arg_words: 1,
+        preserves_vm_registers: false,
+        may_call_helper: true,
+        interruptible_backedge: true
+    },
+    ArrayKernel {
+        context_arg_words: 1,
+        preserves_vm_registers: false,
+        may_call_helper: false,
+        interruptible_backedge: false
+    },
+    ArrayNumericLoop {
+        context_arg_words: 1,
+        preserves_vm_registers: false,
+        may_call_helper: false,
+        interruptible_backedge: false
     }
 }
 
