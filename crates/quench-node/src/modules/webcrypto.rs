@@ -28,6 +28,8 @@ pub(crate) const KEY_MARKER_PROP: &str = "\0quench:webcrypto:key";
 pub(crate) const KEY_DATA_PROP: &str = "\0quench:webcrypto:key-data";
 pub(crate) const KEY_FORMAT_PROP: &str = "\0quench:webcrypto:key-format";
 pub(crate) const KEY_META_PROP: &str = "\0quench:webcrypto:key-meta";
+const KEY_PUBLIC_ALGORITHM_PROP: &str = "\0quench:webcrypto:public-algorithm";
+const KEY_PUBLIC_USAGES_PROP: &str = "\0quench:webcrypto:public-usages";
 
 thread_local! {
     // CryptoKey instances can be created while a promise continuation is
@@ -295,8 +297,16 @@ fn key_getter(name: &str) -> Option<Value> {
         "String.fromCharCode(0) + {:?}",
         KEY_MARKER_PROP.trim_start_matches('\0')
     );
+    let public_algorithm = format!(
+        "String.fromCharCode(0) + {:?}",
+        KEY_PUBLIC_ALGORITHM_PROP.trim_start_matches('\0')
+    );
+    let public_usages = format!(
+        "String.fromCharCode(0) + {:?}",
+        KEY_PUBLIC_USAGES_PROP.trim_start_matches('\0')
+    );
     let source = format!(
-        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") return Array.from(value); if (name === \"algorithm\") {{ const copy = Object.assign({{}}, value); if (value.hash && typeof value.hash === \"object\") copy.hash = Object.assign({{}}, value.hash); if (value.publicExponent && typeof value.publicExponent === \"object\") copy.publicExponent = new Uint8Array(value.publicExponent); return copy; }} return value; }}"
+        "(name) => function() {{ const receiver = this; if ((receiver === null) || ((typeof receiver !== \"object\") && (typeof receiver !== \"function\")) || receiver[{marker}] !== true) {{ const error = new TypeError(\"Illegal invocation\"); error.code = \"ERR_INVALID_THIS\"; throw error; }} const value = receiver[{metadata}][name]; if (name === \"usages\") {{ const cached = receiver[{public_usages}]; if (cached !== undefined) return cached; const copy = Array.from(value); Object.defineProperty(receiver, {public_usages}, {{ value: copy, writable: true, configurable: true }}); return copy; }} if (name === \"algorithm\") {{ const cached = receiver[{public_algorithm}]; if (cached !== undefined) return cached; const copy = Object.assign({{}}, value); if (value.hash && typeof value.hash === \"object\") copy.hash = Object.assign({{}}, value.hash); if (value.publicExponent && typeof value.publicExponent === \"object\") copy.publicExponent = new Uint8Array(value.publicExponent); Object.defineProperty(receiver, {public_algorithm}, {{ value: copy, writable: true, configurable: true }}); return copy; }} return value; }}"
     );
     let factory = eval_function(&source).ok()?;
     execute::call(&factory, &Value::Undefined, &[Value::String(name.into())]).ok()
@@ -670,23 +680,36 @@ pub fn export_key(
                 .strip_prefix("SHA")
                 .unwrap_or(&hash_name)
                 .to_string();
+            let is_sha3 = hash_name.to_ascii_uppercase().starts_with("SHA3");
             let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
                 .unwrap_or_default();
             if name.to_ascii_uppercase().starts_with("RSA-") {
-                let alg = match name.to_ascii_uppercase().as_str() {
-                    "RSA-PSS" => format!("PS{hash}"),
-                    "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
-                    "RSA-OAEP" => format!("RSA-OAEP-{hash}"),
-                    _ => String::new(),
+                let alg = if is_sha3 {
+                    Value::Undefined
+                } else {
+                    Value::String(
+                        match name.to_ascii_uppercase().as_str() {
+                            "RSA-PSS" => format!("PS{hash}"),
+                            "RSASSA-PKCS1-V1_5" => format!("RS{hash}"),
+                            "RSA-OAEP" => format!("RSA-OAEP-{hash}"),
+                            _ => String::new(),
+                        },
+                    )
                 };
                 return Ok(settled(Ok(host_api::object(vec![
                     ("kty".into(), Value::String("RSA".into())),
-                    ("alg".into(), Value::String(alg)),
-                    ("key_ops".into(), execute::get_property(&metadata, "usages")),
+                    ("alg".into(), alg),
+                    (
+                        "key_ops".into(),
+                        crate::modules::clone::deep_clone(execute::get_property(
+                            &metadata,
+                            "usages",
+                        )),
+                    ),
                     ("ext".into(), Value::Boolean(true)),
                 ]))));
             }
-            let alg = if hash.is_empty() || !name.eq_ignore_ascii_case("HMAC") {
+            let alg = if hash.is_empty() || is_sha3 || !name.eq_ignore_ascii_case("HMAC") {
                 Value::Undefined
             } else {
                 Value::String(format!("HS{hash}"))
@@ -698,7 +721,13 @@ pub fn export_key(
                     Value::String(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)),
                 ),
                 ("alg".into(), alg),
-                ("key_ops".into(), execute::get_property(&metadata, "usages")),
+                (
+                    "key_ops".into(),
+                    crate::modules::clone::deep_clone(execute::get_property(
+                        &metadata,
+                        "usages",
+                    )),
+                ),
                 ("ext".into(), Value::Boolean(true)),
             ])
         }
@@ -765,9 +794,7 @@ pub fn generate_key(
         return Ok(result);
     }
     let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
-    let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
-        .unwrap_or_default()
-        .to_ascii_uppercase();
+    let name = algorithm_name(&algorithm).to_ascii_uppercase();
     if matches!(
         name.as_str(),
         "ECDH"
@@ -1775,6 +1802,11 @@ fn chacha_algorithm(value: &Value) -> Option<(Vec<u8>, Vec<u8>)> {
 
 pub fn build() -> (Value, Value) {
     let public_prototype = host_api::object(Vec::new());
+    let _ = execute::set_property_in_place(
+        &public_prototype,
+        "Symbol.toStringTag",
+        Value::String("CryptoKey".into()),
+    );
     let constructor = crate::host::capability(crate::registry::SPEC_WEBCRYPTO_KEY_CONSTRUCT);
     let constructor = execute::set_property(constructor, "prototype", public_prototype.clone());
     let crypto = host_api::object(vec![
