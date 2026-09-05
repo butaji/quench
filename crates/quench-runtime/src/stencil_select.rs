@@ -96,6 +96,10 @@ pub struct RegionRecord {
     pub external_entries: &'static [u16],
     pub fallthrough: Option<(&'static Stencil, u16)>,
     pub abi: RegionAbi,
+    /// Build-time decoder result for the selected target template.  Runtime
+    /// validation compares the emitted bytes against this declaration-derived
+    /// effect instead of treating `may_call_helper` as self-authenticating.
+    pub template_calls_helper: bool,
     /// Some regions describe IC data/layout but do not yet contain a complete
     /// executable semantic leaf.  Those rows remain selectable for auditing,
     /// but the renderer must use the canonical fallback for them.
@@ -113,6 +117,7 @@ pub struct RegionContract {
     pub entry: u16,
     pub external_entries: &'static [u16],
     pub executable: bool,
+    pub template_calls_helper: bool,
 }
 
 impl RegionContract {
@@ -186,6 +191,7 @@ impl RegionRecord {
             entry: self.entry,
             external_entries: self.external_entries,
             executable: self.executable,
+            template_calls_helper: self.template_calls_helper,
         }
     }
 }

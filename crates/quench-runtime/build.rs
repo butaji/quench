@@ -1678,8 +1678,9 @@ fn generate_stencil_catalog() {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, executable: {executable} }}, // declaration {index}",
+                "    crate::stencil_select::RegionRecord {{ name: {declaration_name:?}, key: CANONICAL_{name}_KEY, stencil: crate::stencil_fact::Stencil {{ bytes: CANONICAL_{name}_BYTES, holes: CANONICAL_{name}_HOLES }}, operations: CANONICAL_{name}_OPS, entry: {entry}, external_entries: &[{external_entries}], fallthrough: {fallthrough}, abi: {abi}, template_calls_helper: {template_calls_helper}, executable: {executable} }}, // declaration {index}",
                 entry = declaration.entry,
+                template_calls_helper = target_template_calls_helper(declaration),
             )
         })
         .collect::<Vec<_>>()
@@ -1800,6 +1801,7 @@ const fn canonical_abi_contract(abi: crate::stencil_select::RegionAbi) -> crate:
         },
     }
 }
+
 "#;
     let mut generated = String::from(
         r#"
@@ -1849,6 +1851,35 @@ fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
+}
+
+/// Inspect the selected target bytes at build time. This physical consequence
+/// is compared with the runtime decoder before publication.
+fn target_template_calls_helper(declaration: &RegionDeclaration) -> bool {
+    let target_is_aarch64 = env::var("CARGO_CFG_TARGET_ARCH")
+        .ok()
+        .is_some_and(|arch| arch == "aarch64")
+        || env::var("TARGET")
+            .ok()
+            .is_some_and(|target| target.starts_with("aarch64"));
+    let bytes = if target_is_aarch64 {
+        declaration.aarch64_bytes
+    } else {
+        declaration.x86_bytes
+    };
+    if target_is_aarch64 {
+        bytes.chunks_exact(4).any(|word| {
+            let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+            encoded & 0xFC00_0000 == 0x9400_0000
+                || encoded & 0xFFFF_FC1F == 0xD63F_0000
+                || encoded & 0xFFFF_FC1F == 0xD61F_0000
+        })
+    } else {
+        bytes.first().is_some_and(|byte| *byte == 0xE8)
+            || bytes.windows(2).any(|window| {
+                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18 | 0x20 | 0x28)
+            })
+    }
 }
 
 fn has_single_external_entry(entry: u32, external_entries: &[u32]) -> bool {
