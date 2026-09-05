@@ -1211,6 +1211,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         external_entries: &[0],
     },
     RegionDeclaration {
+        name: "store_property",
+        // Physical tagged-word transfer; canonical writable-slot proof and
+        // ownership-aware commit stay at the VM boundary.
+        operations: &["SetN"],
+        abi: DeclAbi::TaggedWord,
+        x86_bytes: &X86_MOVE_BYTES,
+        aarch64_bytes: &AARCH64_MOVE_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
         name: "increment",
         // IncI is admitted only for Number values; ToNumeric/BigInt and
         // overflow-sensitive cases remain on the canonical updater.
