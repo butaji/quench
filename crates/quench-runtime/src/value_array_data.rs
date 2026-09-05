@@ -1130,6 +1130,30 @@ impl ArrayData {
         true
     }
 
+    /// Append decoded numeric elements while the caller holds a packed-array
+    /// proof. The single borrow keeps bulk intrinsic-loop writes on the same
+    /// canonical dense backing store as ordinary `push`.
+    #[inline(always)]
+    pub(crate) fn append_f64s_proven(&self, values: &[f64]) -> bool {
+        let Some(new_length) = self.length.get().checked_add(values.len()) else {
+            return false;
+        };
+        if new_length > 9_007_199_254_740_991usize {
+            return false;
+        }
+        let DenseElements::Numbers(numbers) = &self.values else {
+            return false;
+        };
+        numbers
+            .borrow_mut()
+            .extend(values.iter().copied().map(std::cell::Cell::new));
+        self.length.set(new_length);
+        self.kind.set(values.iter().fold(self.kind.get(), |kind, value| {
+            monotonic_kind(kind, number_kind(*value))
+        }));
+        true
+    }
+
     /// Append the deterministic masked-number sequence admitted by a counted
     /// loop kernel while borrowing the canonical numeric store once.
     #[inline]
@@ -1660,6 +1684,14 @@ mod array_data_tests {
         data.set_index(0, Value::Boolean(true));
         assert_eq!(data.dense_number_at(0), None);
         assert_eq!(data.get_index(0), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn proven_f64_append_extends_canonical_numeric_storage() {
+        let data = ArrayData::new(vec![Value::Number(1.0)]);
+        assert!(data.append_f64s_proven(&[2.0, 3.5]));
+        assert_eq!(data.logical_len(), 3);
+        assert_eq!(data.numeric_kernel_range(0, 3), Some(vec![1.0, 2.0, 3.5]));
     }
 
     #[test]
