@@ -1939,9 +1939,11 @@ fn native_add_chain_executes_two_ops_with_one_entry() {
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         entry: None,
         shared_entry: None,
+        native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25, 4.0), Ok(7.75));
     assert!(plan.entry.is_some());
+    assert_eq!(plan.native_entry_count(), 1);
     let used = plan.arena.as_ref().expect("rendered chain").used();
     assert_eq!(plan.execute(-2.0, 3.0, 5.0), Ok(6.0));
     assert_eq!(plan.arena.as_ref().expect("cached chain").used(), used);
