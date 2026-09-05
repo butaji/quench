@@ -1845,6 +1845,9 @@ fn ordinary_source_lowering_executes_generated_add_const_view() {
         assert_eq!(witness.key, physical.key);
         assert_eq!(witness.abi, physical.abi);
         assert_eq!(witness.entry, physical.entry);
+        assert_eq!(witness.artifact_id, physical.artifact_id);
+        assert_eq!(witness.data, physical.data);
+        assert_eq!(witness.compiler, physical.compiler);
         assert_eq!(witness.stencil.bytes, physical.stencil.bytes);
         assert_eq!(witness.stencil.holes, physical.stencil.holes);
         assert_eq!(witness.fingerprint, physical.fingerprint);
