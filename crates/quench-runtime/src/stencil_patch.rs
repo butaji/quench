@@ -67,21 +67,16 @@ pub fn write_branch26<const N: usize>(
     offset: u16,
     values: &PatchValues<'_, N>,
 ) -> Result<(), PatchError> {
+    if dst
+        .get(usize::from(offset)..usize::from(offset).saturating_add(4))
+        .is_none()
+    {
+        return Err(PatchError::OutOfBounds);
+    }
+    validate_branch26(dst, offset, values)?;
     let start = usize::from(offset);
-    if start % 4 != 0 {
-        return Err(PatchError::UnsupportedOffset);
-    }
-    let displacement = values.value_for(HoleKind::Branch26) as i64;
-    if displacement % 4 != 0 {
-        return Err(PatchError::UnsupportedOffset);
-    }
-    let words = displacement / 4;
-    if !(-(1_i64 << 25)..(1_i64 << 25)).contains(&words) {
-        return Err(PatchError::UnsupportedOffset);
-    }
-    let slot = dst
-        .get_mut(start..start + 4)
-        .ok_or(PatchError::OutOfBounds)?;
+    let slot = &mut dst[start..start + 4];
+    let words = (values.value_for(HoleKind::Branch26) as i64) / 4;
     let mut instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
     // A Branch26 hole is only valid in an AArch64 unconditional `B` word.
     // Refuse to patch arbitrary data or a conditional/register branch: keeping
@@ -101,6 +96,9 @@ pub fn apply_holes<const N: usize>(
     values: &PatchValues<'_, N>,
 ) -> Result<(), PatchError> {
     for hole in holes {
+        validate_hole(dst, *hole, values)?;
+    }
+    for hole in holes {
         match hole.kind {
             HoleKind::Imm32 => write_imm32(dst, hole.offset, values)?,
             HoleKind::Disp32 => write_disp32(dst, hole.offset, values)?,
@@ -109,6 +107,50 @@ pub fn apply_holes<const N: usize>(
             HoleKind::Literal64 => write_literal64(dst, hole.offset, values)?,
             HoleKind::Ptr64 => write_ptr64(dst, hole.offset, values)?,
         }
+    }
+    Ok(())
+}
+
+fn validate_hole<const N: usize>(
+    dst: &[u8],
+    hole: Hole,
+    values: &PatchValues<'_, N>,
+) -> Result<(), PatchError> {
+    let width = match hole.kind {
+        HoleKind::Imm32 | HoleKind::Disp32 | HoleKind::Rel32 | HoleKind::Branch26 => 4,
+        HoleKind::Literal64 | HoleKind::Ptr64 => 8,
+    };
+    let start = usize::from(hole.offset);
+    if dst.get(start..start + width).is_none() {
+        return Err(PatchError::OutOfBounds);
+    }
+    if matches!(hole.kind, HoleKind::Branch26) {
+        validate_branch26(dst, hole.offset, values)?;
+    }
+    Ok(())
+}
+
+fn validate_branch26<const N: usize>(
+    dst: &[u8],
+    offset: u16,
+    values: &PatchValues<'_, N>,
+) -> Result<(), PatchError> {
+    let start = usize::from(offset);
+    if start % 4 != 0 {
+        return Err(PatchError::UnsupportedOffset);
+    }
+    let displacement = values.value_for(HoleKind::Branch26) as i64;
+    let words = displacement / 4;
+    if displacement % 4 != 0 || !(-(1_i64 << 25)..(1_i64 << 25)).contains(&words) {
+        return Err(PatchError::UnsupportedOffset);
+    }
+    let instruction = u32::from_le_bytes(
+        dst[start..start + 4]
+            .try_into()
+            .map_err(|_| PatchError::OutOfBounds)?,
+    );
+    if instruction & 0x7c00_0000 != 0x1400_0000 {
+        return Err(PatchError::UnsupportedOffset);
     }
     Ok(())
 }
@@ -268,5 +310,33 @@ mod tests {
         assert!(PatchValues::from_site(&site)
             .with_relative_target(usize::MAX, 0)
             .is_none());
+    }
+
+    #[test]
+    fn multi_hole_failure_is_transactional_before_publication() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site)
+            .with_relative_target(8, 0)
+            .expect("branch displacement");
+        let mut bytes = [0u8; 8];
+        bytes[..4].copy_from_slice(&0x1400_0000u32.to_le_bytes());
+        bytes[4..].copy_from_slice(&0x5400_0000u32.to_le_bytes());
+        let original = bytes;
+        let result = apply_holes(
+            &mut bytes,
+            &[
+                Hole {
+                    offset: 0,
+                    kind: HoleKind::Branch26,
+                },
+                Hole {
+                    offset: 4,
+                    kind: HoleKind::Branch26,
+                },
+            ],
+            &values,
+        );
+        assert_eq!(result, Err(PatchError::UnsupportedOffset));
+        assert_eq!(bytes, original);
     }
 }
