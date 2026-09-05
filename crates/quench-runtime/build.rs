@@ -383,18 +383,18 @@ const AARCH64_ARRAY_KERNEL_BYTES: [u8; 44] = {
 };
 
 /// AArch64 numeric array loop ABI. The context is
-/// `{data,len,index,end,addend,result}`. The entry performs the complete
-/// guarded loop, including the conditional exit and native backedge; no Rust
-/// handler is called per iteration.
-const AARCH64_ARRAY_LOOP_BYTES: [u8; 76] = {
-    let mut out = [0; 76];
+/// `{data,len,index,end,addend,result,interrupt}`. The entry performs the
+/// complete guarded loop, including the conditional exit, interrupt poll and
+/// native backedge; no Rust handler is called per iteration.
+const AARCH64_ARRAY_LOOP_BYTES: [u8; 100] = {
+    let mut out = [0; 100];
     put32(&mut out, 0, 0xF940_0801); // ldr x1, [x0, #16] (index)
     put32(&mut out, 4, 0xF940_0C02); // ldr x2, [x0, #24] (end)
     put32(&mut out, 8, 0xFD40_1400); // ldr d0, [x0, #40] (initial result)
     put32(&mut out, 12, 0x1E60_4001); // fmov d1, d0 (zero-iteration result)
     put32(&mut out, 16, 0x1400_0001); // b loop header (skip one instruction)
     put32(&mut out, 20, 0xEB02_003F); // cmp x1, x2
-    put32(&mut out, 24, 0x5400_0142); // b.hs done (to instruction 16)
+    put32(&mut out, 24, 0x5400_01A2); // b.hs done (to result publication)
     put32(&mut out, 28, 0xF940_0003); // ldr x3, [x0]
     put32(&mut out, 32, 0x8B01_0C64); // add x4, x3, x1, lsl #3
     put32(&mut out, 36, 0xFD40_0081); // ldr d1, [x4]
@@ -403,10 +403,16 @@ const AARCH64_ARRAY_LOOP_BYTES: [u8; 76] = {
     put32(&mut out, 48, 0xFD00_0081); // str d1, [x4]
     put32(&mut out, 52, 0x9100_0421); // add x1, x1, #1
     put32(&mut out, 56, 0xF900_0801); // str x1, [x0, #16]
-    put32(&mut out, 60, 0x17FF_FFF6); // b loop header (10 instructions backwards)
-    put32(&mut out, 64, 0xFD00_1401); // str d1, [x0, #40]
-    put32(&mut out, 68, 0x5280_0020); // mov w0, #1
-    put32(&mut out, 72, aarch64_ret());
+    put32(&mut out, 60, 0xF940_1805); // ldr x5, [x0, #48] (interrupt flag)
+    put32(&mut out, 64, 0x3940_00A6); // ldrb w6, [x5]
+    put32(&mut out, 68, 0x3500_00A6); // cbnz w6, interrupted
+    put32(&mut out, 72, 0x17FF_FFF3); // b loop header (13 instructions backwards)
+    put32(&mut out, 76, 0xFD00_1401); // str d1, [x0, #40]
+    put32(&mut out, 80, 0x5280_0020); // mov w0, #1
+    put32(&mut out, 84, aarch64_ret());
+    put32(&mut out, 88, 0xFD00_1401); // interrupted: publish last result
+    put32(&mut out, 92, 0x5280_0080); // mov w0, #4 (interrupt status)
+    put32(&mut out, 96, aarch64_ret());
     out
 };
 

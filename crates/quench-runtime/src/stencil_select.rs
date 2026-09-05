@@ -399,7 +399,7 @@ mod generated_region_admission_tests {
                     );
                 }
                 RegionAbi::ArrayKernel => assert_eq!(record.stencil.bytes.len(), 44),
-                RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 76),
+                RegionAbi::ArrayNumericLoop => assert_eq!(record.stencil.bytes.len(), 100),
             }
         }
     }

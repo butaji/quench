@@ -1216,6 +1216,7 @@ mod tests {
             .unwrap();
         pool.make_executable(address).unwrap();
         let mut data = vec![2.0, 3.0];
+        let interrupt = std::sync::atomic::AtomicBool::new(false);
         let mut raw = crate::vm::NativeArrayLoopContext {
             data: data.as_mut_ptr(),
             len: data.len(),
@@ -1223,6 +1224,7 @@ mod tests {
             end: data.len(),
             addend: 1.0,
             result: 0.0,
+            interrupt: &interrupt,
         };
         assert_eq!(pool.active_dispatches(), 0);
         assert_eq!(
