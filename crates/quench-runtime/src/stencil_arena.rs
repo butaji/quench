@@ -227,6 +227,7 @@ impl AllocationLease {
                 .owner
                 .try_borrow()
                 .map_err(|_| ArenaError::ProtectionFailed)?;
+            pool.validate_address(self.address, self.owner_id, self.abi)?;
             pool.dispatch_entry_with_abi(self.address, self.abi)?
         };
         Ok(entry(context))
