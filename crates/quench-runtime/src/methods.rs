@@ -49,6 +49,18 @@ fn execute_call_method(
         write_value(registers, *dst, value);
         return Ok(());
     }
+    if spreads.is_empty()
+        && args.len() == 1
+        && matches!(callee, Value::Builtin(crate::ops::Builtin::StringCharCodeAt))
+    {
+        let argument = read_register(registers, args[0])?;
+        if let Value::Number(index) = argument {
+            if let Some(value) = crate::strings::char_code_at_number(&receiver, index) {
+                registers.write_number(usize::from(*dst), value);
+                return Ok(());
+            }
+        }
+    }
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
