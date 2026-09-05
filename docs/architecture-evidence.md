@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `900af1893` (cleanup files remain
+Evidence below is bound to source revision `4fe27aaf9` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -11,6 +11,11 @@ The generated catalog now records each target template's build-time helper-call
 effect; `validate_physical_template` compares that fact with decoded bytes and
 rejects drift before publication (focused evidence at
 `/tmp/quench-template-effects-focused-20260905.log`).
+
+Current body increment: `NativeBinaryPlan` now admits numeric loose
+`Equal`/`NotEqual` through the existing comparison declarations (no new
+ABI/table), with ordinary-source native execution and coercive fallback covered
+at `4fe27aaf9` by `/tmp/quench-loose-equality-20260905.log`.
 
 | Layer / family | Code and normal wiring | Executed evidence | Supported / safe boundary | Status and remaining gap |
 | --- | --- | --- | --- | --- |
