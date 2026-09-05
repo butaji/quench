@@ -3565,18 +3565,22 @@ impl std::fmt::Debug for NativeMovePlan {
 /// Optional native leaf for a named plain-own property read.  The shape site
 /// proves the slot and descriptor facts; this leaf only performs the physical
 /// word load, while `RegisterFile` owns the retain/release edge afterward.
+#[derive(Clone, Copy)]
+enum InstalledPropertyEntry {
+    Unpublished,
+    Local(extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64),
+    Shared(crate::stencil_arena::OwnedEntry<
+        extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
+    >),
+}
+
 pub(crate) struct NativePropertyPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     opcode: crate::ir::Opcode,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<
-        extern "C" fn(*const crate::tagged_value::TaggedValue) -> u64,
-    >>,
+    installed: InstalledPropertyEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -3584,8 +3588,7 @@ pub(crate) struct NativePropertyPlan {
 impl NativePropertyPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.shared_entry = None;
-        self.entry = None;
+        self.installed = InstalledPropertyEntry::Unpublished;
         self.cache.clear();
         self.lifecycle.reset();
     }
@@ -3621,10 +3624,7 @@ impl NativePropertyPlan {
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             opcode,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            entry: None,
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            shared_entry: None,
+            installed: InstalledPropertyEntry::Unpublished,
             #[cfg(test)]
             native_entry_count: 0,
         })
@@ -3641,7 +3641,7 @@ impl NativePropertyPlan {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.shared_arena.is_none() {
-            if let Some(entry) = self.entry {
+            if let InstalledPropertyEntry::Local(entry) = self.installed {
                 #[cfg(test)]
                 {
                     self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -3659,7 +3659,7 @@ impl NativePropertyPlan {
         }
         if let Some(shared) = self.shared_arena.clone() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            if let Some(owned) = self.shared_entry {
+            if let InstalledPropertyEntry::Shared(owned) = self.installed {
                 match shared.borrow().with_owned(owned, |entry| entry(slot.cast())) {
                     Ok(bits) => {
                         #[cfg(test)]
@@ -3701,7 +3701,7 @@ impl NativePropertyPlan {
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.shared_entry = Some(owned);
+                self.installed = InstalledPropertyEntry::Shared(owned);
             }
             #[cfg(test)]
             {
@@ -3737,7 +3737,11 @@ impl NativePropertyPlan {
             }
             if let Some(arena) = self.arena.as_ref() {
                 if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
-                    self.entry = arena.tagged_word_entry(address).ok();
+                    self.installed = arena
+                        .tagged_word_entry(address)
+                        .ok()
+                        .map(InstalledPropertyEntry::Local)
+                        .unwrap_or(InstalledPropertyEntry::Unpublished);
                 }
             }
         }
@@ -3747,7 +3751,7 @@ impl NativePropertyPlan {
             self.lifecycle.reset();
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
-                self.entry = None;
+                self.installed = InstalledPropertyEntry::Unpublished;
             }
         }
         result
