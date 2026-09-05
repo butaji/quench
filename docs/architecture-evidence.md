@@ -98,3 +98,5 @@ physical code; focused coverage is **1 passed**
 (`/tmp/quench-runtime-full-20260905-retire-distinction.log`).
 The host library regression suite also passes at this implementation state:
 **4 passed, 0 failed** (`/tmp/quench-node-full-20260905-generated-abi.log`).
+Latest runtime validation after raw-clobber fail-closed handling is **724
+passed, 0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-clobber-latest.log`).
