@@ -892,6 +892,17 @@ impl RegisterFile {
     }
 
     #[inline(always)]
+    pub(crate) fn read_typed_array(&self, index: usize) -> Option<&Value> {
+        let DecodedValue::HeapPtr(pointer) = self.words.get(index)?.decode() else {
+            return None;
+        };
+        // SAFETY: heap pointers are created by `encode` from `Rc<AlignedValue>`;
+        // the register word owns that reference for the returned lifetime.
+        let value = unsafe { &*(pointer as *const AlignedValue) };
+        crate::typed_array_ops::is_view(&value.0).then_some(&value.0)
+    }
+
+    #[inline(always)]
     pub(crate) fn function_ptr(&self, index: usize) -> Option<*const crate::value::FunctionValue> {
         let DecodedValue::FunctionPtr(pointer) = self.words.get(index)?.decode() else {
             return None;
@@ -928,11 +939,7 @@ impl RegisterFile {
     /// operation beside `read_number` makes the Dynamic→Fast fact canonical
     /// while avoiding two separate `Option::zip` chains in binary ops.
     #[inline(always)]
-    pub(crate) fn read_number_pair(
-        &self,
-        left: usize,
-        right: usize,
-    ) -> Option<(f64, f64)> {
+    pub(crate) fn read_number_pair(&self, left: usize, right: usize) -> Option<(f64, f64)> {
         let left = decoded_number(self.words.get(left)?.decode())?;
         let right = decoded_number(self.words.get(right)?.decode())?;
         Some((left, right))

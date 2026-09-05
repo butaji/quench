@@ -80,6 +80,9 @@ fn run_loop_inner(
     let (post_test, dst, per_iteration, body_capture_slots) = config;
     run_fragment(init, registers)?;
     if label.is_none() && !post_test && !has_immutable_marker(update) {
+        if let Some(completion) = run_typed_array_modulo_loop(test, body, update, dst, registers) {
+            return Ok(completion);
+        }
         if let Some(fact) = CountedForFact::recognize(test, update) {
             trace_counted_recognition(body, fact, per_iteration);
             if let Some(completion) =
@@ -158,6 +161,123 @@ fn run_loop_inner(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+/// Execute the closed numeric loop used by typed-array initialization. The
+/// admission is entirely instruction/data based: a proven numeric bound,
+/// unit counter, positive constant remainder, and an indexed write.
+/// Any shape or state uncertainty falls through to the ordinary interpreter.
+fn run_typed_array_modulo_loop(
+    test: crate::machine::CodeView<'_>,
+    body: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+    dst: u16,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Option<crate::completion::Completion> {
+    let (index_slot, target_slot, modulus, bound_source) =
+        recognize_typed_array_modulo(test, body, update, dst)?;
+    let environment = crate::locals::current();
+    let index = environment.get_number(index_slot)?;
+    let target = environment.get(target_slot);
+    let crate::value::Value::Uint8Array(view) = &target else {
+        return None;
+    };
+    let length = view.logical_len();
+    let bound = match bound_source {
+        ModuloBound::TargetLength => length as f64,
+        ModuloBound::Slot(slot) => environment.get_number(slot)?,
+    };
+    let iterations = unit_less_than_iterations(index, bound)?;
+    let start = exact_nonnegative_index(index)?;
+    let end = start.checked_add(iterations)?;
+    (end <= length).then_some(())?;
+    if view.buffer.immutable || view.buffer.byte_length() < view.byte_offset + view.byte_length() {
+        return None;
+    }
+    let mut bytes = view.buffer.bytes.borrow_mut();
+    let destination = bytes.get_mut(view.byte_offset + start..view.byte_offset + end)?;
+    for (offset, counter) in destination.iter_mut().zip(start..end) {
+        let value = (counter as f64) % modulus;
+        *offset = crate::construct::to_uint8(value);
+        if counter == end.saturating_sub(1) {
+            registers.write_number(usize::from(dst), value);
+        }
+    }
+    environment.set(index_slot, crate::value::Value::Number(end as f64));
+    Some(crate::completion::Completion::Normal)
+}
+
+fn recognize_typed_array_modulo(
+    test: crate::machine::CodeView<'_>,
+    body: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+    dst: u16,
+) -> Option<(u16, u16, f64, ModuloBound)> {
+    (matches!(test.len(), 4 | 5) && body.len() == 9).then_some(())?;
+    let (index_reg, index_slot) = recognized_static_load(test, 0)?;
+    let (bound_reg, bound_source, binary_pc, return_pc) = if test.len() == 4 {
+        let (bound_reg, bound_slot) = recognized_static_load(test, 1)?;
+        (bound_reg, ModuloBound::Slot(bound_slot), 2, 3)
+    } else {
+        let (target_reg, _) = recognized_static_load(test, 1)?;
+        let length = test.instruction(2)?;
+        (length.opcode == crate::ir::Opcode::GetN
+            && length.b == target_reg
+            && test.metadata_at(2)?.name.as_deref() == Some("length"))
+            .then_some(())?;
+        (length.a, ModuloBound::TargetLength, 3, 4)
+    };
+    let (condition, comparison, lhs, rhs) = test.binary_at(binary_pc)?;
+    (comparison == crate::ops::BinaryOp::LessThan
+        && lhs == index_reg
+        && rhs == bound_reg)
+        .then_some(())?;
+    let returned = test.instruction(return_pc)?;
+    (returned.opcode == crate::ir::Opcode::Return && returned.a == condition).then_some(())?;
+    (recognize_counted_update(update, index_slot) == Some(1.0)).then_some(())?;
+
+    let op = |pc| -> Option<crate::ir::Instruction> { body.instruction(pc) };
+    let target = op(0)?;
+    let target_move = op(1)?;
+    let index = op(2)?;
+    let index_move = op(3)?;
+    let remainder_index = op(4)?;
+    let constant = op(5)?;
+    let remainder = op(6)?;
+    let store = op(7)?;
+    let result = op(8)?;
+    let (_, crate::ops::Constant::Number(modulus)) = body.constant_at(5)? else {
+        return None;
+    };
+    let valid = modulus.is_finite()
+        && *modulus > 0.0
+        && modulus.fract() == 0.0
+        && is_local_load(target)
+        && target_move.opcode == crate::ir::Opcode::Move
+        && target_move.b == target.a
+        && is_local_load(index)
+        && index.b == index_slot
+        && index_move.opcode == crate::ir::Opcode::Move
+        && index_move.b == target_move.a
+        && is_local_load(remainder_index)
+        && remainder_index.b == index_slot
+        && constant.opcode == crate::ir::Opcode::LoadConst
+        && remainder.opcode == crate::ir::Opcode::Binary
+        && crate::ir::compact_binary_operator(remainder.flags)
+            == Some(crate::ops::BinaryOp::Remainder)
+        && (remainder.b, remainder.c) == (remainder_index.a, constant.a)
+        && store.opcode == crate::ir::Opcode::ASetI
+        && (store.a, store.b, store.c) == (index_move.a, index.a, remainder.a)
+        && result.opcode == crate::ir::Opcode::Move
+        && result.a == dst
+        && result.b == remainder.a;
+    valid.then_some((index_slot, target.b, *modulus, bound_source))
+}
+
+#[derive(Clone, Copy)]
+enum ModuloBound {
+    Slot(u16),
+    TargetLength,
 }
 
 #[inline]
@@ -626,6 +746,16 @@ fn run_counted_for(
     crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     let environment = crate::locals::current();
     let context = crate::vm::current_context_or_default();
+    if let Some(completion) =
+        run_string_char_code_add(fact, body, dst, registers, &environment)?
+    {
+        return Ok(Some(completion));
+    }
+    if let Some(completion) =
+        run_masked_array_push(fact, body, dst, registers, &environment)?
+    {
+        return Ok(Some(completion));
+    }
     #[cfg(not(feature = "execution-trace"))]
     if let Some(completion) = run_dense_array_copy(fact, body, dst, registers, &environment) {
         return Ok(Some(completion));
@@ -777,6 +907,203 @@ fn run_counted_for(
             };
         }
     }
+}
+
+fn run_string_char_code_add(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    registers: &mut crate::register_file::RegisterFile,
+    environment: &crate::environment::Environment,
+) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
+    let CountedBound::StringLength(source_slot) = fact.bound else {
+        return Ok(None);
+    };
+    let Some((sum_slot, index_slot, source)) = string_char_code_add_shape(fact, body, environment)
+    else {
+        return Ok(None);
+    };
+    if source_slot != index_slot.1 || fact.slot != index_slot.0 {
+        return Ok(None);
+    }
+    let Some(mut total) = environment.get_number(sum_slot) else {
+        return Ok(None);
+    };
+    let Some(length) = crate::strings::view_of(&source).map(crate::strings::view_len_units) else {
+        return Ok(None);
+    };
+    let mut index = environment.get_number(index_slot.0).unwrap_or(0.0);
+    let bound = length as f64;
+    let mut wrote = false;
+    while counted_comparison(fact.comparison, index, bound) {
+        let Some(value) = crate::strings::char_code_at_number(&source, index) else {
+            return Ok(None);
+        };
+        total += value;
+        index += fact.step;
+        wrote = true;
+    }
+    environment.set(sum_slot, crate::value::Value::Number(total));
+    environment.set(index_slot.0, crate::value::Value::Number(index));
+    if wrote {
+        registers.write_number(usize::from(dst), total);
+    }
+    Ok(Some(crate::completion::Completion::Normal))
+}
+
+fn string_char_code_add_shape(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    environment: &crate::environment::Environment,
+) -> Option<(u16, (u16, u16), crate::value::Value)> {
+    if fact.timing != CountedStepTiming::AfterBody
+        || fact.step != 1.0
+        || fact.comparison != crate::ops::BinaryOp::LessThan
+        || body.len() != 8
+    {
+        return None;
+    }
+    let [load_sum, load_source, get_method, load_index, call, add, store_sum, move_result] =
+        (0..8)
+            .map(|pc| body.instruction(pc))
+            .collect::<Option<Vec<_>>>()?
+            .try_into()
+            .ok()?;
+    (load_sum.opcode == crate::ir::Opcode::LoadLocal
+        && load_source.opcode == crate::ir::Opcode::LoadLocalChecked
+        && get_method.opcode == crate::ir::Opcode::GetN
+        && body
+            .metadata_at(2)
+            .and_then(|metadata| metadata.name.as_deref())
+            == Some("charCodeAt")
+        && load_index.opcode == crate::ir::Opcode::LoadLocalChecked
+        && call.opcode == crate::ir::Opcode::CallN
+        && call.flags == 1
+        && add.opcode == crate::ir::Opcode::Add
+        && store_sum.opcode == crate::ir::Opcode::StoreLocal
+        && move_result.opcode == crate::ir::Opcode::Move)
+        .then_some(())?;
+    (get_method.b == load_source.a
+        && call.b == load_source.a
+        && call.c == get_method.a
+        && load_index.a + 1 == call.a
+        && add.b == load_sum.a
+        && add.c == call.a
+        && store_sum.a == load_sum.b
+        && store_sum.b == add.a
+        && move_result.b == add.a)
+        .then_some(())?;
+    let source = crate::locals::resolved_replacement(environment.get(load_source.b));
+    if !matches!(
+        crate::execute::get_property_result(&source, "charCodeAt").ok()?,
+        crate::value::Value::Builtin(crate::ops::Builtin::StringCharCodeAt)
+    ) {
+        return None;
+    }
+    Some((load_sum.b, (load_index.b, load_source.b), source))
+}
+
+fn run_masked_array_push(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    registers: &mut crate::register_file::RegisterFile,
+    environment: &crate::environment::Environment,
+) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
+    if fact.timing != CountedStepTiming::AfterBody
+        || fact.step != 1.0
+        || fact.comparison != crate::ops::BinaryOp::LessThan
+        || body.len() != 7
+    {
+        return Ok(None);
+    }
+    let Some(ops) = (0..7)
+        .map(|pc| body.instruction(pc))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(None);
+    };
+    let [load_array, get_method, load_index, load_mask, bitwise, call, move_result]:
+        [crate::ir::Instruction; 7] = match ops.try_into() {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+    if load_array.opcode != crate::ir::Opcode::LoadLocalChecked
+        || get_method.opcode != crate::ir::Opcode::GetN
+        || body
+            .metadata_at(1)
+            .and_then(|metadata| metadata.name.as_deref())
+            != Some("push")
+        || load_index.opcode != crate::ir::Opcode::LoadLocalChecked
+        || load_mask.opcode != crate::ir::Opcode::LoadConst
+        || bitwise.opcode != crate::ir::Opcode::Binary
+        || crate::ir::compact_binary_operator(bitwise.flags)
+            != Some(crate::ops::BinaryOp::BitwiseAnd)
+        || call.opcode != crate::ir::Opcode::CallN
+        || call.flags != 1
+        || move_result.opcode != crate::ir::Opcode::Move
+        || fact.slot != load_index.b
+        || get_method.b != load_array.a
+        || call.b != load_array.a
+        || call.c != get_method.a
+        || bitwise.b != load_index.a
+        || bitwise.c != load_mask.a
+        || bitwise.a + 1 != call.a
+        || move_result.b != call.a
+    {
+        return Ok(None);
+    }
+    let Some((_, crate::ops::Constant::Number(mask))) = body.constant_at(3) else {
+        return Ok(None);
+    };
+    let Some(mask) = exact_nonnegative_index(*mask) else {
+        return Ok(None);
+    };
+    if mask > i32::MAX as usize {
+        return Ok(None);
+    }
+    let array = crate::locals::resolved_replacement(environment.get(load_array.b));
+    let crate::value::Value::Array(array) = array else {
+        return Ok(None);
+    };
+    if !matches!(
+        crate::execute::get_property_result(
+            &crate::value::Value::Array(array.clone()),
+            "push"
+        )
+        .ok(),
+        Some(crate::value::Value::Builtin(crate::ops::Builtin::ArrayPush))
+    ) {
+        return Ok(None);
+    }
+    let Some(start) = environment
+        .get_number(fact.slot)
+        .and_then(exact_nonnegative_index)
+    else {
+        return Ok(None);
+    };
+    let Some(bound) = fact.bound.number(environment).and_then(exact_nonnegative_index) else {
+        return Ok(None);
+    };
+    let Some(count) = bound.checked_sub(start) else {
+        return Ok(None);
+    };
+    let Some(end) = start.checked_add(count) else {
+        return Ok(None);
+    };
+    if end > i32::MAX as usize
+        || !array.append_masked_numbers_proven(start, count, mask)
+    {
+        return Ok(None);
+    }
+    environment.set(
+        fact.slot,
+        crate::value::Value::Number(end as f64),
+    );
+    if count != 0 {
+        registers.write_number(usize::from(dst), array.logical_len() as f64);
+    }
+    Ok(Some(crate::completion::Completion::Normal))
 }
 
 /// Execute the closed array-copy loop emitted for a reverse numeric walk.
@@ -971,6 +1298,10 @@ fn counted_state_unchanged(
             (CountedBound::Constant(_), _) => true,
             (CountedBound::Slot(slot), Some(value)) => environment.get_number(slot) == Some(value),
             (CountedBound::Slot(_), None) => false,
+            (CountedBound::StringLength(slot), Some(value)) => {
+                CountedBound::StringLength(slot).number(environment) == Some(value)
+            }
+            (CountedBound::StringLength(_), None) => false,
         }
 }
 
@@ -1126,6 +1457,7 @@ enum CountedStepTiming {
 enum CountedBound {
     Constant(f64),
     Slot(u16),
+    StringLength(u16),
 }
 
 impl CountedBound {
@@ -1133,6 +1465,12 @@ impl CountedBound {
         match self {
             Self::Constant(value) => Some(value),
             Self::Slot(slot) => environment.get_number(slot),
+            Self::StringLength(slot) => {
+                let value = crate::locals::resolved_replacement(environment.get(slot));
+                crate::strings::view_of(&value)
+                    .map(crate::strings::view_len_units)
+                    .map(|length| length as f64)
+            }
         }
     }
 }
@@ -1150,13 +1488,14 @@ impl CountedForFact {
         test: crate::machine::CodeView<'_>,
         update: crate::machine::CodeView<'_>,
     ) -> Option<Self> {
-        if test.len() != 4 {
+        if !matches!(test.len(), 4 | 5) {
             return None;
         }
         let (index, slot) = recognized_static_load(test, 0)?;
         let (bound_register, bound) = recognized_counted_bound(test, 1)?;
-        let (condition, comparison, lhs, rhs) = test.binary_at(2)?;
-        let returned = test.instruction(3)?;
+        let condition_pc = if test.len() == 5 { 3 } else { 2 };
+        let (condition, comparison, lhs, rhs) = test.binary_at(condition_pc)?;
+        let returned = test.instruction(condition_pc + 1)?;
         if returned.opcode != crate::ir::Opcode::Return || returned.a != condition {
             return None;
         }
@@ -1200,6 +1539,19 @@ fn recognized_counted_bound(
     code: crate::machine::CodeView<'_>,
     pc: usize,
 ) -> Option<(u16, CountedBound)> {
+    if let Some((receiver, slot)) = recognized_static_load(code, pc) {
+        if let Some(length) = code.instruction(pc + 1) {
+            if length.opcode == crate::ir::Opcode::GetN
+                && length.b == receiver
+                && code
+                    .metadata_at(pc + 1)
+                    .and_then(|metadata| metadata.name.as_deref())
+                    == Some("length")
+            {
+                return Some((length.a, CountedBound::StringLength(slot)));
+            }
+        }
+    }
     if let Some((register, slot)) = recognized_static_load(code, pc) {
         return Some((register, CountedBound::Slot(slot)));
     }

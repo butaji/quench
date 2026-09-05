@@ -1130,6 +1130,33 @@ impl ArrayData {
         true
     }
 
+    /// Append the deterministic masked-number sequence admitted by a counted
+    /// loop kernel while borrowing the canonical numeric store once.
+    #[inline]
+    pub(crate) fn append_masked_numbers_proven(
+        &self,
+        start: usize,
+        count: usize,
+        mask: usize,
+    ) -> bool {
+        if !self.is_packed_ordinary() {
+            return false;
+        }
+        let DenseElements::Numbers(numbers) = &self.values else {
+            return false;
+        };
+        numbers
+            .borrow_mut()
+            .extend((start..start.saturating_add(count)).map(|index| {
+                std::cell::Cell::new((index & mask) as f64)
+            }));
+        self.length
+            .set(self.length.get().saturating_add(count));
+        self.kind
+            .set(monotonic_kind(self.kind.get(), number_kind(0.0)));
+        true
+    }
+
     #[inline(always)]
     pub(crate) fn append_shared_values(&self, values: &[Value]) -> bool {
         if !self.is_packed_ordinary() || values.is_empty() {
