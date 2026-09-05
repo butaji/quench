@@ -16,7 +16,9 @@ pub(crate) fn contains_call(bytes: &[u8]) -> bool {
     {
         return bytes.first().is_some_and(|byte| *byte == 0xE8)
             || bytes.windows(2).any(|window| {
-                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18 | 0x20 | 0x28)
+                // FF /2 is CALL r/m; /4 is JMP and must not be treated as a
+                // helper call merely because it shares the FF opcode.
+                window[0] == 0xFF && window[1] & 0x38 == 0x10
             });
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
