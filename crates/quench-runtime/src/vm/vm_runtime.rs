@@ -636,34 +636,12 @@ pub(crate) fn execute_composed_array_numeric_loop(
         .map(|offset| code.instruction(pc + offset))
         .collect::<Option<Vec<_>>>();
     let Some(instructions) = instructions else { return Ok(None) };
-    use crate::ir::Opcode;
-    let shape = [
-        Opcode::LoadLocal,
-        Opcode::LoadConst,
-        Opcode::Binary,
-        Opcode::JumpIfFalse,
-        Opcode::LoadLocal,
-        Opcode::Move,
-        Opcode::LoadLocal,
-        Opcode::Move,
-        Opcode::LoadLocal,
-        Opcode::Slow,
-        Opcode::LoadLocal,
-        Opcode::AGetI,
-        Opcode::AddConst,
-        Opcode::ASetI,
-        Opcode::Move,
-        Opcode::LoadLocal,
-        Opcode::AddConst,
-        Opcode::StoreLocal,
-        Opcode::Jump,
-    ];
     if instructions
         .iter()
-        .zip(shape)
+        .zip(region.operations.iter().copied())
         .any(|(instruction, opcode)| {
             instruction.opcode != opcode
-                || (instruction.flags != 0 && opcode != Opcode::Binary)
+                || (instruction.flags != 0 && opcode != crate::ir::Opcode::Binary)
         })
     {
         return Ok(None);
