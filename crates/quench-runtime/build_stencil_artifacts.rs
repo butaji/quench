@@ -832,6 +832,11 @@ fn fingerprint(
         .map(|item| {
             let source = super::rust_leaf_recipe(item)
                 .map(|recipe| rust_source(item.name, recipe))
+                .or_else(|| match item.name {
+                    "fallthrough" => Some(aarch64_head_source().to_owned() + aarch64_tail_source()),
+                    "array_numeric_loop" => Some(aarch64_array_loop_source().to_owned()),
+                    _ => None,
+                })
                 .unwrap_or_default();
             format!(
                 "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{source}",
@@ -847,7 +852,11 @@ fn fingerprint(
         .collect::<Vec<_>>()
         .join("|");
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in format!("{target}\n{version}\n{features}\n{rustflags}\n{flags:?}\n{schema}\nrust-leaf-recipes-v1\nabi-v3").bytes() {
+    for byte in format!(
+        "{target}\n{version}\n{features}\n{rustflags}\n{flags:?}\n{schema}\nphysical-abi-v3\nobject-extractor-v2"
+    )
+    .bytes()
+    {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
