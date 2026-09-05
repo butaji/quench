@@ -73,6 +73,22 @@ fn cache_signature<const N: usize>(stencil: &Stencil, values: &PatchValues<'_, N
     }
 }
 
+fn physical_cache_signature<const N: usize>(
+    view: crate::stencil_select::PhysicalStencilView,
+    values: &PatchValues<'_, N>,
+) -> u64 {
+    let mut hash = cache_signature(view.stencil, values).wrapping_add(0xcbf2_9ce4_8422_2325);
+    for byte in view.artifact_id.as_bytes().iter().chain(
+        view.fingerprint
+            .unwrap_or_default()
+            .as_bytes()
+            .iter(),
+    ) {
+        hash = hash.wrapping_mul(0x1000_0000_01b3).wrapping_add(u64::from(*byte));
+    }
+    if hash == 0 { 1 } else { hash }
+}
+
 fn selected_chain_matches(
     key: crate::stencil_fact::RegionKey,
     selected: Option<crate::stencil_select::PhysicalStencilView>,
@@ -1035,7 +1051,7 @@ impl StencilArena {
         if !view.contract().abi_is_well_formed() || !view.stencil.validate() {
             return Err(ArenaError::ProtectionFailed);
         }
-        let signature = cache_signature(view.stencil, values);
+        let signature = physical_cache_signature(view, values);
         if let Some(address) = cache
             .get_owned(view.key, signature, self.id)
             .filter(|address| self.owns_address(*address))
@@ -1090,6 +1106,9 @@ impl StencilArena {
         execute: impl FnOnce(usize) -> Result<T, E>,
         fallback: impl FnOnce() -> Result<T, E>,
     ) -> Result<T, E> {
+        let signature = crate::stencil_select::select_physical(key)
+            .map(|view| physical_cache_signature(view, values))
+            .unwrap_or_else(|| cache_signature(stencil, values));
         match self.render_or_get(cache, key, stencil, values) {
             Ok(address) => {
                 // An entry is never handed to an executor while the backing
@@ -1097,7 +1116,7 @@ impl StencilArena {
                 // immutable; later regions use a fresh arena or the complete
                 // ordinary fallback rather than violating W^X.
                 if self.make_executable().is_err() {
-                    cache.remove(key, cache_signature(stencil, values), address);
+                    cache.remove(key, signature, address);
                     return fallback();
                 }
                 match execute(address) {
@@ -1107,7 +1126,7 @@ impl StencilArena {
                         // usable hit. The arena is already RX, so it cannot
                         // be safely repatched; removing the cache entry makes
                         // every later attempt take the complete fallback.
-                        cache.remove(key, cache_signature(stencil, values), address);
+                        cache.remove(key, signature, address);
                         fallback()
                     }
                 }
@@ -1183,8 +1202,9 @@ impl StencilArena {
             Ok(address) => address,
             Err(_) => return fallback(),
         };
+        let signature = physical_cache_signature(view, values);
         if self.make_executable().is_err() {
-            cache.remove(key, cache_signature(stencil, values), address);
+            cache.remove(key, signature, address);
             return fallback();
         }
         let entry_rhs = if key == crate::stencil_select::add_const_region_key() {
@@ -1201,7 +1221,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(_) => {
-                cache.remove(key, cache_signature(stencil, values), address);
+                cache.remove(key, signature, address);
                 fallback()
             }
         }
@@ -1232,7 +1252,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(error) => {
-                cache.remove(key, cache_signature(stencil, values), address);
+                cache.remove(key, physical_cache_signature(view, values), address);
                 Err(error)
             }
         }
@@ -1264,7 +1284,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(error) => {
-                cache.remove(key, cache_signature(stencil, values), address);
+                cache.remove(key, physical_cache_signature(view, values), address);
                 Err(error)
             }
         }
@@ -1296,7 +1316,7 @@ impl StencilArena {
                 Ok(value)
             }
             Err(error) => {
-                cache.remove(key, cache_signature(stencil, values), address);
+                cache.remove(key, physical_cache_signature(view, values), address);
                 Err(error)
             }
         }
@@ -1376,7 +1396,9 @@ impl StencilArena {
         if !selected_chain_matches(key, selected, head, tail) {
             return fallback();
         }
-        let signature = cache_signature(head, values);
+        let signature = selected
+            .map(|view| physical_cache_signature(view, values))
+            .unwrap_or_else(|| cache_signature(head, values));
         if let Some(address) = cache
             .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
@@ -1515,7 +1537,9 @@ impl StencilArena {
         if !selected_chain_matches(key, selected, head, tail) {
             return fallback();
         }
-        let signature = cache_signature(head, values);
+        let signature = selected
+            .map(|view| physical_cache_signature(view, values))
+            .unwrap_or_else(|| cache_signature(head, values));
         if let Some(address) = cache
             .get_owned(key, signature, self.id)
             .filter(|address| self.owns_address(*address))
@@ -2641,6 +2665,20 @@ mod tests {
         );
         assert_eq!(arena.used(), 0);
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn physical_cache_signature_includes_selected_artifact_identity() {
+        let key = crate::stencil_select::numeric_region_key(Opcode::Add).expect("add view");
+        let view = crate::stencil_select::select_physical(key).expect("add view");
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site);
+        let mut alternate = view;
+        alternate.artifact_id = "different-artifact";
+        assert_ne!(
+            physical_cache_signature(view, &values),
+            physical_cache_signature(alternate, &values)
+        );
     }
 
     #[cfg(quench_generated_stencil_artifacts)]
