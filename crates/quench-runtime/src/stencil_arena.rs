@@ -1692,6 +1692,24 @@ mod tests {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
+    fn executable_tagged_pointer_truthiness_is_true() {
+        let key = crate::stencil_select::truthy_pointer_word_region_key();
+        let record = crate::stencil_select::select_region(key).expect("pointer truthiness row");
+        let site = QuickeningSite::<2>::new(Opcode::JumpIfFalse);
+        let values = PatchValues::from_site(&site);
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = arena
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        arena.make_executable().unwrap();
+        let entry = arena.word_bool_entry(address).unwrap();
+        let pointer = crate::tagged_value::TaggedValue::object_ptr(0x1000).unwrap();
+        assert_ne!(entry(pointer.bits()), 0);
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
     fn executable_equality_region_matches_numeric_semantics() {
         let key = crate::stencil_select::compare_equal_region_key();
         let record = crate::stencil_select::select_region(key).expect("equality declaration");
