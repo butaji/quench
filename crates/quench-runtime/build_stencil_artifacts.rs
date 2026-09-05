@@ -125,8 +125,13 @@ pub(crate) fn verify_symbols(path: &Path, names: &[&str]) {
 
 fn empty_artifacts() -> String {
     format!(
-        "{HEADER}pub struct BuildStencilArtifact {{ pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[];\n"
+        "{HEADER}{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[];\n",
+        artifact_schema()
     )
+}
+
+fn artifact_schema() -> &'static str {
+    "pub struct BuildStencilArtifact { pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }"
 }
 
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
@@ -173,7 +178,8 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     }
     assert!(!rows.is_empty(), "no extractable Rust stencil declarations");
     let generated = format!(
-        "{HEADER}pub struct BuildStencilArtifact {{ pub name: &'static str, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil }}\n{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[\n{}\n];\n",
+        "{HEADER}{}\n{}\npub static BUILD_STENCIL_ARTIFACTS: &[BuildStencilArtifact] = &[\n{}\n];\n",
+        artifact_schema(),
         constants.join("\n"),
         rows.join("\n")
     );
