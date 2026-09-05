@@ -473,6 +473,10 @@ pub fn spawn_sync(
             (std::fs::canonicalize(&command), std::fs::canonicalize(&host_exec)),
             (Ok(command), Ok(host_exec)) if command == host_exec
         );
+    if is_host_exec {
+        let env = options.map(|value| execute::get_property(value, "env"));
+        child_args = crate::modules::process::permission_exec_argv(state, child_args, env.as_ref());
+    }
     // Re-executing the compatibility runner with a missing JavaScript entry
     // follows Node's module-resolution contract. Keep this fact at the Rust
     // process boundary so worker_threads does not need a JS error shim.
@@ -525,10 +529,6 @@ pub fn spawn_sync(
     cmd.args(&child_args);
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
-        if let Some(eval_index) = child_args.iter().position(|arg| arg == "-e" || arg == "--eval") {
-            let exec_argv = serde_json::to_string(&child_args[..eval_index]).unwrap_or_else(|_| "[]".into());
-            cmd.env("QUENCH_EXEC_ARGV", exec_argv);
-        }
     }
 
     let mut input: Option<Vec<u8>> = None;
@@ -575,6 +575,14 @@ pub fn spawn_sync(
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
+        if let Some(eval_index) = child_args
+            .iter()
+            .position(|arg| arg == "-e" || arg == "--eval")
+        {
+            let exec_argv =
+                serde_json::to_string(&child_args[..eval_index]).unwrap_or_else(|_| "[]".into());
+            cmd.env("QUENCH_EXEC_ARGV", exec_argv);
+        }
         let argv0 = options
             .and_then(|value| opt_str(value, "argv0"))
             .unwrap_or_else(|| command.clone());
