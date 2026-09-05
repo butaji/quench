@@ -1393,6 +1393,11 @@ mod tests {
             .unwrap();
         assert_eq!(observed, 1);
         assert_eq!(pool.active_dispatches(), 0);
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = pool.with_active(address, || panic!("simulated helper unwind"));
+        }));
+        assert!(unwind.is_err());
+        assert_eq!(pool.active_dispatches(), 0);
         assert_eq!(pool.evict_idle(0), 1);
     }
 
