@@ -517,8 +517,36 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
         )
         .expect("i32 bitwise region");
         assert_eq!(plan.execute(f64::from(lhs), f64::from(rhs)), Ok(f64::from(expected)));
-        assert!(plan.execute(1.5, f64::from(rhs)).is_err());
-        assert!(plan.execute(f64::NAN, f64::from(rhs)).is_err());
+        let converted = crate::intl::tolocale::value::to_int32(1.5);
+        let right = crate::intl::tolocale::value::to_int32(f64::from(rhs));
+        let expected_fraction = match operator {
+            crate::ops::BinaryOp::BitwiseAnd => converted & right,
+            crate::ops::BinaryOp::BitwiseOr => converted | right,
+            crate::ops::BinaryOp::BitwiseXor => converted ^ right,
+            crate::ops::BinaryOp::ShiftLeft => converted.wrapping_shl((right as u32) & 31),
+            crate::ops::BinaryOp::ShiftRight => converted.wrapping_shr((right as u32) & 31),
+            crate::ops::BinaryOp::ShiftRightZeroFill => {
+                ((converted as u32) >> ((right as u32) & 31)) as i32
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(plan.execute(1.5, f64::from(rhs)), Ok(f64::from(expected_fraction)));
+        assert_eq!(
+            plan.execute(f64::NAN, f64::from(rhs)),
+            Ok(f64::from(match operator {
+                crate::ops::BinaryOp::BitwiseAnd => 0,
+                crate::ops::BinaryOp::BitwiseOr => right,
+                crate::ops::BinaryOp::BitwiseXor => right,
+                crate::ops::BinaryOp::ShiftLeft => 0,
+                crate::ops::BinaryOp::ShiftRight => 0,
+                crate::ops::BinaryOp::ShiftRightZeroFill => 0,
+                _ => unreachable!(),
+            }))
+        );
+        assert!(
+            plan.int_entry.is_some() || plan.uint_entry.is_some(),
+            "conversion cases must reach the rendered typed entry"
+        );
     }
 }
 
