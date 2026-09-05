@@ -360,6 +360,18 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
     // Validate the complete window before invoking even the first canonical
     // handler. This is the atomic Unknown/fallback boundary.
     if validate_residual_window(region).is_err() {
+        crate::execution_trace::stencil_observation(
+            region.code,
+            region.pc,
+            "composed_region",
+            false,
+        );
+        crate::execution_trace::stencil_rejection(
+            region.code,
+            region.pc,
+            "composed_region",
+            "window_validation",
+        );
         return 0;
     }
     // From this point on a handler or physical kernel may have committed
@@ -398,7 +410,20 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                 region.error = Some(error);
                 return NATIVE_DISPATCH_SEMANTIC_ERROR;
             }
-            None => {}
+            None => {
+                crate::execution_trace::stencil_observation(
+                    region.code,
+                    region.pc,
+                    "composed_array_loop",
+                    false,
+                );
+                crate::execution_trace::stencil_rejection(
+                    region.code,
+                    region.pc,
+                    "composed_array_loop",
+                    "admission_guard",
+                );
+            }
         }
     }
 
