@@ -1789,7 +1789,15 @@ fn run_baseline_completion_step_from_with_hook<F: FnMut()>(
                             .and_then(|metadata| metadata.name.as_deref())?;
                         quickened_own_slot_data(code, pc, &object, key)
                             .map(|word| word as *const crate::register_file::SlotWord)
-                });
+                            .or_else(|| {
+                                object
+                                    .hot_properties()
+                                    .position_rev(key)
+                                    .is_none()
+                                    .then(|| quickened_prototype_slot_data(&object, key))
+                                    .flatten()
+                            })
+                    });
                 if let Some(slot) = slot {
                     if let Some(site) = code.quickening_site(pc) {
                         let site = site.borrow();
@@ -3257,6 +3265,34 @@ fn quickened_own_slot_data<'a>(
         | crate::quickening::QuickeningDecision::InstallCallGuard
         | crate::quickening::QuickeningDecision::GuardedHit { .. } => None,
     }
+}
+
+/// Return a plain data slot from an immediate prototype chain. Every owner is
+/// checked before advancing, so shadowing accessors and unstable objects fall
+/// back to canonical property semantics.
+fn quickened_prototype_slot_data(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+) -> Option<*const crate::register_file::SlotWord> {
+    let mut owner = receiver as *const crate::value::ObjectData;
+    for _ in 0..4 {
+        let owner_ref = unsafe { owner.as_ref()? };
+        if owner_ref.has_replacement() || owner_ref.is_dictionary() {
+            return None;
+        }
+        if let Some(slot) = owner_ref.hot_properties().position_rev(key) {
+            let layout = owner_ref.semantic_layout_id();
+            let slot = u32::try_from(slot).ok()?;
+            return crate::vm::cached_plain_own_word(owner_ref, key, layout, slot)
+                .map(|word| word as *const crate::register_file::SlotWord);
+        }
+        let proto_slot = owner_ref.hot_properties().position_rev("\0prototype")?;
+        owner = owner_ref
+            .hot_properties()
+            .slot_word(proto_slot)?
+            .object_or_null_ptr()??;
+    }
+    None
 }
 
 #[inline(always)]
