@@ -1,7 +1,7 @@
 # Task 075 — current stencil infrastructure matrix
 
 Status: **gate CLOSED / NOT COMPLETE**. Source evidence is bound to commit
-`574b665c3` (documentation/task cleanup remains user-owned and dirty). Micros
+`5b9e47088` (documentation/task cleanup remains user-owned and dirty). Micros
 and task 073 remain deferred until every required row passes with normal-source
 and non-vacuous native evidence.
 
