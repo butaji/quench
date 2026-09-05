@@ -3894,19 +3894,7 @@ impl NativeRegionPlan {
                         "native fused region protection failed: {error:?}"
                     ))
                 })?;
-            let storage_kind = match record.abi {
-                crate::stencil_select::RegionAbi::ArrayKernel => "array_kernel",
-                crate::stencil_select::RegionAbi::ArrayNumericLoop => "array_numeric_loop",
-                crate::stencil_select::RegionAbi::Bridge => "bridge",
-                crate::stencil_select::RegionAbi::Scalar => "scalar",
-                crate::stencil_select::RegionAbi::TaggedWord => "tagged_word",
-                crate::stencil_select::RegionAbi::ConstantWord => "constant_word",
-                crate::stencil_select::RegionAbi::ScalarBool => "scalar_bool",
-                crate::stencil_select::RegionAbi::ScalarWordBool => "scalar_word_bool",
-                crate::stencil_select::RegionAbi::ScalarWordPairBool => "scalar_word_pair_bool",
-                crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
-                crate::stencil_select::RegionAbi::ScalarU32 => "scalar_u32",
-            };
+            let storage_kind = record.name;
             let (used_bytes, capacity_bytes) = {
                 let slab = arena.borrow();
                 (slab.used(), slab.capacity())
@@ -5835,6 +5823,7 @@ mod tests {
         static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Add];
         static ENTRIES: [u16; 1] = [0];
         let scalar_with_pointer = crate::stencil_select::RegionRecord {
+            name: "test_scalar_pointer",
             key: crate::stencil_fact::RegionKey(0),
             stencil: crate::stencil_fact::Stencil {
                 bytes: &BYTES,
@@ -5860,6 +5849,7 @@ mod tests {
         static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Add];
         static ENTRIES: [u16; 1] = [0];
         let scalar_call = crate::stencil_select::RegionRecord {
+            name: "test_scalar_call",
             key: crate::stencil_fact::RegionKey(1),
             stencil: crate::stencil_fact::Stencil {
                 bytes: &CALL_BYTES,
@@ -5885,6 +5875,7 @@ mod tests {
         static OPS: [crate::ir::Opcode; 1] = [crate::ir::Opcode::Move];
         static ENTRIES: [u16; 1] = [0];
         let pure_bridge = crate::stencil_select::RegionRecord {
+            name: "test_pure_bridge",
             key: crate::stencil_fact::RegionKey(2),
             stencil: bridge.stencil,
             operations: &OPS,
