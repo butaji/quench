@@ -398,16 +398,6 @@ pub fn select_stencil(key: RegionKey) -> Option<PhysicalStencilView> {
     select_physical(key)
 }
 
-/// Select one complete physical view after checking the typed entry ABI.
-/// Despite the historical name, this returns the view rather than bare bytes;
-/// callers retain its metadata through rendering and publication.
-pub fn select_stencil_for_abi(
-    key: RegionKey,
-    abi: RegionAbi,
-) -> Option<PhysicalStencilView> {
-    select_physical_for_abi(key, abi)
-}
-
 /// Select one complete physical view for an ABI-specific entry.  Callers
 /// should retain this value through rendering and publication so bytes and
 /// boundary metadata cannot be selected independently.
