@@ -1501,6 +1501,8 @@ pub(crate) struct NativeBinaryPlan {
     // object on every native execution.
     site: crate::quickening::QuickeningSite<4>,
     opcode: crate::ir::Opcode,
+    key: crate::stencil_fact::RegionKey,
+    returns_boolean: bool,
     /// Once the first render has passed all arena and fact checks, retain the
     /// typed entry pointer. Numeric stencil bytes have no mutable VM state;
     /// re-running lifecycle, cache, mprotect, and address checks on every
@@ -1518,7 +1520,15 @@ impl NativeBinaryPlan {
             return None;
         }
         let opcode = instruction.opcode;
-        opcode.numeric_operator()?;
+        let (key, returns_boolean) = if opcode.numeric_operator().is_some() {
+            (crate::stencil_select::numeric_region_key(opcode)?, false)
+        } else if opcode == crate::ir::Opcode::Binary
+            && instruction.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual)
+        {
+            (crate::stencil_select::compare_equal_region_key(), true)
+        } else {
+            return None;
+        };
         // The AddConst stencil has a fixed machine operand order (source in
         // xmm0, embedded constant in xmm1).  Constant-left addition is
         // observationally distinct for signed zero, so keep that variant on
@@ -1527,7 +1537,6 @@ impl NativeBinaryPlan {
         if opcode == crate::ir::Opcode::AddConst && instruction.add_const_is_left() {
             return None;
         }
-        let key = crate::stencil_select::numeric_region_key(opcode)?;
         // Build-generated rows are the sole executable admission fact.  ARM64
         // rows are real but opt-in until their measured call overhead is
         // recovered; the ordinary baseline remains the default fallback.
@@ -1538,6 +1547,8 @@ impl NativeBinaryPlan {
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(opcode),
             opcode,
+            key,
+            returns_boolean,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
         })
@@ -1550,16 +1561,16 @@ impl NativeBinaryPlan {
         rhs: f64,
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let Some(entry) = self.entry {
-            return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
+        if !self.returns_boolean {
+            if let Some(entry) = self.entry {
+                return Ok(unsafe { invoke_f64x2_preserve_none(entry, lhs, rhs) });
+            }
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         let values = (self.opcode == crate::ir::Opcode::AddConst)
             .then(|| values.with_constant_bits(rhs.to_bits()))
             .unwrap_or(values);
-        let Some(key) = crate::stencil_select::numeric_region_key(self.opcode) else {
-            return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
-        };
+        let key = self.key;
         // Check the generated admission row before mapping any pages.  This
         // makes the ARM/non-executable path allocation-free and leaves the
         // canonical Rust handler as the only semantic implementation.
@@ -1583,7 +1594,13 @@ impl NativeBinaryPlan {
         // The allocation above is fallible and has been stored only after it
         // succeeds, so the executable leaf always retains the ordinary
         // fallback on mapping failure instead of panicking.
-        let result = {
+        let result = if self.returns_boolean {
+            self.arena
+                .as_mut()
+                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
+                .render_selected_bool(&mut self.cache, key, &values, lhs, rhs)
+                .map(|value| if value { 1.0 } else { 0.0 })
+        } else {
             let arena = self
                 .arena
                 .as_mut()
@@ -1593,7 +1610,7 @@ impl NativeBinaryPlan {
             })
         };
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if result.is_ok() {
+        if result.is_ok() && !self.returns_boolean {
             if let Some(record) = crate::stencil_select::select_region(key) {
                 // The arena deliberately canonicalizes hole-free stencils to
                 // signature zero.  Use the same rule here; otherwise the
@@ -1626,6 +1643,10 @@ impl NativeBinaryPlan {
             }
         }
         result
+    }
+
+    pub(crate) fn returns_boolean(&self) -> bool {
+        self.returns_boolean
     }
 }
 

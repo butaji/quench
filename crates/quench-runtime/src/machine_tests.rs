@@ -411,6 +411,8 @@ fn non_x86_native_execution_rejects_before_mapping() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
+        key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
+        returns_boolean: false,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
     assert!(plan.arena.is_none());
@@ -425,6 +427,8 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
         opcode: crate::ir::Opcode::Add,
+        key: crate::stencil_select::numeric_region_key(crate::ir::Opcode::Add).unwrap(),
+        returns_boolean: false,
         entry: None,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
@@ -432,6 +436,23 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
     let used = plan.arena.as_ref().expect("rendered arena").used();
     assert_eq!(plan.execute(4.0, 5.0), Ok(9.0));
     assert_eq!(plan.arena.as_ref().expect("cached arena").used(), used);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_strict_numeric_equality_uses_typed_scalar_entry() {
+    let instruction = crate::ir::Instruction {
+        opcode: crate::ir::Opcode::Binary,
+        flags: crate::ir::compact_binary_id(crate::ops::BinaryOp::StrictEqual),
+        a: 0,
+        b: 1,
+        c: 2,
+    };
+    let policy = crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test();
+    let mut plan = super::NativeBinaryPlan::new(instruction, policy).expect("scalar compare");
+    assert!(plan.returns_boolean());
+    assert_eq!(plan.execute(2.0, 2.0), Ok(1.0));
+    assert_eq!(plan.execute(2.0, 3.0), Ok(0.0));
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
