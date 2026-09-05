@@ -2199,11 +2199,15 @@ impl NativeTruthinessPlan {
         instruction: crate::ir::Instruction,
         policy: crate::stencil_policy::ExecutionPolicy,
     ) -> Option<Self> {
+        let valid_instruction = instruction.opcode == crate::ir::Opcode::JumpIfFalse
+            || (instruction.opcode == crate::ir::Opcode::Unary
+                && instruction.flags
+                    == crate::ir::compact_unary_id(crate::ops::UnaryOp::Not));
         let key = crate::stencil_select::truthy_number_region_key();
         let word_key = crate::stencil_select::truthy_word_region_key();
         let pointer_key = crate::stencil_select::truthy_pointer_word_region_key();
         (policy.native_leaves
-            && instruction.opcode == crate::ir::Opcode::JumpIfFalse
+            && valid_instruction
             && crate::stencil_select::select_region(key).is_some_and(|record| {
                 record.executable
                     && record.abi == crate::stencil_select::RegionAbi::ScalarBool
