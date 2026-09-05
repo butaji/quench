@@ -2488,6 +2488,9 @@ mod tests {
             view.stencil.holes[0].kind,
             crate::stencil_fact::HoleKind::Branch26
         ));
+        assert_eq!(view.relocations.len(), 1);
+        assert_eq!(view.relocations[0].offset, 4);
+        assert_eq!(view.relocations[0].target, "q_fallthrough_tail");
         let (tail, entry) = view.fallthrough.expect("generated tail");
         assert_eq!(entry, 4);
         assert_eq!(tail.bytes, &[0xc0, 0x03, 0x5f, 0xd6]);
