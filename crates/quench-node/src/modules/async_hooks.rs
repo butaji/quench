@@ -343,7 +343,12 @@ pub fn local_enter_with(
         (resource_id, id),
         args.first().cloned().unwrap_or(Value::Undefined),
     );
-    Ok(Value::Undefined)
+    Ok(state
+        .borrow()
+        .async_hooks
+        .current_resource
+        .clone()
+        .unwrap_or(Value::Undefined))
 }
 
 pub fn local_disable(
@@ -1230,7 +1235,10 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
     let key = Rc::as_ptr(promise) as usize;
     if event == "init" {
         let trigger = args.get(2).cloned().unwrap_or(Value::Undefined);
-        let resource = new_resource(state, &[trigger, Value::String("PROMISE".into())])?;
+        let previous = promise_context(state, args.get(2));
+        let resource = new_resource(state, &[trigger, Value::String("PROMISE".into())]);
+        restore_promise_context(state, previous);
+        let resource = resource?;
         let traced_trigger = matches!(
             args.get(2),
             Some(Value::Promise(trigger))
@@ -1313,10 +1321,7 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
                 let channel = execute::get_property(&Value::Object(marker.clone()), "channel");
                 let context = execute::get_property(&Value::Object(marker), "context");
                 let _ = super::diagnostics_channel::tracing_promise_settle(
-                    state,
-                    &channel,
-                    &context,
-                    promise,
+                    state, &channel, &context, promise,
                 );
             }
             if !matches!(marker, Value::Undefined) {
@@ -1331,6 +1336,39 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         }
     }
     Ok(Value::Undefined)
+}
+
+fn promise_context(
+    state: &Rc<RefCell<HostState>>,
+    trigger: Option<&Value>,
+) -> Option<(u64, Option<Value>)> {
+    let Value::Promise(promise) = trigger? else {
+        return None;
+    };
+    let key = Rc::as_ptr(promise) as usize;
+    let resource = state
+        .borrow()
+        .async_hooks
+        .promise_resources
+        .get(&key)
+        .cloned()?;
+    let id = id_property(&resource, ASYNC_ID).and_then(number)?;
+    let mut host = state.borrow_mut();
+    let previous = (host.async_hooks.current_id, host.async_hooks.current_resource.clone());
+    host.async_hooks.current_id = id;
+    host.async_hooks.current_resource = Some(resource);
+    Some(previous)
+}
+
+fn restore_promise_context(
+    state: &Rc<RefCell<HostState>>,
+    previous: Option<(u64, Option<Value>)>,
+) {
+    if let Some((id, resource)) = previous {
+        let mut host = state.borrow_mut();
+        host.async_hooks.current_id = id;
+        host.async_hooks.current_resource = resource;
+    }
 }
 
 pub fn hook_toggle(
