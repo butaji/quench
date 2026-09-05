@@ -235,6 +235,13 @@ impl StencilLifecycle {
         *self = Self::new();
     }
 
+    /// Permanently retire the installed physical version.  This is distinct
+    /// from `reset`: reset starts a fresh admission history, while retirement
+    /// is the fail-closed outcome for a committed physical failure.
+    pub fn retire(&mut self) {
+        self.state = StencilState::Retired;
+    }
+
     /// Wire stencil admission to the interpreter site's existing bounded
     /// degrade tier. No independent miss threshold is introduced here.
     pub fn observe_site<const N: usize>(
@@ -405,6 +412,17 @@ mod tests {
             lifecycle.observe(RegionKey(99), true),
             StencilState::Retired
         );
+        lifecycle.reset();
+        assert_eq!(lifecycle.state(), StencilState::Cold);
+    }
+
+    #[test]
+    fn explicit_retirement_is_not_a_rebuild_reset() {
+        let mut lifecycle = StencilLifecycle::new();
+        lifecycle.observe(RegionKey(1), false);
+        lifecycle.retire();
+        assert_eq!(lifecycle.state(), StencilState::Retired);
+        assert_eq!(lifecycle.observe(RegionKey(2), true), StencilState::Retired);
         lifecycle.reset();
         assert_eq!(lifecycle.state(), StencilState::Cold);
     }
