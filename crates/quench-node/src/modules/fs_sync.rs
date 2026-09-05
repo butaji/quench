@@ -356,6 +356,12 @@ pub fn write_file_sync(
         return Ok(Value::Undefined);
     }
     let path = path_arg(args.first())?;
+    if crate::modules::process::permission_enabled(state)
+        && !crate::modules::process::permission_audit(state)
+        && !crate::modules::process::permission_allows(state, "fs.write")
+    {
+        return Err(crate::modules::process::permission_error("fs.write", &path));
+    }
     let options = parse_options(args.get(2))?;
     let result = write_impl(&path, args.get(1), &options, "open");
     if result.is_ok() && options.flush {
