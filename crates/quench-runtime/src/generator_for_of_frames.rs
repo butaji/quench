@@ -7,7 +7,7 @@ fn collect_for_of_frames(
     let Op::ForOf { slot, body, .. } = op else {
         return Ok(false);
     };
-    let Some(loop_iterator) = crate::loops::live_for_of() else {
+    let Some(loop_iterator) = crate::loops::take_live_for_of() else {
         return Ok(false);
     };
     let Some(ops) = body.code() else {
@@ -75,6 +75,36 @@ fn collect_loop_body_frames(
                 destination: *dst,
             });
             return Ok(true);
+        }
+        if let Op::ForOf {
+            slot: nested_slot,
+            body: nested_body,
+            ..
+        } = op
+        {
+            let Some(nested_iterator) = crate::loops::take_live_for_of() else {
+                continue;
+            };
+            let nested_resume = range_after_iterator_op(body, index);
+            frames.push(for_of_repeat_frame(
+                loop_iterator.clone(),
+                body,
+                nested_resume,
+                resume,
+                0,
+                slot,
+            ));
+            if collect_nested_for_of_frame(
+                nested_iterator,
+                nested_body,
+                nested_resume,
+                *nested_slot,
+                registers,
+                frames,
+            )? {
+                return Ok(true);
+            }
+            frames.pop();
         }
         if matches!(op, Op::IteratorBinding { .. }) {
             frames.push(for_of_repeat_frame(
@@ -341,6 +371,37 @@ fn collect_iterator_frames(
         }
     }
     Ok(false)
+}
+
+fn collect_nested_for_of_frame(
+    iterator: Value,
+    body: &crate::machine::FunctionCode,
+    resume: crate::machine::CodeRange,
+    slot: u16,
+    _registers: &crate::register_file::RegisterFile,
+    frames: &mut Vec<crate::machine::Frame>,
+) -> Result<bool, VmError> {
+    let Some(ops) = body.code() else {
+        return Err(VmError::MissingReturn);
+    };
+    let Some((index, op)) = ops.cold_ops().find(|(_, op)| {
+        matches!(op, Op::Yield { .. } | Op::Await { .. })
+    }) else {
+        return Ok(false);
+    };
+    let yield_dst = match op {
+        Op::Yield { src } | Op::Await { dst: src, .. } => *src,
+        _ => return Ok(false),
+    };
+    frames.push(for_of_repeat_frame(
+        iterator,
+        body.range,
+        range_after_iterator_op(body.range, index),
+        resume,
+        yield_dst,
+        slot,
+    ));
+    Ok(true)
 }
 
 fn collect_nested_yield_frame(
