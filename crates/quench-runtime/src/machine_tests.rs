@@ -675,6 +675,9 @@ fn native_shared_boolean_entry_rebuilds_through_typed_owner() {
         .expect("shared boolean plan");
     assert_eq!(plan.execute(1.0, 2.0), Ok(1.0));
     assert!(plan.shared_bool_entry.is_some());
+    let used = shared.borrow().used();
+    assert_eq!(plan.execute(2.0, 3.0), Ok(1.0));
+    assert_eq!(shared.borrow().used(), used, "owner hit must not render again");
     assert_eq!(shared.borrow_mut().evict_idle(0), 1);
     assert_eq!(plan.execute(2.0, 1.0), Ok(0.0));
     assert!(plan.shared_bool_entry.is_some());
