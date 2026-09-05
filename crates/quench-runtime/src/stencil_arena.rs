@@ -2395,6 +2395,26 @@ mod tests {
         assert!(tail.holes.is_empty());
     }
 
+    #[cfg(all(quench_generated_stencil_artifacts, target_arch = "aarch64"))]
+    #[test]
+    fn generated_key_rejects_legacy_layout_before_publication() {
+        let key = crate::stencil_select::add_const_region_key();
+        let view = crate::stencil_select::select_physical(key).expect("physical view");
+        let record = crate::stencil_select::select_region(key).expect("canonical row");
+        assert!(view.generated);
+        assert_ne!(view.stencil.bytes, record.stencil.bytes);
+        let mut arena = StencilArena::new(4096).expect("arena");
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::AddConst);
+        let values = PatchValues::from_site(&site);
+        assert_eq!(
+            arena.render_or_get(&mut cache, key, &record.stencil, &values),
+            Err(ArenaError::ProtectionFailed)
+        );
+        assert_eq!(arena.used(), 0);
+        assert_eq!(cache.len(), 0);
+    }
+
     #[cfg(quench_generated_stencil_artifacts)]
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
