@@ -2,9 +2,9 @@
 use crate::host::HostState;
 use crate::registry::{
     SPEC_CLUSTER_DISCONNECT, SPEC_CLUSTER_FORK, SPEC_CLUSTER_SETUP_EVENT,
-    SPEC_CLUSTER_SETUP_MASTER, SPEC_CLUSTER_SETUP_PRIMARY, SPEC_CLUSTER_WORKER_DISCONNECT,
-    SPEC_CLUSTER_WORKER_EMIT, SPEC_CLUSTER_WORKER_IS_CONNECTED, SPEC_CLUSTER_WORKER_IS_DEAD,
-    SPEC_CLUSTER_WORKER_CONSTRUCTOR, SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON,
+    SPEC_CLUSTER_SETUP_MASTER, SPEC_CLUSTER_SETUP_PRIMARY, SPEC_CLUSTER_WORKER_CONSTRUCTOR,
+    SPEC_CLUSTER_WORKER_DISCONNECT, SPEC_CLUSTER_WORKER_EMIT, SPEC_CLUSTER_WORKER_IS_CONNECTED,
+    SPEC_CLUSTER_WORKER_IS_DEAD, SPEC_CLUSTER_WORKER_KILL, SPEC_CLUSTER_WORKER_ON,
     SPEC_CLUSTER_WORKER_PROCESS_SEND, SPEC_CLUSTER_WORKER_SEND, SPEC_EVENTS_EMIT,
 };
 use quench_runtime::execute::{self, VmError};
@@ -90,6 +90,7 @@ impl ClusterState {
             .collect()
     }
 
+
     pub(crate) fn process_scope(&self) -> u64 {
         self.process_scope
     }
@@ -104,6 +105,10 @@ impl ClusterState {
 
     pub(crate) fn take_fork_process(&mut self, scope: u64) -> Option<Value> {
         self.fork_processes.remove(&scope)
+    }
+
+    pub(crate) fn fork_process(&self, scope: u64) -> Option<Value> {
+        self.fork_processes.get(&scope).cloned()
     }
 }
 
@@ -184,9 +189,11 @@ fn process_args(process: &Value) -> Value {
         Value::Number(length) if length >= 2.0 => length as usize,
         _ => 0,
     };
-    host_api::array((2..length)
-        .map(|index| execute::get_property(&argv, &index.to_string()))
-        .collect())
+    host_api::array(
+        (2..length)
+            .map(|index| execute::get_property(&argv, &index.to_string()))
+            .collect(),
+    )
 }
 
 fn array_values(array: &Value) -> Vec<Value> {
@@ -246,14 +253,26 @@ fn worker_value(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Value {
             crate::host::capability(SPEC_CLUSTER_WORKER_IS_CONNECTED),
         ),
         ("on".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
-        ("once".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
-        ("emit".into(), crate::host::capability(SPEC_CLUSTER_WORKER_EMIT)),
+        (
+            "once".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_ON),
+        ),
+        (
+            "emit".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_EMIT),
+        ),
         (
             "disconnect".into(),
             crate::host::capability(SPEC_CLUSTER_WORKER_DISCONNECT),
         ),
-        ("kill".into(), crate::host::capability(SPEC_CLUSTER_WORKER_KILL)),
-        ("send".into(), crate::host::capability(SPEC_CLUSTER_WORKER_SEND)),
+        (
+            "kill".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_KILL),
+        ),
+        (
+            "send".into(),
+            crate::host::capability(SPEC_CLUSTER_WORKER_SEND),
+        ),
     ]);
     if let Some(prototype) = state.borrow().cluster.worker_prototype.clone() {
         worker = execute::set_prototype_of(&worker, &prototype).unwrap_or(worker);
@@ -389,15 +408,17 @@ pub fn fork(
         ("connected".into(), Value::Boolean(true)),
         (
             "stdio".into(),
-            host_api::array((0..5)
-                .map(|index| {
-                    if index == 4 {
-                        channel.clone().unwrap_or(Value::Null)
-                    } else {
-                        Value::Null
-                    }
-                })
-                .collect()),
+            host_api::array(
+                (0..5)
+                    .map(|index| {
+                        if index == 4 {
+                            channel.clone().unwrap_or(Value::Null)
+                        } else {
+                            Value::Null
+                        }
+                    })
+                    .collect(),
+            ),
         ),
         ("on".into(), crate::host::capability(SPEC_CLUSTER_WORKER_ON)),
         (
@@ -507,12 +528,15 @@ pub fn fork(
     if let Some(module) = module {
         let process_scope = state.borrow().cluster.process_scope();
         for (worker, address) in pending_listening {
-            state.borrow().event_loop.queue_microtask_with_receiver_scope(
-                crate::host::capability(SPEC_EVENTS_EMIT),
-                vec![Value::String("listening".into()), worker, address],
-                module.clone(),
-                process_scope,
-            );
+            state
+                .borrow()
+                .event_loop
+                .queue_microtask_with_receiver_scope(
+                    crate::host::capability(SPEC_EVENTS_EMIT),
+                    vec![Value::String("listening".into()), worker, address],
+                    module.clone(),
+                    process_scope,
+                );
         }
     }
     Ok(worker)
@@ -554,11 +578,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let previous_argv = process_value
         .as_ref()
         .map(|process| execute::get_property(process, "argv"));
-    let worker_args = state
-        .borrow()
-        .cluster
-        .settings
-        .clone();
+    let worker_args = state.borrow().cluster.settings.clone();
     if let (Some(process), Some(previous_argv)) = (&process_value, &previous_argv) {
         let args = execute::get_property(&worker_args, "args");
         let mut values = array_values(previous_argv);
@@ -589,11 +609,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
     let parent_exit_code = state.borrow().process.exit_code;
     state.borrow_mut().process.exit_code = None;
     state.borrow_mut().cluster.worker_context = Some(id);
-    state
-        .borrow_mut()
-        .cluster
-        .worker_listen_slots
-        .insert(id, 0);
+    state.borrow_mut().cluster.worker_listen_slots.insert(id, 0);
     let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
     let result =
         quench_runtime::reduce::reduce_global_script_source(&wrapped).and_then(|program| {
@@ -633,14 +649,10 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             .other_handlers
             .iter()
             .any(|(event, _, _)| event == "message")
-            || guard
-                .cluster
-                .workers
-                .get(&id)
-                .is_some_and(|worker| {
-                    worker.child_listeners.contains_key("message")
-                        || !worker.pending_messages.is_empty()
-                });
+            || guard.cluster.workers.get(&id).is_some_and(|worker| {
+                worker.child_listeners.contains_key("message")
+                    || !worker.pending_messages.is_empty()
+            });
         (!waits_for_ipc && !net_work).then_some(0)
     });
     state.borrow_mut().process.exit_code = parent_exit_code;
@@ -745,17 +757,8 @@ pub(crate) fn set_worker_mode(
 }
 
 /// Queue a primary cluster `listening` notification for a worker-owned server.
-pub(crate) fn notify_listening(
-    state: &Rc<RefCell<HostState>>,
-    worker_id: u64,
-    address: Value,
-) {
-    if let Some(worker) = state
-        .borrow_mut()
-        .cluster
-        .workers
-        .get_mut(&worker_id)
-    {
+pub(crate) fn notify_listening(state: &Rc<RefCell<HostState>>, worker_id: u64, address: Value) {
+    if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&worker_id) {
         worker.pending_listening.push(address.clone());
     }
     // `fork().on(...)` registers after synchronous worker re-entry. Retain a
@@ -777,7 +780,11 @@ pub(crate) fn notify_listening(
 pub(crate) fn next_worker_listen_slot(state: &Rc<RefCell<HostState>>) -> Option<usize> {
     let worker_id = state.borrow().cluster.worker_context?;
     let mut guard = state.borrow_mut();
-    let slot = guard.cluster.worker_listen_slots.entry(worker_id).or_default();
+    let slot = guard
+        .cluster
+        .worker_listen_slots
+        .entry(worker_id)
+        .or_default();
     let current = *slot;
     *slot = slot.saturating_add(1);
     Some(current)
@@ -869,8 +876,12 @@ fn close_worker_net(state: &Rc<RefCell<HostState>>, worker_id: u64) {
     state.borrow_mut().net.sockets.retain(|_, socket| {
         let socket = socket.borrow();
         !(socket.server_id.is_some_and(|id| server_ids.contains(&id))
-            || socket.local.is_some_and(|address| server_addrs.contains(&address))
-            || socket.peer.is_some_and(|address| server_addrs.contains(&address)))
+            || socket
+                .local
+                .is_some_and(|address| server_addrs.contains(&address))
+            || socket
+                .peer
+                .is_some_and(|address| server_addrs.contains(&address)))
     });
     let stdio = state
         .borrow()
@@ -1023,9 +1034,12 @@ pub fn on(
                 if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {
                     worker.pending_disconnect = false;
                 }
-                let terminal = state.borrow().cluster.workers.get(&id).is_some_and(|worker| {
-                    worker.dead || worker.pending_exit.is_some()
-                });
+                let terminal = state
+                    .borrow()
+                    .cluster
+                    .workers
+                    .get(&id)
+                    .is_some_and(|worker| worker.dead || worker.pending_exit.is_some());
                 if terminal {
                     remove_worker(state, id, &obj);
                 }
@@ -1394,10 +1408,8 @@ pub fn send(
         return Ok(Value::Boolean(true));
     }
     let previous_context = state.borrow().cluster.worker_context;
-    if let (Some(handle), Some(scope)) = (
-        handle.as_ref(),
-        state.borrow().cluster.worker_scope(id),
-    ) {
+    if let (Some(handle), Some(scope)) = (handle.as_ref(), state.borrow().cluster.worker_scope(id))
+    {
         crate::modules::net::transfer_handle_scope(state, handle, scope);
     }
     set_worker_mode(state, id, &obj, true);
@@ -1419,7 +1431,8 @@ pub fn send(
         if let Ok(process) = execute::get_property_result(&obj, "process") {
             let _ = execute::set_property_in_place(&process, "connected", Value::Boolean(false));
             let _ = execute::set_property_in_place(&process, "channel", Value::Null);
-            let _ = execute::set_property_in_place(&process, "exitCode", Value::Number(code as f64));
+            let _ =
+                execute::set_property_in_place(&process, "exitCode", Value::Number(code as f64));
             let _ = emit(state, Some(&process), &[Value::String("close".into())]);
         }
         let _ = emit(

@@ -424,11 +424,25 @@ impl NodeRunner {
     ) -> Result<(), quench_runtime::vm::VmError> {
         match result {
             Err(error) => {
+                if quench_node::modules::process::abort_on_uncaught_exception(&self.host.state()) {
+                    std::process::abort();
+                }
                 match quench_node::modules::pump::handle_uncaught(&self.host.state(), error) {
-                    Ok(()) => self
-                        .drive("__quench_uncaught__();")
-                        .and_then(|_| self.drive("__quench_run_loop__();"))
-                        .map(|_| ()),
+                    Ok(()) => {
+                        let handled = self
+                            .drive("__quench_uncaught__();")
+                            .and_then(|_| self.drive("__quench_run_loop__();"));
+                        match handled {
+                            Ok(_) => Ok(()),
+                            Err(error)
+                                if quench_node::modules::process::abort_on_uncaught_exception(
+                                    &self.host.state(),
+                                ) => {
+                                    std::process::abort();
+                                }
+                            Err(error) => Err(error),
+                        }
+                    }
                     Err(error) => {
                         if quench_node::modules::process::abort_on_uncaught_exception(
                             &self.host.state(),

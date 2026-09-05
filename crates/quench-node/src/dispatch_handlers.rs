@@ -8504,9 +8504,15 @@ pub fn cp_spawn_output_emit(
     // host semantic facts below.  Explicit process.exit codes remain on the
     // real re-exec path; the child runner preserves that status at its Rust
     // process boundary.
-    let source_driven = cp_spawn_script_stdout(&child_args).is_some()
-        || cp_spawn_script_requires_in_process(&child_args)
-        || cp_spawn_eval_requires_in_process(&child_args);
+    // Invocation policy flags must reach the real child boundary.  The
+    // in-process timer model cannot represent abort-on-uncaught semantics;
+    // preserve ordinary source-backed simulation only when no abort policy is
+    // present, so a self-reexec observes the actual OS status/signal.
+    let abort_policy = cp_args_have_abort_policy(&child_args);
+    let source_driven = !abort_policy
+        && (cp_spawn_script_stdout(&child_args).is_some()
+            || cp_spawn_script_requires_in_process(&child_args)
+            || cp_spawn_eval_requires_in_process(&child_args));
     let real_child = if source_driven {
         None
     } else {
@@ -9876,10 +9882,14 @@ fn fork_child_start(
     execute::set_property_in_place(child, "\0childTimerIds", host_api::array(timers_after));
     rehide_runtime_globals(&global);
     if result.is_err() {
+        let error = result.as_ref().err().cloned().expect("error checked");
+        let handled = crate::modules::pump::handle_uncaught(state, error)
+            .and_then(|_| crate::modules::pump::run_uncaught(state));
+        let _ = crate::modules::cluster::fail_fork_process(state, child.object_identity().unwrap_or(0), 1);
         execute::set_property_in_place(&process, "send", previous_send);
         execute::set_property_in_place(&process, "disconnect", previous_disconnect);
         execute::set_property_in_place(&process, "connected", previous_connected);
-        return result.map(|_| ());
+        return handled.map(|_| ());
     }
     Ok(())
 }
@@ -10859,6 +10869,7 @@ pub fn cp_async(
                         String::from_utf8_lossy(&output.stdout).into_owned(),
                         String::from_utf8_lossy(&output.stderr).into_owned(),
                         output.status.success(),
+                        child_status_code(&output.status),
                     )
                 })
         } else {
@@ -10883,13 +10894,17 @@ pub fn cp_async(
         } else {
             callback_error
         };
-        let mut output = if let Some((stdout, _, success)) = &shell_capture {
+        let mut output = if let Some((stdout, _, success, status)) = &shell_capture {
             if !success {
                 let mut error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::Error,
                     &[Value::String(format!("Command failed: {command_text}"))],
                 );
-                execute::set_property_in_place(&mut error, "code", Value::Number(1.0));
+                execute::set_property_in_place(
+                    &mut error,
+                    "code",
+                    Value::Number(*status as f64),
+                );
                 callback_error = error;
             }
             stdout.clone()
@@ -10932,7 +10947,7 @@ pub fn cp_async(
         ) {
             output.clear();
         }
-        let mut stderr = if let Some((_, stderr, _)) = shell_capture {
+        let mut stderr = if let Some((_, stderr, _, _)) = shell_capture {
             stderr
         } else if eval_script {
             let source = command_text
@@ -11780,6 +11795,23 @@ fn cp_spawn_script_requires_in_process(args: &Value) -> bool {
                 source.contains("setInterval")
                     || source.contains("setTimeout")
                     || source.contains("child.unref")
+            })
+    })
+}
+
+fn cp_args_have_abort_policy(args: &Value) -> bool {
+    let Value::Array(array) = args else {
+        return false;
+    };
+    (0..array.logical_len()).any(|index| {
+        execute::get_property_result(args, &index.to_string())
+            .ok()
+            .and_then(|value| execute::to_js_string(&value).ok())
+            .is_some_and(|flag| {
+                matches!(
+                    flag.as_str(),
+                    "--abort-on-uncaught-exception" | "--abort_on_uncaught_exception"
+                )
             })
     })
 }
