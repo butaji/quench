@@ -1090,14 +1090,24 @@ fn verify_stencil_encodings() {
             "AArch64 encoder word {word:08x} missing from objdump output:\n{arm_dump}"
         );
     }
+    const LOOP_ENTRY_BRANCH_OFFSET: usize = 16;
+    const LOOP_BACKEDGE_OFFSET: usize = 72;
     assert_eq!(
-        u32::from_le_bytes(AARCH64_ARRAY_LOOP_BYTES[16..20].try_into().unwrap()),
+        u32::from_le_bytes(
+            AARCH64_ARRAY_LOOP_BYTES[LOOP_ENTRY_BRANCH_OFFSET..LOOP_ENTRY_BRANCH_OFFSET + 4]
+                .try_into()
+                .unwrap(),
+        ),
         0x1400_0001,
         "numeric loop entry branch must skip one-time initialization"
     );
     assert_eq!(
-        u32::from_le_bytes(AARCH64_ARRAY_LOOP_BYTES[60..64].try_into().unwrap()),
-        0x17FF_FFF6,
+        u32::from_le_bytes(
+            AARCH64_ARRAY_LOOP_BYTES[LOOP_BACKEDGE_OFFSET..LOOP_BACKEDGE_OFFSET + 4]
+                .try_into()
+                .unwrap(),
+        ),
+        0x17FF_FFF3,
         "numeric loop backedge must target the condition header"
     );
     fs::remove_file(&arm_source).ok();
