@@ -1190,6 +1190,10 @@ mod tests {
     fn physical_view_rejects_layout_mismatch_before_entry() {
         static BYTES: &[u8] = &[0xC3];
         static WRONG_ENTRIES: &[u16] = &[1];
+        const TARGET: &str = match option_env!("QUENCH_BUILD_TARGET") {
+            Some(target) => target,
+            None => "test",
+        };
         static BAD_ENTRY: BuildStencilArtifact = BuildStencilArtifact {
             name: "add_const",
             key: RegionKey(0),
@@ -1224,11 +1228,29 @@ mod tests {
             fallthrough: None,
             fallthrough_entry: 0,
         };
+        static BAD_LAYOUT: BuildStencilArtifact = BuildStencilArtifact {
+            name: "add_const",
+            key: RegionKey(0),
+            target: TARGET,
+            compiler: "test",
+            fingerprint: "test",
+            abi: RegionAbi::Scalar,
+            entry: 0,
+            external_entries: &[0],
+            has_fallthrough: true,
+            executable: true,
+            template_calls_helper: false,
+            bytes: BYTES,
+            stencil: Stencil { bytes: BYTES, holes: &[] },
+            fallthrough: None,
+            fallthrough_entry: 9,
+        };
         let record = CANONICAL_REGION_TABLE
             .iter()
             .find(|record| record.name == "add_const")
             .expect("add_const row");
         assert!(generated_physical_view(record.key, record, &BAD_ENTRY).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_ENTRIES).is_none());
+        assert!(generated_physical_view(record.key, record, &BAD_LAYOUT).is_none());
     }
 }
