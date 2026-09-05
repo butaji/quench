@@ -421,6 +421,7 @@ fn generated_physical_view(
     let metadata_matches = artifact.name == record.name
         && artifact.key == key
         && artifact_target_matches_host(artifact.target)
+        && !artifact.fingerprint.is_empty()
         && artifact.abi == record.abi
         && artifact.entry == record.entry
         && artifact.external_entries == record.external_entries
@@ -1260,5 +1261,24 @@ mod tests {
         assert!(generated_physical_view(record.key, record, &BAD_ENTRY).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_ENTRIES).is_none());
         assert!(generated_physical_view(record.key, record, &BAD_LAYOUT).is_none());
+
+        static BAD_TARGET: BuildStencilArtifact = BuildStencilArtifact {
+            name: "add_const",
+            key: RegionKey(0),
+            target: "mismatched-target",
+            compiler: "test",
+            fingerprint: "test",
+            abi: RegionAbi::Scalar,
+            entry: 0,
+            external_entries: &[0],
+            has_fallthrough: false,
+            executable: true,
+            template_calls_helper: false,
+            bytes: BYTES,
+            stencil: Stencil { bytes: BYTES, holes: &[] },
+            fallthrough: None,
+            fallthrough_entry: 0,
+        };
+        assert!(generated_physical_view(record.key, record, &BAD_TARGET).is_none());
     }
 }
