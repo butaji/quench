@@ -73,14 +73,20 @@ fn cache_signature<const N: usize>(stencil: &Stencil, values: &PatchValues<'_, N
     }
 }
 
-fn selected_chain_matches(key: crate::stencil_fact::RegionKey, head: &Stencil, tail: &Stencil) -> bool {
-    let Some(view) = crate::stencil_select::select_physical(key) else {
+fn selected_chain_matches(
+    key: crate::stencil_fact::RegionKey,
+    selected: Option<crate::stencil_select::PhysicalStencilView>,
+    head: &Stencil,
+    tail: &Stencil,
+) -> bool {
+    let Some(view) = selected.or_else(|| crate::stencil_select::select_physical(key)) else {
         return true;
     };
     let Some((expected_tail, _)) = view.fallthrough else {
         return false;
     };
-    view.abi == crate::stencil_select::RegionAbi::Scalar
+    view.key == key
+        && view.abi == crate::stencil_select::RegionAbi::Scalar
         && view.stencil.bytes == head.bytes
         && view.stencil.holes == head.holes
         && expected_tail.bytes == tail.bytes
@@ -1165,6 +1171,7 @@ impl StencilArena {
                 rel32_offset,
                 lhs,
                 rhs,
+                Some(view),
                 fallback,
             );
             if result.is_ok() {
@@ -1363,9 +1370,10 @@ impl StencilArena {
         rel32_offset: u16,
         lhs: f64,
         rhs: f64,
+        selected: Option<crate::stencil_select::PhysicalStencilView>,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
-        if !selected_chain_matches(key, head, tail) {
+        if !selected_chain_matches(key, selected, head, tail) {
             return fallback();
         }
         let signature = cache_signature(head, values);
@@ -1481,6 +1489,7 @@ impl StencilArena {
         _rel32_offset: u16,
         _lhs: f64,
         _rhs: f64,
+        _selected: Option<crate::stencil_select::PhysicalStencilView>,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
         fallback()
@@ -1500,9 +1509,10 @@ impl StencilArena {
         branch_offset: u16,
         lhs: f64,
         rhs: f64,
+        selected: Option<crate::stencil_select::PhysicalStencilView>,
         fallback: impl FnOnce() -> Result<f64, ArenaError>,
     ) -> Result<f64, ArenaError> {
-        if !selected_chain_matches(key, head, tail) {
+        if !selected_chain_matches(key, selected, head, tail) {
             return fallback();
         }
         let signature = cache_signature(head, values);
@@ -2457,6 +2467,7 @@ mod tests {
                 5,
                 10.25,
                 2.5,
+                None,
                 || Ok(0.0),
             ),
             Ok(12.75)
@@ -2527,6 +2538,7 @@ mod tests {
             branch_offset,
             1.0,
             2.0,
+            None,
             || Ok(-1.0),
         );
         assert_eq!(result, Ok(-1.0));
