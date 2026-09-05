@@ -1504,6 +1504,7 @@ pub(crate) struct NativeBinaryPlan {
     key: crate::stencil_fact::RegionKey,
     returns_boolean: bool,
     integer_op: Option<crate::ops::BinaryOp>,
+    integer_unsigned: bool,
     /// Once the first render has passed all arena and fact checks, retain the
     /// typed entry pointer. Numeric stencil bytes have no mutable VM state;
     /// re-running lifecycle, cache, mprotect, and address checks on every
@@ -1512,6 +1513,8 @@ pub(crate) struct NativeBinaryPlan {
     entry: Option<extern "C" fn(f64, f64) -> f64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     int_entry: Option<extern "C" fn(i32, i32) -> i32>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    uint_entry: Option<extern "C" fn(u32, u32) -> u32>,
 }
 
 #[inline]
@@ -1548,17 +1551,38 @@ impl NativeBinaryPlan {
                 Some(crate::ops::BinaryOp::BitwiseAnd) => {
                     return Self::new_integer(instruction, policy,
                         crate::stencil_select::bitwise_and_region_key(),
-                        crate::ops::BinaryOp::BitwiseAnd)
+                        crate::ops::BinaryOp::BitwiseAnd,
+                        false)
                 }
                 Some(crate::ops::BinaryOp::BitwiseOr) => {
                     return Self::new_integer(instruction, policy,
                         crate::stencil_select::bitwise_or_region_key(),
-                        crate::ops::BinaryOp::BitwiseOr)
+                        crate::ops::BinaryOp::BitwiseOr,
+                        false)
                 }
                 Some(crate::ops::BinaryOp::BitwiseXor) => {
                     return Self::new_integer(instruction, policy,
                         crate::stencil_select::bitwise_xor_region_key(),
-                        crate::ops::BinaryOp::BitwiseXor)
+                        crate::ops::BinaryOp::BitwiseXor,
+                        false)
+                }
+                Some(crate::ops::BinaryOp::ShiftLeft) => {
+                    return Self::new_integer(instruction, policy,
+                        crate::stencil_select::shift_left_region_key(),
+                        crate::ops::BinaryOp::ShiftLeft,
+                        false)
+                }
+                Some(crate::ops::BinaryOp::ShiftRight) => {
+                    return Self::new_integer(instruction, policy,
+                        crate::stencil_select::shift_right_region_key(),
+                        crate::ops::BinaryOp::ShiftRight,
+                        false)
+                }
+                Some(crate::ops::BinaryOp::ShiftRightZeroFill) => {
+                    return Self::new_integer(instruction, policy,
+                        crate::stencil_select::shift_right_zero_region_key(),
+                        crate::ops::BinaryOp::ShiftRightZeroFill,
+                        true)
                 }
                 Some(crate::ops::BinaryOp::LessThan) => {
                     crate::stencil_select::compare_less_region_key()
@@ -1599,10 +1623,13 @@ impl NativeBinaryPlan {
             key,
             returns_boolean,
             integer_op,
+            integer_unsigned: false,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             int_entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            uint_entry: None,
         })
     }
 
@@ -1611,6 +1638,7 @@ impl NativeBinaryPlan {
         policy: crate::stencil_policy::ExecutionPolicy,
         key: crate::stencil_fact::RegionKey,
         operator: crate::ops::BinaryOp,
+        unsigned: bool,
     ) -> Option<Self> {
         if !policy.native_leaves
             || instruction.opcode != crate::ir::Opcode::Binary
@@ -1628,10 +1656,13 @@ impl NativeBinaryPlan {
             key,
             returns_boolean: false,
             integer_op: Some(operator),
+            integer_unsigned: unsigned,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             int_entry: None,
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            uint_entry: None,
         })
     }
 
@@ -1646,7 +1677,15 @@ impl NativeBinaryPlan {
             let right = exact_i32(rhs).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(entry) = self.int_entry {
-                return Ok(f64::from(entry(left, right)));
+                if !self.integer_unsigned {
+                    return Ok(f64::from(entry(left, right)));
+                }
+            }
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if self.integer_unsigned {
+                if let Some(entry) = self.uint_entry {
+                    return Ok(f64::from(entry(left as u32, right as u32)));
+                }
             }
             if self.lifecycle.observe_site(&self.site, self.key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
@@ -1657,17 +1696,34 @@ impl NativeBinaryPlan {
                 self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
             }
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-            let result = self
+            let arena = self
                 .arena
                 .as_mut()
-                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
-                .render_selected_i32(&mut self.cache, self.key, &values, left, right)
-                .map(f64::from);
+                .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
+            let result = if self.integer_unsigned {
+                arena
+                    .render_selected_u32(
+                        &mut self.cache,
+                        self.key,
+                        &values,
+                        left as u32,
+                        right as u32,
+                    )
+                    .map(|value| f64::from(value))
+            } else {
+                arena
+                    .render_selected_i32(&mut self.cache, self.key, &values, left, right)
+                    .map(|value| f64::from(value))
+            };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if result.is_ok() {
                 if let Some(arena) = self.arena.as_ref() {
                     if let Some(address) = self.cache.get_owned(self.key, 0, arena.id()) {
-                        self.int_entry = arena.i32_entry(address).ok();
+                        if self.integer_unsigned {
+                            self.uint_entry = arena.u32_entry(address).ok();
+                        } else {
+                            self.int_entry = arena.i32_entry(address).ok();
+                        }
                     }
                 }
             }
@@ -1678,6 +1734,7 @@ impl NativeBinaryPlan {
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 {
                     self.int_entry = None;
+                    self.uint_entry = None;
                 }
             }
             return result;
@@ -2419,6 +2476,7 @@ impl NativeRegionPlan {
                     record.abi,
                     crate::stencil_select::RegionAbi::Scalar
                         | crate::stencil_select::RegionAbi::ScalarI32
+                        | crate::stencil_select::RegionAbi::ScalarU32
                 )
         })?;
         Some(Self {
@@ -2505,6 +2563,7 @@ impl NativeRegionPlan {
                 contract.abi,
                 crate::stencil_select::RegionAbi::Scalar
                     | crate::stencil_select::RegionAbi::ScalarI32
+                    | crate::stencil_select::RegionAbi::ScalarU32
             ) {
                 return Err(NativeDispatchError::Physical(
                     "native fused region ABI metadata mismatch".into(),
@@ -2532,6 +2591,7 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::Bridge => "bridge",
                 crate::stencil_select::RegionAbi::Scalar => "scalar",
                 crate::stencil_select::RegionAbi::ScalarI32 => "scalar_i32",
+                crate::stencil_select::RegionAbi::ScalarU32 => "scalar_u32",
             };
             let (used_bytes, capacity_bytes) = {
                 let slab = arena.borrow();
@@ -2586,6 +2646,11 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ScalarI32 => {
                     return Err(NativeDispatchError::Physical(
                         "scalar i32 ABI cannot enter a region context".into(),
+                    ));
+                }
+                crate::stencil_select::RegionAbi::ScalarU32 => {
+                    return Err(NativeDispatchError::Physical(
+                        "scalar u32 ABI cannot enter a region context".into(),
                     ));
                 }
             }
@@ -2802,8 +2867,9 @@ impl BaselinePlan {
                         if !record.executable
                             || matches!(
                                 record.abi,
-                                crate::stencil_select::RegionAbi::Scalar
+                                    crate::stencil_select::RegionAbi::Scalar
                                     | crate::stencil_select::RegionAbi::ScalarI32
+                                    | crate::stencil_select::RegionAbi::ScalarU32
                             )
                         {
                             return None;
