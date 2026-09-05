@@ -25,3 +25,18 @@ fn generated_artifact_target_is_selected_as_one_physical_view() {
         assert_eq!(view.fingerprint, Some(artifact.fingerprint));
     }
 }
+
+#[cfg(quench_generated_stencil_artifacts)]
+#[test]
+fn generated_artifacts_have_nonzero_identity_and_physical_payload() {
+    assert!(!BUILD_STENCIL_ARTIFACTS.is_empty());
+    for artifact in BUILD_STENCIL_ARTIFACTS {
+        assert!(!artifact.artifact_id.is_empty());
+        assert!(!artifact.compiler.is_empty());
+        assert!(!artifact.fingerprint.is_empty());
+        assert!(!artifact.bytes.is_empty());
+        assert!(!artifact.stencil.bytes.is_empty());
+        assert_eq!(artifact.stencil.bytes, artifact.bytes);
+        assert_eq!(artifact.target, env!("QUENCH_BUILD_TARGET"));
+    }
+}
