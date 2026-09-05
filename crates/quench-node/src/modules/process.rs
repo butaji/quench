@@ -884,6 +884,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
         ),
         (
+            "getgroups",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETGROUPS),
+        ),
+        (
             "geteuid",
             crate::host::capability(crate::registry::SPEC_PROCESS_GETEUID),
         ),

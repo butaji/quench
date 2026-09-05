@@ -113,6 +113,7 @@ const CAP_PROCESS_GETUID: u16 = 0x0A12;
 const CAP_PROCESS_GETGID: u16 = 0x0A13;
 const CAP_PROCESS_GETEUID: u16 = 0x0A14;
 const CAP_PROCESS_GETEGID: u16 = 0x0A15;
+const CAP_PROCESS_GETGROUPS: u16 = 0x0A2E;
 const CAP_PROCESS_SETUID: u16 = 0x0A16;
 const CAP_PROCESS_SETGID: u16 = 0x0A17;
 const CAP_PROCESS_SETEUID: u16 = 0x0A18;
@@ -1139,6 +1140,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_GETGID => process_getgid,
         CAP_PROCESS_GETEUID => process_geteuid,
         CAP_PROCESS_GETEGID => process_getegid,
+        CAP_PROCESS_GETGROUPS => process_getgroups,
         CAP_PROCESS_SETUID => process_setuid,
         CAP_PROCESS_SETGID => process_setgid,
         CAP_PROCESS_SETEUID => process_seteuid,
