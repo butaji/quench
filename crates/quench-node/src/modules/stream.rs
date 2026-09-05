@@ -18,6 +18,7 @@ use crate::registry::{
     SPEC_STREAM_PROMISES_CALLBACK, SPEC_STREAM_PROMISES_FINISHED, SPEC_STREAM_PROMISES_PIPELINE,
     SPEC_STREAM_READABLE, SPEC_STREAM_TRANSFORM, SPEC_STREAM_WEB_PIPELINE_COMPLETE,
     SPEC_STREAM_WEB_PIPELINE_ERROR, SPEC_STREAM_WRITABLE,
+    SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
@@ -48,10 +49,14 @@ pub fn pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     if raw_stages.iter().any(is_web_stage) {
         return web_pipeline(state, &raw_stages, callback);
     }
-    let terminal = raw_stages.last().filter(|value| quench_runtime::is_callable(value)).cloned();
-    let stream_args = terminal
-        .as_ref()
-        .map_or_else(|| raw_stages.clone(), |_| raw_stages[..raw_stages.len() - 1].to_vec());
+    let terminal = raw_stages
+        .last()
+        .filter(|value| quench_runtime::is_callable(value))
+        .cloned();
+    let stream_args = terminal.as_ref().map_or_else(
+        || raw_stages.clone(),
+        |_| raw_stages[..raw_stages.len() - 1].to_vec(),
+    );
     let stages = normalize_pipeline(state, stream_args)?;
     if stages.is_empty() {
         let code = if args.is_empty() {
@@ -329,7 +334,10 @@ pub fn web_pipeline_complete(
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     if quench_runtime::is_callable(&callback) {
         let arguments = if matches!(args.get(1), Some(Value::Boolean(true))) {
-            vec![Value::Undefined, args.get(2).cloned().unwrap_or(Value::Undefined)]
+            vec![
+                Value::Undefined,
+                args.get(2).cloned().unwrap_or(Value::Undefined),
+            ]
         } else {
             Vec::new()
         };
@@ -542,11 +550,7 @@ fn pipeline_error(message: &str, code: &str) -> VmError {
     )
     .unwrap_or_else(|_| host_api::object(Vec::new()));
     execute::set_property_in_place(&error, "code", Value::String(code.into()));
-    execute::set_property_in_place(
-        &error,
-        "\0node_error_to_string_code",
-        Value::Boolean(true),
-    );
+    execute::set_property_in_place(&error, "\0node_error_to_string_code", Value::Boolean(true));
     VmError::Thrown(error)
 }
 
@@ -1415,6 +1419,38 @@ fn option_enabled(options: Option<&Value>, key: &str) -> bool {
     )
 }
 
+/// Forward Writable.prototype.write through the Rust host boundary so byte
+/// views use Node's internal `buffer` encoding marker without sending that
+/// marker through the public string-encoding validator. Node ignores the
+/// optional encoding argument for Buffer/typed-array chunks; the prelude's
+/// state machine can then perform its ordinary normalization and lifecycle
+/// handling unchanged.
+pub fn writable_write_adapter(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let original = args.first().ok_or(VmError::NotCallable)?;
+    if !quench_runtime::is_callable(original) {
+        return Err(VmError::NotCallable);
+    }
+    let mut write_args = args.get(1..).unwrap_or_default().to_vec();
+    let byte_view = write_args.first().is_some_and(|chunk| {
+        matches!(
+            chunk,
+            Value::Uint8Array(_) | Value::DataView(_) | Value::ArrayBuffer(_)
+        )
+    });
+    if byte_view && matches!(write_args.get(1), Some(Value::String(_))) {
+        write_args[1] = Value::Undefined;
+    }
+    execute::call(
+        original,
+        receiver.unwrap_or(&Value::Undefined),
+        &write_args,
+    )
+}
+
 pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     if let Some(cached) = state.borrow().stream_module.clone() {
         return Ok(cached);
@@ -1460,6 +1496,39 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
             ])
         }
     };
+    // The JS prelude's Writable state machine is retained for its lifecycle
+    // semantics, but public byte-view writes must first discard the optional
+    // encoding label.  Install one Rust-owned forwarding capability on each
+    // writable family prototype so the rule applies uniformly to Writable,
+    // Duplex, Transform, and subclasses without changing fixture code or the
+    // prelude's string codec validator.
+    for constructor_name in ["Writable", "Duplex", "Transform", "PassThrough"] {
+        let constructor = execute::get_property(&module, constructor_name);
+        let prototype = execute::get_property(&constructor, "prototype");
+        let original = execute::get_property(&prototype, "write");
+        if !quench_runtime::is_callable(&original) {
+            continue;
+        }
+        let adapter = host_api::bound_capability_with_arguments(
+            crate::host::capability_ref(SPEC_STREAM_WRITABLE_WRITE_ADAPTER),
+            vec![original],
+        );
+        let adapter = execute::define_property(
+            adapter,
+            "name",
+            host_api::object(vec![
+                ("value".into(), Value::String("write".into())),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        )
+        .unwrap_or_else(|_| {
+            host_api::bound_capability_with_arguments(
+                crate::host::capability_ref(SPEC_STREAM_WRITABLE_WRITE_ADAPTER),
+                vec![execute::get_property(&prototype, "write")],
+            )
+        });
+        let _ = execute::set_property_in_place(&prototype, "write", adapter);
+    }
     if let Ok(compose) = quench_runtime::execute::get_property_result(&module, "compose") {
         state.borrow_mut().stream_compose_impl = Some(compose);
     }
