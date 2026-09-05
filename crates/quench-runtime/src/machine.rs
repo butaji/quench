@@ -2938,6 +2938,8 @@ pub(crate) struct NativeAddChainPlan {
     entry: Option<extern "C" fn(f64, f64, f64) -> f64>,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn(f64, f64, f64) -> f64>>,
+    #[cfg(test)]
+    native_entry_count: u64,
 }
 
 impl NativeAddChainPlan {
@@ -2967,7 +2969,22 @@ impl NativeAddChainPlan {
             entry: None,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             shared_entry: None,
+            #[cfg(test)]
+            native_entry_count: 0,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_entry_count(&self) -> u64 {
+        self.native_entry_count
+    }
+
+    #[inline]
+    fn note_entry(&mut self) {
+        #[cfg(test)]
+        {
+            self.native_entry_count = self.native_entry_count.saturating_add(1);
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -2980,7 +2997,9 @@ impl NativeAddChainPlan {
     ) -> Result<f64, crate::stencil_arena::ArenaError> {
         if self.shared_arena.is_none() {
             if let Some(entry) = self.entry {
-                return Ok(unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) });
+                let result = unsafe { invoke_f64x3_entry(entry, lhs, rhs, third) };
+                self.note_entry();
+                return Ok(result);
             }
         }
         let key = crate::stencil_select::add_chain_region_key();
@@ -2996,7 +3015,10 @@ impl NativeAddChainPlan {
             match shared.borrow().with_owned(owned, |entry| unsafe {
                 invoke_f64x3_entry(entry, lhs, rhs, third)
             }) {
-                Ok(value) => return Ok(value),
+                Ok(value) => {
+                    self.note_entry();
+                    return Ok(value);
+                }
                 Err(_) => self.shared_entry = None,
             }
         }
@@ -3022,9 +3044,13 @@ impl NativeAddChainPlan {
             };
             let owned = shared.borrow().owned_entry(address, entry)?;
             self.shared_entry = Some(owned);
-            return shared.borrow().with_owned(owned, |entry| unsafe {
+            let result = shared.borrow().with_owned(owned, |entry| unsafe {
                 invoke_f64x3_entry(entry, lhs, rhs, third)
             });
+            if result.is_ok() {
+                self.note_entry();
+            }
+            return result;
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -3035,6 +3061,7 @@ impl NativeAddChainPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?
             .render_selected_f64x3(&mut self.cache, key, &values, lhs, rhs, third);
         if result.is_ok() {
+            self.note_entry();
             if let Some(arena) = self.arena.as_ref() {
                 if let Some(address) = self.cache.get_owned(key, 0, arena.id()) {
                     self.entry = arena.f64x3_entry(address).ok();

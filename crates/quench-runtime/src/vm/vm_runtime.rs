@@ -6442,6 +6442,16 @@ mod compact_handler_tests {
         )
         .expect("fused numeric chain");
         assert_eq!(completion, crate::completion::Completion::Return(Value::Number(7.75)));
+        if crate::stencil_policy::current().native_leaves {
+            assert_eq!(
+                plan.native_add_chain_at(0)
+                    .expect("fused plan")
+                    .borrow()
+                    .native_entry_count(),
+                1,
+                "fused test must execute the physical entry"
+            );
+        }
     }
 
     #[test]
