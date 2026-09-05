@@ -429,11 +429,15 @@ mod generated_region_admission_tests {
                     ));
                 }
                 RegionAbi::ScalarBool => {
-                    assert!(matches!(record.stencil.bytes.len(), 23 | 28));
-                    assert!(matches!(
-                        record.operations,
-                        [crate::ir::Opcode::JumpIfFalse]
-                    ));
+                    if matches!(record.operations, [crate::ir::Opcode::JumpIfFalse]) {
+                        assert!(matches!(record.stencil.bytes.len(), 23 | 28));
+                    } else {
+                        assert!(matches!(
+                            record.operations,
+                            [crate::ir::Opcode::Binary, crate::ir::Opcode::Return]
+                        ));
+                        assert!(matches!(record.stencil.bytes.len(), 11 | 12 | 16 | 20));
+                    }
                 }
                 RegionAbi::ScalarWordBool => {
                     assert!(matches!(
