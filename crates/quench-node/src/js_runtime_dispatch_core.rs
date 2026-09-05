@@ -155,6 +155,9 @@ impl QuenchNodeHost {
                         ("stderr".into(), quench_runtime::host_api::bytes(&[])),
                     ]))
                 }
+                HostCapabilityKind::Custom(CapabilityName::ChildGetValidStdio) => {
+                    crate::modules::child_process::get_valid_stdio(arguments)
+                }
                 HostCapabilityKind::Custom(CapabilityName::ChildStdoutToString) => {
                     Ok(Value::String(
                         format!("{}\n", std::env::args().next().unwrap_or_default()).into(),

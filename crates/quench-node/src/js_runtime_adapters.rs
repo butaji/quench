@@ -188,6 +188,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::FsAccessAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsExistsSync),
                 HostCapabilityKind::Custom(CapabilityName::ChildExecFile),
+                HostCapabilityKind::Custom(CapabilityName::ChildGetValidStdio),
                 HostCapabilityKind::Custom(CapabilityName::ChildFork),
                 HostCapabilityKind::Custom(CapabilityName::ChildEmit),
                 HostCapabilityKind::Custom(CapabilityName::ChildSend),
