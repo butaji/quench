@@ -2339,6 +2339,12 @@ fn validate_region_window(
         ));
     }
     let abi = contract.abi_contract();
+    let physical_call = stencil_contains_call(record.stencil.bytes);
+    if physical_call && !abi.may_call_helper {
+        return Err(NativeDispatchError::Physical(
+            "native stencil contains a call outside its ABI contract".into(),
+        ));
+    }
     if !record.stencil.validate() {
         return Err(NativeDispatchError::Physical(
             "native region stencil layout or relocation is invalid".into(),
@@ -2368,6 +2374,11 @@ fn validate_region_window(
     {
         return Err(NativeDispatchError::Physical(
             "raw array region contains an external pointer relocation".into(),
+        ));
+    }
+    if abi.context_arg_words == 0 && pointer_holes != 0 {
+        return Err(NativeDispatchError::Physical(
+            "scalar/native leaf ABI cannot carry a context pointer relocation".into(),
         ));
     }
     if matches!(contract.abi, crate::stencil_select::RegionAbi::Bridge)
@@ -2436,6 +2447,31 @@ fn validate_region_window(
         }
     }
     Ok(())
+}
+
+/// Detect direct helper calls in the physical template independently of the
+/// semantic ABI declaration. This is intentionally conservative: a possible
+/// call rejects a raw no-helper ABI, while helper-capable bridges remain valid.
+fn stencil_contains_call(bytes: &[u8]) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return bytes.chunks_exact(4).any(|word| {
+            let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+            encoded & 0xFC00_0000 == 0x9400_0000
+        });
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        return bytes.first().is_some_and(|byte| *byte == 0xE8)
+            || bytes.windows(2).any(|window| {
+                window[0] == 0xFF && matches!(window[1] & 0x38, 0x10 | 0x18)
+            });
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = bytes;
+        false
+    }
 }
 
 impl NativeRegionPlan {
