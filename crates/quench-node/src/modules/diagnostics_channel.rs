@@ -949,6 +949,20 @@ pub fn publish(
     Ok(Value::Undefined)
 }
 
+/// Publish a host-owned diagnostic without requiring the caller to retain a
+/// JavaScript Channel object. Native permission and transport checks use the
+/// same channel registry as user code, so subscribers observe identical
+/// ordering and store propagation.
+pub(crate) fn publish_named(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: Value,
+) -> Result<(), VmError> {
+    let channel = channel(state, None, &[Value::String(name.to_owned())])?;
+    publish(state, Some(&channel), &[message])?;
+    Ok(())
+}
+
 /// Run a node:test body inside the stores bound to the test start channel and
 /// emit the corresponding start/end/error trace events. Keeping the scope
 /// around the whole body (including promise pumping) makes AsyncLocalStorage
