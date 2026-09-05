@@ -61,7 +61,10 @@ globalThis.structuredClone = (value, options) => {
     for (const key of Object.keys(value)) clone[key] = value[key];
     return clone;
   }
-  const cryptoKeyClone = globalThis.__quenchCloneWebCryptoKey?.(value);
+  const cryptoKeyClone =
+    value && value[String.fromCharCode(0) + "quench:webcrypto:key"] === true
+      ? undefined
+      : globalThis.__quenchCloneWebCryptoKey?.(value);
   if (cryptoKeyClone) return cryptoKeyClone;
   return __nodeNativeStructuredClone
     ? __nodeNativeStructuredClone(value, options)
