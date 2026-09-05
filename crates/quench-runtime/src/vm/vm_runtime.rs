@@ -1737,9 +1737,21 @@ pub(crate) fn execute_optimized_code_step_from(
             }
             Err(crate::machine::NativeDispatchError::Physical(_)) => {
                 crate::execution_trace::stencil_observation(code, start, "region", false);
+                crate::execution_trace::stencil_rejection(
+                    code,
+                    start,
+                    "region",
+                    "physical_entry",
+                );
                 crate::execution_trace::leaf_rejection("optimizing_native_region");
             }
             Err(crate::machine::NativeDispatchError::Committed(message)) => {
+                crate::execution_trace::stencil_rejection(
+                    code,
+                    start,
+                    "region",
+                    "post_entry_failure",
+                );
                 return Err(VmError::EvalError(format!(
                     "committed native region failure: {message}"
                 )));
