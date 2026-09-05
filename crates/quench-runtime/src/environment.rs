@@ -240,6 +240,27 @@ impl SlotStore {
         self.invariant();
     }
 
+    #[inline(always)]
+    fn store_tagged_bits(&self, index: usize, bits: u64) -> bool {
+        if self
+            .bridges()
+            .and_then(|bridges| bridges.get(index))
+            .is_some_and(Option::is_some)
+        {
+            return false;
+        }
+        self.values_mut().write_tagged_bits(index, bits).is_some()
+    }
+
+    #[inline(always)]
+    fn can_store_tagged_bits(&self, index: usize) -> bool {
+        self.values().len() > index
+            && !self
+                .bridges()
+                .and_then(|bridges| bridges.get(index))
+                .is_some_and(Option::is_some)
+    }
+
     fn copy_from_register(
         &self,
         index: usize,
@@ -975,6 +996,37 @@ impl Environment {
                 store.immediate_word_ptr(index).map(|ptr| ptr.cast_const())
             })
             .flatten()
+    }
+
+    /// Commit a tagged word into a proven ordinary local slot. The register
+    /// file performs the retain/release edge; cell-backed and invalidated
+    /// bindings return false so callers use the complete store path.
+    #[inline(always)]
+    pub(crate) fn store_proven_tagged_bits(&self, slot: u16, bits: u64) -> bool {
+        if self.is_deleted_slot(slot)
+            || self.is_immutable_slot(slot)
+            || self.is_uninitialized(slot)
+        {
+            return false;
+        }
+        self.slots_ref()
+            .with_binding(usize::from(slot), |store, index| {
+                store.store_tagged_bits(index, bits)
+            })
+            .unwrap_or(false)
+    }
+
+    #[inline(always)]
+    pub(crate) fn can_store_proven_tagged_bits(&self, slot: u16) -> bool {
+        !self.is_deleted_slot(slot)
+            && !self.is_immutable_slot(slot)
+            && !self.is_uninitialized(slot)
+            && self
+                .slots_ref()
+                .with_binding(usize::from(slot), |store, index| {
+                    store.can_store_tagged_bits(index)
+                })
+                .unwrap_or(false)
     }
 
     pub(crate) fn load_into_fixed<const N: usize>(
