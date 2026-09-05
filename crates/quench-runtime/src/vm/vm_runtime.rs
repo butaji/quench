@@ -5799,6 +5799,7 @@ mod compact_handler_tests {
         arena.make_executable().expect("protect numeric loop");
         for (mut data, initial_result, expected_result, expected_data) in [
             (Vec::<f64>::new(), 0.0, 0.0, Vec::<f64>::new()),
+            (Vec::<f64>::new(), 9.0, 9.0, Vec::<f64>::new()),
             (vec![7.0], 0.0, 8.0, vec![8.0]),
             (vec![1.0, 2.0, 3.0], 0.0, 4.0, vec![2.0, 3.0, 4.0]),
             (vec![2.0, 3.0], 9.0, 4.0, vec![3.0, 4.0]),
