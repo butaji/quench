@@ -3908,7 +3908,8 @@ impl BaselinePlan {
                     policy,
                     Rc::clone(&shared_region_arena),
                 )
-                    .map(|native| Rc::new(RefCell::new(native)))
+                .filter(|_| entry.instruction.opcode == crate::ir::Opcode::Move)
+                .map(|native| Rc::new(RefCell::new(native)))
             })
             .collect::<Vec<_>>()
             .into();
