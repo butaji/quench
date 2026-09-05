@@ -550,12 +550,22 @@ fn feed_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<Value, Vm
 }
 
 fn reset_keep_alive_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) {
-    let reset = state
-        .borrow()
-        .http
-        .conns
-        .get(&socket_id)
-        .is_some_and(|conn| conn.response_done && conn.keep_alive && conn.body_done);
+    let (reset, unref_server_socket) = {
+        let host = state.borrow();
+        let Some(conn) = host.http.conns.get(&socket_id) else {
+            return;
+        };
+        let server_unrefed = net::net_id(&conn.server).is_some_and(|server_id| {
+            host.net
+                .servers
+                .get(&server_id)
+                .is_some_and(|server| !server.borrow().refed)
+        });
+        (
+            conn.response_done && conn.keep_alive && conn.body_done,
+            server_unrefed,
+        )
+    };
     if !reset {
         return;
     }
@@ -565,6 +575,17 @@ fn reset_keep_alive_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) {
         conn.body_done = true;
         conn.head_parsed = false;
         conn.response_done = false;
+    }
+    if unref_server_socket {
+        if let Some(socket) = state
+            .borrow()
+            .net
+            .sockets
+            .get(&socket_id)
+            .map(|socket| socket.borrow().js.clone())
+        {
+            let _ = net::socket_unref(state, Some(&socket), &[]);
+        }
     }
 }
 
