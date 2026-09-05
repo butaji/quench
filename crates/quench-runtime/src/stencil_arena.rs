@@ -293,6 +293,10 @@ impl SharedStencilSlab {
         if slab_capacity == 0 || slab_capacity > MAX_ARENA_BYTES {
             return Err(ArenaError::InvalidCapacity);
         }
+        let slab_capacity = slab_capacity
+            .checked_add(PAGE - 1)
+            .ok_or(ArenaError::InvalidCapacity)?
+            & !(PAGE - 1);
         Ok(Self {
             slabs: Vec::new(),
             slab_capacity,
