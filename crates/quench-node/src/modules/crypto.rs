@@ -1368,6 +1368,47 @@ pub fn key_object_prototypes() -> (Value, Value) {
     })
 }
 
+/// Clone a host-owned KeyObject for structured-clone boundaries.
+///
+/// KeyObject state is deliberately kept in non-enumerable Rust-owned facts,
+/// so an ordinary enumerable-property clone would reduce it to `{}` and lose
+/// the prototype methods (`type`, `export`, and friends). Rebuild the same
+/// public prototype and copy the portable key facts instead.
+pub(crate) fn clone_key_object(value: &Value) -> Option<Value> {
+    if !is_key_object(value) {
+        return None;
+    }
+    let key_type = key_hidden(value, KEY_TYPE_PROP);
+    let Value::String(ref key_type_name) = key_type else {
+        return None;
+    };
+    let (key_proto, asym_proto) = key_object_prototypes();
+    let prototype = if key_type_name == "secret" {
+        key_proto
+    } else {
+        asym_proto
+    };
+    let clone = execute::set_prototype_of(&host_api::object(Vec::new()), &prototype).ok()?;
+    define_hidden(&clone, KEY_MARKER_PROP, Value::Boolean(true));
+    define_hidden(&clone, KEY_TYPE_PROP, key_type);
+    for (name, fact) in [
+        (KEY_SIZE_PROP, key_hidden(value, KEY_SIZE_PROP)),
+        (KEY_ASYM_TYPE_PROP, key_hidden(value, KEY_ASYM_TYPE_PROP)),
+        (KEY_DETAILS_PROP, key_hidden(value, KEY_DETAILS_PROP)),
+    ] {
+        if !matches!(fact, Value::Undefined) {
+            define_hidden(&clone, name, crate::modules::clone::deep_clone(fact));
+        }
+    }
+    let data = bytes_from_value(&key_hidden(value, KEY_DATA_PROP))?;
+    define_hidden(
+        &clone,
+        KEY_DATA_PROP,
+        crate::modules::buffer_proto::make_buffer(&data),
+    );
+    Some(clone)
+}
+
 pub fn key_object_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
