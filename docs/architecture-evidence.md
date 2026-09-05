@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `ceaf68da0` (cleanup files remain
+Evidence below is bound to source revision `4c64f1480` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -54,7 +54,7 @@ ignored** (`/tmp/quench-runtime-trace-20260905-shared-bool-v2.log`), with the
 typed shared-integer witness passing separately
 (`/tmp/quench-scalar-owned-int-trace-20260905.log`).
 The shared comparison owner witness passes in both normal and trace builds
-(`/tmp/quench-shared-bool-focused-20260905-v2.log`,
+(`/tmp/quench-shared-bool-focused-20260905-v3.log`,
 `/tmp/quench-shared-bool-trace-20260905.log`, 1 passed each).
 
 Logical-not now reuses the corrected truthiness entries for proven numbers and
