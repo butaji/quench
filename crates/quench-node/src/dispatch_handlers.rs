@@ -10775,8 +10775,28 @@ pub fn cp_send(
         }
         return Ok(Value::Boolean(true));
     }
+    // The in-process fork transport still has to honor the selected IPC
+    // serializer.  In particular, `advanced` serializes non-typed-array host
+    // objects as ordinary objects with their own enumerable properties; it
+    // must not leak the sender's VM object into the child realm.  Keep this
+    // at the shared delivery boundary so fork and child-to-parent traffic use
+    // the same semantics.
+    let advanced_serialization = matches!(
+        execute::get_property(
+            &execute::get_property(child, "\0childOptions"),
+            "serialization"
+        ),
+        Value::String(ref value) if value == "advanced"
+    );
+    let serialized_message = || {
+        if advanced_serialization {
+            crate::modules::clone::advanced_clone(message.clone())
+        } else {
+            message.clone()
+        }
+    };
     let delivered = if from_fork_process || to_fork_process {
-        message.clone()
+        serialized_message()
     } else if args
         .get(1)
         .is_some_and(|value| !matches!(value, Value::Undefined | Value::Null))
