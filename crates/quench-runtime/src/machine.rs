@@ -2862,8 +2862,7 @@ enum InstalledUnaryEntry {
 pub(crate) struct NativeUnaryPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
-    cache: crate::stencil_select::RenderedRegionCache,
-    lifecycle: crate::stencil_lifecycle::StencilLifecycle,
+    physical: PhysicalState,
     site: crate::quickening::QuickeningSite<4>,
     key: crate::stencil_fact::RegionKey,
     kind: NativeUnaryKind,
@@ -2877,7 +2876,7 @@ impl std::fmt::Debug for NativeUnaryPlan {
         formatter
             .debug_struct("NativeUnaryPlan")
             .field("key", &self.key)
-            .field("cache_len", &self.cache.len())
+            .field("cache_len", &self.physical.cache.len())
             .finish()
     }
 }
@@ -2886,8 +2885,7 @@ impl NativeUnaryPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
         self.installed = InstalledUnaryEntry::Unpublished;
-        self.cache.clear();
-        self.lifecycle.reset();
+        self.physical.clear();
     }
 
     fn new_with_shared(
@@ -2924,8 +2922,7 @@ impl NativeUnaryPlan {
             .then_some(Self {
                 arena: None,
                 shared_arena: None,
-                cache: crate::stencil_select::RenderedRegionCache::new(),
-                lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
+                physical: PhysicalState::new(),
                 site: crate::quickening::QuickeningSite::new(instruction.opcode),
                 key,
                 kind,
@@ -2959,13 +2956,13 @@ impl NativeUnaryPlan {
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site)
             .with_constant_bits(0x8000_0000_0000_0000);
-        let (address, entry) = {
+        let address = {
             let mut slab = shared.borrow_mut();
             let stencil = crate::stencil_select::select_stencil(self.key)
                 .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-            let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+            let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
             slab.make_executable(address)?;
-            (address, slab.f64_unary_entry(address)?)
+            address
         };
         let owned = shared.borrow().owned_f64_unary_entry(address)?;
         self.installed = InstalledUnaryEntry::NumberShared(owned);
@@ -3006,7 +3003,7 @@ impl NativeUnaryPlan {
             .ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
         let stencil = crate::stencil_select::select_stencil(self.key)
             .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
         arena.make_executable()?;
         let entry = arena.f64_unary_entry(address)?;
         self.installed = InstalledUnaryEntry::NumberLocal(address);
@@ -3045,17 +3042,16 @@ impl NativeUnaryPlan {
                 }
             }
             let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-            let rendered = (|| {
+            let rendered = (|| -> Result<usize, crate::stencil_arena::ArenaError> {
                 let mut slab = shared.borrow_mut();
                 let stencil = crate::stencil_select::select_stencil(self.key)
                     .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-                let address = slab.render_or_get(&mut self.cache, self.key, stencil, &values)?;
+                let address = slab.render_or_get(&mut self.physical.cache, self.key, stencil, &values)?;
                 slab.make_executable(address)?;
-                Ok((address, slab.i32_unary_entry(address)?))
+                Ok(address)
             })();
-            let (address, entry) = rendered.map_err(|error| {
-                self.cache.clear();
-                self.lifecycle.reset();
+            let address = rendered.map_err(|error| {
+                self.physical.clear();
                 error
             })?;
             let owned = shared.borrow().owned_i32_unary_entry(address)?;
@@ -3063,8 +3059,6 @@ impl NativeUnaryPlan {
                 Ok(result) => result,
                 Err(error) => {
                     self.clear_shared_capabilities();
-                    self.cache.clear();
-                    self.lifecycle.reset();
                     return Err(error);
                 }
             };
@@ -3080,7 +3074,7 @@ impl NativeUnaryPlan {
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
         let arena = self.arena.as_mut().ok_or(crate::stencil_arena::ArenaError::MappingFailed)?;
-        let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
+        let address = arena.render_or_get(&mut self.physical.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
         let entry = arena.i32_unary_entry(address)?;
         self.installed = InstalledUnaryEntry::IntegerLocal(address);
