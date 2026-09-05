@@ -1,5 +1,7 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
+mod build_stencil_artifacts;
+
 #[derive(Clone, Copy)]
 struct RegionDeclaration {
     name: &'static str,
@@ -1480,6 +1482,8 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
 fn main() {
     generate_op_names();
     generate_stencil_catalog();
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    build_stencil_artifacts::generate(&output, REGION_DECLARATIONS);
     validate_stencil_declarations();
     if env::var_os("QUENCH_VERIFY_STENCIL_ENCODINGS").is_some() {
         verify_stencil_encodings();
@@ -1487,6 +1491,10 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(quench_production)");
     println!("cargo:rerun-if-env-changed=PROFILE");
     println!("cargo:rerun-if-env-changed=QUENCH_VERIFY_STENCIL_ENCODINGS");
+    println!("cargo:rerun-if-env-changed=QUENCH_GENERATE_STENCIL_OBJECTS");
+    println!("cargo:rerun-if-env-changed=QUENCH_CLANG");
+    println!("cargo:rerun-if-env-changed=QUENCH_OBJCOPY");
+    println!("cargo:rerun-if-env-changed=QUENCH_NM");
     let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
     // Keep this mapping exhaustive: a profile not represented here must not
     // silently masquerade as a production artifact.
@@ -1859,6 +1867,7 @@ fn canonical_region_lookup(key: crate::stencil_fact::RegionKey) -> Option<&'stat
     generated.push('\n');
     fs::write(output.join("stencil_catalog.rs"), generated).expect("write stencil catalog");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_stencil_artifacts.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
 }
 
