@@ -416,6 +416,7 @@ fn non_x86_native_execution_rejects_before_mapping() {
         returns_boolean: false,
         integer_op: None,
         integer_unsigned: false,
+        native_entry_count: 0,
     };
     assert!(plan.execute(1.0, 2.0).is_err());
     assert!(plan.arena.is_none());
@@ -438,6 +439,7 @@ fn native_numeric_entry_pointer_is_cached_after_first_render() {
         entry: None,
         int_entry: None,
         uint_entry: None,
+        native_entry_count: 0,
     };
     assert_eq!(plan.execute(1.5, 2.25), Ok(3.75));
     assert!(plan.entry.is_some());
@@ -642,10 +644,10 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert!(plan
                 .native_binary_at(binary_pc)
-                .is_some_and(|native| native.borrow().int_entry.is_some()));
+                .is_some_and(|native| native.borrow().native_entry_count > 0));
             assert!(shift_pc.is_some_and(|pc| {
                 plan.native_binary_at(pc)
-                    .is_some_and(|native| native.borrow().int_entry.is_some())
+                    .is_some_and(|native| native.borrow().native_entry_count > 0)
             }));
             executed = true;
         });

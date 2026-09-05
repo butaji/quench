@@ -126,6 +126,23 @@ impl SharedStencilSlab {
         self.peak_dispatches.get()
     }
 
+    /// Drop published slabs only at an idle ownership boundary.  Callers keep
+    /// cache entries, but each entry carries the slab generation, so a later
+    /// lookup cannot treat an evicted address as callable.  Shared plans do
+    /// not retain typed function pointers; they resolve them while borrowing
+    /// the live owner immediately before execution.
+    pub fn evict_idle(&mut self, retain: usize) -> usize {
+        if self.active_dispatches.get() != 0 {
+            return 0;
+        }
+        let remove = self.slabs.len().saturating_sub(retain);
+        if remove == 0 {
+            return 0;
+        }
+        self.slabs.drain(0..remove);
+        remove
+    }
+
     pub fn render_or_get<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,
@@ -157,6 +174,10 @@ impl SharedStencilSlab {
         self.slabs
             .iter_mut()
             .find(|slab| slab.owns_address(address))
+    }
+
+    pub(crate) fn owner_for(&self, address: usize) -> Option<u64> {
+        self.slab_for(address).map(StencilArena::id)
     }
 
     pub fn make_executable(&mut self, address: usize) -> Result<(), ArenaError> {
@@ -1273,6 +1294,38 @@ mod tests {
         );
         assert_eq!(pool.slab_count(), 0);
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn shared_slab_evicts_only_idle_generations_without_reusing_cache_addresses() {
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetProperty);
+        let values = PatchValues::from_site(&site);
+        static BYTES: [u8; 4096] = [0; 4096];
+        let stencil = Stencil {
+            bytes: &BYTES,
+            holes: &[],
+        };
+        let first_key = crate::stencil_fact::RegionKey(104);
+        let second_key = crate::stencil_fact::RegionKey(105);
+        let first = pool
+            .render_or_get(&mut cache, first_key, &stencil, &values)
+            .unwrap();
+        let first_owner = pool.owner_for(first).unwrap();
+        pool.make_executable(first).unwrap();
+        pool.render_or_get(&mut cache, second_key, &stencil, &values)
+            .unwrap();
+        pool.active_dispatches.set(1);
+        assert_eq!(pool.evict_idle(1), 0);
+        pool.active_dispatches.set(0);
+        assert_eq!(pool.evict_idle(1), 1);
+        assert_eq!(pool.slab_count(), 1);
+        assert_eq!(pool.evict_idle(1), 0);
+        let replacement = pool
+            .render_or_get(&mut cache, first_key, &stencil, &values)
+            .unwrap();
+        assert_ne!(pool.owner_for(replacement), Some(first_owner));
     }
 
     #[cfg(target_arch = "aarch64")]
