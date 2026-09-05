@@ -494,6 +494,7 @@ fn generated_physical_view(
         && artifact_identity_matches(artifact, record)
         && artifact.key == key
         && artifact_target_matches_host(artifact.target)
+        && !artifact.compiler.is_empty()
         && !artifact.fingerprint.is_empty()
         && artifact.abi == record.abi
         && artifact.entry == record.entry
