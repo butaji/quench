@@ -1397,12 +1397,23 @@ pub fn key_object_from(
 }
 
 fn webcrypto_key_object(value: &Value) -> Result<Value, VmError> {
-    let key_type = execute::to_js_string(&execute::get_property(value, "type"))
+    let metadata = execute::get_property(value, crate::modules::webcrypto::KEY_META_PROP);
+    let key_type = execute::to_js_string(&execute::get_property(&metadata, "type"))
         .unwrap_or_else(|_| "secret".into());
     if key_type == "secret" {
-        return Ok(value.clone());
+        let (key_proto, _) = key_object_prototypes();
+        let result = execute::set_prototype_of(&host_api::object(Vec::new()), &key_proto)
+            .unwrap_or_else(|_| host_api::object(Vec::new()));
+        define_hidden(&result, KEY_TYPE_PROP, Value::String("secret".into()));
+        define_hidden(&result, KEY_MARKER_PROP, Value::Boolean(true));
+        define_hidden(
+            &result,
+            KEY_DATA_PROP,
+            execute::get_property(value, crate::modules::webcrypto::KEY_DATA_PROP),
+        );
+        return Ok(result);
     }
-    let algorithm = execute::get_property(value, "algorithm");
+    let algorithm = execute::get_property(&metadata, "algorithm");
     let name = execute::to_js_string(&execute::get_property(&algorithm, "name"))
         .unwrap_or_default()
         .to_ascii_lowercase();
