@@ -543,6 +543,13 @@ pub(crate) struct NativeArrayKernelContext {
     pub(crate) result: f64,
 }
 
+impl NativeArrayKernelContext {
+    #[inline]
+    fn is_valid(&self) -> bool {
+        self.index < self.len && !self.data.is_null()
+    }
+}
+
 #[repr(C)]
 pub(crate) struct NativeArrayLoopContext {
     pub data: *mut f64,
@@ -552,6 +559,16 @@ pub(crate) struct NativeArrayLoopContext {
     pub addend: f64,
     pub result: f64,
     pub interrupt: *const std::sync::atomic::AtomicBool,
+}
+
+impl NativeArrayLoopContext {
+    #[inline]
+    fn is_valid(&self) -> bool {
+        self.index <= self.end
+            && self.end <= self.len
+            && (self.len == 0 || !self.data.is_null())
+            && !self.interrupt.is_null()
+    }
 }
 
 /// Enter the direct physical array kernel after one complete semantic guard.
@@ -565,6 +582,13 @@ pub(crate) fn execute_composed_array_kernel(
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
+    // The typed region ABI carries a borrowed register window.  A malformed
+    // bridge must reject before touching it; otherwise a null C-ABI pointer
+    // would turn an entry miss into undefined behavior rather than an
+    // ordinary semantic fallback.
+    if region.registers.is_null() {
+        return Ok(None);
+    }
     let registers = unsafe { &mut *region.registers };
     let i0 = code.instruction(pc).ok_or_else(|| {
         crate::machine::NativeDispatchError::Physical("array kernel entry missing".into())
@@ -645,6 +669,9 @@ pub(crate) fn execute_composed_array_kernel(
         addend,
         result: element,
     };
+    if !kernel.is_valid() {
+        return Ok(None);
+    }
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayKernelContext).cast());
     drop(words);
@@ -689,6 +716,12 @@ pub(crate) fn execute_composed_array_numeric_loop(
 ) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
     let code = region.code;
     let pc = region.pc;
+    // Both pointers are part of the raw loop-entry contract.  Rejecting a
+    // malformed context before any register read keeps this boundary
+    // fail-closed and preserves the complete ordinary path.
+    if region.registers.is_null() || region.context.is_null() {
+        return Ok(None);
+    }
     let registers = unsafe { &mut *region.registers };
     if region.operations.len() != 19 {
         return Ok(None);
@@ -779,6 +812,10 @@ pub(crate) fn execute_composed_array_numeric_loop(
         _ => return Ok(None),
     };
     let vm_context = unsafe { &*region.context };
+    let interrupt = vm_context.interrupt_flag();
+    if interrupt.is_null() {
+        return Ok(None);
+    }
     let mut kernel = NativeArrayLoopContext {
         data: words.as_mut_ptr(),
         len: words.len(),
@@ -786,8 +823,11 @@ pub(crate) fn execute_composed_array_numeric_loop(
         end,
         addend,
         result: 0.0,
-        interrupt: vm_context.interrupt_flag(),
+        interrupt,
     };
+    if !kernel.is_valid() {
+        return Ok(None);
+    }
     region.native_entered = true;
     let status = invoke((&mut kernel as *mut NativeArrayLoopContext).cast());
     drop(words);
@@ -3410,6 +3450,25 @@ mod compact_handler_tests {
         assert_eq!(offset_of!(super::NativeArrayLoopContext, addend), 32);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, result), 40);
         assert_eq!(offset_of!(super::NativeArrayLoopContext, interrupt), 48);
+
+        let interrupt = std::sync::atomic::AtomicBool::new(false);
+        let mut data = [0.0_f64; 1];
+        let valid = super::NativeArrayLoopContext {
+            data: data.as_mut_ptr(),
+            len: 1,
+            index: 0,
+            end: 1,
+            addend: 1.0,
+            result: 0.0,
+            interrupt: &interrupt,
+        };
+        assert!(valid.is_valid());
+        let mut invalid = valid;
+        invalid.end = 2;
+        assert!(!invalid.is_valid());
+        invalid.end = 1;
+        invalid.interrupt = std::ptr::null();
+        assert!(!invalid.is_valid());
     }
 
     #[cfg(target_arch = "aarch64")]

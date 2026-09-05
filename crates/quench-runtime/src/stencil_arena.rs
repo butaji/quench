@@ -1438,6 +1438,9 @@ mod tests {
         assert!(unwind.is_err());
         assert_eq!(pool.active_dispatches(), 0);
         assert_eq!(pool.evict_idle(0), 1);
+        // A cached scalar/composed pointer from the retired owner must fail
+        // closed rather than being invoked after its slab is reclaimed.
+        assert!(pool.with_active(address, || ()).is_err());
     }
 
     #[test]
