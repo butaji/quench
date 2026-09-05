@@ -2458,6 +2458,7 @@ fn stencil_contains_call(bytes: &[u8]) -> bool {
         return bytes.chunks_exact(4).any(|word| {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             encoded & 0xFC00_0000 == 0x9400_0000
+                || encoded & 0xFFFF_FC1F == 0xD63F_0000
         });
     }
     #[cfg(target_arch = "x86_64")]

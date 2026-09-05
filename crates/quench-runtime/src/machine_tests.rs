@@ -554,6 +554,8 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
 fn region_verifier_rejects_physical_call_for_raw_abi() {
     #[cfg(target_arch = "aarch64")]
     assert!(super::stencil_contains_call(&[0x00, 0x00, 0x00, 0x94]));
+    #[cfg(target_arch = "aarch64")]
+    assert!(super::stencil_contains_call(&[0x00, 0x00, 0x3F, 0xD6]));
     #[cfg(target_arch = "x86_64")]
     assert!(super::stencil_contains_call(&[0xE8, 0, 0, 0, 0]));
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
