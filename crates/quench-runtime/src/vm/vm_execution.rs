@@ -280,10 +280,9 @@ pub(crate) fn execute_code_completion_step_with_owner(
         return Ok(CompletionStep { completion, next, suspended_pc: None });
     }
     if let Some(plan) = owner.baseline_plan() {
-        let (completion, next) = crate::vm::execute_baseline_code_step_from_with_owner(
+        return crate::vm::execute_baseline_completion_step_from_with_owner(
             code, &plan, pc, registers, &context, owner,
-        )?;
-        return Ok(CompletionStep { completion, next, suspended_pc: None });
+        );
     }
     run_code_completion_step_from(code, pc, registers, &context)
 }
