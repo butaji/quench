@@ -2703,6 +2703,13 @@ impl std::fmt::Debug for NativeNullishPlan {
 
 /// Native primitive constant leaf. Heap-owning constants stay on the
 /// canonical loader; this body only publishes an immutable tagged word.
+#[derive(Clone, Copy)]
+enum InstalledConstantEntry {
+    Unpublished,
+    Local(extern "C" fn() -> u64),
+    Shared(crate::stencil_arena::OwnedEntry<extern "C" fn() -> u64>),
+}
+
 pub(crate) struct NativeLoadConstPlan {
     bits: u64,
     key: crate::stencil_fact::RegionKey,
@@ -2710,10 +2717,7 @@ pub(crate) struct NativeLoadConstPlan {
     shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     site: crate::quickening::QuickeningSite<2>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    entry: Option<extern "C" fn() -> u64>,
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    shared_entry: Option<crate::stencil_arena::OwnedEntry<extern "C" fn() -> u64>>,
+    installed: InstalledConstantEntry,
     #[cfg(test)]
     native_entry_count: u64,
 }
@@ -2732,8 +2736,7 @@ impl std::fmt::Debug for NativeLoadConstPlan {
 impl NativeLoadConstPlan {
     #[inline]
     fn clear_shared_capabilities(&mut self) {
-        self.shared_entry = None;
-        self.entry = None;
+        self.installed = InstalledConstantEntry::Unpublished;
         self.cache.clear();
     }
 
@@ -2763,9 +2766,7 @@ impl NativeLoadConstPlan {
                 cache: crate::stencil_select::RenderedRegionCache::new(),
                 site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::LoadConst),
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                entry: None,
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                shared_entry: None,
+                installed: InstalledConstantEntry::Unpublished,
                 #[cfg(test)]
                 native_entry_count: 0,
             })
@@ -2774,7 +2775,7 @@ impl NativeLoadConstPlan {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self) -> Result<u64, crate::stencil_arena::ArenaError> {
         if let Some(shared) = self.shared_arena.clone() {
-            if let Some(owned) = self.shared_entry {
+            if let InstalledConstantEntry::Shared(owned) = self.installed {
                 if let Ok(result) = shared.borrow().with_owned(owned, |entry| entry()) {
                     #[cfg(test)]
                     {
@@ -2795,7 +2796,7 @@ impl NativeLoadConstPlan {
                 (address, slab.constant_word_entry(address)?)
             };
             let owned = shared.borrow().owned_constant_word_entry(address)?;
-            self.shared_entry = Some(owned);
+            self.installed = InstalledConstantEntry::Shared(owned);
             return match shared.borrow().with_owned(owned, |entry| entry()) {
                 Ok(result) => {
                     #[cfg(test)]
@@ -2810,7 +2811,7 @@ impl NativeLoadConstPlan {
                 }
             };
         }
-        if let Some(entry) = self.entry {
+        if let InstalledConstantEntry::Local(entry) = self.installed {
             #[cfg(test)]
             {
                 self.native_entry_count = self.native_entry_count.saturating_add(1);
@@ -2829,7 +2830,7 @@ impl NativeLoadConstPlan {
         let address = arena.render_or_get(&mut self.cache, self.key, crate::stencil_select::select_stencil(self.key).ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?, &values)?;
         arena.make_executable()?;
         let entry = arena.constant_word_entry(address)?;
-        self.entry = Some(entry);
+        self.installed = InstalledConstantEntry::Local(entry);
         #[cfg(test)]
         {
             self.native_entry_count = self.native_entry_count.saturating_add(1);
