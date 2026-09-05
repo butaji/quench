@@ -4109,6 +4109,7 @@ fn validate_region_window(
     code: CodeView<'_>,
     pc: usize,
     record: &crate::stencil_select::RegionRecord,
+    stencil: &crate::stencil_fact::Stencil,
 ) -> Result<(), NativeDispatchError> {
     let contract = record.contract();
     if !contract.executable
@@ -4120,7 +4121,7 @@ fn validate_region_window(
             "native region contract has no legal entry".into(),
         ));
     }
-    validate_physical_template(record).map_err(NativeDispatchError::Physical)?;
+    validate_physical_view(record, stencil).map_err(NativeDispatchError::Physical)?;
     let end = pc
         .checked_add(contract.operations.len())
         .ok_or_else(|| NativeDispatchError::Physical("native region pc overflow".into()))?;
@@ -4174,15 +4175,22 @@ fn validate_region_window(
 /// Constructors for scalar/tagged leaves use this same proof before retaining
 /// an entry pointer; region execution repeats it at the full-window boundary.
 fn validate_physical_template(record: &crate::stencil_select::RegionRecord) -> Result<(), String> {
+    validate_physical_view(record, &record.stencil)
+}
+
+fn validate_physical_view(
+    record: &crate::stencil_select::RegionRecord,
+    stencil: &crate::stencil_fact::Stencil,
+) -> Result<(), String> {
     let contract = record.contract();
     let abi = contract.abi_contract();
     if !contract.abi_is_well_formed() {
         return Err("region ABI has inconsistent clobber/live-out/root contract".into());
     }
-    if !record.stencil.validate() {
+    if !stencil.validate() {
         return Err("native region stencil layout or relocation is invalid".into());
     }
-    let physical_calls_helper = crate::stencil_physical::contains_call(record.stencil.bytes);
+    let physical_calls_helper = crate::stencil_physical::contains_call(stencil.bytes);
     let declared_boundary = contract.requires_semantic_boundary()
         || contract.has_effect(crate::facts::OperationEffect::Control)
         || contract.has_effect(crate::facts::OperationEffect::ReadHeap)
@@ -4207,12 +4215,11 @@ fn validate_physical_template(record: &crate::stencil_select::RegionRecord) -> R
         }
     }
     if abi.interruptible_backedge
-        && !crate::stencil_physical::contains_interrupt_checkpoint(record.stencil.bytes)
+        && !crate::stencil_physical::contains_interrupt_checkpoint(stencil.bytes)
     {
         return Err("interruptible region has no verified native checkpoint".into());
     }
-    let pointer_holes = record
-        .stencil
+    let pointer_holes = stencil
         .holes
         .iter()
         .filter(|hole| matches!(hole.kind, crate::stencil_fact::HoleKind::Ptr64))
@@ -4226,16 +4233,16 @@ fn validate_physical_template(record: &crate::stencil_select::RegionRecord) -> R
     if raw_region_declares_allocation(contract) {
         return Err("raw array region declares an allocating operation".into());
     }
-    if cfg!(target_arch = "aarch64") && record.stencil.holes.is_empty() {
-        crate::stencil_physical::validate_aarch64_instruction_stream(record.stencil.bytes)?;
+    if cfg!(target_arch = "aarch64") && stencil.holes.is_empty() {
+        crate::stencil_physical::validate_aarch64_instruction_stream(stencil.bytes)?;
     }
     if matches!(
         contract.abi,
         crate::stencil_select::RegionAbi::ArrayKernel
             | crate::stencil_select::RegionAbi::ArrayNumericLoop
     ) {
-        crate::stencil_physical::validate_raw_instruction_stream(record.stencil.bytes)?;
-        let actual = crate::stencil_physical::simd_clobber_mask(record.stencil.bytes);
+        crate::stencil_physical::validate_raw_instruction_stream(stencil.bytes)?;
+        let actual = crate::stencil_physical::simd_clobber_mask(stencil.bytes);
         if actual & !abi.hardware_clobber_mask != 0 {
             return Err(format!(
                 "raw ABI declares clobber mask {:04x}, template uses undeclared {:04x}",
@@ -4243,7 +4250,7 @@ fn validate_physical_template(record: &crate::stencil_select::RegionRecord) -> R
                 actual & !abi.hardware_clobber_mask
             ));
         }
-        let actual_gpr = crate::stencil_physical::gpr_clobber_mask(record.stencil.bytes);
+        let actual_gpr = crate::stencil_physical::gpr_clobber_mask(stencil.bytes);
         if actual_gpr & !abi.hardware_gpr_clobber_mask != 0 {
             return Err(format!(
                 "raw ABI declares GPR clobber mask {:04x}, template uses undeclared {:04x}",
@@ -4309,7 +4316,7 @@ impl NativeRegionPlan {
         let record = crate::stencil_select::select_region(key).filter(|record| {
             record.executable
                 && !record.operations.is_empty()
-                && validate_physical_template(record).is_ok()
+                && validate_physical_view(record, view.stencil).is_ok()
                 && record.abi.accepts_region_context()
                 && view.executable
                 && view.stencil.validate()
@@ -4373,7 +4380,7 @@ impl NativeRegionPlan {
                 "native fused region operation contract changed".into(),
             ));
         }
-        validate_region_window(code, pc, record)?;
+        validate_region_window(code, pc, record, view.stencil)?;
         if !record.executable
             || self.physical.lifecycle.observe_site(&self.site, key, true)
                 == crate::stencil_lifecycle::StencilState::Retired
