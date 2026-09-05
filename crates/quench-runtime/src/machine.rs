@@ -4635,11 +4635,12 @@ impl NativeRegionPlan {
             match view.abi {
                 crate::stencil_select::RegionAbi::ArrayKernel => {
                     let physical = crate::vm::execute_composed_array_kernel(&mut region, |raw| {
-                        arena.borrow().execute_dispatch_with_abi(
+                        let lease = crate::stencil_arena::SharedStencilSlab::acquire_address_lease(
+                            &arena,
                             address,
-                            raw,
                             crate::stencil_select::RegionAbi::ArrayKernel,
-                        )
+                        )?;
+                        lease.invoke_dispatch(raw)
                     });
                     self.last_native_execution |= region.native_entered;
                     if let Some(result) = physical? {
@@ -4653,11 +4654,12 @@ impl NativeRegionPlan {
                 crate::stencil_select::RegionAbi::ArrayNumericLoop => {
                     let physical =
                         crate::vm::execute_composed_array_numeric_loop(&mut region, |raw| {
-                            arena.borrow().execute_dispatch_with_abi(
+                            let lease = crate::stencil_arena::SharedStencilSlab::acquire_address_lease(
+                                &arena,
                                 address,
-                                raw,
                                 crate::stencil_select::RegionAbi::ArrayNumericLoop,
-                            )
+                            )?;
+                            lease.invoke_dispatch(raw)
                         });
                     self.last_native_execution |= region.native_entered;
                     if let Some(result) = physical? {
