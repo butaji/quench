@@ -8333,7 +8333,27 @@ pub fn cp_spawn(
                     .map(Value::String)
                     .collect(),
             );
+            let previous_scope = state.borrow().cluster.process_scope();
+            let previous_event_scope = state.borrow().event_loop.process_scope();
+            let child_scope = child.object_identity().unwrap_or(previous_scope);
+            execute::set_property_in_place(
+                &child,
+                "\0forkScope",
+                Value::Number(child_scope as f64),
+            );
+            execute::set_property_in_place(
+                &child,
+                "\0forkParentScope",
+                Value::Number(previous_scope as f64),
+            );
+            state.borrow_mut().cluster.set_process_scope(child_scope);
+            state.borrow().event_loop.set_process_scope(child_scope);
             fork_child_start(state, &child, &script, &fork_args)?;
+            state.borrow_mut().cluster.set_process_scope(previous_scope);
+            state
+                .borrow()
+                .event_loop
+                .set_process_scope(previous_event_scope);
         }
     }
     Ok(child)
@@ -9049,12 +9069,27 @@ pub fn cp_spawn_output_emit(
     emit(&stderr, "end", Vec::new())?;
     emit(&stdout, "close", Vec::new())?;
     emit(&stderr, "close", Vec::new())?;
+    let child_scope = match execute::get_property(child, "\0forkScope") {
+        Value::Number(scope) if scope.is_finite() && scope >= 0.0 => Some(scope as u64),
+        _ => None,
+    };
+    let spawn_ipc_live = matches!(
+        execute::get_property(child, "\0childSpawnIpc"),
+        Value::Boolean(true)
+    ) && child_scope.is_some_and(|scope| {
+        crate::modules::net::has_live_scope(state, scope)
+            || matches!(
+                execute::get_property(child, "\0childTimerIds"),
+                Value::Array(ref timers) if timers.logical_len() > 0
+            )
+    });
     if matches!(
         execute::get_property(child, "\0childForkIpc"),
         Value::Boolean(true)
-    ) {
+    ) || spawn_ipc_live {
         // An IPC child remains alive after startup; its exit/close pair is
-        // tied to the channel disconnect rather than the bootstrap callback.
+        // tied to the channel disconnect or the last referenced child handle
+        // rather than the bootstrap callback.
         return Ok(Value::Undefined);
     }
     let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
@@ -9158,6 +9193,7 @@ pub fn cp_kill(
             .event_loop
             .set_process_scope(previous_event_scope);
         disconnect_result?;
+        crate::modules::net::terminate_scope(state, child_scope);
         execute::set_property_in_place(child, "\0forkProcess", Value::Undefined);
         clear_fork_timers(state, child);
         let signal = execute::get_property(child, "signalCode");
