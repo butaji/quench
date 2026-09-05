@@ -7,6 +7,7 @@
 use crate::stencil_fact::{PatchValues, Stencil};
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_select::{select_region, RenderedRegionCache};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -80,6 +81,8 @@ pub struct StencilArena {
 pub struct SharedStencilSlab {
     slabs: Vec<StencilArena>,
     slab_capacity: usize,
+    active_dispatches: Cell<usize>,
+    peak_dispatches: Cell<usize>,
 }
 
 impl SharedStencilSlab {
@@ -90,6 +93,8 @@ impl SharedStencilSlab {
         Ok(Self {
             slabs: Vec::new(),
             slab_capacity,
+            active_dispatches: Cell::new(0),
+            peak_dispatches: Cell::new(0),
         })
     }
 
@@ -110,6 +115,18 @@ impl SharedStencilSlab {
 
     pub fn capacity(&self) -> usize {
         self.slabs.iter().map(StencilArena::capacity).sum()
+    }
+
+    /// Number of currently executing entries owned by this pool.  Execution
+    /// is synchronous today, but keeping this explicit makes the lifetime
+    /// contract auditable before any eviction or concurrent publication is
+    /// added: active slabs must never be reclaimed.
+    pub fn active_dispatches(&self) -> usize {
+        self.active_dispatches.get()
+    }
+
+    pub fn peak_dispatches(&self) -> usize {
+        self.peak_dispatches.get()
     }
 
     pub fn render_or_get<const N: usize>(
@@ -160,9 +177,17 @@ impl SharedStencilSlab {
         address: usize,
         context: *mut std::ffi::c_void,
     ) -> Result<u64, ArenaError> {
-        self.slab_for(address)
-            .ok_or(ArenaError::ProtectionFailed)?
-            .execute_dispatch(address, context)
+        let slab = self
+            .slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?;
+        let active = self.active_dispatches.get().saturating_add(1);
+        self.active_dispatches.set(active);
+        self.peak_dispatches
+            .set(self.peak_dispatches.get().max(active));
+        let result = slab.execute_dispatch(address, context);
+        self.active_dispatches
+            .set(active.saturating_sub(1));
+        result
     }
 }
 
@@ -173,6 +198,8 @@ impl std::fmt::Debug for SharedStencilSlab {
             .field("slabs", &self.slabs.len())
             .field("used", &self.used())
             .field("capacity", &self.capacity())
+            .field("active_dispatches", &self.active_dispatches())
+            .field("peak_dispatches", &self.peak_dispatches())
             .finish()
     }
 }
@@ -1022,6 +1049,42 @@ mod tests {
         );
         assert_eq!(pool.slab_count(), 0);
         assert_eq!(cache.len(), 0);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn shared_slab_accounts_active_native_execution() {
+        let key = crate::stencil_select::array_numeric_loop_region_key();
+        let record = crate::stencil_select::select_region(key).expect("array loop row");
+        let site = QuickeningSite::<2>::new(Opcode::LoadLocal);
+        let values = PatchValues::from_site(&site);
+        let mut pool = SharedStencilSlab::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let address = pool
+            .render_or_get(&mut cache, key, &record.stencil, &values)
+            .unwrap();
+        pool.make_executable(address).unwrap();
+        let mut data = vec![2.0, 3.0];
+        let mut raw = crate::vm::NativeArrayLoopContext {
+            data: data.as_mut_ptr(),
+            len: data.len(),
+            index: 0,
+            end: data.len(),
+            addend: 1.0,
+            result: 0.0,
+        };
+        assert_eq!(pool.active_dispatches(), 0);
+        assert_eq!(
+            pool.execute_dispatch(
+                address,
+                (&mut raw as *mut crate::vm::NativeArrayLoopContext).cast()
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(pool.active_dispatches(), 0);
+        assert_eq!(pool.peak_dispatches(), 1);
+        assert_eq!(data, vec![3.0, 4.0]);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
