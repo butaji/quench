@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `69f34f47e` (cleanup files remain
+Evidence below is bound to source revision `ca616f99a` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -56,6 +56,9 @@ The same host check was repeated after the constant-update admission
 (`/tmp/quench-node-check-20260905-fused-const-update.log`).
 The indexed-increment body is exercised through ordinary baseline routing with
 numeric output and string-index fallback (`/tmp/quench-get-inc-native-20260905.log`).
+Its destructive destination/index alias is now rejected before raw entry and
+the canonical path preserves the loaded value (`/tmp/quench-get-inc-alias-20260905.log`;
+focused 1 passed, full runtime 722 passed, 0 failed, 1 ignored at `ca616f99a`).
 Both baseline and composed finish paths now decode the C status through the
 same typed `NativeStatus` state machine; transport tests pass for committed,
 interrupt and malformed statuses (`/tmp/quench-native-status-typed-20260905.log`,
