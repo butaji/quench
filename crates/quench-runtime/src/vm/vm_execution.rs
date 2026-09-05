@@ -757,6 +757,25 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_source_prototype_property_lookup_preserves_semantics() {
+        let source = r#"
+            function read(o) { return o.value; }
+            var prototype = { value: 11 };
+            var receiver = Object.create(prototype);
+            if (read(receiver) !== 11) throw "prototype lookup changed";
+            prototype.value = 13;
+            if (read(receiver) !== 13) throw "prototype mutation was stale";
+        "#;
+        let program = crate::reduce::reduce_source(source).expect("source reduces");
+        let result = crate::vm::execute_code_with_context(
+            program.code(),
+            &crate::vm::VmContext::default(),
+        )
+        .expect("prototype source executes");
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
     fn owner_baseline_step_retires_completed_fragment() {
         let owner = crate::machine::FunctionCode::from_ops(vec![crate::ops::Op::Move {
             dst: 0,
