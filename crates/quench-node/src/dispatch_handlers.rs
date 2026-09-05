@@ -10176,7 +10176,15 @@ fn fork_child_start(
         crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
     );
     execute::set_property_in_place(&process, "\0forkChild", child.clone());
-    let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
+    // Fork accepts an ESM module URL as its entry point.  Child execution
+    // reuses the parent realm, but the source still needs the same import and
+    // `import.meta` lowering as a top-level `.mjs` fixture; wrapping it as
+    // CommonJS leaves raw import syntax for the reducer to reject.
+    let wrapped = if filename.ends_with(".mjs") {
+        crate::esm_imports::transform_esm_imports(&source)
+    } else {
+        crate::modules::require::wrap_cjs(state, &filename, &source)
+    };
     // Forked workers reuse the parent VM realm, but their source is reduced
     // independently from the runner bootstrap. Ensure the canonical fetch
     // global is present before common modules inspect the global surface.
