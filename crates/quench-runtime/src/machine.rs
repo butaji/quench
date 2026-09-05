@@ -1517,11 +1517,7 @@ impl NativeBinaryPlan {
         if !policy.native_leaves {
             return None;
         }
-        let opcode = match instruction.opcode {
-            crate::ir::Opcode::IncI if instruction.flags == 0 => crate::ir::Opcode::Add,
-            crate::ir::Opcode::IncI => crate::ir::Opcode::Sub,
-            opcode => opcode,
-        };
+        let opcode = instruction.opcode;
         opcode.numeric_operator()?;
         // The AddConst stencil has a fixed machine operand order (source in
         // xmm0, embedded constant in xmm1).  Constant-left addition is
@@ -3955,7 +3951,7 @@ impl Machine {
 
 #[cfg(test)]
 mod tests {
-    use super::{EnvironmentRef, FrameStack, Machine, NativeBinaryPlan, RegisterWindow};
+    use super::{EnvironmentRef, FrameStack, Machine, RegisterWindow};
     use crate::completion::{Completion, TailCallRequest};
     use crate::value::Value;
     use std::rc::Rc;
@@ -3982,24 +3978,6 @@ mod tests {
         assert!(code.cold_at(0).is_none());
         let invalid = super::CodeRange::new(range.code, 0, 1).unwrap();
         assert!(store.code(invalid).is_none());
-    }
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    #[test]
-    fn numeric_update_reuses_add_sub_stencil_for_proven_numbers() {
-        let policy = if cfg!(target_arch = "aarch64") {
-            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test()
-        } else {
-            crate::stencil_policy::current()
-        };
-        let mut increment =
-            NativeBinaryPlan::new(crate::ir::Instruction::inc_i(0, 1, false), policy)
-                .expect("numeric update stencil");
-        let mut decrement =
-            NativeBinaryPlan::new(crate::ir::Instruction::inc_i(0, 1, true), policy)
-                .expect("numeric decrement stencil");
-        assert_eq!(increment.execute(4.0, 1.0).expect("increment"), 5.0);
-        assert_eq!(decrement.execute(4.0, 1.0).expect("decrement"), 3.0);
     }
 
     #[test]
