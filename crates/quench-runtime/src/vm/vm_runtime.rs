@@ -606,6 +606,20 @@ pub(crate) struct NativeArrayElementContext {
     pub(crate) result: f64,
 }
 
+#[repr(C)]
+pub(crate) struct NativeArrayElementStoreContext {
+    pub(crate) element: *mut f64,
+    pub(crate) value: f64,
+}
+
+impl NativeArrayElementStoreContext {
+    #[inline]
+    fn is_valid(&self) -> bool {
+        !self.element.is_null()
+            && (self.element as usize) % std::mem::align_of::<f64>() == 0
+    }
+}
+
 impl NativeArrayElementContext {
     #[inline]
     fn is_valid(&self) -> bool {
@@ -681,6 +695,71 @@ fn execute_composed_array_get(
     Ok(Some(handler_transition(pc, None)))
 }
 
+#[cfg(target_arch = "aarch64")]
+fn execute_composed_array_set(
+    region: &mut NativeRegionContext<'_>,
+    invoke: impl FnOnce(*mut std::ffi::c_void) -> Result<u64, crate::stencil_arena::ArenaError>,
+) -> Result<Option<DispatchTransition>, crate::machine::NativeDispatchError> {
+    let code = region.code;
+    let pc = region.pc;
+    if region.registers.is_null() || region.operations.len() != 1 {
+        return Ok(None);
+    }
+    let registers = unsafe { &mut *region.registers };
+    let instruction = code.instruction(pc).ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array set entry missing".into())
+    })?;
+    if instruction.opcode != crate::ir::Opcode::ASetI || instruction.flags != 0 {
+        return Ok(None);
+    }
+    let Some(index) = registers.read_array_index(usize::from(instruction.b)) else {
+        return Ok(None);
+    };
+    let Some(value) = registers.read_number(usize::from(instruction.c)) else {
+        return Ok(None);
+    };
+    let Some(array) = registers
+        .read_array(usize::from(instruction.a))
+        .filter(|array| crate::locals::array_word_is_current(array))
+        .filter(|array| array.is_plain_dense_access())
+    else {
+        return Ok(None);
+    };
+    if !array.has_kernel_numeric_index(index) {
+        return Ok(None);
+    }
+    let mut words = array.numeric_kernel_words_mut().ok_or_else(|| {
+        crate::machine::NativeDispatchError::Physical("array numeric storage missing".into())
+    })?;
+    let Some(element) = words.get_mut(index) else {
+        return Ok(None);
+    };
+    let expected = value;
+    let mut kernel = NativeArrayElementStoreContext {
+        element: element as *mut f64,
+        value,
+    };
+    if !kernel.is_valid() {
+        return Ok(None);
+    }
+    region.native_entered = true;
+    let status = invoke((&mut kernel as *mut NativeArrayElementStoreContext).cast())
+        .map_err(|error| {
+            crate::machine::NativeDispatchError::Committed(format!(
+                "array set execution failed after entry: {error:?}"
+            ))
+        })?;
+    let written = *element;
+    drop(words);
+    if status != NATIVE_DISPATCH_OK || written.to_bits() != expected.to_bits() {
+        return Err(crate::machine::NativeDispatchError::Committed(
+            "array set returned invalid committed state".into(),
+        ));
+    }
+    crate::execution_trace::stencil_iterations(code, pc, "composed_array_set", 1);
+    Ok(Some(handler_transition(pc, None)))
+}
+
 #[repr(C)]
 pub(crate) struct NativeArrayLoopContext {
     pub data: *mut f64,
@@ -716,6 +795,10 @@ pub(crate) fn execute_composed_array_kernel(
     #[cfg(target_arch = "aarch64")]
     if region.operations == [crate::ir::Opcode::AGetI] {
         return execute_composed_array_get(region, invoke);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if region.operations == [crate::ir::Opcode::ASetI] {
+        return execute_composed_array_set(region, invoke);
     }
     let code = region.code;
     let pc = region.pc;
@@ -4476,6 +4559,71 @@ mod compact_handler_tests {
         .expect("baseline typed array region");
         assert_eq!(registers.read(0), Some(Value::Number(8.25)));
         assert!(region.borrow().last_native_execution());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn baseline_driver_routes_dense_index_store_through_typed_native_region() {
+        let executable = crate::machine::ExecutableCode::from_ops(vec![Op::SetPropertyDynamic {
+            object: 0,
+            key: 1,
+            src: 2,
+            strict: false,
+        }]);
+        let code = executable.code();
+        code.quicken_instruction(0, crate::ir::Opcode::ASetI, 0, 0, 0);
+        let plan = crate::machine::BaselinePlan::compile_for_test(
+            code,
+            crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        );
+        let region = plan.native_region_at(0).expect("typed array store admission");
+        assert_eq!(
+            region.borrow().key_for_test(),
+            crate::stencil_select::array_set_number_region_key()
+        );
+        let array = Value::Array(Rc::new(crate::value::ArrayData::new(vec![
+            Value::Number(2.0),
+        ])));
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
+            array,
+            Value::Number(0.0),
+            Value::Number(f64::NEG_INFINITY),
+        ]);
+        let context = crate::vm::current_context_or_default();
+        crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut registers,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("baseline typed array store");
+        let stored = registers
+            .read_array(0)
+            .and_then(|array| array.dense_number_at(0))
+            .expect("stored dense number");
+        assert_eq!(stored, f64::NEG_INFINITY);
+        assert!(region.borrow().last_native_execution());
+
+        // An out-of-bounds index is outside the proven dense-slot contract;
+        // the ordinary setter may grow the array, but the raw bytes must not
+        // run or make the fallback retry an already-entered region.
+        let mut hostile = crate::register_file::RegisterFile::from_values(vec![
+            registers.read(0).expect("array remains live"),
+            Value::Number(4.0),
+            Value::Number(7.0),
+        ]);
+        crate::vm::execute_baseline_code_from(
+            code,
+            &plan,
+            0,
+            &mut hostile,
+            &context,
+            crate::environment::Environment::new(),
+        )
+        .expect("ordinary out-of-bounds array store");
+        assert!(!region.borrow().last_native_execution());
     }
 
     #[test]

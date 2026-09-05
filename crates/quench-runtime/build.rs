@@ -192,6 +192,17 @@ const fn aarch64_array_get_number_bytes() -> [u8; 20] {
     out
 }
 
+const fn aarch64_array_set_number_bytes() -> [u8; 20] {
+    let mut out = [0; 20];
+    // x0 = NativeArrayElementStoreContext*, x1 = element pointer.
+    put32(&mut out, 0, aarch64_ldr_x(1, 0, 0));
+    put32(&mut out, 4, aarch64_ldr_d(0, 0, 8));
+    put32(&mut out, 8, aarch64_str_d(0, 1, 0));
+    put32(&mut out, 12, aarch64_mov_w_imm0(1));
+    put32(&mut out, 16, aarch64_ret());
+    out
+}
+
 /// Intel SDM Vol. 2, MOVSD/ADDSD/SUBSD/MULSD/DIVSD legacy SSE2 encodings.
 const fn x86_sse2_binary(opcode: u8, rd: u8, rm: u8) -> [u8; 4] {
     [0xF2, 0x0F, opcode, 0xC0 | ((rd & 7) << 3) | (rm & 7)]
@@ -449,6 +460,7 @@ const AARCH64_LOOP_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch6
 const AARCH64_PROPERTY_BYTES: [u8; 8] = aarch64_pair(aarch64_ldr_x0_x0(), aarch64_ret());
 const AARCH64_MOVE_BYTES: [u8; 8] = AARCH64_PROPERTY_BYTES;
 const AARCH64_ARRAY_GET_NUMBER_BYTES: [u8; 20] = aarch64_array_get_number_bytes();
+const AARCH64_ARRAY_SET_NUMBER_BYTES: [u8; 20] = aarch64_array_set_number_bytes();
 const AARCH64_FALLTHROUGH_BYTES: [u8; 8] = aarch64_pair(aarch64_fadd_d(0, 0, 1), aarch64_b());
 const AARCH64_SUBTRACT_BYTES: [u8; 8] = aarch64_pair(aarch64_fsub_d(0, 0, 1), aarch64_ret());
 const AARCH64_MULTIPLY_BYTES: [u8; 8] = aarch64_pair(aarch64_fmul_d(0, 0, 1), aarch64_ret());
@@ -1104,6 +1116,20 @@ const REGION_DECLARATIONS: &[RegionDeclaration] = &[
         abi: DeclAbi::ArrayKernel,
         x86_bytes: &X86_DISPATCH_BYTES,
         aarch64_bytes: &AARCH64_ARRAY_GET_NUMBER_BYTES,
+        portable_bytes: &[0xC3],
+        holes: &[],
+        aarch64_holes: &[],
+        entry: 0,
+        external_entries: &[0],
+    },
+    RegionDeclaration {
+        name: "array_set_number",
+        // ARM64 performs the proven dense numeric store from an explicit
+        // element pointer; other targets retain the complete bridge.
+        operations: &["ASetI"],
+        abi: DeclAbi::ArrayKernel,
+        x86_bytes: &X86_DISPATCH_BYTES,
+        aarch64_bytes: &AARCH64_ARRAY_SET_NUMBER_BYTES,
         portable_bytes: &[0xC3],
         holes: &[],
         aarch64_holes: &[],
