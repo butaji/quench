@@ -950,7 +950,13 @@ impl StencilArena {
             cache.remove(key, cache_signature(&record.stencil, values), address);
             return fallback();
         }
-        self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
+        match self.execute_f64(address, lhs, rhs) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                cache.remove(key, cache_signature(&record.stencil, values), address);
+                fallback()
+            }
+        }
     }
 
     pub fn render_selected_bool<const N: usize>(
@@ -969,7 +975,13 @@ impl StencilArena {
         }
         let address = self.render_or_get(cache, key, &record.stencil, values)?;
         self.make_executable()?;
-        self.execute_bool(address, lhs, rhs)
+        match self.execute_bool(address, lhs, rhs) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                cache.remove(key, cache_signature(&record.stencil, values), address);
+                Err(error)
+            }
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -991,7 +1003,13 @@ impl StencilArena {
         }
         let address = self.render_or_get(cache, key, &record.stencil, values)?;
         self.make_executable()?;
-        self.execute_i32(address, lhs, rhs)
+        match self.execute_i32(address, lhs, rhs) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                cache.remove(key, cache_signature(&record.stencil, values), address);
+                Err(error)
+            }
+        }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1013,7 +1031,13 @@ impl StencilArena {
         }
         let address = self.render_or_get(cache, key, &record.stencil, values)?;
         self.make_executable()?;
-        self.execute_u32(address, lhs, rhs)
+        match self.execute_u32(address, lhs, rhs) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                cache.remove(key, cache_signature(&record.stencil, values), address);
+                Err(error)
+            }
+        }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -1087,7 +1111,13 @@ impl StencilArena {
             .filter(|address| self.owns_address(*address))
         {
             if self.is_executable() {
-                return self.execute_f64(address, lhs, rhs).or_else(|_| fallback());
+                return match self.execute_f64(address, lhs, rhs) {
+                    Ok(value) => Ok(value),
+                    Err(_) => {
+                        cache.remove(key, signature, address);
+                        fallback()
+                    }
+                };
             }
             // A prior protection failure must not make this address a
             // permanent cache hit. Remove it and retry the bounded render.
@@ -1167,7 +1197,13 @@ impl StencilArena {
             cache.remove(key, signature, address);
             return fallback();
         }
-        self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
+        match self.execute_f64(address, lhs, rhs) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                cache.remove(key, signature, address);
+                fallback()
+            }
+        }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -1208,7 +1244,13 @@ impl StencilArena {
             .filter(|address| self.owns_address(*address))
         {
             if self.is_executable() {
-                return self.execute_f64(address, lhs, rhs).or_else(|_| fallback());
+                return match self.execute_f64(address, lhs, rhs) {
+                    Ok(value) => Ok(value),
+                    Err(_) => {
+                        cache.remove(key, signature, address);
+                        fallback()
+                    }
+                };
             }
             cache.remove(key, signature, address);
         }
@@ -1286,7 +1328,13 @@ impl StencilArena {
             cache.remove(key, signature, address);
             return fallback();
         }
-        self.execute_f64(address, lhs, rhs).or_else(|_| fallback())
+        match self.execute_f64(address, lhs, rhs) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                cache.remove(key, signature, address);
+                fallback()
+            }
+        }
     }
 
     /// Flip the entire arena from writable to executable once all regions have
