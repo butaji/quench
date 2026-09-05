@@ -1,7 +1,7 @@
 # Task 075 infrastructure evidence
 
 This is the single current matrix for `docs/stencil-jit-implementation-spec.md`.
-Evidence below is bound to source revision `691dcd44b` (cleanup files remain
+Evidence below is bound to source revision `3000b2340` (cleanup files remain
 dirty by user authorization). The gate is CLOSED / NOT COMPLETE: rows marked partial or missing block
 micros/task 073. This matrix reflects the current working revision; the
 documentation/task cleanup edits remain user-owned and are not included in
@@ -36,7 +36,7 @@ The helper split retains a clean non-trace regression (**731 passed, 0 failed,
 Logical-not now reuses the corrected truthiness entries for proven numbers and
 tagged words; the ARM64 zero setup is encoded as `fmov d1, xzr` and is covered
 by ordinary-source numeric/NaN/boolean execution plus coercive fallback
-(`/tmp/quench-logical-not-focused-20260905-v4.log`). Full runtime is **732
+(`/tmp/quench-logical-not-focused-20260905-v5.log`). Full runtime is **732
 passed, 0 failed, 1 ignored** (`/tmp/quench-runtime-full-20260905-logical-not.log`)
 and execution-trace runtime is **744 passed, 0 failed, 1 ignored**
 (`/tmp/quench-runtime-trace-20260905-logical-not.log`).
