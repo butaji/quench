@@ -23,6 +23,12 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
     static ROOTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static ENV_ROOTS: RefCell<Vec<Rc<crate::environment::Environment>>> = const { RefCell::new(Vec::new()) };
+    static FRAME_ROOTS: RefCell<Vec<FrameRoot>> = const { RefCell::new(Vec::new()) };
+}
+
+struct FrameRoot {
+    registers: *const crate::register_file::RegisterFile,
+    environment: Rc<crate::environment::Environment>,
 }
 
 /// Keep a call continuation's Rust-owned values visible to trial deletion.
@@ -31,6 +37,7 @@ thread_local! {
 pub(crate) struct RootGuard {
     value_length: usize,
     environment_length: usize,
+    frame_length: usize,
 }
 
 pub(crate) fn protect_call(continuation: &crate::completion::CallContinuation) -> RootGuard {
@@ -47,22 +54,26 @@ pub(crate) fn protect_call(continuation: &crate::completion::CallContinuation) -
         RootGuard {
             value_length,
             environment_length,
+            frame_length: FRAME_ROOTS.with(|frames| frames.borrow().len()),
         }
     })
 }
 
 /// Keep a live residual frame visible while a helper-capable native bridge
-/// runs.  The frame may allocate, throw, or re-enter JavaScript before the
-/// bridge publishes its completion; cloning the current words here is the
-/// existing collector's root representation and is balanced by `RootGuard`.
+/// runs. The collector scans the packed words only when collection occurs;
+/// entry/exit therefore does not decode or clone every register.
 pub(crate) fn protect_frame(
     registers: &crate::register_file::RegisterFile,
     environment: &Rc<crate::environment::Environment>,
 ) -> RootGuard {
-    let value_length = ROOTS.with(|roots| {
-        let mut roots = roots.borrow_mut();
-        let length = roots.len();
-        registers.visit_values(|value| roots.push(value));
+    let value_length = ROOTS.with(|roots| roots.borrow().len());
+    let frame_length = FRAME_ROOTS.with(|frames| {
+        let mut frames = frames.borrow_mut();
+        let length = frames.len();
+        frames.push(FrameRoot {
+            registers,
+            environment: Rc::clone(environment),
+        });
         length
     });
     let environment_length = ENV_ROOTS.with(|roots| {
@@ -74,6 +85,7 @@ pub(crate) fn protect_frame(
     RootGuard {
         value_length,
         environment_length,
+        frame_length,
     }
 }
 
@@ -99,6 +111,7 @@ pub(crate) fn protect_environment(environment: &Rc<crate::environment::Environme
     RootGuard {
         value_length,
         environment_length,
+        frame_length: FRAME_ROOTS.with(|frames| frames.borrow().len()),
     }
 }
 
@@ -106,6 +119,7 @@ impl Drop for RootGuard {
     fn drop(&mut self) {
         ROOTS.with(|roots| roots.borrow_mut().truncate(self.value_length));
         ENV_ROOTS.with(|roots| roots.borrow_mut().truncate(self.environment_length));
+        FRAME_ROOTS.with(|frames| frames.borrow_mut().truncate(self.frame_length));
     }
 }
 
@@ -327,6 +341,19 @@ pub(crate) fn collect_cycles() {
                     },
                     _ => {}
                 }
+            }
+        }
+    });
+    FRAME_ROOTS.with(|frames| {
+        for frame in frames.borrow().iter() {
+            // SAFETY: a FrameRoot is installed only while the synchronous
+            // caller owns the RegisterFile; RootGuard removes it before that
+            // owner can leave or be relocated.
+            unsafe { (&*frame.registers).visit_values(|value| {
+                mark_direct_root_value(&value, &ids, &mut external);
+            }) };
+            for value in frame.environment.cycle_values() {
+                mark_direct_root_value(&value, &ids, &mut external);
             }
         }
     });
@@ -635,11 +662,11 @@ mod tests {
         ]);
         let environment = Environment::new();
         let guard = protect_frame(&registers, &environment);
-        drop(registers);
         drop(object);
         collect_cycles();
         assert!(weak.upgrade().is_some(), "frame root was collected during bridge");
         drop(guard);
+        drop(registers);
         collect_cycles();
         assert!(weak.upgrade().is_none(), "temporary frame root leaked past bridge exit");
     }
