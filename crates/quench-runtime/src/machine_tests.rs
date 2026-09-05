@@ -1445,6 +1445,25 @@ fn primitive_load_const_uses_rendered_machine_word_and_preserves_value() {
     );
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn shared_constant_entry_recovers_after_owner_eviction() {
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::stencil_arena::SharedStencilSlab::new(4096).expect("slab"),
+    ));
+    let mut plan = super::NativeLoadConstPlan::new_with_shared(
+        crate::tagged_value::TaggedValue::number(42.5).bits(),
+        crate::stencil_policy::ExecutionPolicy::arm_opt_in_for_test(),
+        shared.clone(),
+    )
+    .expect("shared constant plan");
+    assert_eq!(plan.execute(), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert!(plan.shared_entry.is_some());
+    assert_eq!(shared.borrow_mut().evict_idle(0), 1);
+    assert_eq!(plan.execute(), Ok(crate::tagged_value::TaggedValue::number(42.5).bits()));
+    assert!(plan.shared_entry.is_some(), "eviction must force a fresh owner");
+}
+
 #[test]
 fn region_verifier_rejects_physical_call_for_raw_abi() {
     #[cfg(target_arch = "aarch64")]
