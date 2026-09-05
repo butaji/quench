@@ -36,6 +36,7 @@ macro_rules! typed_writer {
 
 typed_writer!(write_imm32, Imm32, 4, u32);
 typed_writer!(write_disp32, Disp32, 4, u32);
+typed_writer!(write_literal64, Literal64, 8, u64);
 typed_writer!(write_ptr64, Ptr64, 8, u64);
 
 /// Rel32 carries a signed displacement encoded through the shared `u64` value
@@ -98,6 +99,7 @@ pub fn apply_holes<const N: usize>(
             HoleKind::Disp32 => write_disp32(dst, hole.offset, values)?,
             HoleKind::Rel32 => write_rel32(dst, hole.offset, values)?,
             HoleKind::Branch26 => write_branch26(dst, hole.offset, values)?,
+            HoleKind::Literal64 => write_literal64(dst, hole.offset, values)?,
             HoleKind::Ptr64 => write_ptr64(dst, hole.offset, values)?,
         }
     }
