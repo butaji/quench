@@ -2341,7 +2341,14 @@ fn validate_key_use(
             .is_ok_and(|value| value == usage)
     });
     if !allowed {
-        let message = format!("baseKey does not have {usage} usage");
+        // WebCrypto uses the baseKey wording for derivation, while the
+        // operation families report the concrete operation they rejected.
+        // Keep this distinction in one usage fact instead of duplicating it
+        // across each algorithm implementation.
+        let message = match usage {
+            "deriveBits" | "deriveKey" => format!("baseKey does not have {usage} usage"),
+            _ => format!("Unable to use this key to {usage}"),
+        };
         return Some(invalid_access_error(&message));
     }
     let key_type = execute::to_js_string(&execute::get_property(key, "type")).ok()?;
