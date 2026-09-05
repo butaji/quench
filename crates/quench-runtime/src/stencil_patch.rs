@@ -83,6 +83,13 @@ pub fn write_branch26<const N: usize>(
         .get_mut(start..start + 4)
         .ok_or(PatchError::OutOfBounds)?;
     let mut instruction = u32::from_le_bytes(slot.try_into().expect("validated width"));
+    // A Branch26 hole is only valid in an AArch64 unconditional `B` word.
+    // Refuse to patch arbitrary data or a conditional/register branch: keeping
+    // the high bits would otherwise turn a malformed template into callable
+    // code with an unrelated control-flow encoding.
+    if instruction & 0x7c00_0000 != 0x1400_0000 {
+        return Err(PatchError::UnsupportedOffset);
+    }
     instruction = (instruction & 0xfc00_0000) | (words as u32 & 0x03ff_ffff);
     slot.copy_from_slice(&instruction.to_le_bytes());
     Ok(())
@@ -184,6 +191,19 @@ mod tests {
             .expect("signed displacement is representable");
         assert_eq!(
             write_branch26(&mut unaligned, 0, &values),
+            Err(PatchError::UnsupportedOffset)
+        );
+    }
+
+    #[test]
+    fn aarch64_branch26_rejects_non_branch_instruction() {
+        let site = QuickeningSite::<2>::new(Opcode::Add);
+        let values = PatchValues::from_site(&site)
+            .with_relative_target(16, 0)
+            .expect("aligned branch target");
+        let mut bytes = 0x5400_0000u32.to_le_bytes();
+        assert_eq!(
+            write_branch26(&mut bytes, 0, &values),
             Err(PatchError::UnsupportedOffset)
         );
     }
