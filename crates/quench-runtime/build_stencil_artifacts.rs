@@ -142,7 +142,7 @@ fn empty_artifacts() -> String {
 }
 
 fn artifact_schema() -> &'static str {
-    "pub struct BuildStencilArtifact { pub name: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub stencil: crate::stencil_fact::Stencil, pub fallthrough: Option<crate::stencil_fact::Stencil>, pub fallthrough_entry: u16 }"
+    "pub struct BuildStencilArtifact { pub name: &'static str, pub artifact_id: &'static str, pub key: crate::stencil_fact::RegionKey, pub target: &'static str, pub compiler: &'static str, pub fingerprint: &'static str, pub abi: crate::stencil_select::RegionAbi, pub entry: u16, pub external_entries: &'static [u16], pub has_fallthrough: bool, pub executable: bool, pub template_calls_helper: bool, pub bytes: &'static [u8], pub data: &'static [u8], pub stencil: crate::stencil_fact::Stencil, pub fallthrough: Option<crate::stencil_fact::Stencil>, pub fallthrough_entry: u16 }"
 }
 
 fn extract_objects(declarations: &[RegionDeclaration]) -> String {
@@ -537,7 +537,10 @@ fn validate_fragment_relocations(
                 .macho_relocations()
                 .expect("read Mach-O fragment relocations")
             {
-                assert!(text_section, "Mach-O fragment relocation targets non-text data");
+                assert!(
+                    text_section,
+                    "Mach-O fragment relocation targets non-text data"
+                );
                 let info = relocation.info(Endianness::Little);
                 let expected_target = target_symbol.expect("declared Mach-O relocation target");
                 let (expected_offset, _, expected_kind) = expected
@@ -772,7 +775,7 @@ fn render_artifact(
         .collect::<Vec<_>>()
         .join(", ");
     let row = format!(
-        "    BuildStencilArtifact {{ name: {name:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {}, fallthrough_entry: {} }},",
+        "    BuildStencilArtifact {{ name: {name:?}, artifact_id: {artifact_id:?}, key: CANONICAL_{identifier}_KEY, target: {target:?}, compiler: {compiler:?}, fingerprint: {fingerprint:?}, abi: {}, entry: {}, external_entries: &[{}], has_fallthrough: {}, executable: true, template_calls_helper: {}, bytes: BYTES_{identifier}, data: &[], stencil: crate::stencil_fact::Stencil {{ bytes: BYTES_{identifier}, holes: {} }}, fallthrough: {}, fallthrough_entry: {} }},",
         super::abi_expr(declaration),
         declaration.entry,
         entries,
@@ -783,6 +786,7 @@ fn render_artifact(
             format!("Some(crate::stencil_fact::Stencil {{ bytes: FALLTHROUGH_{identifier}, holes: &[] }})")
         }),
         fallthrough_offset(declaration, target),
+        artifact_id = format!("{name}@{fingerprint}"),
     );
     (constant, row)
 }
