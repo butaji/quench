@@ -37,6 +37,11 @@ fn flush_icache(ptr: *const u8, len: usize) {
 const PAGE: usize = 4096;
 static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(target_arch = "aarch64")]
+const STENCIL_ALIGNMENT: usize = 4;
+#[cfg(not(target_arch = "aarch64"))]
+const STENCIL_ALIGNMENT: usize = 1;
+
 /// Global bound for the disposable physical region pool.  A plan may rotate
 /// from an RX slab to a fresh RW slab, but never allocate an unbounded number
 /// of executable mappings.
@@ -781,7 +786,7 @@ impl StencilArena {
         stencil: &Stencil,
         values: &PatchValues<'_, N>,
     ) -> Result<usize, ArenaError> {
-        let offset = self.alloc(stencil.bytes.len())?;
+        let offset = self.alloc_aligned(stencil.bytes.len(), STENCIL_ALIGNMENT)?;
         let result = unsafe {
             std::ptr::copy_nonoverlapping(
                 stencil.bytes.as_ptr(),
@@ -1336,6 +1341,23 @@ mod tests {
         let offset = arena.copy_and_patch(&stencil, &values).unwrap();
         assert_eq!(offset, 0);
         assert_eq!(arena.byte(0), 0);
+    }
+
+    #[test]
+    fn rendered_entries_start_on_target_instruction_boundaries() {
+        let mut arena = StencilArena::new(4096).unwrap();
+        let mut cache = RenderedRegionCache::new();
+        let site = QuickeningSite::<2>::new(Opcode::GetProperty);
+        let values = PatchValues::from_site(&site);
+        let first = Stencil { bytes: &[1, 2, 3], holes: &[] };
+        let second = Stencil { bytes: &[4, 5, 6, 7], holes: &[] };
+        arena
+            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(201), &first, &values)
+            .unwrap();
+        let address = arena
+            .render_or_get(&mut cache, crate::stencil_fact::RegionKey(202), &second, &values)
+            .unwrap();
+        assert_eq!(address % STENCIL_ALIGNMENT, 0);
     }
 
     #[test]
