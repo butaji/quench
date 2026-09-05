@@ -31,6 +31,35 @@ enum DeclAbi {
     ArrayNumericLoop,
 }
 
+#[derive(Clone, Copy)]
+enum RustLeafRecipe {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+impl RustLeafRecipe {
+    const fn expression(self) -> &'static str {
+        match self {
+            Self::Add => "a + b",
+            Self::Sub => "a - b",
+            Self::Mul => "a * b",
+            Self::Div => "a / b",
+        }
+    }
+}
+
+fn rust_leaf_recipe(operations: &[&str]) -> Option<RustLeafRecipe> {
+    match operations {
+        ["Add", "Return"] => Some(RustLeafRecipe::Add),
+        ["Sub", "Return"] => Some(RustLeafRecipe::Sub),
+        ["Mul", "Return"] => Some(RustLeafRecipe::Mul),
+        ["Div", "Return"] => Some(RustLeafRecipe::Div),
+        _ => None,
+    }
+}
+
 const fn le32(word: u32) -> [u8; 4] {
     word.to_le_bytes()
 }
@@ -1493,7 +1522,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=QUENCH_VERIFY_STENCIL_ENCODINGS");
     println!("cargo:rerun-if-env-changed=QUENCH_GENERATE_STENCIL_OBJECTS");
     println!("cargo:rerun-if-env-changed=QUENCH_RUSTC");
-    println!("cargo:rerun-if-env-changed=QUENCH_OBJDUMP");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE");
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
     // Keep this mapping exhaustive: a profile not represented here must not
     // silently masquerade as a production artifact.
@@ -1554,11 +1584,9 @@ fn verify_stencil_encodings() {
         ]),
         "assemble Rust AArch64 stencil verification source",
     );
-    let arm_dump = run_tool_output(
-        stencil_tool("objdump").args(["-d", arm_object.to_str().expect("ARM object path")]),
-        "disassemble AArch64 stencil verification object",
-    );
-    for word in [
+    build_stencil_artifacts::verify_words(
+        &arm_object,
+        &[
         aarch64_fadd_d(0, 0, 1),
         aarch64_fsub_d(0, 0, 1),
         aarch64_fmul_d(0, 0, 1),
@@ -1594,12 +1622,8 @@ fn verify_stencil_encodings() {
         aarch64_ldr_x0_x0(),
         aarch64_br_x16(),
         aarch64_ret(),
-    ] {
-        assert!(
-            arm_dump.contains(&format!("{word:08x}")),
-            "AArch64 encoder word {word:08x} missing from objdump output:\n{arm_dump}"
-        );
-    }
+        ],
+    );
     const LOOP_ENTRY_BRANCH_OFFSET: usize = 16;
     const LOOP_BACKEDGE_OFFSET: usize = 72;
     assert_eq!(
@@ -1625,13 +1649,6 @@ fn verify_stencil_encodings() {
     fs::remove_dir(&root).ok();
 }
 
-fn run_tool(command: &mut Command, description: &str) {
-    let status = command
-        .status()
-        .unwrap_or_else(|error| panic!("{description} failed to start: {error}"));
-    assert!(status.success(), "{description} exited with {status}");
-}
-
 fn strip_global_asm_terminator(path: &std::path::Path) {
     let mut source = fs::read(path).expect("read global_asm source");
     let trailer = b"\"#);\n";
@@ -1641,43 +1658,11 @@ fn strip_global_asm_terminator(path: &std::path::Path) {
     }
 }
 
-fn stencil_tool(name: &str) -> Command {
-    let variable = format!("QUENCH_{}", name.to_ascii_uppercase());
-    if let Some(path) = env::var_os(&variable) {
-        return Command::new(path);
-    }
-    let candidates = match name {
-        "objdump" => ["llvm-objdump", "objdump"].as_slice(),
-        _ => &[name],
-    };
-    for candidate in candidates {
-        if Command::new(candidate).arg("--version").output().is_ok() {
-            return Command::new(candidate);
-        }
-    }
-    if cfg!(target_os = "macos") {
-        if let Ok(output) = Command::new("xcrun").args(["--find", name]).output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                if !path.is_empty() {
-                    return Command::new(path);
-                }
-            }
-        }
-    }
-    Command::new(name)
-}
-
-fn run_tool_output(command: &mut Command, description: &str) -> String {
-    let output = command
-        .output()
+fn run_tool(command: &mut Command, description: &str) {
+    let status = command
+        .status()
         .unwrap_or_else(|error| panic!("{description} failed to start: {error}"));
-    assert!(
-        output.status.success(),
-        "{description} exited with {}",
-        output.status
-    );
-    String::from_utf8(output.stdout).expect("objdump output is UTF-8")
+    assert!(status.success(), "{description} exited with {status}");
 }
 
 fn generate_stencil_catalog() {
