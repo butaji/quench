@@ -156,12 +156,13 @@ fn extract_objects(declarations: &[RegionDeclaration]) -> String {
     let mut constants = Vec::new();
     let mut rows = Vec::new();
     for declaration in declarations {
-        if !declaration.holes.is_empty() || !declaration.aarch64_holes.is_empty() {
-            continue;
-        }
         let Some(recipe) = super::rust_leaf_recipe(declaration) else {
             continue;
         };
+        // A generated whole-function recipe owns its arguments directly, so
+        // it does not need the canonical byte-template holes (AddConst is the
+        // first example). Unsupported hole-bearing recipes remain skipped
+        // until a declared relocation plan exists.
         let artifact = compile_one(
             &root.path,
             &target,
