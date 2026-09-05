@@ -44,100 +44,26 @@ pub struct AbiContract {
 }
 
 macro_rules! region_abi_catalog {
-    ($( $name:ident {
-        context_arg_words: $words:literal,
-        preserves_vm_registers: $preserves:literal,
-        may_call_helper: $helpers:literal,
-        interruptible_backedge: $interruptible:literal,
-        hardware_clobber_mask: $clobbers:literal,
-        live_out_mask: $live_out:literal,
-        root_materialization_required: $roots:literal
-    }),+ $(,)?) => {
+    ($( $name:ident ),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub enum RegionAbi { $( $name ),+ }
 
         impl RegionAbi {
             pub const fn contract(self) -> AbiContract {
-                match self {
-                    $( Self::$name => AbiContract {
-                        context_arg_words: $words,
-                        preserves_vm_registers: $preserves,
-                        may_call_helper: $helpers,
-                        interruptible_backedge: $interruptible,
-                        hardware_clobber_mask: $clobbers,
-                        live_out_mask: $live_out,
-                        root_materialization_required: $roots,
-                    }, )+
-                }
+                canonical_abi_contract(self)
             }
         }
     };
 }
 
 region_abi_catalog! {
-    Scalar {
-        context_arg_words: 0,
-        preserves_vm_registers: true,
-        may_call_helper: false,
-        interruptible_backedge: false,
-        hardware_clobber_mask: 0,
-        live_out_mask: 1,
-        root_materialization_required: false
-    },
-    TaggedWord {
-        context_arg_words: 0,
-        preserves_vm_registers: true,
-        may_call_helper: false,
-        interruptible_backedge: false,
-        hardware_clobber_mask: 0,
-        live_out_mask: 1,
-        root_materialization_required: false
-    },
-    ScalarI32 {
-        context_arg_words: 0,
-        preserves_vm_registers: true,
-        may_call_helper: false,
-        interruptible_backedge: false,
-        hardware_clobber_mask: 0,
-        live_out_mask: 1,
-        root_materialization_required: false
-    },
-    ScalarU32 {
-        context_arg_words: 0,
-        preserves_vm_registers: true,
-        may_call_helper: false,
-        interruptible_backedge: false,
-        hardware_clobber_mask: 0,
-        live_out_mask: 1,
-        root_materialization_required: false
-    },
-    Bridge {
-        context_arg_words: 1,
-        preserves_vm_registers: false,
-        may_call_helper: true,
-        interruptible_backedge: false,
-        hardware_clobber_mask: 0xffff,
-        live_out_mask: 0xffff,
-        root_materialization_required: true
-    },
-    ArrayKernel {
-        context_arg_words: 1,
-        preserves_vm_registers: false,
-        may_call_helper: false,
-        interruptible_backedge: false,
-        hardware_clobber_mask: 0x0003,
-        live_out_mask: 1,
-        root_materialization_required: false
-    },
-    ArrayNumericLoop {
-        context_arg_words: 1,
-        preserves_vm_registers: false,
-        may_call_helper: false,
-        interruptible_backedge: true,
-        hardware_clobber_mask: 0x0007,
-        live_out_mask: 0x0003,
-        root_materialization_required: false
-    }
+    Scalar,
+    TaggedWord,
+    ScalarI32,
+    ScalarU32,
+    Bridge,
+    ArrayKernel,
+    ArrayNumericLoop,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
