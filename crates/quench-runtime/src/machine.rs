@@ -2167,13 +2167,13 @@ impl NativeBinaryPlan {
         };
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if result.is_ok() && !self.returns_boolean() {
-            if let Some(record) = crate::stencil_select::select_region(key) {
+            if let Some(view) = crate::stencil_select::select_physical(key) {
                 // The arena deliberately canonicalizes hole-free stencils to
                 // signature zero.  Use the same rule here; otherwise the
                 // cached pointer would never be found for the common Add,
                 // Sub, Mul, and Div leaves and the boundary tax would return
                 // on every iteration.
-                let signature = if record.stencil.holes.is_empty() {
+                let signature = if view.stencil.holes.is_empty() {
                     0
                 } else {
                     values.signature()
