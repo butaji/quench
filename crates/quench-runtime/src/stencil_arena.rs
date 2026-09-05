@@ -205,6 +205,16 @@ impl SharedStencilSlab {
             .u32_entry(address)
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn f64x3_entry(
+        &self,
+        address: usize,
+    ) -> Result<extern "C" fn(f64, f64, f64) -> f64, ArenaError> {
+        self.slab_for(address)
+            .ok_or(ArenaError::ProtectionFailed)?
+            .f64x3_entry(address)
+    }
+
     pub fn execute_dispatch(
         &self,
         address: usize,

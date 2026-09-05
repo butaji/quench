@@ -1917,6 +1917,7 @@ impl std::fmt::Debug for NativeBinaryPlan {
 /// non-numeric/aliasing cases stay on the canonical path.
 pub(crate) struct NativeAddChainPlan {
     arena: Option<crate::stencil_arena::StencilArena>,
+    shared_arena: Option<std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>>,
     cache: crate::stencil_select::RenderedRegionCache,
     lifecycle: crate::stencil_lifecycle::StencilLifecycle,
     site: crate::quickening::QuickeningSite<4>,
@@ -1925,6 +1926,15 @@ pub(crate) struct NativeAddChainPlan {
 }
 
 impl NativeAddChainPlan {
+    fn new_with_arena(
+        policy: crate::stencil_policy::ExecutionPolicy,
+        shared_arena: std::rc::Rc<std::cell::RefCell<crate::stencil_arena::SharedStencilSlab>>,
+    ) -> Option<Self> {
+        let mut plan = Self::new(policy)?;
+        plan.shared_arena = Some(shared_arena);
+        Some(plan)
+    }
+
     fn new(policy: crate::stencil_policy::ExecutionPolicy) -> Option<Self> {
         if !policy.native_leaves {
             return None;
@@ -1933,6 +1943,7 @@ impl NativeAddChainPlan {
         crate::stencil_select::select_region(key).filter(|record| record.executable)?;
         Some(Self {
             arena: None,
+            shared_arena: None,
             cache: crate::stencil_select::RenderedRegionCache::new(),
             lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
             site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
@@ -1958,6 +1969,18 @@ impl NativeAddChainPlan {
             == crate::stencil_lifecycle::StencilState::Retired
         {
             return Err(crate::stencil_arena::ArenaError::ProtectionFailed);
+        }
+        if let Some(shared) = self.shared_arena.clone() {
+            let entry = {
+                let mut slab = shared.borrow_mut();
+                let stencil = crate::stencil_select::select_stencil(key)
+                    .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
+                let address = slab.render_or_get(&mut self.cache, key, stencil, &values)?;
+                slab.make_executable(address)?;
+                slab.f64x3_entry(address)?
+            };
+            self.entry = Some(entry);
+            return Ok(unsafe { invoke_f64x3_preserve_none(entry, lhs, rhs, third) });
         }
         if self.arena.is_none() {
             self.arena = Some(crate::stencil_arena::StencilArena::new(4096)?);
@@ -1988,7 +2011,12 @@ impl std::fmt::Debug for NativeAddChainPlan {
             .debug_struct("NativeAddChainPlan")
             .field(
                 "used_bytes",
-                &self.arena.as_ref().map_or(0, |arena| arena.used()),
+                &self
+                    .shared_arena
+                    .as_ref()
+                    .map(|arena| arena.borrow().used())
+                    .or_else(|| self.arena.as_ref().map(|arena| arena.used()))
+                    .unwrap_or(0),
             )
             .field("cache_len", &self.cache.len())
             .finish()
@@ -2929,7 +2957,12 @@ impl BaselinePlan {
                     // residual value flow.
                     && !register_mentioned_after(&entries, pc + 2, entry.instruction.a);
                 admissible
-                    .then(|| NativeAddChainPlan::new(policy))
+                    .then(|| {
+                        NativeAddChainPlan::new_with_arena(
+                            policy,
+                            Rc::clone(&shared_region_arena),
+                        )
+                    })
                     .flatten()
                     .map(|native| Rc::new(RefCell::new(native)))
             })

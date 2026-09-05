@@ -659,6 +659,7 @@ fn ordinary_source_lowering_admits_guarded_bitwise_region() {
 fn native_add_chain_executes_two_ops_with_one_entry() {
     let mut plan = super::NativeAddChainPlan {
         arena: None,
+        shared_arena: None,
         cache: crate::stencil_select::RenderedRegionCache::new(),
         lifecycle: crate::stencil_lifecycle::StencilLifecycle::new(),
         site: crate::quickening::QuickeningSite::new(crate::ir::Opcode::Add),
