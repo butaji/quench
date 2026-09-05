@@ -551,6 +551,23 @@ fn native_bitwise_i32_regions_guard_number_conversion() {
 }
 
 #[test]
+fn region_verifier_rejects_physical_call_for_raw_abi() {
+    #[cfg(target_arch = "aarch64")]
+    assert!(super::stencil_contains_call(&[0x00, 0x00, 0x00, 0x94]));
+    #[cfg(target_arch = "x86_64")]
+    assert!(super::stencil_contains_call(&[0xE8, 0, 0, 0, 0]));
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    assert!(!super::stencil_contains_call(&[0xE8]));
+    for key in [
+        crate::stencil_select::array_loop_body_region_key(),
+        crate::stencil_select::array_numeric_loop_region_key(),
+    ] {
+        let record = crate::stencil_select::select_region(key).expect("raw declaration");
+        assert!(!super::stencil_contains_call(record.stencil.bytes));
+    }
+}
+
+#[test]
 fn ordinary_source_lowering_admits_guarded_bitwise_region() {
     let program = crate::reduce::reduce_source("var x = 240; x = (x & 15) << 1; x;")
         .expect("bitwise source lowers");
