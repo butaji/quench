@@ -155,6 +155,12 @@ const NATIVE_DISPATCH_OK: u64 = 1;
 const NATIVE_DISPATCH_SEMANTIC_ERROR: u64 = 2;
 const NATIVE_DISPATCH_COMMITTED_ERROR: u64 = 3;
 
+/// Native loops are deliberately bounded until the physical ABI has an
+/// interrupt poll/safepoint instruction of its own.  Keeping a finite chunk
+/// prevents an admitted byte region from monopolizing the VM thread; larger
+/// spans remain semantically complete through the ordinary residual loop.
+const MAX_NATIVE_ARRAY_LOOP_ITERATIONS: usize = 4096;
+
 // Keep the CPS fast path shallow enough that the large transition frame does
 // not accumulate on long-running ARM64 loops. The stack-safe segment takes
 // over at this boundary and preserves the same canonical transitions.
@@ -680,6 +686,9 @@ pub(crate) fn execute_composed_array_numeric_loop(
     };
     let end = end as usize;
     if index > end {
+        return Ok(None);
+    }
+    if end.saturating_sub(index) > MAX_NATIVE_ARRAY_LOOP_ITERATIONS {
         return Ok(None);
     }
     let environment = crate::locals::current();
